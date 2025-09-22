@@ -63,17 +63,11 @@ class QEffDynamicCache(DynamicCache):
                 invalid_scatter_index = torch.iinfo(torch.int32).max
                 scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
 
-                self.key_cache[layer_idx] = CtxScatterFuncCB.apply(
-                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-                )
-                self.value_cache[layer_idx] = CtxScatterFuncCB.apply(
-                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-                )
+                self.key_cache[layer_idx] = CtxScatterFuncCB.apply(self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states)
+                self.value_cache[layer_idx] = CtxScatterFuncCB.apply(self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states)
             else:
                 self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
-                self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                    self.value_cache[layer_idx], position_ids, value_states
-                )
+                self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], position_ids, value_states)
 
     def read_only(self, layer_idx, cache_kwargs):
         """
@@ -150,18 +144,12 @@ class QEffDynamicCache(DynamicCache):
                 invalid_scatter_index = torch.iinfo(torch.int32).max
                 scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
 
-                self.key_cache[layer_idx] = CtxScatterFuncCB.apply(
-                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-                )
+                self.key_cache[layer_idx] = CtxScatterFuncCB.apply(self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states)
 
-                self.value_cache[layer_idx] = CtxScatterFuncCB.apply(
-                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-                )
+                self.value_cache[layer_idx] = CtxScatterFuncCB.apply(self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states)
             else:
                 self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
-                self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                    self.value_cache[layer_idx], position_ids, value_states
-                )
+                self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], position_ids, value_states)
 
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
@@ -223,19 +211,13 @@ class QEffDynamicCache(DynamicCache):
                 invalid_scatter_index = torch.iinfo(torch.int32).max
                 scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
 
-                self.key_cache[layer_idx] = CtxScatterFuncCB3D.apply(
-                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-                )
+                self.key_cache[layer_idx] = CtxScatterFuncCB3D.apply(self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states)
 
-                self.value_cache[layer_idx] = CtxScatterFuncCB3D.apply(
-                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-                )
+                self.value_cache[layer_idx] = CtxScatterFuncCB3D.apply(self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states)
 
             else:
                 self.key_cache[layer_idx] = CtxScatterFunc3D.apply(self.key_cache[layer_idx], position_ids, key_states)
-                self.value_cache[layer_idx] = CtxScatterFunc3D.apply(
-                    self.value_cache[layer_idx], position_ids, value_states
-                )
+                self.value_cache[layer_idx] = CtxScatterFunc3D.apply(self.value_cache[layer_idx], position_ids, value_states)
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
             # Gather
@@ -266,9 +248,7 @@ class QEffEncoderDecoderCache(EncoderDecoderCache):
     """
 
     @classmethod
-    def from_legacy_cache(
-        cls, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
-    ) -> "EncoderDecoderCache":
+    def from_legacy_cache(cls, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None) -> "EncoderDecoderCache":
         """Converts a cache in the legacy cache format into an equivalent `EncoderDecoderCache`."""
         cache = cls(
             self_attention_cache=QEffDynamicCache(),
@@ -292,9 +272,7 @@ class QEffHybridCache(HybridCache):
         self.value_cache: List[torch.Tensor] = []
 
     @classmethod
-    def from_legacy_cache(
-        cls, config, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
-    ) -> "HybridCache":
+    def from_legacy_cache(cls, config, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None) -> "HybridCache":
         """Converts a cache in the legacy cache format into an equivalent `DynamicCache`. Used for
         backward compatibility."""
         cache = cls(config, batch_size=past_key_values[0][0].shape[0], max_cache_len=past_key_values[0][0].shape[2])
@@ -346,9 +324,7 @@ class QEffHybridCache(HybridCache):
             sliding_window_pattern = cache_kwargs.get("sliding_window_pattern")
             is_sliding_layer = torch.tensor(bool((layer_idx + 1) % sliding_window_pattern))
             layer_ctx_len = self.key_cache[layer_idx].shape[2]
-            kv_position_ids = torch.where(
-                (~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (layer_ctx_len - 1)
-            )
+            kv_position_ids = torch.where((~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (layer_ctx_len - 1))
 
             kv_position_ids = torch.where(
                 is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1) * 2),
@@ -360,9 +336,7 @@ class QEffHybridCache(HybridCache):
             key_states = torch.where(valid_mask == 1, key_states, torch.zeros_like(key_states))
             value_states = torch.where(valid_mask == 1, value_states, torch.zeros_like(value_states))
             self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
-            self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                self.value_cache[layer_idx], kv_position_ids, value_states
-            )
+            self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], kv_position_ids, value_states)
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
             # Original Gather
@@ -378,9 +352,7 @@ class QEffHybridCache(HybridCache):
 
             all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
             rolling_indices = torch.where(all_indices > layer_ctx_len - 1, all_indices % layer_ctx_len, all_indices)
-            final_indices = torch.where(
-                (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
-            )
+            final_indices = torch.where((is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices)
             k_out = CtxGatherFunc.apply(k_out, final_indices)
             v_out = CtxGatherFunc.apply(v_out, final_indices)
             ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
@@ -416,9 +388,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
         return legacy_cache
 
     @classmethod
-    def from_legacy_cache(
-        cls, config, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
-    ) -> "HybridChunkedCache":
+    def from_legacy_cache(cls, config, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None) -> "HybridChunkedCache":
         """Converts a cache in the legacy cache format into an equivalent `HybridChunkedCache`. Used for
         backward compatibility."""
         cache = cls(config, max_batch_size=past_key_values[0][0].shape[0], max_cache_len=past_key_values[0][0].shape[2])
@@ -447,9 +417,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
 
             # Update the position_ids to handle the sliding window
             layer_ctx_len = self.key_cache[layer_idx].shape[2]
-            kv_position_ids = torch.where(
-                (~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (layer_ctx_len - 1)
-            )
+            kv_position_ids = torch.where((~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (layer_ctx_len - 1))
 
             kv_position_ids = torch.where(
                 is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1) * 2),
@@ -461,9 +429,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             key_states = torch.where(valid_mask == 1, key_states, torch.zeros_like(key_states))
             value_states = torch.where(valid_mask == 1, value_states, torch.zeros_like(value_states))
             self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
-            self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                self.value_cache[layer_idx], kv_position_ids, value_states
-            )
+            self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], kv_position_ids, value_states)
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
             # Original Gather
@@ -480,9 +446,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             # Rolling indices for sliding window
             all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
             rolling_indices = torch.where(all_indices > layer_ctx_len - 1, all_indices % layer_ctx_len, all_indices)
-            final_indices = torch.where(
-                (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
-            )
+            final_indices = torch.where((is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices)
             k_out = CtxGatherFunc.apply(k_out, final_indices)
             v_out = CtxGatherFunc.apply(v_out, final_indices)
             ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)

@@ -33,9 +33,7 @@ class FP8QuantizationScheme:
 
     def __post_init__(self):
         if self.num_bits != 8 or self.type != "float" or self.strategy not in ["tensor", "channel", "token"]:
-            raise NotImplementedError(
-                f"Only FP8 compressed-tensors supported, got num_bits={self.num_bits}, type={self.type}, strategy={self.strategy}"
-            )
+            raise NotImplementedError(f"Only FP8 compressed-tensors supported, got num_bits={self.num_bits}, type={self.type}, strategy={self.strategy}")
 
 
 class FP8DeQuantLinear(torch.nn.Module):
@@ -51,9 +49,7 @@ class FP8DeQuantLinear(torch.nn.Module):
 
         self.register_buffer(
             "weight",
-            torch.empty(
-                (out_features, in_features), dtype=FP8_DTYPE
-            ),  # This is fixed for now and only e4m3fn quantization is prominent
+            torch.empty((out_features, in_features), dtype=FP8_DTYPE),  # This is fixed for now and only e4m3fn quantization is prominent
         )
 
         if bias:
@@ -81,18 +77,14 @@ class FP8DeQuantLinear(torch.nn.Module):
         fp8_dequant_layer.input_activations_quantization_scheme = input_activations_quant_scheme
 
         if fp8_dequant_layer.weights_quantization_scheme.dynamic:
-            raise NotImplementedError(
-                f"Expected statically quantized weights but got weights quantization scheme dynamic = {fp8_dequant_layer.weights_quantization_scheme.dynamic}"
-            )
+            raise NotImplementedError(f"Expected statically quantized weights but got weights quantization scheme dynamic = {fp8_dequant_layer.weights_quantization_scheme.dynamic}")
 
         if fp8_dequant_layer.weights_quantization_scheme.strategy == "tensor":
             fp8_dequant_layer.register_buffer("weight_scale", torch.zeros((1), dtype=torch.float32))
         elif fp8_dequant_layer.weights_quantization_scheme.strategy == "channel":
             fp8_dequant_layer.register_buffer("weight_scale", torch.zeros((out_features, 1), dtype=torch.float32))
         else:
-            raise NotImplementedError(
-                f"Unknown weights quantization strategy {fp8_dequant_layer.weights_quantization_scheme.strategy}, ['channel' or 'tensor'] strategy supported."
-            )
+            raise NotImplementedError(f"Unknown weights quantization strategy {fp8_dequant_layer.weights_quantization_scheme.strategy}, ['channel' or 'tensor'] strategy supported.")
 
         if not fp8_dequant_layer.input_activations_quantization_scheme.dynamic:
             if fp8_dequant_layer.input_activations_quantization_scheme.strategy == "tensor":
@@ -100,9 +92,7 @@ class FP8DeQuantLinear(torch.nn.Module):
             elif fp8_dequant_layer.input_activations_quant_scheme.strategy == "token":
                 fp8_dequant_layer.register_buffer("input_scale", torch.zeros((1, in_features), dtype=torch.float32))
             else:
-                raise NotImplementedError(
-                    f"Unknown input activations quantization strategy {fp8_dequant_layer.input_activations_quantization_scheme.strategy}, ['token' or 'tensor'] strategy supported."
-                )
+                raise NotImplementedError(f"Unknown input activations quantization strategy {fp8_dequant_layer.input_activations_quantization_scheme.strategy}, ['token' or 'tensor'] strategy supported.")
 
         return fp8_dequant_layer
 
@@ -145,14 +135,10 @@ class QEffFP8Config(QuantizationConfigMixin):
         self.quantization_config = None
         self.sparsity_config = None
         if kv_cache_scheme:
-            logger.warning(
-                f"kv_cache_scheme={kv_cache_scheme} will be ignored please use `mxint8_kv_cache=True` during compile call if you want to keep kv cache in int8 at runtime on Cloud AI 100"
-            )
+            logger.warning(f"kv_cache_scheme={kv_cache_scheme} will be ignored please use `mxint8_kv_cache=True` during compile call if you want to keep kv cache in int8 at runtime on Cloud AI 100")
 
         if quant_method != "fp8" or activation_scheme not in ["static", "dynamic", None]:
-            raise NotImplementedError(
-                f"Expected FP8 quantization with static/dynamic/None activation quantization, go quant_method={quant_method}, activation_scheme={activation_scheme}"
-            )
+            raise NotImplementedError(f"Expected FP8 quantization with static/dynamic/None activation quantization, go quant_method={quant_method}, activation_scheme={activation_scheme}")
 
         self.quant_method = QEffExtendedQuantizationMethod.FP8
 
@@ -167,18 +153,11 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
         self.run_compressed = quantization_config.run_compressed
         # -- Handle extra kwargs below --
         self.modules_to_not_convert = kwargs.pop("modules_to_not_convert", [])
-        self.modules_to_not_convert = list(
-            set(self.modules_to_not_convert if self.modules_to_not_convert else [])
-            | set(self.quantization_config.ignored_layers if self.quantization_config.ignored_layers else [])
-        )
+        self.modules_to_not_convert = list(set(self.modules_to_not_convert if self.modules_to_not_convert else []) | set(self.quantization_config.ignored_layers if self.quantization_config.ignored_layers else []))
         self.pre_quantized = kwargs.pop("pre_quantized", True)
 
         if not self.pre_quantized and self.requires_calibration:
-            raise ValueError(
-                f"The quantization method {quantization_config.quant_method} does require the model to be pre-quantized."
-                f" You explicitly passed `pre_quantized=False` meaning your model weights are not quantized. Make sure to "
-                f"pass `pre_quantized=True` while knowing what you are doing."
-            )
+            raise ValueError(f"The quantization method {quantization_config.quant_method} does require the model to be pre-quantized. You explicitly passed `pre_quantized=False` meaning your model weights are not quantized. Make sure to pass `pre_quantized=True` while knowing what you are doing.")
 
     def validate_environment(self, *args, **kwargs):
         return True
@@ -192,9 +171,7 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
         if not self.modules_to_not_convert or "lm_head" not in self.modules_to_not_convert:
             self.modules_to_not_convert.extend(get_keys_to_not_convert(model))
 
-        logger.warning(
-            f"activations quantization strategy = {self.quantization_config.activation_scheme}, will be ignored and the layers will be run with de-quantized weights"
-        )
+        logger.warning(f"activations quantization strategy = {self.quantization_config.activation_scheme}, will be ignored and the layers will be run with de-quantized weights")
 
         # -- Defining local method as it uses lot of local variables --
         def replace_linear_with_fp8_dequant_layer(module):
@@ -250,9 +227,7 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
         self.run_compressed = run_compressed
         # Validate configuration
         if len(self.config_groups) != 1:
-            raise NotImplementedError(
-                "Currently only single quantization group is supported, please raise an issue with model details for support!"
-            )
+            raise NotImplementedError("Currently only single quantization group is supported, please raise an issue with model details for support!")
 
         if quantization_status not in {"compressed", "frozen"}:
             raise NotImplementedError(f"expected quantization_status=`frozen`, got {quantization_status}")
@@ -261,9 +236,7 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
             raise NotImplementedError(f"Expected kv_cache_scheme=None, got {kv_cache_scheme}")
 
         if format not in {"naive-quantized", "float-quantized"}:
-            raise NotImplementedError(
-                f"Expected quantization format in ['naive_quantized', 'float-quantized']  got {format}"
-            )
+            raise NotImplementedError(f"Expected quantization format in ['naive_quantized', 'float-quantized']  got {format}")
 
         if sparsity_config:
             raise NotImplementedError(f"Expected sparsity_config to be None, got {sparsity_config}")
@@ -284,16 +257,9 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
             raise NotImplementedError(f"Only linear targets are supported, got {self.targets}")
 
         if output_activation_quantization_config:
-            raise NotImplementedError(
-                f"output_activations quantization is not supported got {output_activation_quantization_config}"
-            )
+            raise NotImplementedError(f"output_activations quantization is not supported got {output_activation_quantization_config}")
 
-        if (
-            activations_quantization_config.get("block_structure")
-            or activations_quantization_config.get("group_size")
-            or weights_quantization_config.get("block_structure")
-            or weights_quantization_config.get("group_size")
-        ):
+        if activations_quantization_config.get("block_structure") or activations_quantization_config.get("group_size") or weights_quantization_config.get("block_structure") or weights_quantization_config.get("group_size"):
             raise NotImplementedError(f"group_size and block_structure not supported got {group_0}")
 
         self.weights_quantization_scheme = FP8QuantizationScheme(
@@ -337,26 +303,17 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
     def __init__(self, quantization_config, **kwargs):
         # TODO: check if more checks are required
         if not isinstance(quantization_config, QEffCompressedTensorsConfig):
-            raise TypeError(
-                f"Only {QEffCompressedTensorsConfig} is supported for initialization got {type(quantization_config)}"
-            )
+            raise TypeError(f"Only {QEffCompressedTensorsConfig} is supported for initialization got {type(quantization_config)}")
         self.run_compressed = quantization_config.run_compressed
         self.quantization_config = quantization_config
 
         # -- Handle extra kwargs below --
         self.modules_to_not_convert = kwargs.pop("modules_to_not_convert", [])
-        self.modules_to_not_convert = list(
-            set(self.modules_to_not_convert if self.modules_to_not_convert else [])
-            | set(self.quantization_config.ignore if self.quantization_config.ignore else [])
-        )
+        self.modules_to_not_convert = list(set(self.modules_to_not_convert if self.modules_to_not_convert else []) | set(self.quantization_config.ignore if self.quantization_config.ignore else []))
         self.pre_quantized = kwargs.pop("pre_quantized", True)
 
         if not self.pre_quantized and self.requires_calibration:
-            raise ValueError(
-                f"The quantization method {quantization_config.quant_method} does require the model to be pre-quantized."
-                f" You explicitly passed `pre_quantized=False` meaning your model weights are not quantized. Make sure to "
-                f"pass `pre_quantized=True` while knowing what you are doing."
-            )
+            raise ValueError(f"The quantization method {quantization_config.quant_method} does require the model to be pre-quantized. You explicitly passed `pre_quantized=False` meaning your model weights are not quantized. Make sure to pass `pre_quantized=True` while knowing what you are doing.")
 
     def validate_environment(self, *args, **kwargs):
         return True
@@ -368,13 +325,9 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
 
     def _process_model_before_weight_loading(self, model, **kwargs):
         if self.quantization_config.targets != ["Linear"]:
-            raise NotImplementedError(
-                f"Only Linear layer with FP8 quantization are supported got targets = {self.quantization_config.targets}"
-            )
+            raise NotImplementedError(f"Only Linear layer with FP8 quantization are supported got targets = {self.quantization_config.targets}")
 
-        logger.warning(
-            f"activations quantization scheme = {self.quantization_config.input_activations_quantization_scheme.__dict__}, will be ignored and the layers will be run with de-quantized weights"
-        )
+        logger.warning(f"activations quantization scheme = {self.quantization_config.input_activations_quantization_scheme.__dict__}, will be ignored and the layers will be run with de-quantized weights")
 
         # -- Defining local method as it uses lot of local variables --
         def replace_linear_with_fp8_dequant_layer(module):

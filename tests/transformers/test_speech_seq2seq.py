@@ -83,9 +83,7 @@ def test_seq2seq_export_and_hash(config, tmp_path):
 
     # Check if the KV-cache inputs and outputs are created
     onnx_model = onnx.load(model_0_0.onnx_path, load_external_data=False)
-    retained_output_names = {
-        x.name[: -len("_RetainedState")] for x in onnx_model.graph.output if x.name.endswith("_RetainedState")
-    }
+    retained_output_names = {x.name[: -len("_RetainedState")] for x in onnx_model.graph.output if x.name.endswith("_RetainedState")}
     retained_output_names.issubset({x.name for x in onnx_model.graph.input})
 
     # Check if there is no re-export

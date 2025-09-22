@@ -48,11 +48,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     # Original PyTorch model output
     pt_outputs = pt_model(**inputs)
     pooling_method = POOLING_MAP[pooling] if pooling else None
-    pt_embeddings = (
-        pooling_method(pt_outputs.last_hidden_state, inputs["attention_mask"])
-        if pooling
-        else pt_outputs.last_hidden_state
-    )
+    pt_embeddings = pooling_method(pt_outputs.last_hidden_state, inputs["attention_mask"]) if pooling else pt_outputs.last_hidden_state
 
     # QEff transformed PyTorch model
     qeff_model = QEFFAutoModel(pt_model, pretrained_model_name_or_path=model_name, pooling=pooling)
@@ -89,9 +85,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
     ai100_output = qeff_model.generate(inputs=inputs)
-    qeff_ai100_embeddings = (
-        ai100_output["output"] if pooling else ai100_output["output"][:, : inputs["input_ids"].shape[1], :]
-    )
+    qeff_ai100_embeddings = ai100_output["output"] if pooling else ai100_output["output"][:, : inputs["input_ids"].shape[1], :]
 
     # Compare ONNX and AI 100 outputs
     mad = np.mean(np.abs(qeff_ai100_embeddings - onnx_outputs[0]))
@@ -141,9 +135,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model_name["model_name"], seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
-    )
+    check_embed_pytorch_vs_ort_vs_ai100(model_name=model_name["model_name"], seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path)
 
 
 @pytest.mark.on_qaic
@@ -178,6 +170,4 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model):
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"], seq_len=[32, 20], n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
-    )
+    check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=[32, 20], n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path)

@@ -36,9 +36,7 @@ def run_model(
     # The Dual QPC approach splits the model to perform Image Encoding and Output generation in 2 different QPCs.
     # The outputs of the Vision Encoder are then passed to the Language model via host in this case.
 
-    model = QEFFAutoModelForImageTextToText.from_pretrained(
-        model_name, token=token, attn_implementation="eager", kv_offload=kv_offload
-    )
+    model = QEFFAutoModelForImageTextToText.from_pretrained(model_name, token=token, attn_implementation="eager", kv_offload=kv_offload)
 
     ## STEP - 2 Export & Compile the Model
 

@@ -11,9 +11,7 @@ import QEfficient
 from QEfficient.cloud.infer import main as infer
 
 
-def check_infer(
-    mocker, model_name, prompt="My name is", full_batch_size=None, enable_qnn=False, image_url=None, generation_len=20
-):
+def check_infer(mocker, model_name, prompt="My name is", full_batch_size=None, enable_qnn=False, image_url=None, generation_len=20):
     check_and_assign_cache_dir_spy = mocker.spy(QEfficient.cloud.infer, "check_and_assign_cache_dir")
     qeff_model_load_spy = mocker.spy(QEfficient.cloud.infer.QEFFCommonLoader, "from_pretrained")
     load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer, "load_hf_tokenizer")

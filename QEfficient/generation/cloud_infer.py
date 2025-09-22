@@ -76,10 +76,7 @@ class QAICInferenceSession:
         if status != qaicrt.QStatus.QS_SUCCESS:
             raise RuntimeError("Failed to getIoDescriptor")
         iodesc.ParseFromString(bytes(iodesc_data))
-        self.allowed_shapes = [
-            [(aic_to_np_dtype_mapping[x.type].itemsize, list(x.dims)) for x in allowed_shape.shapes]
-            for allowed_shape in iodesc.allowed_shapes
-        ]
+        self.allowed_shapes = [[(aic_to_np_dtype_mapping[x.type].itemsize, list(x.dims)) for x in allowed_shape.shapes] for allowed_shape in iodesc.allowed_shapes]
         self.bindings = iodesc.selected_set.bindings
         self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
         # Create and load Program
@@ -94,9 +91,7 @@ class QAICInferenceSession:
             self.activate()
         # Create input qbuffers and buf_dims
         self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
-        self.buf_dims = qaicrt.BufferDimensionsVecRef(
-            [(aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
-        )
+        self.buf_dims = qaicrt.BufferDimensionsVecRef([(aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings])
 
     @property
     def input_names(self) -> List[str]:
@@ -175,9 +170,7 @@ class QAICInferenceSession:
                 error_message += "\nAllowed shapes:"
                 for i, allowed_shape in enumerate(self.allowed_shapes):
                     error_message += f"\n{i}\n"
-                    for binding, (elemsize, shape), (_, passed_shape) in zip(
-                        self.bindings, allowed_shape, self.buf_dims
-                    ):
+                    for binding, (elemsize, shape), (_, passed_shape) in zip(self.bindings, allowed_shape, self.buf_dims):
                         if passed_shape == [0]:
                             if not binding.is_partial_buf_allowed:
                                 warn(f"Partial buffer not allowed for: {binding.name}")

@@ -78,9 +78,7 @@ class QEffMptAttention(MptAttention):
             attention_scores = attention_scores + position_bias
 
         if attention_mask is not None:
-            attention_scores = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
-            )
+            attention_scores = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores)
 
         # (batch_size, n_heads, seq_length, key_length)
         attn_weights = nn.functional.softmax(attention_scores.float(), dim=-1).to(value_states.dtype)
@@ -169,9 +167,7 @@ class QEFfMptModel(MptModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple[torch.Tensor, ...], BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -206,9 +202,7 @@ class QEFfMptModel(MptModel):
         alibi = self.build_mpt_alibi_tensor(self.num_heads, self.config.max_seq_len, device=hidden_states.device)
 
         if attention_mask is not None:
-            causal_mask = _prepare_4d_causal_attention_mask(
-                attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
-            )
+            causal_mask = _prepare_4d_causal_attention_mask(attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length)
             causal_mask = causal_mask.bool()
         elif attention_mask is None:
             causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values_length)

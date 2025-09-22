@@ -38,9 +38,7 @@ class QEFFGrok1CustomRMSNormAIC(nn.Module):
         Returns:
             torch.Tensor: Normalized tensor.
         """
-        return CustomRMSNormFunc.apply(
-            hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
-        )
+        return CustomRMSNormFunc.apply(hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps)
 
 
 class QEffGrok1MultiHeadAttention(nn.Module):
@@ -111,18 +109,13 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         attn_weights = self.max_attn_val * F.tanh(attn_weights / self.max_attn_val)
 
         if attention_mask is not None:
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
         attn_weights = F.softmax(attn_weights, dim=-1).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
+            raise ValueError(f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is {attn_output.size()}")
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, -1)
@@ -154,26 +147,16 @@ class QEffGrok1MoeBlock(nn.Module):
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
         # Creating experts mask and routing weights masked
-        awesome_experts_mask_1 = (
-            torch.nn.functional.one_hot(selected_experts[:, 0], num_classes=self.num_experts).bool().T.unsqueeze(-1)
-        )
-        awesome_experts_mask_2 = (
-            torch.nn.functional.one_hot(selected_experts[:, 1], num_classes=self.num_experts).bool().T.unsqueeze(-1)
-        )
+        awesome_experts_mask_1 = torch.nn.functional.one_hot(selected_experts[:, 0], num_classes=self.num_experts).bool().T.unsqueeze(-1)
+        awesome_experts_mask_2 = torch.nn.functional.one_hot(selected_experts[:, 1], num_classes=self.num_experts).bool().T.unsqueeze(-1)
 
         gateupout1 = torch.zeros(hidden_states.shape[0], self.ffn_dim)  # T, hs
         gateupout2 = torch.zeros(hidden_states.shape[0], self.ffn_dim)  # T, hs
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
-            current_expert_output = expert_layer.act_fn(expert_layer.linear(hidden_states)) * expert_layer.linear_v(
-                hidden_states
-            )
-            gateupout1 += torch.where(
-                awesome_experts_mask_1[expert_idx], current_expert_output, torch.zeros_like(gateupout1)
-            )
-            gateupout2 += torch.where(
-                awesome_experts_mask_2[expert_idx], current_expert_output, torch.zeros_like(gateupout2)
-            )
+            current_expert_output = expert_layer.act_fn(expert_layer.linear(hidden_states)) * expert_layer.linear_v(hidden_states)
+            gateupout1 += torch.where(awesome_experts_mask_1[expert_idx], current_expert_output, torch.zeros_like(gateupout1))
+            gateupout2 += torch.where(awesome_experts_mask_2[expert_idx], current_expert_output, torch.zeros_like(gateupout2))
 
         downout1 = torch.zeros_like(hidden_states)
         downout2 = torch.zeros_like(hidden_states)
@@ -182,14 +165,10 @@ class QEffGrok1MoeBlock(nn.Module):
         concat_gateout = torch.cat((gateupout1.unsqueeze(0), gateupout2.unsqueeze(0)), dim=0)
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
-            concat_down += torch.where(
-                concat_mask[:, expert_idx, :], expert_layer.linear_1(concat_gateout), torch.zeros_like(concat_down)
-            )
+            concat_down += torch.where(concat_mask[:, expert_idx, :], expert_layer.linear_1(concat_gateout), torch.zeros_like(concat_down))
 
         downout1, downout2 = concat_down[0], concat_down[1]
-        hidden_states = (
-            downout1 * routing_weights[:, 0].unsqueeze(-1) + downout2 * routing_weights[:, 1].unsqueeze(-1)
-        ).reshape(batch_size, sequence_length, hidden_dim)
+        hidden_states = (downout1 * routing_weights[:, 0].unsqueeze(-1) + downout2 * routing_weights[:, 1].unsqueeze(-1)).reshape(batch_size, sequence_length, hidden_dim)
 
         return hidden_states, router_logits
 
@@ -310,9 +289,7 @@ class QEffGrok1Model(nn.Module):
             Union[Tuple, MoeModelOutputWithPast]: Model output.
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -432,13 +409,9 @@ class QEffGrok1ModelForCausalLM(nn.Module):
             MoeCausalLMOutputWithPast: Model output.
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_router_logits = (
-            output_router_logits if output_router_logits is not None else self.config.output_router_logits
-        )
+        output_router_logits = output_router_logits if output_router_logits is not None else self.config.output_router_logits
 
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)

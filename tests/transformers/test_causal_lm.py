@@ -100,9 +100,7 @@ def test_causal_lm_export_and_hash(config, cb, tmp_path):
 
     # Check if the KV-cache inputs and outputs are created
     onnx_model = onnx.load(model_0_0.onnx_path, load_external_data=False)
-    retained_output_names = {
-        x.name[: -len("_RetainedState")] for x in onnx_model.graph.output if x.name.endswith("_RetainedState")
-    }
+    retained_output_names = {x.name[: -len("_RetainedState")] for x in onnx_model.graph.output if x.name.endswith("_RetainedState")}
     retained_output_names.issubset({x.name for x in onnx_model.graph.input})
 
     # Check if there is no re-export
@@ -159,9 +157,7 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
     bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
     seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
     fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-    kv_cache_shape = get_padding_shape_from_config(
-        qeff_model.model.config, fbs if qeff_model.continuous_batching else bs, seq_len
-    )
+    kv_cache_shape = get_padding_shape_from_config(qeff_model.model.config, fbs if qeff_model.continuous_batching else bs, seq_len)
     dynamic_axes = {
         "input_ids": {0: "batch_size", 1: "seq_len"},
         "position_ids": {0: "batch_size", 1: "seq_len"},

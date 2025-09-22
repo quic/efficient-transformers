@@ -24,9 +24,7 @@ def str2bool(v):
 
 
 def get_finetune_parser():
-    parser = argparse.ArgumentParser(
-        description="Finetune command, the model is downloaded from Huggingface, finetuned on Cloud AI 100 and checkpoints are saved."
-    )
+    parser = argparse.ArgumentParser(description="Finetune command, the model is downloaded from Huggingface, finetuned on Cloud AI 100 and checkpoints are saved.")
     parser.add_argument(
         "--model_name",
         "--model-name",
@@ -59,12 +57,8 @@ def get_finetune_parser():
         default=True,
         help="To run validation during training",
     )
-    parser.add_argument(
-        "--train_batch_size", "--train-batch-size", required=False, type=int, default=1, help="Batch size for training"
-    )
-    parser.add_argument(
-        "--val_batch_size", "--val-batch-size", required=False, type=int, default=1, help="Batch size for validation"
-    )
+    parser.add_argument("--train_batch_size", "--train-batch-size", required=False, type=int, default=1, help="Batch size for training")
+    parser.add_argument("--val_batch_size", "--val-batch-size", required=False, type=int, default=1, help="Batch size for validation")
     parser.add_argument(
         "--context_length",
         "--context-length",
@@ -96,12 +90,8 @@ def get_finetune_parser():
         default=True,
         help="Use autocast for mixed precision",
     )
-    parser.add_argument(
-        "--grad_scaler", "--grad-scaler", type=str2bool, nargs="?", const=True, default=True, help="Use gradient scaler"
-    )
-    parser.add_argument(
-        "--num_epochs", "--num-epochs", required=False, type=int, default=1, help="Number of training epochs"
-    )
+    parser.add_argument("--grad_scaler", "--grad-scaler", type=str2bool, nargs="?", const=True, default=True, help="Use gradient scaler")
+    parser.add_argument("--num_epochs", "--num-epochs", required=False, type=int, default=1, help="Number of training epochs")
     parser.add_argument(
         "--max_train_step",
         "--max-train-step",
@@ -135,9 +125,7 @@ def get_finetune_parser():
         help="Number of workers for dataloader",
     )
     parser.add_argument("--lr", required=False, type=float, default=3e-4, help="Learning rate ")
-    parser.add_argument(
-        "--weight_decay", "--weight-decay", required=False, type=float, default=0.0, help="Weight decay for optimizer"
-    )
+    parser.add_argument("--weight_decay", "--weight-decay", required=False, type=float, default=0.0, help="Weight decay for optimizer")
     parser.add_argument(
         "--gamma",
         required=False,

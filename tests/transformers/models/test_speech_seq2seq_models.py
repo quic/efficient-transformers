@@ -55,9 +55,7 @@ def load_seq2seq_model(model_config):
     return model_hf, params
 
 
-def run_seq2seq_pytorch_hf(
-    model, processor: AutoProcessor, inputs: np.ndarray, sample_rate: int, generation_len: int
-) -> List[str]:
+def run_seq2seq_pytorch_hf(model, processor: AutoProcessor, inputs: np.ndarray, sample_rate: int, generation_len: int) -> List[str]:
     """
     Run pytorch inference on model
 
@@ -116,9 +114,7 @@ def run_seq2seq_pytorch_hf(
     return generated_ids[0]
 
 
-def run_seq2seq_pytorch_with_kv(
-    model, processor: AutoProcessor, inputs: np.ndarray, sample_rate: int, generation_len: int
-) -> List[str]:
+def run_seq2seq_pytorch_with_kv(model, processor: AutoProcessor, inputs: np.ndarray, sample_rate: int, generation_len: int) -> List[str]:
     """
     Run pytorch inference on model
 
@@ -155,9 +151,7 @@ def run_seq2seq_pytorch_with_kv(
     for i in range(config.num_hidden_layers):
         for self_cross in ["self", "cross"]:
             for kv in ["key", "value"]:
-                model_inputs["past_key_values"][i].append(
-                    torch.zeros(kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32)
-                )
+                model_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32))
 
     # encoder run
     outputs = model.model(**model_inputs)
@@ -188,9 +182,7 @@ def run_seq2seq_pytorch_with_kv(
     return generated_ids[0]
 
 
-def run_seq2seq_ort(
-    onnx_path, config, processor: AutoProcessor, inputs: np.ndarray, sample_rate: int, generation_len: int
-) -> List[str]:
+def run_seq2seq_ort(onnx_path, config, processor: AutoProcessor, inputs: np.ndarray, sample_rate: int, generation_len: int) -> List[str]:
     """
     Run onnxruntime inference on model
 
@@ -215,9 +207,7 @@ def run_seq2seq_ort(
         if node.op_type == "Constant":
             np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t, os.path.dirname(onnx_path))
             if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
-                added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
-                    np.array(0, np_tensor.dtype)
-                )
+                added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(np.array(0, np_tensor.dtype))
 
     session_options = onnxruntime.SessionOptions()
     for name, value in added_initializers.items():
@@ -245,9 +235,7 @@ def run_seq2seq_ort(
         for self_cross in ["self", "cross"]:
             for kv in ["key", "value"]:
                 pkv_names.append(f"past_{kv}_{self_cross}.{i}_RetainedState")
-                model_inputs[f"past_{kv}_{self_cross}.{i}"] = torch.zeros(
-                    kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32
-                )
+                model_inputs[f"past_{kv}_{self_cross}.{i}"] = torch.zeros(kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32)
 
     output_names = ["logits"] + pkv_names
 
@@ -266,9 +254,7 @@ def run_seq2seq_ort(
         model_inputs[name.split("_RetainedState")[0]] = outputs[1 + i]
 
     for num_tokens in range(generation_len):
-        outputs = session.run(
-            output_names, {k: (v.detach().numpy() if type(v) is torch.Tensor else v) for k, v in model_inputs.items()}
-        )
+        outputs = session.run(output_names, {k: (v.detach().numpy() if type(v) is torch.Tensor else v) for k, v in model_inputs.items()})
         logits = outputs[0]
         next_token = logits.argmax(-1)
         generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
@@ -318,9 +304,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_kv_tokens = run_seq2seq_pytorch_with_kv(qeff_model, processor, data, sample_rate, ctx_len)
 
-    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-    )
+    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     qeff_model.export()
 
@@ -339,13 +323,9 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
 
-    exec_info = qeff_model.generate(
-        inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len
-    )
+    exec_info = qeff_model.generate(inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
-    assert (pytorch_kv_tokens == cloud_ai_100_tokens).all(), (
-        "Tokens don't match for pytorch output and Cloud AI 100 output."
-    )
+    assert (pytorch_kv_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for pytorch output and Cloud AI 100 output."
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
 
@@ -374,6 +354,4 @@ def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
-    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=4, enable_qnn=True, qnn_config=qnn_config_json_path
-    )
+    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4, enable_qnn=True, qnn_config=qnn_config_json_path)

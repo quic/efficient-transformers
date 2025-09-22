@@ -173,9 +173,7 @@ def convert_to_cloud_kvstyle(
         raise Exception(f"please pass the {qeff_model.__class__.__name__} after transform API")
 
     # Decide path for saving exported ONNX files.
-    model_name = export_kvstyle_transformed_model_to_onnx(
-        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len
-    )  # type: ignore
+    model_name = export_kvstyle_transformed_model_to_onnx(model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len)  # type: ignore
 
     # return the model path for automation.
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")

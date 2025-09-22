@@ -18,9 +18,7 @@ from QEfficient.utils._utils import load_json, load_yaml
 from QEfficient.utils.logging_utils import logger
 
 
-def create_and_dump_specializations(
-    batch_size: int, prompt_len: int, ctx_len: int, path: str, full_batch_size: Optional[int] = None
-):
+def create_and_dump_specializations(batch_size: int, prompt_len: int, ctx_len: int, path: str, full_batch_size: Optional[int] = None):
     # Create specialization file.
     specializations = {
         "specializations": [
@@ -197,9 +195,7 @@ def compile(
         custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
 
     if not os.path.isfile(custom_io_file_path):
-        raise FileNotFoundError(
-            f"Custom IO file {custom_io_file_name} is not present at the expected path {custom_io_file_path}. Please pass the correct file path or rerun infer/export API"
-        )
+        raise FileNotFoundError(f"Custom IO file {custom_io_file_name} is not present at the expected path {custom_io_file_path}. Please pass the correct file path or rerun infer/export API")
 
     if enable_qnn:
         qpc_path = qnn_compile(
@@ -214,7 +210,7 @@ def compile(
             mos=mos,
             device_group=device_group,
             qnn_config=qnn_config,
-            specializations=(load_json(specialization_json_path))["specializations"],
+            specializations=load_json(specialization_json_path)["specializations"],
             custom_io=load_yaml(custom_io_file_path),
         )
         logger.info(f"QNN Compiled QPC files can be found here: {qpc_path}")
@@ -233,9 +229,7 @@ def compile(
             **kwargs,
         )
         if kwargs.get("io_encrypt", None):
-            logger.warning(
-                f"Compilation for IO-Encrypt has been successfully completed at path: {qpc_path}. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately"
-            )
+            logger.warning(f"Compilation for IO-Encrypt has been successfully completed at path: {qpc_path}. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately")
         else:
             logger.info(f"Compiled QPC files can be found here: {qpc_path}")
 

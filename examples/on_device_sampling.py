@@ -137,13 +137,9 @@ if __name__ == "__main__":
     """
 
     parser = argparse.ArgumentParser(description="Run QEfficient model with On Device Sampling")
-    parser.add_argument(
-        "--model-name", "--model_name", required=True, default="meta-llama/Llama-3.1-8B", help="HF Model card name/id"
-    )
+    parser.add_argument("--model-name", "--model_name", required=True, default="meta-llama/Llama-3.1-8B", help="HF Model card name/id")
     parser.add_argument("--batch-size", "--batch_size", type=int, default=1, help="Batch size for text generation")
-    parser.add_argument(
-        "--prompt-len", "--prompt_len", default=32, type=int, help="Sequence length for text generation."
-    )
+    parser.add_argument("--prompt-len", "--prompt_len", default=32, type=int, help="Sequence length for text generation.")
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
     parser.add_argument(
         "--mxfp6",
@@ -159,9 +155,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
     )
-    parser.add_argument(
-        "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
-    )
+    parser.add_argument("--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100")
     parser.add_argument(
         "--device_group",
         "--device-group",
@@ -190,10 +184,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--override-qaic-config",
-        type=lambda configs: {
-            str(value[0]): value[1] if len(value) > 1 else True
-            for value in (re.split(r"[:=]", config.strip()) for config in re.split(r"[ ]+", configs.strip()))
-        },
+        type=lambda configs: {str(value[0]): value[1] if len(value) > 1 else True for value in (re.split(r"[:=]", config.strip()) for config in re.split(r"[ ]+", configs.strip()))},
         default=None,
         help="override or set qaic device configuration.",
     )
@@ -204,25 +195,19 @@ if __name__ == "__main__":
         "--repetition-penalty",
         type=float,
         default=None,
-        help="Sampling parameter that penalizes new tokens based on whether they appear in the "
-        "prompt and the generated text so far. Values > 1 encourage the model to use new tokens, "
-        "while values < 1 encourage the model to repeat tokens.",
+        help="Sampling parameter that penalizes new tokens based on whether they appear in the prompt and the generated text so far. Values > 1 encourage the model to use new tokens, while values < 1 encourage the model to repeat tokens.",
     )
     sampling_group.add_argument(
         "--presence-penalty",
         type=float,
         default=None,
-        help="Sampling parameter that penalizes new tokens based on whether they appear in the "
-        "generated text so far. Values > 0 encourage the model to use new tokens, while values < "
-        "0 encourage the model to repeat tokens.",
+        help="Sampling parameter that penalizes new tokens based on whether they appear in the generated text so far. Values > 0 encourage the model to use new tokens, while values < 0 encourage the model to repeat tokens.",
     )
     sampling_group.add_argument(
         "--temperature",
         type=float,
         default=0.0,
-        help="Sampling parameter that controls the randomness of the sampling. Lower"
-        "values make the model more deterministic, while higher values make"
-        "the model more random. Zero means greedy sampling.",
+        help="Sampling parameter that controls the randomness of the sampling. Lowervalues make the model more deterministic, while higher values makethe model more random. Zero means greedy sampling.",
     )
     sampling_group.add_argument(
         "--top-k",
@@ -234,16 +219,13 @@ if __name__ == "__main__":
         "--top-p",
         type=float,
         default=None,
-        help="Sampling parameter that controls the cumulative probability of the top tokens to "
-        "consider. Must be in (0, 1]. Set to 1.0 to consider all tokens.",
+        help="Sampling parameter that controls the cumulative probability of the top tokens to consider. Must be in (0, 1]. Set to 1.0 to consider all tokens.",
     )
     sampling_group.add_argument(
         "--min-p",
         type=float,
         default=None,
-        help="Sampling parameter that represents the minumum probability for a token to be "
-        "considered, relative to the probability of the most likely token. Must be in [0, 1]. "
-        "Set to 0.0 to disable this.",
+        help="Sampling parameter that represents the minumum probability for a token to be considered, relative to the probability of the most likely token. Must be in [0, 1]. Set to 0.0 to disable this.",
     )
     sampling_group.add_argument(
         "--random-number",
@@ -257,11 +239,7 @@ if __name__ == "__main__":
     for i in range(0, len(compiler_options)):
         if compiler_options[i].startswith("--"):
             key = compiler_options[i].lstrip("-").replace("-", "_")
-            value = (
-                compiler_options[i + 1]
-                if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-")
-                else True
-            )
+            value = compiler_options[i + 1] if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-") else True
             compiler_options_dict[key] = value
 
     main(args, **compiler_options_dict)

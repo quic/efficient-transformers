@@ -96,6 +96,4 @@ def test_output_consistency(model_name):
         assert len(set(outputDict[key])) == 1, "Outputs from different slots for same prompt does not match!!"
 
     # Assertion to check if any prompts are missed.
-    assert len(multiple_prompt) == len(multiple_prompt_output), (
-        "Number of Generated Tokens do not match the number of valid inputs!!"
-    )
+    assert len(multiple_prompt) == len(multiple_prompt_output), "Number of Generated Tokens do not match the number of valid inputs!!"

@@ -281,9 +281,7 @@ def build_model_class_mapping(auto_model_class, qeff_class_name):
     """
     Build a mapping of model config class names to QEfficient model class names.
     """
-    return {
-        config_class.__name__: qeff_class_name for config_class, model_class in auto_model_class._model_mapping.items()
-    }
+    return {config_class.__name__: qeff_class_name for config_class, model_class in auto_model_class._model_mapping.items()}
 
 
 EXTERNAL_MODEL_CLASS_MAPPING = {"Grok1Config": "QEFFAutoModelForCausalLM"}
@@ -307,16 +305,12 @@ def _prepare_cross_attention_mask(
 
     # invert the mask
     inverted_cross_attn_mask = (1.0 - cross_attention_mask).to(dtype)
-    cross_attention_mask = inverted_cross_attn_mask.masked_fill(
-        inverted_cross_attn_mask.to(torch.bool), torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
-    )
+    cross_attention_mask = inverted_cross_attn_mask.masked_fill(inverted_cross_attn_mask.to(torch.bool), torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32))
 
     # apply full-row bias, which return 4D tensor of shape [B, H, S1, 1] where value is 0 if the a full row in cross attn mask's
     # last dimension contains negative infinity values, otherwise it's 1
     negative_inf_value = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
-    full_text_row_masked_out_mask = (
-        (cross_attention_mask != negative_inf_value).any(dim=-1).type_as(cross_attention_mask)[..., None]
-    )
+    full_text_row_masked_out_mask = (cross_attention_mask != negative_inf_value).any(dim=-1).type_as(cross_attention_mask)[..., None]
     cross_attention_mask *= full_text_row_masked_out_mask
 
     return cross_attention_mask, full_text_row_masked_out_mask
@@ -343,11 +337,7 @@ def _prepare_aspect_ratio_attention_mask(
     # Reshape to 2D and create 4D attention mask
     # (batch_size, 1, max_num_tiles * target_length, max_num_tiles * target_length)
     attention_mask = attention_mask.reshape(batch_size, max_num_tiles * target_length, 1)
-    attention_mask = (
-        attention_mask
-        @ attention_mask.transpose(-1, -2)
-        * torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
-    )
+    attention_mask = attention_mask @ attention_mask.transpose(-1, -2) * torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
     attention_mask = attention_mask.unsqueeze(1)
 
     return attention_mask

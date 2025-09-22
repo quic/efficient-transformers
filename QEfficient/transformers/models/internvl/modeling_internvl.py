@@ -43,9 +43,7 @@ class QEffInternDecoderWrapper(nn.Module):
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
-        outputs = self.model.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
-        )
+        outputs = self.model.language_model(inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
 
@@ -68,9 +66,7 @@ class QEffInternVLModel(nn.Module):
     ):
         num_patches = compiler_options.pop("num_patches", None)
         if num_patches is None:
-            logger.warning(
-                "User should pass `num_patches` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 13"
-            )
+            logger.warning("User should pass `num_patches` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 13")
             num_patches = constants.INTERN_NUM_PATCHES
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.INTERN_PREFILL_SEQ_LEN  # 4096-256
@@ -174,9 +170,7 @@ class QEffInternVLModel(nn.Module):
         if patch_size and downsample_ratio:
             computed_feature_size = int(((img_size / patch_size) * downsample_ratio) ** 2)
             if computed_feature_size != constants.INTERN_FEATURE_SIZE:
-                logger.warning(
-                    "Discrepancy detected between estimated and actual feature sizes. Could impact on functionality or accuracy"
-                )
+                logger.warning("Discrepancy detected between estimated and actual feature sizes. Could impact on functionality or accuracy")
 
         # Define shapes
         inputs_shapes = {}
@@ -203,11 +197,7 @@ class QEffInternVLModel(nn.Module):
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
-        lang_inputs["position_ids"] = (
-            torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-            .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-            .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
-        )
+        lang_inputs["position_ids"] = torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64).view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN).repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         lang_inputs["image_idx"] = torch.zeros((1, 1), dtype=torch.int64)
 
         # Add data for KV
@@ -245,9 +235,7 @@ class QEffInternVLModel(nn.Module):
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
-        outputs = self.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
-        )
+        outputs = self.language_model(inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True)
         next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
         return outputs.logits, pixel_values, image_idx, outputs.past_key_values
@@ -271,17 +259,8 @@ class QEffInternVisionEmbeddings(nn.Module):
 
         pos_embed = self.position_embedding[:, 1:, :]
         target_dtype = pos_embed.dtype
-        pos_embed = (
-            pos_embed.float()
-            .reshape(1, self.image_size // self.patch_size, self.image_size // self.patch_size, -1)
-            .permute(0, 3, 1, 2)
-        )
-        pos_embed = (
-            F.interpolate(pos_embed, size=(height, width), mode="bilinear", align_corners=False)
-            .reshape(1, -1, height * width)
-            .permute(0, 2, 1)
-            .to(target_dtype)
-        )
+        pos_embed = pos_embed.float().reshape(1, self.image_size // self.patch_size, self.image_size // self.patch_size, -1).permute(0, 3, 1, 2)
+        pos_embed = F.interpolate(pos_embed, size=(height, width), mode="bilinear", align_corners=False).reshape(1, -1, height * width).permute(0, 2, 1).to(target_dtype)
 
         position_embedding = torch.cat([self.position_embedding[:, :1, :], pos_embed], dim=1)
 

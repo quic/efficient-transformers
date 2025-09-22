@@ -179,9 +179,7 @@ def main(
     config = qeff_model.model.config
     architecture = config.architectures[0] if config.architectures else None
 
-    if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values() and (
-        kwargs.pop("img_size", None) or image_path or image_url
-    ):
+    if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values() and (kwargs.pop("img_size", None) or image_path or image_url):
         logger.warning(f"Skipping image arguments as they are not valid for {architecture}")
 
     #########
@@ -241,13 +239,9 @@ def main(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Inference command, the model will be downloaded from HF, optimized, compiled, executed on Cloud AI 100"
-    )
+    parser = argparse.ArgumentParser(description="Inference command, the model will be downloaded from HF, optimized, compiled, executed on Cloud AI 100")
     parser.add_argument("--model-name", "--model_name", required=True, help="HF Model card name/id")
-    parser.add_argument(
-        "--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files"
-    )
+    parser.add_argument("--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files")
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",
@@ -255,13 +249,9 @@ if __name__ == "__main__":
         required=False,
         help="Cache dir to store HF Downloads",
     )
-    parser.add_argument(
-        "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
-    )
+    parser.add_argument("--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models")
     parser.add_argument("--batch-size", "--batch_size", type=int, default=1, help="Batch size for text generation")
-    parser.add_argument(
-        "--prompt-len", "--prompt_len", default=32, type=int, help="Sequence length for text generation."
-    )
+    parser.add_argument("--prompt-len", "--prompt_len", default=32, type=int, help="Sequence length for text generation.")
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
     parser.add_argument(
         "--mxfp6",
@@ -283,9 +273,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
     )
-    parser.add_argument(
-        "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
-    )
+    parser.add_argument("--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100")
     parser.add_argument(
         "--device_group",
         "--device-group",
@@ -358,11 +346,7 @@ if __name__ == "__main__":
     for i in range(0, len(compiler_options)):
         if compiler_options[i].startswith("--"):
             key = compiler_options[i].lstrip("-").replace("-", "_")
-            value = (
-                compiler_options[i + 1]
-                if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-")
-                else True
-            )
+            value = compiler_options[i + 1] if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-") else True
             compiler_options_dict[key] = value
     if args.verbose:
         logger.setLevel(logging.INFO)

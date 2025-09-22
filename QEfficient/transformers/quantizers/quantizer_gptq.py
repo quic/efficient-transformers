@@ -108,10 +108,7 @@ class QEffGPTQQuantizer(HfQuantizer):
             modules_to_not_convert=self.modules_to_not_convert,
         )
         if not has_been_replaced:
-            logger.warning(
-                "You are loading a GPTQ model but no linear modules were found in your model."
-                " Please double check your model architecture, or submit an issue on GitHub if you think this is a bug."
-            )
+            logger.warning("You are loading a GPTQ model but no linear modules were found in your model. Please double check your model architecture, or submit an issue on GitHub if you think this is a bug.")
         return model
 
     def _process_model_after_weight_loading(self, model, **kwargs):

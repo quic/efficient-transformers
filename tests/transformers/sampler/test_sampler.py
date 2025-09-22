@@ -116,25 +116,15 @@ def test_sampler_transform(
 
     # Skip inputs/outputs buffers
     model_w_sampler_session.skip_buffers(set([x for x in model_w_sampler_session.input_names if x.startswith("past_")]))
-    model_w_sampler_session.skip_buffers(
-        set([x for x in model_w_sampler_session.output_names if x.endswith("_RetainedState")])
-    )
-    model_wo_sampler_session.skip_buffers(
-        set([x for x in model_wo_sampler_session.input_names if x.startswith("past_")])
-    )
-    model_wo_sampler_session.skip_buffers(
-        set([x for x in model_wo_sampler_session.output_names if x.endswith("_RetainedState")])
-    )
+    model_w_sampler_session.skip_buffers(set([x for x in model_w_sampler_session.output_names if x.endswith("_RetainedState")]))
+    model_wo_sampler_session.skip_buffers(set([x for x in model_wo_sampler_session.input_names if x.startswith("past_")]))
+    model_wo_sampler_session.skip_buffers(set([x for x in model_wo_sampler_session.output_names if x.endswith("_RetainedState")]))
 
     # Validate sampler inputs
     sampler_inputs = Constants.SAMPLER_INPUTS
     for input_name in sampler_inputs:
-        assert input_name in model_w_sampler_session.input_names, (
-            f"Sampler input {input_name} not found in QPC compiled with On Device Sampler"
-        )
-        assert input_name not in model_wo_sampler_session.input_names, (
-            f"Sampler input {input_name} found in QPC compiled without On Device Sampler"
-        )
+        assert input_name in model_w_sampler_session.input_names, f"Sampler input {input_name} not found in QPC compiled with On Device Sampler"
+        assert input_name not in model_wo_sampler_session.input_names, f"Sampler input {input_name} found in QPC compiled without On Device Sampler"
 
 
 @pytest.mark.on_qaic
@@ -224,12 +214,8 @@ def test_greedy_sampling(
     )
 
     # Compare generated texts and ids
-    assert model_w_sampler_exec_info.generated_texts == model_wo_sampler_exec_info.generated_texts, (
-        "Generated texts do not match"
-    )
-    assert (model_w_sampler_exec_info.generated_ids == model_wo_sampler_exec_info.generated_ids).all(), (
-        "Generated ids do not match"
-    )
+    assert model_w_sampler_exec_info.generated_texts == model_wo_sampler_exec_info.generated_texts, "Generated texts do not match"
+    assert (model_w_sampler_exec_info.generated_ids == model_wo_sampler_exec_info.generated_ids).all(), "Generated ids do not match"
 
 
 @pytest.mark.on_qaic
@@ -372,15 +358,7 @@ def test_random_sampling(
         ],
     }
     for i in range(full_batch_size):
-        assert (
-            tokenizer.decode(model_w_sampler_exec_info.generated_ids[i][:generation_len]) == golden_texts["w_sampler"]
-        ), "Sampler generated texts does not match"
-        assert (model_w_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["w_sampler"]).all(), (
-            "Sampler generated ids do not match"
-        )
-        assert (
-            tokenizer.decode(model_wo_sampler_exec_info.generated_ids[i][:generation_len]) == golden_texts["wo_sampler"]
-        ), "Without sampler generated texts does not match"
-        assert (model_wo_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["wo_sampler"]).all(), (
-            "Without sampler generated ids do not match"
-        )
+        assert tokenizer.decode(model_w_sampler_exec_info.generated_ids[i][:generation_len]) == golden_texts["w_sampler"], "Sampler generated texts does not match"
+        assert (model_w_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["w_sampler"]).all(), "Sampler generated ids do not match"
+        assert tokenizer.decode(model_wo_sampler_exec_info.generated_ids[i][:generation_len]) == golden_texts["wo_sampler"], "Without sampler generated texts does not match"
+        assert (model_wo_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["wo_sampler"]).all(), "Without sampler generated ids do not match"

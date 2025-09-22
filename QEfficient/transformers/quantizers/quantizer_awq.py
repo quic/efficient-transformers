@@ -25,20 +25,14 @@ class QEffAwqConfig(AwqConfig):
         """
 
         if self.backend not in [AwqBackendPackingMethod.AUTOAWQ]:
-            raise ValueError(
-                f"Only quantization backend {AwqBackendPackingMethod.AUTOAWQ} is supported - not recognized backend {self.backend}"
-            )
+            raise ValueError(f"Only quantization backend {AwqBackendPackingMethod.AUTOAWQ} is supported - not recognized backend {self.backend}")
 
         self.version = AWQLinearVersion.from_str(self.version)
         if self.version not in [AWQLinearVersion.GEMM]:
-            raise ValueError(
-                f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}"
-            )
+            raise ValueError(f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}")
 
         if self.do_fuse or self.fuse_max_seq_len is not None:
-            raise ValueError(
-                f"fused modules are not supported, got do_fuse={self.do_fuse}, fuse_max_seq_len={self.fuse_max_seq_len}"
-            )
+            raise ValueError(f"fused modules are not supported, got do_fuse={self.do_fuse}, fuse_max_seq_len={self.fuse_max_seq_len}")
 
         if self.bits != 4:
             raise ValueError(f"Only 4-bit AWQ quantization is supported, got bits={self.bits}")
@@ -78,7 +72,4 @@ class QEffAwqQuantizer(AwqQuantizer):
 
         model = replace_quantization_scales(model, model.config.model_type)
         if not has_been_replaced:
-            logger.warning(
-                "You are loading an AWQ model but no linear modules were found in your model."
-                " Please double check your model architecture, or submit an issue on github if you think this is a bug."
-            )
+            logger.warning("You are loading an AWQ model but no linear modules were found in your model. Please double check your model architecture, or submit an issue on github if you think this is a bug.")

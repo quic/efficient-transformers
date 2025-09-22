@@ -25,13 +25,9 @@ class WQLinear_GEMM(nn.Module):
 
         # quick sanity check (make sure alignment)
         if self.in_features % self.group_size != 0:
-            raise ValueError(
-                f"in_features should be perfectly divisible by group_size, got in_features = {self.in_features}, group_size = {self.group_size} while initializing WQLinear_GEMM module"
-            )
+            raise ValueError(f"in_features should be perfectly divisible by group_size, got in_features = {self.in_features}, group_size = {self.group_size} while initializing WQLinear_GEMM module")
         if out_features % (32 // self.bits) != 0:
-            raise ValueError(
-                f"out_features must be perfectly divisible by number of weights packed into int32 value i.e. 8, got out_features={self.out_features}"
-            )
+            raise ValueError(f"out_features must be perfectly divisible by number of weights packed into int32 value i.e. 8, got out_features={self.out_features}")
 
         # For compatibility with QuantLinearORT
         self.g_idx = torch.tensor([i // group_size for i in range(in_features)], dtype=torch.int32)

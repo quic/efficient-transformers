@@ -36,9 +36,7 @@ class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
         super().__init__(config=config)
 
         # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
+        self._set_cos_sin_cache(seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype())
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -108,9 +106,7 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+        attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -337,12 +333,8 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
         cache_position: Optional[torch.LongTensor] = None,
     ) -> MoeModelOutputWithPast:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_router_logits = (
-            output_router_logits if output_router_logits is not None else self.config.output_router_logits
-        )
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_router_logits = output_router_logits if output_router_logits is not None else self.config.output_router_logits
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -461,13 +453,9 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         ```"""
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_router_logits = (
-            output_router_logits if output_router_logits is not None else self.config.output_router_logits
-        )
+        output_router_logits = output_router_logits if output_router_logits is not None else self.config.output_router_logits
 
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs: MoeModelOutputWithPast = self.model(

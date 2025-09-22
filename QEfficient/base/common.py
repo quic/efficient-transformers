@@ -30,10 +30,7 @@ class QEFFCommonLoader:
     """
 
     def __init__(self, *args: Any, **kwds: Any) -> None:
-        raise EnvironmentError(
-            f"{self.__class__.__name__} is designed to be instantiated "
-            f"using the `{self.__class__.__name__}.from_pretrained(pretrained_model_name_or_path)`"
-        )
+        raise EnvironmentError(f"{self.__class__.__name__} is designed to be instantiated using the `{self.__class__.__name__}.from_pretrained(pretrained_model_name_or_path)`")
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs) -> QEFFBaseModel:
@@ -42,17 +39,12 @@ class QEFFCommonLoader:
         """
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
-        class_name = (
-            MODEL_CLASS_MAPPING.get(config.__class__.__name__, None)
-            or EXTERNAL_MODEL_CLASS_MAPPING[config.__class__.__name__]
-        )
+        class_name = MODEL_CLASS_MAPPING.get(config.__class__.__name__, None) or EXTERNAL_MODEL_CLASS_MAPPING[config.__class__.__name__]
         if class_name:
             module = __import__("QEfficient.transformers.models.modeling_auto")
             model_class = getattr(module, class_name)
         else:
-            raise NotImplementedError(
-                f"Unknown architecture={config.__class__.__name__}, either use specific auto model class for loading the model or raise an issue for support!"
-            )
+            raise NotImplementedError(f"Unknown architecture={config.__class__.__name__}, either use specific auto model class for loading the model or raise an issue for support!")
 
         local_model_dir = kwargs.pop("local_model_dir", None)
         if not os.path.isdir(pretrained_model_name_or_path) and local_model_dir is None:

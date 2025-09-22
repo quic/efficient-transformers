@@ -51,9 +51,7 @@ class CustomRMSNormAIC(nn.Module):
         self.weight = torch.nn.Parameter(torch.ones(hidden_size))
 
     def forward(self, hidden_states):
-        return CustomRMSNormFunc.apply(
-            hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
-        )
+        return CustomRMSNormFunc.apply(hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps)
 
 
 class GemmaCustomRMSNormAIC(CustomRMSNormAIC):

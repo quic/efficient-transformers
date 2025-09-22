@@ -86,9 +86,7 @@ class QEffGemma3RotaryEmbedding(nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
         # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
+        self._set_cos_sin_cache(seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype())
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -163,9 +161,7 @@ def eager_attention_forward(
         attn_weights = attn_weights * softcap
 
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+        attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -234,11 +230,7 @@ class QEffGemma3Attention(Gemma3Attention):
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
+                raise ValueError(f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} for auto-regressive decoding with k/v caching, please make sure to initialize the attention class with a layer index.")
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         if self.is_sliding:
             cos, sin = self.rotary_emb_local(value_states, seq_len=self.config.max_position_embeddings)
@@ -268,9 +260,7 @@ class QEffGemma3Attention(Gemma3Attention):
             attn_weights = attn_weights * self.config.attn_logit_softcapping
 
         if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(
-                attention_mask.bool(), torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+            attn_weights = torch.where(attention_mask.bool(), torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -278,10 +268,7 @@ class QEffGemma3Attention(Gemma3Attention):
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.config.num_attention_heads, q_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.config.num_attention_heads, q_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
+            raise ValueError(f"`attn_output` should be of size {(bsz, self.config.num_attention_heads, q_len, self.head_dim)}, but is {attn_output.size()}")
 
         attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -310,9 +297,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
         hidden_states = self.input_layernorm(hidden_states)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         if self.is_sliding:
-            attention_mask = _create_causal_mask(
-                position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window
-            )
+            attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window)
         else:
             attention_mask = _create_causal_mask(
                 position_ids=position_ids,
@@ -376,9 +361,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
         **flash_attn_kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -386,9 +369,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if self.gradient_checkpointing and self.training and use_cache:
-            logger.warning_once(
-                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
-            )
+            logger.warning_once("`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`.")
             use_cache = False
 
         if inputs_embeds is None:
@@ -413,9 +394,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
             if attention_mask is not None:
                 # In case a 4d mask is passed directly without using `generate`, we have to rely on cache_position
                 # It will break dynamo tracing but there are no way around it (and it should never happen in practice)
-                last_cache_position = (
-                    attention_mask.shape[-1] if attention_mask.dim() == 2 else cache_position[-1].item()
-                )
+                last_cache_position = attention_mask.shape[-1] if attention_mask.dim() == 2 else cache_position[-1].item()
         causal_mask = None
         # embed positions
         hidden_states = inputs_embeds
@@ -526,14 +505,9 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         ```"""
 
         if self.training and self.config._attn_implementation != "eager":
-            logger.warning_once(
-                "It is strongly recommended to train Gemma3 models with the `eager` attention implementation "
-                f"instead of `{self.config._attn_implementation}`. Use `eager` with `AutoModelForCausalLM.from_pretrained('<path-to-checkpoint>', attn_implementation='eager')`."
-            )
+            logger.warning_once(f"It is strongly recommended to train Gemma3 models with the `eager` attention implementation instead of `{self.config._attn_implementation}`. Use `eager` with `AutoModelForCausalLM.from_pretrained('<path-to-checkpoint>', attn_implementation='eager')`.")
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         outputs = self.model(
@@ -571,9 +545,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = config.sliding_window_pattern if hasattr(config, "sliding_window_pattern") else 2  # 2 is for BC
-        is_sliding = torch.tensor(
-            [bool((i + 1) % layer_switch) for i in range(config.num_hidden_layers)], dtype=torch.bool
-        )
+        is_sliding = torch.tensor([bool((i + 1) % layer_switch) for i in range(config.num_hidden_layers)], dtype=torch.bool)
         global_cache_shape = [batch_size, n_heads, seq_len, d_head]
         if hasattr(config, "sliding_window"):
             sliding_cache_shape = [batch_size, n_heads, min(config.sliding_window, seq_len), d_head]
@@ -617,9 +589,7 @@ class QEffGemma3DecoderWrapper(nn.Module):
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        outputs = self.model.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
-        )
+        outputs = self.model.language_model(inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
 
@@ -642,9 +612,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         image_features_expanded = image_features.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        outputs = self.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
-        )
+        outputs = self.language_model(inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return outputs.logits, pixel_values, image_idx, outputs.past_key_values
 
@@ -712,18 +680,10 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
         pkv_dynamic_sliding_axes = {0: "batch_size", 2: "sliding_window"}
-        layer_switch = (
-            self.language_model.config.sliding_window_pattern
-            if hasattr(self.language_model.config, "sliding_window_pattern")
-            else 2
-        )
+        layer_switch = self.language_model.config.sliding_window_pattern if hasattr(self.language_model.config, "sliding_window_pattern") else 2
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                apply_dynamic_axes = (
-                    pkv_dynamic_sliding_axes
-                    if ((i + 1) % layer_switch and hasattr(self.language_model.config, "sliding_window_pattern"))
-                    else pkv_dynamic_axes
-                )
+                apply_dynamic_axes = pkv_dynamic_sliding_axes if ((i + 1) % layer_switch and hasattr(self.language_model.config, "sliding_window_pattern")) else pkv_dynamic_axes
                 lang_dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
 
         dynamic_axes = {}
@@ -757,9 +717,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = config.sliding_window_pattern if hasattr(config, "sliding_window_pattern") else 2  # 2 is for BC
-        is_sliding = torch.tensor(
-            [bool((i + 1) % layer_switch) for i in range(config.num_hidden_layers)], dtype=torch.bool
-        )
+        is_sliding = torch.tensor([bool((i + 1) % layer_switch) for i in range(config.num_hidden_layers)], dtype=torch.bool)
         global_cache_shape = [batch_size, n_heads, seq_len, d_head]
         if hasattr(config, "sliding_window"):
             sliding_cache_shape = [batch_size, n_heads, min(config.sliding_window, seq_len), d_head]
@@ -807,11 +765,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
-        lang_inputs["position_ids"] = (
-            torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-            .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-            .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
-        )
+        lang_inputs["position_ids"] = torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64).view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN).repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
         lang_inputs["past_key_values"] = self.get_dummy_pkv_cache(

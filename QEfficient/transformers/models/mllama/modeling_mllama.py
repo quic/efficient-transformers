@@ -228,11 +228,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
+                raise ValueError(f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} for auto-regressive decoding with k/v caching, please make sure to initialize the attention class with a layer index.")
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
@@ -254,9 +250,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
 
         if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -397,9 +391,7 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
                 past_key_value.value_cache[self.layer_idx],
             )
         else:
-            raise ValueError(
-                "Cross attention layer can't find neither `cross_attn_states` nor cached values for key/values!"
-            )
+            raise ValueError("Cross attention layer can't find neither `cross_attn_states` nor cached values for key/values!")
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -489,9 +481,7 @@ class QEffMllamaVisionModel(MllamaVisionModel):
         return_dict: Optional[bool] = None,
     ) -> Union[BaseModelOutput, Tuple[torch.Tensor, ...]]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         batch_size, num_concurrent_media, num_tiles, num_channels, height, width = pixel_values.shape
@@ -554,13 +544,9 @@ class QEffMllamaVisionModel(MllamaVisionModel):
         hidden_state = self.layernorm_post(hidden_state)
 
         # Apply global encoder
-        hidden_state = hidden_state.reshape(
-            batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, dim
-        )
+        hidden_state = hidden_state.reshape(batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, dim)
         hidden_state = self.post_tile_positional_embedding(hidden_state, aspect_ratio_ids)
-        hidden_state = hidden_state.reshape(
-            batch_size * num_concurrent_media, num_tiles * (num_patches + num_padding_patches), dim
-        )
+        hidden_state = hidden_state.reshape(batch_size * num_concurrent_media, num_tiles * (num_patches + num_padding_patches), dim)
         global_output = self.global_transformer(
             hidden_state,
             attention_mask=attention_mask,
@@ -570,9 +556,7 @@ class QEffMllamaVisionModel(MllamaVisionModel):
         hidden_state = global_output[0]
 
         # Remove padding form hidden state
-        hidden_state = hidden_state.reshape(
-            batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, dim
-        )
+        hidden_state = hidden_state.reshape(batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, dim)
         hidden_state = hidden_state[:, :, :slice_index]
         hidden_state = hidden_state.reshape(batch_size, num_concurrent_media, num_tiles, num_patches, dim)
 
@@ -582,13 +566,9 @@ class QEffMllamaVisionModel(MllamaVisionModel):
         intermediate_hidden_states = intermediate_hidden_states[..., self.intermediate_layers_indices]
 
         # Remove padding from intermediate hidden states
-        intermediate_hidden_states = intermediate_hidden_states.reshape(
-            batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, -1
-        )
+        intermediate_hidden_states = intermediate_hidden_states.reshape(batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, -1)
         intermediate_hidden_states = intermediate_hidden_states[:, :, :slice_index]
-        intermediate_hidden_states = intermediate_hidden_states.reshape(
-            batch_size, num_concurrent_media, num_tiles, num_patches, -1
-        )
+        intermediate_hidden_states = intermediate_hidden_states.reshape(batch_size, num_concurrent_media, num_tiles, num_patches, -1)
 
         # Concatenate final hidden state and intermediate hidden states
         hidden_state = torch.cat([hidden_state, intermediate_hidden_states], dim=-1)
@@ -640,9 +620,7 @@ class QEffMllamaTextModel(MllamaTextModel):
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -661,9 +639,7 @@ class QEffMllamaTextModel(MllamaTextModel):
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
+            cache_position = torch.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device)
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
@@ -684,9 +660,7 @@ class QEffMllamaTextModel(MllamaTextModel):
             # Let's check if the layer is cross attention layer and if we have cross attention states
             # or cached cross attention states.
             is_cross_attention_layer = idx in self.cross_attention_layers
-            is_cross_attention_cache_empty = past_key_values is None or (
-                past_key_values is not None and past_key_values.get_seq_length(idx) == 0
-            )
+            is_cross_attention_cache_empty = past_key_values is None or (past_key_values is not None and past_key_values.get_seq_length(idx) == 0)
 
             # original modeling to check the is_cross_attention_layers
             # if is_cross_attention_layer and cross_attention_states is None and is_cross_attention_cache_empty:
@@ -759,9 +733,7 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
@@ -813,9 +785,7 @@ class QEffMllamaVisionEncoder(nn.Module):
             aspect_ratio_mask=aspect_ratio_mask,
         )
         cross_attention_states = vision_outputs[0]
-        cross_attention_states = self.model.multi_modal_projector(cross_attention_states).reshape(
-            -1, cross_attention_states.shape[-2], self.model.hidden_size
-        )
+        cross_attention_states = self.model.multi_modal_projector(cross_attention_states).reshape(-1, cross_attention_states.shape[-2], self.model.hidden_size)
 
         bsz = pixel_values.shape[0]
         outputs = []
@@ -824,9 +794,7 @@ class QEffMllamaVisionEncoder(nn.Module):
             key_states = cross_attn.k_proj(cross_attention_states)
             value_states = cross_attn.v_proj(cross_attention_states)
             key_states = key_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(1, 2)
-            value_states = value_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(
-                1, 2
-            )
+            value_states = value_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(1, 2)
             outputs.append((key_states, value_states))
         return outputs
 
@@ -860,20 +828,14 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
-            )
+            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one")
 
         if pixel_values is not None and inputs_embeds is not None:
-            raise ValueError(
-                "You cannot specify both pixel_values and inputs_embeds at the same time, and must specify either one"
-            )
+            raise ValueError("You cannot specify both pixel_values and inputs_embeds at the same time, and must specify either one")
 
         if pixel_values is not None and cross_attention_states is not None:
             raise ValueError("`pixel_values` and `cross_attention_states` cannot be provided simultaneously")
@@ -891,9 +853,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                 return_dict=return_dict,
             )
             cross_attention_states = vision_outputs[0]
-            cross_attention_states = self.multi_modal_projector(cross_attention_states).reshape(
-                -1, cross_attention_states.shape[-2], self.hidden_size
-            )
+            cross_attention_states = self.multi_modal_projector(cross_attention_states).reshape(-1, cross_attention_states.shape[-2], self.hidden_size)
 
         if cross_attention_mask is not None:
             cross_attention_mask, full_text_row_masked_out_mask = _prepare_cross_attention_mask(
@@ -952,9 +912,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
 
         # vision inputs
         vision_inputs = {
-            "pixel_values": torch.zeros(
-                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size), dtype=torch.float32
-            ),
+            "pixel_values": torch.zeros((BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size), dtype=torch.float32),
             "aspect_ratio_ids": torch.ones((BS, MAX_NUM_IMG), dtype=torch.int64),
             "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
         }
@@ -981,12 +939,8 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             if i in cross_attention_layers:
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
-                lang_inputs["past_key_values"].key_cache[i] = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim
-                )
-                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim
-                )
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim)
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim)
             else:
                 lang_inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
                 lang_inputs["past_key_values"].value_cache[i] = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
@@ -1115,8 +1069,6 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             IOInfo(name="aspect_ratio_ids", datatype=torch.int64, shape=("batch_size", "max_num_images")),
             IOInfo(name="aspect_ratio_mask", datatype=torch.int64, shape=("batch_size", "max_num_images", 4)),
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(
-                name="cross_attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len", "max_num_images", 4)
-            ),
+            IOInfo(name="cross_attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len", "max_num_images", 4)),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
         ]

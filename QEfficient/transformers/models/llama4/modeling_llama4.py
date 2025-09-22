@@ -56,9 +56,7 @@ def eager_attention_forward_vision(
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
         attn_weights = attn_weights + causal_mask
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+        attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights.float(), dim=-1).to(query.dtype)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
@@ -78,9 +76,7 @@ def complex_mul_onnx_safe(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return torch.stack((real, imag), dim=-1)
 
 
-def qeff_vision_apply_rotary_emb(
-    query: torch.Tensor, key: torch.Tensor, freqs_ci: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
+def qeff_vision_apply_rotary_emb(query: torch.Tensor, key: torch.Tensor, freqs_ci: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     query_in = query.view(*query.shape[:-1], -1, 2)
     key_in = key.view(*key.shape[:-1], -1, 2)
 
@@ -245,9 +241,7 @@ class QEffLlama4VisionModel(Llama4VisionModel):
         ```
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # num_concurrent_media and num_chunks are both currently 1
@@ -316,9 +310,7 @@ class QEffLlama4TextRotaryEmbedding(nn.Module):
 
         # self.max_seq_len_cached = config.max_position_embeddings
         # TODO: max sequence length cached should be taken before export and model should be exported with that paramter.
-        logger.warning(
-            f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, this is the maximum sequence length supported for the model"
-        )
+        logger.warning(f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, this is the maximum sequence length supported for the model")
         self.max_seq_len_cached = constants.LLAMA4_MAX_POSITION_EMBEDDINGS
 
         # Get inverse frequency and scaling function (handles yarn/etc)
@@ -385,9 +377,7 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+        attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -443,9 +433,7 @@ class QEffLlama4TextMoe(Llama4TextMoe):
         # ───────────────────────── Stage-2 : Down ────────────────────────────────
         for e in range(self.num_experts):
             routing_weight = routing_weights[:, e].unsqueeze(-1)
-            masked_down = torch.where(
-                routing_weight > 0, (upgate @ self.experts.down_proj[e]), torch.zeros_like(expert_out)
-            )
+            masked_down = torch.where(routing_weight > 0, (upgate @ self.experts.down_proj[e]), torch.zeros_like(expert_out))
             expert_out += masked_down
 
         # ───────────────────────── Stage-3 : Shared expert ───────────────────────
@@ -480,9 +468,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         ##
         if self.use_rope:  # the 16E model skips rope for long context on certain layers
-            query_states, key_states = qeff_apply_rotary_emb(
-                query_states, key_states, position_embeddings.to(query_states.device)
-            )
+            query_states, key_states = qeff_apply_rotary_emb(query_states, key_states, position_embeddings.to(query_states.device))
 
         if hasattr(self, "qk_norm"):  # the 128E model does not use qk_norm
             query_states = self.qk_norm(query_states)
@@ -490,9 +476,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
 
         # Use temperature tuning from https://arxiv.org/abs/2501.19399) to NoROPE layers
         if self.attn_temperature_tuning and not self.use_rope:
-            attn_scales = (
-                torch.log(torch.floor((position_ids.float() + 1.0) / self.floor_scale) + 1.0) * self.attn_scale + 1.0
-            )
+            attn_scales = torch.log(torch.floor((position_ids.float() + 1.0) / self.floor_scale) + 1.0) * self.attn_scale + 1.0
             attn_scales = attn_scales.view((*input_shape, 1, 1))
             query_states = (query_states * attn_scales).to(query_states.dtype)
 
@@ -503,9 +487,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
             chunk_position_ids = position_ids
 
             if self.use_rope:
-                chunk_position_ids = torch.where(
-                    chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
-                )
+                chunk_position_ids = torch.where(chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids)
 
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_position_ids}
@@ -628,9 +610,7 @@ class QEffLlama4TextModel(Llama4TextModel):
         **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -647,18 +627,12 @@ class QEffLlama4TextModel(Llama4TextModel):
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
+            cache_position = torch.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device)
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = _create_causal_mask(
-            position_ids=position_ids, target_length=past_key_values.key_cache[3].shape[-2]
-        )
-        chunk_position_ids = torch.where(
-            position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
-        )
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.key_cache[3].shape[-2])
+        chunk_position_ids = torch.where(position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids)
         target_length = min(past_key_values.key_cache[0].shape[-2], torch.tensor(self.config.attention_chunk_size))
         chunk_causal_mask = _create_causal_mask(position_ids=chunk_position_ids, target_length=target_length)
 
@@ -738,9 +712,7 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
@@ -777,9 +749,7 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
-        is_chunked_attention = torch.tensor(
-            [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
-        )
+        is_chunked_attention = torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
         attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
         global_cache_shape = [batch_size, n_heads, seq_len, d_head]
         chunked_cache_shape = [
@@ -840,9 +810,7 @@ class QEffLlama4DecoderWrapper(nn.Module):
         image_features_expanded = vision_embeds.unsqueeze(0)[indices0, indices1]
         image_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
-        outputs = self.model.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
-        )
+        outputs = self.model.language_model(inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True)
         next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
         return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
@@ -874,9 +842,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         image_features_expanded = projected_vision_flat.unsqueeze(0)[indices0, indices1]
         image_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
-        outputs = self.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
-        )
+        outputs = self.language_model(inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True)
         next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
         return outputs.logits, pixel_values, image_idx, outputs.past_key_values
@@ -892,28 +858,17 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
     ):
         max_num_tiles = compiler_options.pop("max_num_tiles", None)
         if max_num_tiles is None:
-            logger.warning(
-                "User should pass `max_num_tiles` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 17"
-            )
+            logger.warning("User should pass `max_num_tiles` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 17")
             max_num_tiles = 17
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         chunk_ctx_len = min(
             ctx_len,
-            (
-                self.config.text_config.attention_chunk_size
-                if hasattr(self, "config")
-                else constants.LLAMA4_ATTENTION_CHUNK_SIZE
-            ),
+            (self.config.text_config.attention_chunk_size if hasattr(self, "config") else constants.LLAMA4_ATTENTION_CHUNK_SIZE),
         )
-        if (
-            prefill_seq_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
-            or ctx_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
-        ):
-            raise ValueError(
-                f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, Your prefill_seq_len is {prefill_seq_len} and ctx_len is {ctx_len}."
-            )
+        if prefill_seq_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS or ctx_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS:
+            raise ValueError(f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, Your prefill_seq_len is {prefill_seq_len} and ctx_len is {ctx_len}.")
 
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
@@ -922,11 +877,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
 
         downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
-        num_features_per_tile = int(
-            (img_size // self.config.vision_config.patch_size)
-            * (img_size // self.config.vision_config.patch_size)
-            // downsample_ratio
-        )
+        num_features_per_tile = int((img_size // self.config.vision_config.patch_size) * (img_size // self.config.vision_config.patch_size) // downsample_ratio)
         vision_size = num_features_per_tile * max_num_tiles
 
         vision = [
@@ -1019,9 +970,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
-        is_chunked_attention = torch.tensor(
-            [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
-        )
+        is_chunked_attention = torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
         attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
         global_cache_shape = [batch_size, n_heads, seq_len, d_head]
         chunked_cache_shape = [
@@ -1051,11 +1000,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         max_num_tiles = 17
         downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
-        num_features_per_tile = int(
-            (img_size // self.config.vision_config.patch_size)
-            * (img_size // self.config.vision_config.patch_size)
-            // downsample_ratio
-        )
+        num_features_per_tile = int((img_size // self.config.vision_config.patch_size) * (img_size // self.config.vision_config.patch_size) // downsample_ratio)
         vision_size = num_features_per_tile * max_num_tiles
 
         inputs_shapes["vision_embeds"] = (
@@ -1079,11 +1024,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
-        lang_inputs["position_ids"] = (
-            torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-            .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-            .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
-        )
+        lang_inputs["position_ids"] = torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64).view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN).repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
         past_key_values = self.get_dummy_pkv_cache(

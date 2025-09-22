@@ -30,9 +30,7 @@ class QuantLinearTorchFunction(torch.autograd.Function):
     def forward(ctx, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
         if torch.onnx.is_in_onnx_export():
             return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype).float()
-        fp_weight = dequantize_blockwise_bits(
-            qself_qweight, qself_scales, qself_qzeros, bits, group_size, g_idx, in_features, out_features
-        )[0].float()
+        fp_weight = dequantize_blockwise_bits(qself_qweight, qself_scales, qself_qzeros, bits, group_size, g_idx, in_features, out_features)[0].float()
 
         return torch.matmul(x.float(), fp_weight.T.float())
 
@@ -56,10 +54,7 @@ def dequantize_blockwise_bits(quant_values, scale, zero_point, bits, group_size,
             expand_zero_point = expand_zero_point.reshape(quant_values.shape[0], -1, 1)
             expand_zero_point = expand_zero_point[:, : quant_values.shape[1]]
     if g_idx is not None and g_idx[:32].sum().item() != 0:
-        float_values = (
-            (expand_quant_value.reshape(expand_quant_value.shape[0], -1) - expand_zero_point[:, g_idx, 0])
-            * aligned_scale[:, g_idx, 0]
-        ).to(scale.dtype)
+        float_values = ((expand_quant_value.reshape(expand_quant_value.shape[0], -1) - expand_zero_point[:, g_idx, 0]) * aligned_scale[:, g_idx, 0]).to(scale.dtype)
     else:
         float_values = ((expand_quant_value - expand_zero_point) * aligned_scale).to(scale.dtype)
     float_values = float_values.reshape(cols, -1)
@@ -94,12 +89,8 @@ class QuantLinearORT(nn.Module):
             "qzeros",
             torch.zeros((q_rows + (q_rows & 1)) * (out_features // 8 * self.bits), dtype=torch.uint8),
         )
-        self.register_buffer(
-            "scales", torch.zeros((math.ceil(in_features / self.group_size) * out_features), dtype=torch.float16)
-        )
-        self.register_buffer(
-            "g_idx", torch.tensor([i // self.group_size for i in range(in_features)], dtype=torch.int32)
-        )
+        self.register_buffer("scales", torch.zeros((math.ceil(in_features / self.group_size) * out_features), dtype=torch.float16))
+        self.register_buffer("g_idx", torch.tensor([i // self.group_size for i in range(in_features)], dtype=torch.int32))
         if bias:
             self.register_buffer("bias", torch.zeros((out_features), dtype=torch.float16))
         else:
@@ -146,9 +137,7 @@ class QuantLinearORT(nn.Module):
         scales_pt = scales_pt.reshape(-1)
 
         # Validation checks
-        if (self.qweight.shape != intweight_pt_T.shape) and (
-            self.qzeros.shape == intzeros_pt.shape or self.qzeros.dtype != intzeros_pt.dtype
-        ):
+        if (self.qweight.shape != intweight_pt_T.shape) and (self.qzeros.shape == intzeros_pt.shape or self.qzeros.dtype != intzeros_pt.dtype):
             raise RuntimeError("Something went wrong while packing the weights in QuantLinearORT module")
 
         # Assign buffers

@@ -15,13 +15,9 @@ from QEfficient.utils._utils import filter_kwargs
 
 def get_speculative_config(pretrained_model_name_or_path, **kwargs) -> dict:
     if not isinstance(pretrained_model_name_or_path, (str, Path)):
-        raise ValueError(
-            f"`pretrained_config` must be a string or Path object but is of type {type(pretrained_model_name_or_path)}"
-        )
+        raise ValueError(f"`pretrained_config` must be a string or Path object but is of type {type(pretrained_model_name_or_path)}")
     try:
-        speculative_config, _ = PretrainedConfig.get_config_dict(
-            pretrained_model_name_or_path, _configuration_file="speculator_config.json", **kwargs
-        )
+        speculative_config, _ = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, _configuration_file="speculator_config.json", **kwargs)
     except OSError as err:
         raise OSError(f"{err}.\nFile 'speculator_config.json' is expected to exist to apply turbo projections.")
     return speculative_config

@@ -72,14 +72,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         self.num_layers = model.config.num_hidden_layers
         self.exported_peft_config = None
-        self.adapter_weights = {
-            adapter_name: {
-                name.replace(f".{adapter_name}.weight", ".weight"): param.detach().numpy().astype("float16")
-                for name, param in model.named_parameters()
-                if name.endswith(f".{adapter_name}.weight")
-            }
-            for adapter_name in model.peft_config
-        }
+        self.adapter_weights = {adapter_name: {name.replace(f".{adapter_name}.weight", ".weight"): param.detach().numpy().astype("float16") for name, param in model.named_parameters() if name.endswith(f".{adapter_name}.weight")} for adapter_name in model.peft_config}
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -119,9 +112,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             :adapter_name (str): Adapter name to be used to set this adapter as current
         """
         self.model.load_adapter(model_id, adapter_name)
-        self.adapter_weights[adapter_name] = {
-            k: v.numpy().astype("float16") for k, v in load_peft_weights(model_id).items()
-        }
+        self.adapter_weights[adapter_name] = {k: v.numpy().astype("float16") for k, v in load_peft_weights(model_id).items()}
 
     @property
     def active_adapter(self) -> str:
@@ -131,11 +122,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     def set_adapter(self, adapter_name: str):
         "Sets active adapter from one of the loaded adapters"
         if self.exported_peft_config is not None and self.exported_peft_config != self.model.peft_config[adapter_name]:
-            raise ValueError(
-                "Unable to activate incompatible adapter. "
-                "Use an adapter compatible with export-time adapter "
-                "or re-export with this adapter"
-            )
+            raise ValueError("Unable to activate incompatible adapter. Use an adapter compatible with export-time adapter or re-export with this adapter")
         self.model.set_adapter(adapter_name)
 
     def disable_adapter(self):
@@ -165,9 +152,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         if kwargs.pop("finite_adapters", False):  # initialize through finite_adapters class
             obj = QEffAutoLoraModelForCausalLM.from_pretrained(
-                pretrained_model_name_or_path=PeftConfig.from_pretrained(
-                    pretrained_name_or_path
-                ).base_model_name_or_path,
+                pretrained_model_name_or_path=PeftConfig.from_pretrained(pretrained_name_or_path).base_model_name_or_path,
                 **kwargs,
             )
             if adapter_name := kwargs.pop("adapter_name", None):
@@ -305,25 +290,17 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         inputs.update(model_kwargs)
         inputs = {k: v.numpy() if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
 
-        batch_size = max(
-            [x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes]
-            + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[0]]
-        )
+        batch_size = max([x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes] + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[0]])
         passed_batch_size = inputs["input_ids"].shape[0]
         if passed_batch_size != batch_size:
             raise ValueError(f"Model compiled for batch_size: {batch_size}, but passed batch_size: {passed_batch_size}")
 
-        prefill_seq_len = max(
-            [x[self.qpc_session.binding_index_map["input_ids"]][1][1] for x in self.qpc_session.allowed_shapes]
-            + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[1]]
-        )
+        prefill_seq_len = max([x[self.qpc_session.binding_index_map["input_ids"]][1][1] for x in self.qpc_session.allowed_shapes] + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[1]])
 
         input_len = inputs["input_ids"].shape[1]
         num_chunks = -(input_len // -prefill_seq_len)  # Ceil divide without float
         padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
-        inputs["input_ids"] = np.concatenate(
-            [inputs["input_ids"], np.zeros((batch_size, padded_len - input_len), dtype=inputs["input_ids"].dtype)], 1
-        )
+        inputs["input_ids"] = np.concatenate([inputs["input_ids"], np.zeros((batch_size, padded_len - input_len), dtype=inputs["input_ids"].dtype)], 1)
         next_position_ids = inputs.pop("attention_mask").sum(1, keepdims=True)
         inputs["position_ids"] = np.arange(padded_len).reshape(1, -1)
         inputs["position_ids"] = np.where(inputs["position_ids"] < next_position_ids, inputs["position_ids"], -1)

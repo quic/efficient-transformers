@@ -27,7 +27,8 @@ def test_compiler_invalid_file(tmp_path):
 def test_compiler_invalid_flag(tmp_path):
     qeff_obj = SimpleNamespace()
 
-    onnx_model = onnx.parser.parse_model("""
+    onnx_model = onnx.parser.parse_model(
+        """
     <
         ir_version: 8,
         opset_import: ["": 17]
@@ -36,11 +37,10 @@ def test_compiler_invalid_flag(tmp_path):
     {
         y = Identity(x)
     }
-    """)
+    """
+    )
     valid_file = tmp_path / "valid.onnx"
     onnx.save(onnx_model, valid_file)
 
     with pytest.raises(RuntimeError):
-        QEFFBaseModel._compile(
-            qeff_obj, valid_file, tmp_path, convert_tofp16=True, compile_only=True, aic_binary_dir=tmp_path
-        )
+        QEFFBaseModel._compile(qeff_obj, valid_file, tmp_path, convert_tofp16=True, compile_only=True, aic_binary_dir=tmp_path)

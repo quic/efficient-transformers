@@ -64,9 +64,7 @@ class ApiRunner:
         Return:
             :numpy.ndarray: Generated output tokens
         """
-        input_ids = [
-            self.input_handler.tokenizer.encode(prompt, return_tensors="pt") for prompt in self.input_handler.prompt
-        ]
+        input_ids = [self.input_handler.tokenizer.encode(prompt, return_tensors="pt") for prompt in self.input_handler.prompt]
 
         generated_ids = []
 
@@ -82,10 +80,7 @@ class ApiRunner:
             gen_ids = gen_ids[:, inp_ids.shape[1] :]
             generated_ids.append(gen_ids)
 
-        generated_texts = [
-            self.input_handler.tokenizer.decode(gen_ids.squeeze().tolist(), skip_special_tokens=True)
-            for gen_ids in generated_ids
-        ]
+        generated_texts = [self.input_handler.tokenizer.decode(gen_ids.squeeze().tolist(), skip_special_tokens=True) for gen_ids in generated_ids]
         print("Original HF Model Outputs (Torch CPU): \n")
         print("Prompt:", repr(self.input_handler.prompt))
         print("Completion:", repr(generated_texts))
@@ -184,9 +179,7 @@ class ApiRunner:
             if node.op_type == "Constant":
                 np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t, os.path.dirname(model_path))
                 if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
-                    added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
-                        np.array(0, np_tensor.dtype)
-                    )
+                    added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(np.array(0, np_tensor.dtype))
 
         session_options = onnxruntime.SessionOptions()
         for name, value in added_initializers.items():
@@ -254,9 +247,7 @@ class ApiRunnerVlm:
     4. ``ONNX`` model on Cloud AI 100
     """
 
-    def __init__(
-        self, batch_size, processor, config, image, conversation, prompt, prompt_len, ctx_len, max_gen_len, n_layer
-    ):
+    def __init__(self, batch_size, processor, config, image, conversation, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
         """ """
         self.input_handler_vlm = InputHandlerVLM(
             batch_size=batch_size,
@@ -336,9 +327,7 @@ class ApiRunnerVlm:
             if node.op_type == "Constant":
                 np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t, os.path.dirname(model_path))
                 if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
-                    added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
-                        np.array(0, np_tensor.dtype)
-                    )
+                    added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(np.array(0, np_tensor.dtype))
         session_options = onnxruntime.SessionOptions()
         for name, value in added_initializers.items():
             session_options.add_initializer(name, value)

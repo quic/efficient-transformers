@@ -39,9 +39,7 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 # Load the tokenizer and add special tokens
-tokenizer = AutoTokenizer.from_pretrained(
-    train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
-)
+tokenizer = AutoTokenizer.from_pretrained(train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name)
 if not tokenizer.pad_token_id:
     tokenizer.pad_token_id = tokenizer.eos_token_id
 

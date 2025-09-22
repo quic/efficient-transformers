@@ -75,12 +75,7 @@ def generate_qnn_specialization(
             if isinstance(input_shape, str):
                 if input_shape in specializations[0]:
                     shape_list.append(int(specializations[0][input_shape]))
-                    if (
-                        not prefill_decode_shapes
-                        and len(specializations) > 1
-                        and input_shape in specializations[1]
-                        and specializations[0][input_shape] != specializations[1][input_shape]
-                    ):
+                    if not prefill_decode_shapes and len(specializations) > 1 and input_shape in specializations[1] and specializations[0][input_shape] != specializations[1][input_shape]:
                         prefill_decode_shapes = True
                 else:
                     raise AttributeError(f"ERROR: {input_shape} is required in specializations")

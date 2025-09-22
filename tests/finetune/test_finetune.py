@@ -48,13 +48,8 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
     If not close, reports the step numbers and the differences at those steps.
     """
     # --- Initial Checks ---
-    assert actual_list is not None and isinstance(actual_list, list), (
-        f"Actual {name} data is missing or not a list for scenario '{scenario_key}'."
-    )
-    assert len(ref_list) == len(actual_list), (
-        f"{name} length mismatch for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). "
-        f"Expected {len(ref_list)} elements, but got {len(actual_list)}."
-    )
+    assert actual_list is not None and isinstance(actual_list, list), f"Actual {name} data is missing or not a list for scenario '{scenario_key}'."
+    assert len(ref_list) == len(actual_list), f"{name} length mismatch for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). Expected {len(ref_list)} elements, but got {len(actual_list)}."
 
     # --- Convert to NumPy arrays for efficient comparison ---
     ref_arr = np.array(ref_list)
@@ -76,14 +71,7 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
         max_diff = np.max(np.abs(ref_arr - actual_arr))
 
         # --- Report detailed deviation in the AssertionError ---
-        error_message = (
-            f"{name} deviated too much for scenario '{scenario_key}' "
-            f"(WS: {current_world_size}, Rank: {current_rank}).\n"
-            f"Max Difference: {max_diff:.6f}, Allowed Tolerance: {atol:.6f}.\n"
-            f"Deviations found at {len(deviated_indices)} steps:\n" + "\n".join(deviation_details) + "\n"
-            f"Reference (first 10): {ref_list[:10]}...\n"
-            f"Actual    (first 10): {actual_list[:10]}..."
-        )
+        error_message = f"{name} deviated too much for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}).\nMax Difference: {max_diff:.6f}, Allowed Tolerance: {atol:.6f}.\nDeviations found at {len(deviated_indices)} steps:\n" + "\n".join(deviation_details) + f"\nReference (first 10): {ref_list[:10]}...\nActual    (first 10): {actual_list[:10]}..."
         assert False, error_message  # Force the assertion to fail with the custom message
     else:
         # If all close, report success and max_diff for printing
@@ -285,10 +273,7 @@ def test_finetune(
 
     args, kwargs = update_config_spy.call_args_list[0]
     train_config = args[0]
-    assert max_train_step >= train_config.gradient_accumulation_steps, (
-        "Total training step should be more than "
-        f"{train_config.gradient_accumulation_steps} which is gradient accumulation steps."
-    )
+    assert max_train_step >= train_config.gradient_accumulation_steps, f"Total training step should be more than {train_config.gradient_accumulation_steps} which is gradient accumulation steps."
 
     if use_peft:
         saved_file = os.path.join(train_config.output_dir, "complete_epoch_1/adapter_model.safetensors")

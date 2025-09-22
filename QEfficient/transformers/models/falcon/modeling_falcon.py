@@ -44,9 +44,7 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
     def __init__(self, config: FalconConfig, device=None):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
+        self._set_cos_sin_cache(seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype())
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -149,9 +147,7 @@ class QEffFalconAttention(FalconAttention):
 
         attention_scores = query_layer @ key_layer.transpose(-1, -2)
         attention_scores /= math.sqrt(self.head_dim)
-        attention_scores = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
-        )
+        attention_scores = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores)
         attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=hidden_states.dtype)
         # It is unclear why neither dropout nor head_mask is applied here (while it is with alibi).
         attn_output = attention_scores @ value_layer
@@ -213,16 +209,10 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
             if self.config.parallel_attn:
                 mlp_layernorm_out = attention_layernorm_out
             else:
-                residual = dropout_add(
-                    attention_output, residual, self.config.attention_dropout, training=self.training
-                )
+                residual = dropout_add(attention_output, residual, self.config.attention_dropout, training=self.training)
                 mlp_layernorm_out = self.post_attention_layernorm(residual)
 
-        if (
-            self.config.new_decoder_architecture
-            and self.config.parallel_attn
-            and self.config.num_ln_in_parallel_attn == 1
-        ):
+        if self.config.new_decoder_architecture and self.config.parallel_attn and self.config.num_ln_in_parallel_attn == 1:
             mlp_layernorm_out = attention_layernorm_out
 
         outputs = attn_outputs[1:]
@@ -267,16 +257,12 @@ class QEffFalconModel(FalconModel):
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple[torch.Tensor, ...], BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
-            )
+            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one")
 
         if inputs_embeds is None:
             inputs_embeds = self.word_embeddings(input_ids)
@@ -291,9 +277,7 @@ class QEffFalconModel(FalconModel):
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_key_values_length, past_key_values_length + seq_length, device=inputs_embeds.device
-            )
+            cache_position = torch.arange(past_key_values_length, past_key_values_length + seq_length, device=inputs_embeds.device)
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)

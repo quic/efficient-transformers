@@ -87,18 +87,14 @@ def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export script.")
     parser.add_argument("--model_name", "--model-name", required=True, help="HF Model card name/id")
-    parser.add_argument(
-        "--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files"
-    )
+    parser.add_argument("--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files")
     parser.add_argument(
         "--cache_dir",
         "--cache-dir",
         required=False,
         help="Cache_dir to store the HF files",
     )
-    parser.add_argument(
-        "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
-    )
+    parser.add_argument("--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models")
     parser.add_argument(
         "--full_batch_size",
         "--full-batch-size",

@@ -47,17 +47,14 @@ def get_custom_dataset(dataset_config, tokenizer, split: str, context_length=Non
 
     module_path = Path(module_path)
     if not module_path.is_file():
-        logger.raise_error(
-            f"Custom dataset file {module_path.as_posix()} does not exist or is not a file.", FileNotFoundError
-        )
+        logger.raise_error(f"Custom dataset file {module_path.as_posix()} does not exist or is not a file.", FileNotFoundError)
 
     module = load_module_from_py_file(module_path.as_posix())
     try:
         return getattr(module, func_name)(dataset_config, tokenizer, split, context_length)
     except AttributeError:
         logger.raise_error(
-            f"For custom dataset preprocessing, the method ({func_name}) is not "
-            f"present in the file ({module_path.as_posix()}).",
+            f"For custom dataset preprocessing, the method ({func_name}) is not present in the file ({module_path.as_posix()}).",
             AttributeError,
         )
 
@@ -72,10 +69,7 @@ def get_data_collator(dataset_processer, dataset_config):
 
     if ":" not in dataset_config.collate_file:
         logger.log_rank_zero(
-            "Can not find function name in 'collate_file' key in dataset_config "
-            "file. Using the default data collator function instead. If this is "
-            "not intended then change the format of the 'collate_file' key in "
-            "dataset_config file to follow the format: python_file_path:function_name",
+            "Can not find function name in 'collate_file' key in dataset_config file. Using the default data collator function instead. If this is not intended then change the format of the 'collate_file' key in dataset_config file to follow the format: python_file_path:function_name",
             logging.WARNING,
         )
         return None
@@ -91,17 +85,11 @@ def get_data_collator(dataset_processer, dataset_config):
 
     module_path = Path(module_path)
     if not module_path.is_file():
-        logger.raise_error(
-            f"Custom dataset collate file {module_path.as_posix()} does not exist or is not a file.", FileNotFoundError
-        )
+        logger.raise_error(f"Custom dataset collate file {module_path.as_posix()} does not exist or is not a file.", FileNotFoundError)
 
     module = load_module_from_py_file(module_path.as_posix())
     try:
         return getattr(module, func_name)(dataset_processer)
     except AttributeError:
-        logger.log_rank_zero(
-            f"Can not find the function {func_name} in file "
-            f"({module_path.as_posix()}). Using the default data collator "
-            "function instead."
-        )
+        logger.log_rank_zero(f"Can not find the function {func_name} in file ({module_path.as_posix()}). Using the default data collator function instead.")
         return None

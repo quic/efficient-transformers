@@ -74,12 +74,8 @@ def prefix_caching_inference(model_name, qpc_path):
     # generation for batch_indices
     ##############################
     # Run prefill for indices 2, 3 with same prompts
-    out2, pos2, gen_len2 = generator._qaic_model.run_prefill(
-        prompts[0], generation_len=None, decode_batch_id=np.array(2, dtype=np.int64).reshape(1, 1)
-    )
-    out3, pos3, gen_len3 = generator._qaic_model.run_prefill(
-        prompts[1], generation_len=None, decode_batch_id=np.array(3, dtype=np.int64).reshape(1, 1)
-    )
+    out2, pos2, gen_len2 = generator._qaic_model.run_prefill(prompts[0], generation_len=None, decode_batch_id=np.array(2, dtype=np.int64).reshape(1, 1))
+    out3, pos3, gen_len3 = generator._qaic_model.run_prefill(prompts[1], generation_len=None, decode_batch_id=np.array(3, dtype=np.int64).reshape(1, 1))
 
     # Run decode for batch indices 2, 3
     decode_inputs = {
@@ -208,6 +204,4 @@ def prefix_caching_inference(model_name, qpc_path):
         decode_inputs["input_ids"] = next_token_id
         decode_inputs["position_ids"][1][0] += 1
 
-    assert np.all(
-        prompts_exec_info.generated_ids[1][:247] == [int(val[1]) for val in generation_outputs_prefill_cached][:247]
-    )
+    assert np.all(prompts_exec_info.generated_ids[1][:247] == [int(val[1]) for val in generation_outputs_prefill_cached][:247])

@@ -14,16 +14,8 @@ from torch.utils.data import Dataset
 from QEfficient.finetune.utils.logging_utils import logger
 
 PROMPT_DICT = {
-    "prompt_input": (
-        "Below is an instruction that describes a task, paired with an input that provides further context. "
-        "Write a response that appropriately completes the request.\n\n"
-        "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"
-    ),
-    "prompt_no_input": (
-        "Below is an instruction that describes a task. "
-        "Write a response that appropriately completes the request.\n\n"
-        "### Instruction:\n{instruction}\n\n### Response:"
-    ),
+    "prompt_input": ("Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"),
+    "prompt_no_input": ("Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Response:"),
 }
 
 
@@ -58,9 +50,7 @@ class InstructionDataset(Dataset):
         else:
             prompt = PROMPT_DICT["prompt_input"].format_map(ann)
         example = prompt + ann["output"]
-        prompt = torch.tensor(
-            self.tokenizer.encode(prompt, max_length=self.context_length, pad_to_max_length=True), dtype=torch.int64
-        )
+        prompt = torch.tensor(self.tokenizer.encode(prompt, max_length=self.context_length, pad_to_max_length=True), dtype=torch.int64)
         example = self.tokenizer.encode(example, max_length=self.context_length, pad_to_max_length=True)
         example.append(self.tokenizer.eos_token_id)
         example = torch.tensor(example, dtype=torch.int64)

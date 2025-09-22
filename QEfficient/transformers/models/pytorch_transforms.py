@@ -531,25 +531,17 @@ class SpDTransform:
         pretrained_model_name_or_path_temp = kwargs.pop("pretrained_model_name_or_path", None)
         if qaic_config is None or (speculative_model_type := qaic_config.get("speculative_model_type")) is None:
             return model, transformed
-        elif speculative_model_type not in (
-            supported_spd_model_types := [SPD_TARGET] + list(model_type_registry.keys())
-        ):
-            raise ValueError(
-                f"Specualtive model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
-            )
+        elif speculative_model_type not in (supported_spd_model_types := [SPD_TARGET] + list(model_type_registry.keys())):
+            raise ValueError(f"Specualtive model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}")
         elif (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
             if speculative_model_type != SPD_TARGET:
                 # build and attach draft mlp
                 pretrained_model_name_or_path = qaic_config["pretrained_model_name_or_path"]
-                model = build_and_attach_mlp(
-                    model, pretrained_model_name_or_path, speculative_model_type=speculative_model_type, **kwargs
-                )
+                model = build_and_attach_mlp(model, pretrained_model_name_or_path, speculative_model_type=speculative_model_type, **kwargs)
             transformed = True
         else:
-            raise NotImplementedError(
-                f"model class {model_class} does not yet support returning multiple logits to keep."
-            )
+            raise NotImplementedError(f"model class {model_class} does not yet support returning multiple logits to keep.")
         kwargs["pretrained_model_name_or_path"] = pretrained_model_name_or_path_temp
         return model, transformed
 
@@ -651,11 +643,7 @@ class PoolingTransform:
     @classmethod
     def apply(cls, model: nn.Module, pooling: Union[str, Callable]) -> Tuple[nn.Module, bool]:
         transformed = False
-        pooling_method = (
-            POOLING_MAP[pooling]
-            if isinstance(pooling, str) and pooling in POOLING_MAP
-            else validate_user_pooling_function(pooling)
-        )
+        pooling_method = POOLING_MAP[pooling] if isinstance(pooling, str) and pooling in POOLING_MAP else validate_user_pooling_function(pooling)
         model = PooledModel(model, pooling_method)
         warnings.warn("Pooling is applied to the model.")
         return model, transformed

@@ -17,9 +17,7 @@ full_batch_size = 4
 device_group = [0]
 
 ## STEP 1 -- init base model
-qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(
-    "predibase/gsm8k", "gsm8k", continuous_batching=True, finite_adapters=True
-)
+qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/gsm8k", "gsm8k", continuous_batching=True, finite_adapters=True)
 
 # (alternative) non-cb compilation
 # qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(

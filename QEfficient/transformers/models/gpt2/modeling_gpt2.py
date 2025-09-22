@@ -23,9 +23,7 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 def eager_attention_forward(module, query, key, value, attention_mask, head_mask=None, **kwargs):
     attn_weights = torch.matmul(query, key.transpose(-1, -2))
     if module.scale_attn_weights:
-        attn_weights = attn_weights / torch.full(
-            [], value.size(-1) ** 0.5, dtype=attn_weights.dtype, device=attn_weights.device
-        )
+        attn_weights = attn_weights / torch.full([], value.size(-1) ** 0.5, dtype=attn_weights.dtype, device=attn_weights.device)
 
     if not module.is_cross_attention:
         # if only "normal" attention layer implements causal mask
@@ -38,9 +36,7 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
 
     if attention_mask is not None:
         # Apply the attention mask
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+        attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
@@ -76,10 +72,7 @@ class QEffGPT2Attention(GPT2Attention):
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn"):
-                raise ValueError(
-                    "If class is used as cross attention, the weights `q_attn` have to be defined. "
-                    "Please make sure to instantiate class with `GPT2Attention(..., is_cross_attention=True)`."
-                )
+                raise ValueError("If class is used as cross attention, the weights `q_attn` have to be defined. Please make sure to instantiate class with `GPT2Attention(..., is_cross_attention=True)`.")
 
             query_states = self.q_attn(hidden_states)
             key_states, value_states = self.c_attn(encoder_hidden_states).split(self.split_size, dim=2)
@@ -172,10 +165,7 @@ class QEffGPT2Block(GPT2Block):
         if encoder_hidden_states is not None:
             # add one self-attention block for cross-attention
             if not hasattr(self, "crossattention"):
-                raise ValueError(
-                    f"If `encoder_hidden_states` are passed, {self} has to be instantiated with "
-                    "cross-attention layers by setting `config.add_cross_attention=True`"
-                )
+                raise ValueError(f"If `encoder_hidden_states` are passed, {self} has to be instantiated with cross-attention layers by setting `config.add_cross_attention=True`")
             residual = hidden_states
 
             hidden_states = self.ln_cross_attn(hidden_states)
@@ -232,9 +222,7 @@ class QEffGPT2Model(GPT2Model):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 

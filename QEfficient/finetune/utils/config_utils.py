@@ -46,9 +46,7 @@ def update_config(config, **kwargs):
                     if hasattr(config, param_name):
                         setattr(config, param_name, v)
                     else:
-                        logger.raise_error(
-                            f"Config '{config_name}' does not have parameter: '{param_name}'", ValueError
-                        )
+                        logger.raise_error(f"Config '{config_name}' does not have parameter: '{param_name}'", ValueError)
             else:
                 config_type = type(config).__name__
                 logger.debug(f"Unknown parameter '{k}' for config type '{config_type}'")
@@ -161,8 +159,7 @@ def validate_config(config_data: Dict[str, Any], config_type: str = Peft_Method.
     for field, expected_type in required_fields.items():
         if not isinstance(config_data[field], expected_type):
             logger.raise_error(
-                f"Field '{field}' in {config_type} config must be of type {expected_type.__name__}, "
-                f"got {type(config_data[field]).__name__}",
+                f"Field '{field}' in {config_type} config must be of type {expected_type.__name__}, got {type(config_data[field]).__name__}",
                 ValueError,
             )
 
@@ -174,8 +171,7 @@ def validate_config(config_data: Dict[str, Any], config_type: str = Peft_Method.
     for field, expected_type in optional_fields.items():
         if field in config_data and not isinstance(config_data[field], expected_type):
             logger.raise_error(
-                f"Field '{field}' in {config_type} config must be of type {expected_type.__name__}, "
-                f"got {type(config_data[field]).__name__}",
+                f"Field '{field}' in {config_type} config must be of type {expected_type.__name__}, got {type(config_data[field]).__name__}",
                 ValueError,
             )
 

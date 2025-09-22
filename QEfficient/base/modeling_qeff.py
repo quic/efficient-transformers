@@ -60,9 +60,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
-        self.model_architecture = (
-            (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
-        ) or None
+        self.model_architecture = ((arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]) or None
 
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
@@ -109,16 +107,14 @@ class QEFFBaseModel(ABC):
             RuntimeError: If model is in meta state or if weights are offloaded
         """
         if self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters()):
-            error_msg = (
-                "Cannot re-export model: weights have been offloaded to save memory. "
-                "To re-export, please create a new model instance using from_pretrained() method."
-            )
+            error_msg = "Cannot re-export model: weights have been offloaded to save memory. To re-export, please create a new model instance using from_pretrained() method."
             logger.error(error_msg)
             raise RuntimeError(error_msg)
 
     @property
     @abstractmethod
-    def model_name(self) -> str: ...
+    def model_name(self) -> str:
+        ...
 
     @abstractmethod
     def export(self, export_dir: Optional[str] = None) -> Path:
@@ -236,9 +232,7 @@ class QEFFBaseModel(ABC):
                                 ]
                             )
                         else:
-                            raise ValueError(
-                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
-                            )
+                            raise ValueError(f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}")
                 else:
                     input_names.append(param)
 
@@ -269,9 +263,7 @@ class QEFFBaseModel(ABC):
             for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **transform_kwargs)
 
-            model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
-            )
+            model.metadata_props.append(onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names())))
             logger.info("ONNX transforms applied")
 
             onnx.save(model, onnx_path)
@@ -336,9 +328,7 @@ class QEFFBaseModel(ABC):
 
         if enable_qnn:
             if compiler_options:
-                logger.warning(
-                    f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
-                )
+                logger.warning(f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}")
 
             self.qpc_path = qnn_compile(
                 onnx_path=onnx_path,
@@ -354,13 +344,7 @@ class QEFFBaseModel(ABC):
 
             return self.qpc_path
 
-        command = (
-            constants.COMPILER
-            + [
-                f"-aic-hw-version={compiler_options.pop('aic_hw_version', compiler_options.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}"
-            ]
-            + [f"-m={onnx_path}"]
-        )
+        command = constants.COMPILER + [f"-aic-hw-version={compiler_options.pop('aic_hw_version', compiler_options.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}"] + [f"-m={onnx_path}"]
 
         if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
@@ -377,9 +361,7 @@ class QEFFBaseModel(ABC):
         if mdp_ts_json_path is not None:
             mdp_ts_json = load_json(str(mdp_ts_json_path))
         elif mdp_ts_num_devices > 1:
-            mdp_ts_json = generate_mdp_partition_config(
-                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
-            )
+            mdp_ts_json = generate_mdp_partition_config(mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES))
         else:
             mdp_ts_json = None
 
@@ -413,9 +395,7 @@ class QEFFBaseModel(ABC):
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
-            specializations_data = {
-                "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
-            }
+            specializations_data = {"specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]}
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
 

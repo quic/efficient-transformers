@@ -20,9 +20,7 @@ class AdapterWeightsToInputsTransform(OnnxTransform):
 
         # Find nodes with lora weights as inputs
         weight_suffix = f".{adapter_name}.weight"
-        lora_weight_nodes = {
-            inp: node for node in model.graph.node for inp in node.input if inp.endswith(weight_suffix)
-        }
+        lora_weight_nodes = {inp: node for node in model.graph.node for inp in node.input if inp.endswith(weight_suffix)}
 
         for i, weight in enumerate(model.graph.initializer):
             if weight.name.endswith(weight_suffix):

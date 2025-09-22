@@ -63,9 +63,7 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Execution script.")
-    parser.add_argument(
-        "--model_name", "--model-name", required=False, type=str, help="HF model card name for tokenizing the inputs"
-    )
+    parser.add_argument("--model_name", "--model-name", required=False, type=str, help="HF model card name for tokenizing the inputs")
     parser.add_argument("--qpc_path", "--qpc-path", required=True, help="Path to generated QPC")
     parser.add_argument(
         "--device_group",
@@ -85,9 +83,7 @@ if __name__ == "__main__":
         help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
     parser.add_argument("--generation_len", "--generation-len", type=int, help="Number of tokens to generate")
-    parser.add_argument(
-        "--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files"
-    )
+    parser.add_argument("--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files")
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",
@@ -102,8 +98,6 @@ if __name__ == "__main__":
         default=None,
         help="Set full batch size to enable continuous batching mode, default is None",
     )
-    parser.add_argument(
-        "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
-    )
+    parser.add_argument("--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models")
     args = parser.parse_args()
     main(**args.__dict__)

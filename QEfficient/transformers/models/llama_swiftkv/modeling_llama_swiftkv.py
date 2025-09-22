@@ -74,12 +74,8 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         self.is_causal = True
         self.layer_idx = layer_idx
         self.q_proj_swiftkv = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
-        self.k_proj_swiftkv = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.v_proj_swiftkv = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
+        self.k_proj_swiftkv = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj_swiftkv = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
         self.rotary_emb = QEffLlamaRotaryEmbedding(config=config)
@@ -101,39 +97,28 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         kv_seq_len = position_ids.shape[-1]
         if past_key_value is not None:
             if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
+                raise ValueError(f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} for auto-regressive decoding with k/v caching, please make sure to initialize the attention class with a layer index.")
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         position_ids = position_ids[torch.arange(bsz), position_ids.to(torch.int32).argmax(1)].unsqueeze(1)
-        query_states, _ = qeff_apply_rotary_pos_emb(
-            query_states, torch.empty_like(query_states), cos, sin, position_ids
-        )
+        query_states, _ = qeff_apply_rotary_pos_emb(query_states, torch.empty_like(query_states), cos, sin, position_ids)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
         if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         # attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
+            raise ValueError(f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is {attn_output.size()}")
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
@@ -191,25 +176,14 @@ class QEffLlamaSwiftKVModel(nn.Module):
         self.config = config
 
         self.embed_tokens = nn.Embedding(self.vocab_size, config.hidden_size, None)
-        self.layers = torch.nn.ModuleList(
-            [
-                QEffLlamaDecoderLayer(config=config, layer_idx=idx)
-                if idx < config.num_key_value_layers
-                else QEffLlamaSwiftKVDecoderLayer(config=config, layer_idx=idx)
-                for idx in range(config.num_hidden_layers)
-            ]
-        )
+        self.layers = torch.nn.ModuleList([QEffLlamaDecoderLayer(config=config, layer_idx=idx) if idx < config.num_key_value_layers else QEffLlamaSwiftKVDecoderLayer(config=config, layer_idx=idx) for idx in range(config.num_hidden_layers)])
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.norm_swiftkv = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-    def _run_swiftkv_layers(
-        self, hidden_states: torch.Tensor, position_ids: torch.Tensor, past_key_values, causal_mask, batch_index
-    ) -> torch.Tensor:
+    def _run_swiftkv_layers(self, hidden_states: torch.Tensor, position_ids: torch.Tensor, past_key_values, causal_mask, batch_index) -> torch.Tensor:
         for layer_idx in range(self.config.num_key_value_layers, self.config.num_hidden_layers):
             layer = self.layers[layer_idx]
-            hidden_states, past_key_values = layer(
-                hidden_states, position_ids, past_key_values, causal_mask, batch_index
-            )
+            hidden_states, past_key_values = layer(hidden_states, position_ids, past_key_values, causal_mask, batch_index)
 
         hidden_states = self.norm(hidden_states)
         return hidden_states, past_key_values
@@ -269,18 +243,11 @@ class QEffLlamaSwiftKVModel(nn.Module):
                 mask_length = attention_mask.shape[-1]
                 padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
                 padding_mask = padding_mask == 0
-                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
-                    padding_mask, min_dtype
-                )
+                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(padding_mask, min_dtype)
             else:
                 causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
 
-        if (
-            self.config._attn_implementation == "sdpa"
-            and attention_mask is not None
-            and attention_mask.device.type == "cuda"
-            and not output_attentions
-        ):
+        if self.config._attn_implementation == "sdpa" and attention_mask is not None and attention_mask.device.type == "cuda" and not output_attentions:
             # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
             # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
             # Details: https://github.com/pytorch/pytorch/issues/110213
@@ -305,22 +272,14 @@ class QEffLlamaSwiftKVModel(nn.Module):
                 past_key_values = QEffDynamicCache()
             else:
                 past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-                logger.warning_once(
-                    "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
-                    "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
-                    "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
-                )
+                logger.warning_once("We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)")
 
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-        cache_position = torch.arange(
-            past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-        )
+        cache_position = torch.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device)
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = self._update_causal_mask(
-            None, inputs_embeds, cache_position, position_ids, past_key_values, False
-        )
+        causal_mask = self._update_causal_mask(None, inputs_embeds, cache_position, position_ids, past_key_values, False)
         hidden_states = inputs_embeds
 
         next_decoder_cache = None
@@ -347,18 +306,12 @@ class QEffLlamaSwiftKVModel(nn.Module):
             key_states = self_attn.k_proj_swiftkv(swiftkv_hidden_states)
             value_states = self_attn.v_proj_swiftkv(swiftkv_hidden_states)
             key_states = key_states.view(bsz, q_len, self_attn.num_key_value_heads, self_attn.head_dim).transpose(1, 2)
-            value_states = value_states.view(bsz, q_len, self_attn.num_key_value_heads, self_attn.head_dim).transpose(
-                1, 2
-            )
+            value_states = value_states.view(bsz, q_len, self_attn.num_key_value_heads, self_attn.head_dim).transpose(1, 2)
 
             kv_seq_len = key_states.shape[-2]
             if past_key_values is not None:
                 if self_attn.layer_idx is None:
-                    raise ValueError(
-                        f"The cache structure has changed since version v4.36. If you are using {self_attn.__class__.__name__} "
-                        "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                        "with a layer index."
-                    )
+                    raise ValueError(f"The cache structure has changed since version v4.36. If you are using {self_attn.__class__.__name__} for auto-regressive decoding with k/v caching, please make sure to initialize the attention class with a layer index.")
                 kv_seq_len = past_key_values.get_usable_length(kv_seq_len, self_attn.layer_idx)
 
             cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
@@ -377,9 +330,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
             hidden_states = orig_hidden_states[torch.arange(bsz).reshape(-1, 1), last_pos_id, :]
             causal_mask = causal_mask[torch.arange(bsz).reshape(-1, 1), :, last_pos_id, :]
 
-        hidden_states, next_decoder_cache = self._run_swiftkv_layers(
-            hidden_states, position_ids, past_key_values, causal_mask, batch_index
-        )
+        hidden_states, next_decoder_cache = self._run_swiftkv_layers(hidden_states, position_ids, past_key_values, causal_mask, batch_index)
         # We can fill the orig_hidden_states with the processed hidden_states here but it's not needed as for next token prediction
         # we only need the last valid pos_indices hidden_states.
         # Here the shape of hiden_states is [batch_size, 1, hidden_dim] instead of [batch_size, seq_len, hidden_dim]

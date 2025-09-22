@@ -104,9 +104,7 @@ class ExternalModuleMapperTransform(PytorchTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
         for module in model.modules():
-            if (repl_method_map := cls._match_class_replace_method.get(type(module))) or (
-                repl_method_map := cls._match_string_replace_method.get(module.__class__.__name__)
-            ):
+            if (repl_method_map := cls._match_class_replace_method.get(type(module))) or (repl_method_map := cls._match_string_replace_method.get(module.__class__.__name__)):
                 for orig_method_name, mapped_method in repl_method_map.items():
                     setattr(module, orig_method_name, MethodType(mapped_method, module))
 

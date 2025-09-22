@@ -87,17 +87,13 @@ def hf_download(
             raise e
         except OSError as e:
             if "Consistency check failed" in str(e):
-                logger.info(
-                    "Consistency check failed during model download. The file appears to be incomplete. Resuming the download..."
-                )
+                logger.info("Consistency check failed during model download. The file appears to be incomplete. Resuming the download...")
                 retry_count += 1
             else:
                 raise e
 
     if retry_count >= max_retries:
-        raise DownloadRetryLimitExceeded(
-            f"Unable to download full model after {max_retries} tries. If the model fileS are huge in size, please try again."
-        )
+        raise DownloadRetryLimitExceeded(f"Unable to download full model after {max_retries} tries. If the model fileS are huge in size, please try again.")
     return model_path
 
 
@@ -192,9 +188,7 @@ def load_hf_tokenizer(
             allow_patterns=["*.json", "*.py", "*token*", "*.txt"],
         )
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs
-    )
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
 
     return tokenizer
@@ -239,16 +233,7 @@ def get_qpc_dir_path(
     enable_qnn: Optional[bool] = False,
 ):
     # Create a unique directory name for the QPC model based on all parameters
-    qpc_base_dir_name = (
-        "qpc"
-        + f"{'_qnn_' if enable_qnn else '_'}"
-        + f"{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
-        + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
-        + f"{f'_{num_speculative_tokens}nst_' if num_speculative_tokens is not None else ''}"
-        + f"{len(device_group) if device_group is not None else 1}"
-        + "devices"
-        + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
-    )
+    qpc_base_dir_name = "qpc" + f"{'_qnn_' if enable_qnn else '_'}" + f"{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos" + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}" + f"{f'_{num_speculative_tokens}nst_' if num_speculative_tokens is not None else ''}" + f"{len(device_group) if device_group is not None else 1}" + "devices" + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_card_name))
     os.makedirs(model_card_dir, exist_ok=True)
 
@@ -259,9 +244,7 @@ def get_qpc_dir_path(
 def check_and_assign_cache_dir(local_model_dir, cache_dir):
     if local_model_dir is not None:
         if cache_dir is not None:
-            logger.warning(
-                f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir."
-            )
+            logger.warning(f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir.")
         return None
     return cache_dir if cache_dir else None
 
@@ -309,9 +292,7 @@ def get_sliding_window_shapes(config, batch_size, seq_len):
     if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
         n_heads = config.n_head
         d_head = config.n_embd // config.n_head
-    elif hasattr(config, "num_key_value_heads") and hasattr(
-        config, "num_attention_heads"
-    ):  # Check for num_key_value_heads (Llama/Mistral)
+    elif hasattr(config, "num_key_value_heads") and hasattr(config, "num_attention_heads"):  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = config.num_key_value_heads
 
         if hasattr(config, "head_dim"):
@@ -377,9 +358,7 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
     if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
         n_heads = config.n_head
         d_head = config.n_embd // config.n_head
-    elif hasattr(config, "num_key_value_heads") and hasattr(
-        config, "num_attention_heads"
-    ):  # Check for num_key_value_heads (Llama/Mistral)
+    elif hasattr(config, "num_key_value_heads") and hasattr(config, "num_attention_heads"):  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = config.num_key_value_heads
 
         if hasattr(config, "head_dim"):
@@ -726,12 +705,7 @@ def dump_qconfig(func):
                 kwargs.get("specializations"),
                 kwargs.get("mdp_ts_num_devices", 1),
                 kwargs.get("num_speculative_tokens"),
-                **{
-                    k: v
-                    for k, v in kwargs.items()
-                    if k
-                    not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io", "onnx_path"]
-                },
+                **{k: v for k, v in kwargs.items() if k not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io", "onnx_path"]},
             )
         except Exception as e:
             print(f"An unexpected error occurred while dumping the qconfig: {e}")
@@ -817,13 +791,9 @@ def create_and_dump_qconfigs(
     if enable_qnn:
         qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
         if not qnn_sdk_path:
-            raise EnvironmentError(
-                f"QNN_SDK_PATH {qnn_sdk_path} is not set. Please set {QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME}"
-            )
+            raise EnvironmentError(f"QNN_SDK_PATH {qnn_sdk_path} is not set. Please set {QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME}")
         qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
-        qnn_sdk_details = load_yaml(
-            qnn_sdk_yaml_path
-        )  # Extract QNN SDK details from YAML file if the environment variable is set
+        qnn_sdk_details = load_yaml(qnn_sdk_yaml_path)  # Extract QNN SDK details from YAML file if the environment variable is set
         qnn_config = {
             "qnn_config_path": qnn_config_path,
         }

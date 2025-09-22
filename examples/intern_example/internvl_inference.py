@@ -88,18 +88,10 @@ class InternProcessor:
         orig_width, orig_height = image.size
         aspect_ratio = orig_width / orig_height
         # calculate the existing image aspect ratio
-        target_ratios = set(
-            (i, j)
-            for n in range(min_num, max_num + 1)
-            for i in range(1, n + 1)
-            for j in range(1, n + 1)
-            if i * j <= max_num and i * j >= min_num
-        )
+        target_ratios = set((i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1) if i * j <= max_num and i * j >= min_num)
         target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
         # find the closest aspect ratio to the target
-        target_aspect_ratio = self.find_closest_aspect_ratio(
-            aspect_ratio, target_ratios, orig_width, orig_height, image_size
-        )
+        target_aspect_ratio = self.find_closest_aspect_ratio(aspect_ratio, target_ratios, orig_width, orig_height, image_size)
         # calculate the target width and height
         target_width = image_size * target_aspect_ratio[0]
         target_height = image_size * target_aspect_ratio[1]
@@ -209,9 +201,7 @@ def run_intern_on_aic(
     pixel_values = internProcessor.load_image(image, max_num=12)
     question = "<image>\n" + prompt
     query = internProcessor(pixel_values, question, messages, roles)
-    inputs = tokenizer(
-        query, return_tensors="pt", padding="max_length", max_length=prefill_seq_len, padding_side="right"
-    )
+    inputs = tokenizer(query, return_tensors="pt", padding="max_length", max_length=prefill_seq_len, padding_side="right")
 
     inputs["pixel_values"] = pixel_values
 

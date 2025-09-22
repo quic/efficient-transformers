@@ -21,9 +21,7 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 # pass HF_TOKEN if gated model
 # For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
-qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, config=config, attn_implementation="eager", kv_offload=True
-)
+qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_id, config=config, attn_implementation="eager", kv_offload=True)
 
 ### use skip_vision=Ture, if want to run only text, or false ###
 skip_vision = True
@@ -81,9 +79,7 @@ else:
     )
 
     ### IMAGE + TEXT ###
-    image_url = (
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    )
+    image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
 
     messages = [
         {

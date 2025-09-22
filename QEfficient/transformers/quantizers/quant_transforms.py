@@ -108,9 +108,7 @@ class FP8DeQuantLinearToLinearTransform(ModuleMutatorTransform):
     def mutate(cls, original_module, parent_module):
         #  -- de-quantizing the weights --
         dequant_weights = original_module.weight.to(torch.float32) * original_module.weight_scale
-        dequant_linear_layer = nn.Linear(
-            original_module.in_features, original_module.out_features, bias=original_module.bias is not None
-        )
+        dequant_linear_layer = nn.Linear(original_module.in_features, original_module.out_features, bias=original_module.bias is not None)
         dequant_linear_layer.weight = torch.nn.Parameter(dequant_weights)
         if original_module.bias is not None:
             dequant_linear_layer.bias = torch.nn.Parameter(original_module.bias.float())

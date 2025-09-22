@@ -76,9 +76,7 @@ def train(
     if train_config.save_metrics:
         if not os.path.exists(train_config.output_dir):
             os.makedirs(train_config.output_dir, exist_ok=True)
-        metrics_filename = (
-            f"{train_config.output_dir}/metrics_data_{local_rank}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
-        )
+        metrics_filename = f"{train_config.output_dir}/metrics_data_{local_rank}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
         train_step_metric = []
         train_step_loss = []
         eval_step_loss = []
@@ -117,9 +115,7 @@ def train(
     # Start the training loop
     for epoch in range(train_config.num_epochs):
         if loss_0_counter.item() == train_config.convergence_counter:
-            logger.log_rank_zero(
-                f"Skipping epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps."
-            )
+            logger.log_rank_zero(f"Skipping epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps.")
             break
 
         if train_config.use_peft and train_config.from_peft_checkpoint:
@@ -155,25 +151,17 @@ def train(
             if train_config.use_peft and train_config.from_peft_checkpoint:
                 # to bring the count of train_step in sync with where it left off
                 if epoch == intermediate_epoch and step == 0:
-                    logger.log_rank_zero(
-                        f"Skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for it."
-                    )
+                    logger.log_rank_zero(f"Skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for it.")
                 if epoch == intermediate_epoch and step < intermediate_step:
                     continue
 
             if train_config.max_train_step > 0 and total_train_steps >= train_config.max_train_step:
                 max_steps_reached = True
-                logger.log_rank_zero(
-                    "Maximum training steps reached "
-                    f"(max_train_step={train_config.max_train_step}). Stopping "
-                    "the training process."
-                )
+                logger.log_rank_zero(f"Maximum training steps reached (max_train_step={train_config.max_train_step}). Stopping the training process.")
                 break
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
-            is_optimizer_step = (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(
-                train_dataloader
-            ) - 1
+            is_optimizer_step = (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1
             if train_config.enable_ddp:
                 # Below block derived from : https://github.com/karpathy/nanoGPT/blob/93a43d9a5c22450bbf06e78da2cb6eeef084b717/train.py#L293
                 # in DDP training we only need to sync gradients at the last micro step.
@@ -189,9 +177,7 @@ def train(
                     loss = loss.nan_to_num(nan=0.0)
                     num_dummy_samples += train_config.train_batch_size
                 else:
-                    num_dummy_samples_per_batch = (
-                        (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
-                    )
+                    num_dummy_samples_per_batch = (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
                     if num_dummy_samples_per_batch > 0:
                         num_dummy_samples += num_dummy_samples_per_batch
                         loss = loss * train_config.train_batch_size / num_dummy_samples_per_batch
@@ -224,9 +210,7 @@ def train(
                 train_step_metric.append(step_metric_value)
 
             # Accumulate gradients
-            complete_accum_steps = (
-                len(train_dataloader) - len(train_dataloader) % train_config.gradient_accumulation_steps
-            )
+            complete_accum_steps = len(train_dataloader) - len(train_dataloader) % train_config.gradient_accumulation_steps
             if step < complete_accum_steps:
                 num_samples_in_cur_update = train_config.gradient_accumulation_steps
             else:
@@ -253,17 +237,11 @@ def train(
                 stop_qaic_profiling(train_config.use_profiler, device_type)
                 if train_config.enable_ddp:
                     if dist.get_rank() == 0:
-                        model.module.save_pretrained(
-                            train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step + 1}"
-                        )
+                        model.module.save_pretrained(train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step + 1}")
                 else:
-                    model.save_pretrained(
-                        train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step + 1}"
-                    )
+                    model.save_pretrained(train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step + 1}")
 
-            pbar.set_description(
-                f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
-            )
+            pbar.set_description(f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
             if train_config.save_metrics:
                 save_to_json(
                     metrics_filename,
@@ -277,9 +255,7 @@ def train(
                     eval_metric,
                 )
             if loss_0_counter.item() == train_config.convergence_counter:
-                logger.log_rank_zero(
-                    f"Loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps.Hence,stopping the fine tuning."
-                )
+                logger.log_rank_zero(f"Loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps.Hence,stopping the fine tuning.")
                 break
 
         pbar.close()
@@ -287,17 +263,9 @@ def train(
         epoch_times.append(epoch_end_time)
 
         if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-            train_epoch_loss = (
-                0.0
-                if total_loss == 0.0
-                else total_loss / (step - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
-            )
+            train_epoch_loss = 0.0 if total_loss == 0.0 else total_loss / (step - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
         else:
-            train_epoch_loss = (
-                0.0
-                if total_loss == 0.0
-                else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
-            )
+            train_epoch_loss = 0.0 if total_loss == 0.0 else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
 
         if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
             train_epoch_metric = acc_helper.compute()
@@ -318,9 +286,7 @@ def train(
         lr_scheduler.step()
 
         if train_config.run_validation:
-            eval_epoch_loss, eval_epoch_metric, step_loss, step_metric = evaluation(
-                model, train_config, eval_dataloader, device
-            )
+            eval_epoch_loss, eval_epoch_metric, step_loss, step_metric = evaluation(model, train_config, eval_dataloader, device)
 
             if is_rank_zero():
                 tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
@@ -340,9 +306,7 @@ def train(
                 best_eval_loss = eval_epoch_loss
                 logger.log_rank_zero(f"Best eval loss on epoch {epoch + 1} is {best_eval_loss:.4f}")
 
-            logger.log_rank_zero(
-                f"Epoch {epoch + 1}: Eval Loss: {eval_epoch_loss.detach().cpu():.4f}, Eval metric: {eval_epoch_metric.detach().cpu():.4f}"
-            )
+            logger.log_rank_zero(f"Epoch {epoch + 1}: Eval Loss: {eval_epoch_loss.detach().cpu():.4f}, Eval metric: {eval_epoch_metric.detach().cpu():.4f}")
 
         # saving the adapters after completion of each epoch
         if train_config.save_model:
@@ -352,9 +316,7 @@ def train(
             else:
                 model.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
 
-        logger.log_rank_zero(
-            f"Epoch {epoch + 1}: Train epoch loss: {train_epoch_loss:.4f}, Train metric: {train_epoch_metric:.4f}, Epoch time {epoch_end_time:.2f} sec"
-        )
+        logger.log_rank_zero(f"Epoch {epoch + 1}: Train epoch loss: {train_epoch_loss:.4f}, Train metric: {train_epoch_metric:.4f}, Epoch time {epoch_end_time:.2f} sec")
         # Saving the results every epoch to plot later
         if train_config.save_metrics:
             save_to_json(
@@ -439,9 +401,7 @@ def evaluation(model, train_config, eval_dataloader, device):
                 loss = loss.nan_to_num(nan=0.0)
                 num_dummy_samples += 1
             else:
-                num_dummy_samples_per_batch = (
-                    (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
-                )
+                num_dummy_samples_per_batch = (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
                 if num_dummy_samples_per_batch > 0:
                     num_dummy_samples += num_dummy_samples_per_batch
                     loss = loss * train_config.val_batch_size / num_dummy_samples_per_batch
@@ -462,9 +422,7 @@ def evaluation(model, train_config, eval_dataloader, device):
             eval_loss += loss.detach().float()
 
     # Compute average loss and metric
-    eval_epoch_loss = (
-        0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
-    )
+    eval_epoch_loss = 0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
     if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
         eval_epoch_metric = acc_helper.compute()
     else:
@@ -490,6 +448,4 @@ def print_trainable_parameters(model) -> None:
         model: The PyTorch model.
     """
     trainable_params, all_param = model.get_nb_trainable_parameters()
-    logger.log_rank_zero(
-        f"Trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
-    )
+    logger.log_rank_zero(f"Trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}")

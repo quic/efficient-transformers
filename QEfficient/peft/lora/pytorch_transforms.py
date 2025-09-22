@@ -33,9 +33,7 @@ class TargetModulesTransform(ModuleMappingTransform):
 
     # a class method that deals with target module names
     @classmethod
-    def apply(
-        cls, model: nn.Module, target_modules: Optional[Dict], lora_rank: int, max_num_adapters: int
-    ) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, target_modules: Optional[Dict], lora_rank: int, max_num_adapters: int) -> Tuple[nn.Module, bool]:
         transformed = False
         nontarget_modules = {key for key in cls.all_modules if key not in target_modules}
 

@@ -36,23 +36,12 @@ def validate_sampler_inputs(session_inputs: Set[str], include_sampler: Optional[
         session_includes_sampler = False
     elif count < len(sampler_inputs):
         session_includes_sampler = False
-        raise ValueError(
-            f"The provided QPC does not have the required number of inputs to run sampling "
-            f"on the QAIC device (only {count}/{len(sampler_inputs)} inputs provided). Partial "
-            "sampling support is not available. Please check the QPC and try again."
-        )
+        raise ValueError(f"The provided QPC does not have the required number of inputs to run sampling on the QAIC device (only {count}/{len(sampler_inputs)} inputs provided). Partial sampling support is not available. Please check the QPC and try again.")
 
     # Post-validation consistency checks
     if include_sampler and not session_includes_sampler:
-        logger.warning(
-            "User entered `include_sampler`=True. But the provided QPC is not compiled "
-            "to run sampling on the QAIC device. Falling back to the PyTorch backend."
-        )
+        logger.warning("User entered `include_sampler`=True. But the provided QPC is not compiled to run sampling on the QAIC device. Falling back to the PyTorch backend.")
     elif (include_sampler is None or not include_sampler) and session_includes_sampler:
-        raise ValueError(
-            "The provided QPC is compiled to run sampling on the QAIC device. "
-            "But the user did not enter `include_sampler`=True. Please make sure the input "
-            "is specified correctly."
-        )
+        raise ValueError("The provided QPC is compiled to run sampling on the QAIC device. But the user did not enter `include_sampler`=True. Please make sure the input is specified correctly.")
 
     return session_includes_sampler

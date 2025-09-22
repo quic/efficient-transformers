@@ -80,9 +80,7 @@ SpDTransformProjTestConfigs = [
 ]
 
 
-def create_qaic_model_inputs(
-    input_len: int, vocab_size: int, padding_shape: tuple, num_hidden_layers: int, is_tlm: bool = False
-) -> dict:
+def create_qaic_model_inputs(input_len: int, vocab_size: int, padding_shape: tuple, num_hidden_layers: int, is_tlm: bool = False) -> dict:
     """create pytorch QEff model inputs
 
     ``Mandatory`` Args:
@@ -166,9 +164,7 @@ def run_kv_cache_transform_and_test(
             )
         else:
             original_model_outputs = hf_model(input_ids=input_ids, output_hidden_states=True)
-        hidden_size_projections = (
-            hf_model.hidden_size_projections if hasattr(hf_model, "hidden_size_projections") else None
-        )
+        hidden_size_projections = hf_model.hidden_size_projections if hasattr(hf_model, "hidden_size_projections") else None
         if hidden_size_projections:
             # compute projections
             last_hidden_size = original_model_outputs.hidden_states[-1]  # shape: [bsz, seq_len, d_model]
@@ -195,12 +191,8 @@ def run_kv_cache_transform_and_test(
     assert original_model_outputs.keys() == transformed_model_outputs.keys(), "Model output keys do not match!"
 
     # FIXME: Tolerance should not be so high for logits
-    assert compare_original_vs_kv_model_pt_outputs(
-        original_model_outputs["logits"], transformed_model_outputs["logits"], tolerance=logits_tolerance
-    ), "Logits are not matching with tolerance=0.8"
-    assert compare_original_vs_kv_model_pt_outputs(
-        original_model_outputs["hidden_states"], transformed_model_outputs["hidden_states"], tolerance=1e-5
-    )
+    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs["logits"], transformed_model_outputs["logits"], tolerance=logits_tolerance), "Logits are not matching with tolerance=0.8"
+    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs["hidden_states"], transformed_model_outputs["hidden_states"], tolerance=1e-5)
 
     # Slice Past key values based on input_len
     pkv = transformed_model_outputs["past_key_values"][0]
@@ -209,9 +201,7 @@ def run_kv_cache_transform_and_test(
         new_pkv.append(past_key_value[:, :, :input_len, :])
     transformed_model_outputs["past_key_values"] = (tuple(new_pkv),)
 
-    assert compare_original_vs_kv_model_pt_outputs(
-        original_model_outputs["past_key_values"], transformed_model_outputs["past_key_values"], tolerance=1e-10
-    )
+    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs["past_key_values"], transformed_model_outputs["past_key_values"], tolerance=1e-10)
 
 
 @pytest.mark.parametrize("input_size", [2, 5], ids=lambda x: "input_size=" + str(x))
@@ -243,9 +233,7 @@ def test_rms_norm_ops_transform(module: torch.nn.Module, hidden_size: int, input
     "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
     KVCacheTransformTestConfigs,
 )
-def test_kv_cache_transform(
-    config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance
-):
+def test_kv_cache_transform(config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance):
     config = AutoConfig.for_model(
         config_class,
         **kwargs,
@@ -268,9 +256,7 @@ def test_kv_cache_transform(
     padding_shape = get_padding_shape_from_config(config=config, batch_size=1, seq_len=32)
 
     # Prepare KV model inputs
-    qaic_model_inputs = create_qaic_model_inputs(
-        input_len=8, vocab_size=config.vocab_size, padding_shape=padding_shape, num_hidden_layers=num_hidden_layers
-    )
+    qaic_model_inputs = create_qaic_model_inputs(input_len=8, vocab_size=config.vocab_size, padding_shape=padding_shape, num_hidden_layers=num_hidden_layers)
 
     run_kv_cache_transform_and_test(
         hf_model,
@@ -327,9 +313,7 @@ def test_spd_transform(config_class, num_hidden_layers, num_attention_heads, hid
     "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
     SpDTransformProjTestConfigs,
 )
-def test_spd_proj_transform(
-    config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance
-):
+def test_spd_proj_transform(config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance):
     config = AutoConfig.for_model(
         config_class,
         **kwargs,
@@ -385,12 +369,8 @@ def test_spd_proj_transform(
 def test_awq_to_matmulnbits_transform(in_features, out_features):
     wqlinear = WQLinear_GEMM(bits=4, group_size=128, in_features=in_features, out_features=out_features, bias=False)
 
-    wqlinear.qweight = torch.randint(
-        low=-(2**31), high=2**31 - 1, size=(in_features, out_features // 8), dtype=torch.int32
-    )
-    wqlinear.qzeros = torch.randint(
-        low=-(2**31), high=2**31 - 1, size=(in_features // wqlinear.group_size, out_features // 8), dtype=torch.int32
-    )
+    wqlinear.qweight = torch.randint(low=-(2**31), high=2**31 - 1, size=(in_features, out_features // 8), dtype=torch.int32)
+    wqlinear.qzeros = torch.randint(low=-(2**31), high=2**31 - 1, size=(in_features // wqlinear.group_size, out_features // 8), dtype=torch.int32)
     wqlinear.scales = torch.rand(in_features // wqlinear.group_size, out_features, dtype=torch.float32)
 
     rand_data = torch.rand(4, in_features)
@@ -399,35 +379,25 @@ def test_awq_to_matmulnbits_transform(in_features, out_features):
     assert transformed
     new_out = new_module(rand_data)
     assert isinstance(new_module, QuantLinearORT)
-    assert compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-8), (
-        "Test failed because MAE is greater than tolerance"
-    )
+    assert compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-8), "Test failed because MAE is greater than tolerance"
 
 
 @pytest.mark.parametrize("in_features", [4096, 4096])
 @pytest.mark.parametrize("out_features", [4096, 4096])
 def test_gptq_to_matmulnbits_transform(in_features, out_features):
-    quant_linear_gptq = QuantLinearGPTQ(
-        bits=4, group_size=128, in_features=in_features, out_features=out_features, bias=False
-    )
-    quant_linear_gptq.qweight = torch.randint(
-        low=-(2**31), high=2**31 - 1, size=(in_features // 8, out_features), dtype=torch.int32
-    )
+    quant_linear_gptq = QuantLinearGPTQ(bits=4, group_size=128, in_features=in_features, out_features=out_features, bias=False)
+    quant_linear_gptq.qweight = torch.randint(low=-(2**31), high=2**31 - 1, size=(in_features // 8, out_features), dtype=torch.int32)
     quant_linear_gptq.qzeros = torch.randint(
         low=-(2**31),
         high=2**31 - 1,
         size=(in_features // quant_linear_gptq.group_size, out_features // 8),
         dtype=torch.int32,
     )
-    quant_linear_gptq.scales = torch.rand(
-        in_features // quant_linear_gptq.group_size, out_features, dtype=torch.float32
-    )
+    quant_linear_gptq.scales = torch.rand(in_features // quant_linear_gptq.group_size, out_features, dtype=torch.float32)
     rand_data = torch.rand(4, in_features)
     old_out = quant_linear_gptq(rand_data)
     new_module, transformed = GPTQToMatmulNbitsTransform.apply(quant_linear_gptq)
     assert transformed
     new_out = new_module(rand_data)
     assert isinstance(new_module, QuantLinearORT)
-    assert compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-4), (
-        "Test failed because MAE is greater than tolerance"
-    )
+    assert compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-4), "Test failed because MAE is greater than tolerance"

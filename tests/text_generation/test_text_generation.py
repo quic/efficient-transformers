@@ -100,7 +100,5 @@ def test_generate_text_stream(
     for decoded_tokens in text_generator.generate_stream_tokens(Constants.INPUT_STR, generation_len=max_gen_len):
         stream_tokens.extend(decoded_tokens)
 
-    assert cloud_ai_100_output == stream_tokens, (
-        f"Deviation in output observed while comparing regular execution and streamed output: {cloud_ai_100_output} != {stream_tokens}"
-    )
+    assert cloud_ai_100_output == stream_tokens, f"Deviation in output observed while comparing regular execution and streamed output: {cloud_ai_100_output} != {stream_tokens}"
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))

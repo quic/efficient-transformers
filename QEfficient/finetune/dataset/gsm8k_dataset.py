@@ -26,9 +26,7 @@ def tokenize_and_mask(row: Dict[str, str], *, tokenizer, instruction) -> Dict[st
 
     input_str = tokenizer.bos_token + instruction.format(**row)
     ques_ids = tokenizer(input_str, add_special_tokens=False, return_attention_mask=False)["input_ids"]
-    ans_ids = tokenizer(row["answer"] + tokenizer.eos_token, add_special_tokens=False, return_attention_mask=False)[
-        "input_ids"
-    ]
+    ans_ids = tokenizer(row["answer"] + tokenizer.eos_token, add_special_tokens=False, return_attention_mask=False)["input_ids"]
     input_ids = ques_ids + ans_ids
 
     # State machine to recognize <<expression=answer>> and mask answer

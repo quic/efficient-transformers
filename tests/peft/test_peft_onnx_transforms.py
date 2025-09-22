@@ -15,7 +15,8 @@ from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
 def test_adapter_weights_to_inputs_transform():
     external_tensors_file = "weight.raw"
     adapter_name = "testAdapter1"
-    test_onnx = onnx.parser.parse_model(f"""
+    test_onnx = onnx.parser.parse_model(
+        f"""
     <
         ir_version: 8,
         opset_import: ["" : 17]
@@ -29,7 +30,8 @@ def test_adapter_weights_to_inputs_transform():
         layer1output = MatMul (input, layer1_{adapter_name}_weight)
         output = MatMul (layer1output, layer2_{adapter_name}_weight)
     }}
-    """)
+    """
+    )
 
     out_onnx, transformed = AdapterWeightsToInputsTransform.apply(test_onnx, adapter_name=adapter_name)
     assert not transformed
@@ -49,7 +51,8 @@ def test_adapter_weights_to_inputs_transform():
 
     assert (
         onnx.printer.to_text(out_onnx)
-        == textwrap.dedent("""
+        == textwrap.dedent(
+            """
     <
        ir_version: 8,
        opset_import: ["" : 17]
@@ -60,5 +63,6 @@ def test_adapter_weights_to_inputs_transform():
        ["layer1.weight_identity"] "layer1.weight_RetainedState" = Identity ("layer1.weight")
        ["layer2.weight_identity"] "layer2.weight_RetainedState" = Identity ("layer2.weight")
     }
-    """).strip()
+    """
+        ).strip()
     )

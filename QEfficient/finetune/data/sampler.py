@@ -52,9 +52,7 @@ class DistributedLengthBasedBatchSampler(torch.utils.data.BatchSampler):
         seed: int = 0,
     ) -> None:
         random.seed(seed)
-        self.batch_sampler = LengthBasedBatchSampler(
-            data_source, batch_size=batch_size, drop_last=False, shuffle=shuffle
-        )
+        self.batch_sampler = LengthBasedBatchSampler(data_source, batch_size=batch_size, drop_last=False, shuffle=shuffle)
         self.num_replicas = num_replicas
         self.rank = rank
 

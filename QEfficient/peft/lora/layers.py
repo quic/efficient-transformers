@@ -23,13 +23,9 @@ class LinearMultiLoRA(nn.Linear):
         self.max_num_adapters = max_num_adapters
         self.lora_rank = lora_rank
 
-        self.lora_a_weights = nn.Parameter(
-            self.weight.new_zeros(self.max_num_adapters + 1, 1, self.in_features, self.lora_rank)
-        )
+        self.lora_a_weights = nn.Parameter(self.weight.new_zeros(self.max_num_adapters + 1, 1, self.in_features, self.lora_rank))
         self.lora_a_weights.requires_grad = False
-        self.lora_b_weights = nn.Parameter(
-            self.weight.new_zeros(self.max_num_adapters + 1, 1, self.lora_rank, self.out_features)
-        )
+        self.lora_b_weights = nn.Parameter(self.weight.new_zeros(self.max_num_adapters + 1, 1, self.lora_rank, self.out_features))
         self.lora_b_weights.requires_grad = False
         self.lora_scalings = torch.full((self.max_num_adapters + 1, 1, 1, 1), 1.0, dtype=torch.float)
 
@@ -41,17 +37,11 @@ class LinearMultiLoRA(nn.Linear):
 
         # multilora implementation: lora_ids <batch_size, 1>
         other_indices_a = torch.arange(self.lora_a_weights.shape[2]).view(1, 1, -1)
-        selected_lora_a_weights = CtxGatherFuncCB.apply(
-            self.lora_a_weights, lora_ids, other_indices_a
-        )  # <num_loras, 1, feature, r>
+        selected_lora_a_weights = CtxGatherFuncCB.apply(self.lora_a_weights, lora_ids, other_indices_a)  # <num_loras, 1, feature, r>
         other_indices_b = torch.arange(self.lora_b_weights.shape[2]).view(1, 1, -1)
-        selected_lora_b_weights = CtxGatherFuncCB.apply(
-            self.lora_b_weights, lora_ids, other_indices_b
-        )  # <num_loras, 1, r, feature>
+        selected_lora_b_weights = CtxGatherFuncCB.apply(self.lora_b_weights, lora_ids, other_indices_b)  # <num_loras, 1, r, feature>
         other_indices_s = torch.arange(self.lora_scalings.shape[2]).view(1, 1, -1)
-        selected_lora_scalings = CtxGatherFuncCB.apply(
-            self.lora_scalings, lora_ids, other_indices_s
-        )  # <num_loras, 1, 1, 1>
+        selected_lora_scalings = CtxGatherFuncCB.apply(self.lora_scalings, lora_ids, other_indices_s)  # <num_loras, 1, 1, 1>
 
         selected_lora_a_weights = selected_lora_a_weights.squeeze(1)
         selected_lora_b_weights = selected_lora_b_weights.squeeze(1)

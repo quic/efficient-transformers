@@ -113,9 +113,7 @@ def run_prefill_on_draft_and_target(
     for i in range(num_chunks):
         chunk_inputs = inputs.copy()
         chunk_inputs["input_ids"] = inputs["input_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
-        chunk_inputs["position_ids"] = inputs["position_ids"][
-            :, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len
-        ]
+        chunk_inputs["position_ids"] = inputs["position_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
 
         tlm_outputs = tlm_session.run(chunk_inputs)
         if dlm_session is not None:
@@ -139,15 +137,11 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert input_len_padded <= ctx_len, (
-        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
-    )
+    assert input_len_padded <= ctx_len, "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
     return input_len_padded
 
 
-def find_candidate_pred_tokens(
-    input_ids: np.ndarray, fill_tok: int, max_ngram_size: int = 3, num_pred_tokens: int = 10
-) -> np.ndarray:
+def find_candidate_pred_tokens(input_ids: np.ndarray, fill_tok: int, max_ngram_size: int = 3, num_pred_tokens: int = 10) -> np.ndarray:
     """find candidate predicted tokens
     code is a numpy-adaptation of the function `find_candidate_pred_tokens` in
     https://github.com/apoorvumang/prompt-lookup-decoding?tab=readme-ov-file
@@ -233,9 +227,7 @@ def pld_spec_decode_inference(
 
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
-    target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, is_tlm=True
-    )
+    target_model = AutoModelForCausalLM.from_pretrained(target_model_name, continuous_batching=continuous_batching, is_tlm=True)
 
     num_devices = len(device_group)
     target_model_qpc_path: str = target_model.compile(
@@ -253,9 +245,7 @@ def pld_spec_decode_inference(
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
-    target_model_session.skip_buffers(
-        set([x for x in target_model_session.output_names if x.endswith("_RetainedState")])
-    )
+    target_model_session.skip_buffers(set([x for x in target_model_session.output_names if x.endswith("_RetainedState")]))
 
     is_cb = full_batch_size is not None
     decode_batch_size = full_batch_size if is_cb else prefill_bsz
@@ -308,9 +298,7 @@ def pld_spec_decode_inference(
         generated_ids[bi].append(input_ids.item())
         tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
         input_len = prompts_tokenized[bi]["position_ids"].max(1).item() + 1
-        tlm_precode_inputs["position_ids"][bi] = np.arange(
-            input_len, input_len + num_speculative_tokens + 1, dtype=np.int64
-        )
+        tlm_precode_inputs["position_ids"][bi] = np.arange(input_len, input_len + num_speculative_tokens + 1, dtype=np.int64)
         # assumes that prefill queue will always be popped from the front
         input_lengths[bi] = input_len
         max_gen_len[bi] -= input_lengths[bi]
@@ -368,18 +356,12 @@ def pld_spec_decode_inference(
         num_tokens_selected = np.ones(decode_batch_size, dtype=np.int64)
         tlm_precode_position_ids = np.full((decode_batch_size, num_speculative_tokens + 1), -1, dtype=np.int64)
         non_empty_valid_indices = ~empty_indices & valid_batch_indices
-        matching = (
-            tlm_precode_inputs["input_ids"][non_empty_valid_indices, 1:] == target_tokens[non_empty_valid_indices, :-1]
-        )  # shape: [non_empty_valid_indices, num_speculative_tokens]
+        matching = tlm_precode_inputs["input_ids"][non_empty_valid_indices, 1:] == target_tokens[non_empty_valid_indices, :-1]  # shape: [non_empty_valid_indices, num_speculative_tokens]
         num_tokens_selected[non_empty_valid_indices] = matching.cumprod(axis=1).sum(axis=1) + 1
         if empty_indices.sum() > 0:
-            tlm_precode_position_ids[empty_indices] = tlm_position_ids[empty_indices] + (
-                tlm_precode_inputs["position_ids"][empty_indices, 0] + 1
-            ).reshape(-1, 1)
+            tlm_precode_position_ids[empty_indices] = tlm_position_ids[empty_indices] + (tlm_precode_inputs["position_ids"][empty_indices, 0] + 1).reshape(-1, 1)
         if non_empty_valid_indices.sum() > 0:
-            tlm_precode_position_ids[non_empty_valid_indices] = tlm_precode_inputs["position_ids"][
-                non_empty_valid_indices
-            ] + num_tokens_selected[non_empty_valid_indices].reshape(-1, 1)
+            tlm_precode_position_ids[non_empty_valid_indices] = tlm_precode_inputs["position_ids"][non_empty_valid_indices] + num_tokens_selected[non_empty_valid_indices].reshape(-1, 1)
         # record accepted tokens
         all_accept[valid_batch_indices] = num_tokens_selected[valid_batch_indices] == num_speculative_tokens + 1
         mean_num_accepted_tokens += num_tokens_selected[valid_batch_indices].mean().item()
@@ -400,9 +382,7 @@ def pld_spec_decode_inference(
             break
         # prepare decode inputs for next decode iteration
         num_valid_batch_indices = valid_batch_indices.sum().item()
-        common_input_ids = target_tokens[valid_batch_indices, num_tokens_selected[valid_batch_indices] - 1].reshape(
-            num_valid_batch_indices, 1
-        )
+        common_input_ids = target_tokens[valid_batch_indices, num_tokens_selected[valid_batch_indices] - 1].reshape(num_valid_batch_indices, 1)
         tlm_precode_inputs["input_ids"][valid_batch_indices, 0] = common_input_ids.flatten()
         tlm_precode_position_ids[~valid_batch_indices] = -1
         tlm_precode_inputs["position_ids"] = tlm_precode_position_ids
@@ -460,9 +440,7 @@ def arg_parse():
     parser.add_argument("--ctx-len", type=int, default=1024, help="Context length")
     parser.add_argument("--prefill-bsz", type=int, default=1, help="Prefill batch size")
     parser.add_argument("--max-ngram-size", type=int, default=3, help="max ngram size")
-    parser.add_argument(
-        "--target-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name"
-    )
+    parser.add_argument("--target-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name")
     parser.add_argument("--full-batch-size", type=int, default=2, help="Full batch size")
     parser.add_argument(
         "--device-group",

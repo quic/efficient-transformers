@@ -48,9 +48,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
     def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs) -> None:
         super().__init__(model, continuous_batching)
         if self.model.__class__.__name__ not in ["QEffMistralForCausalLM", "QEffLlamaForCausalLM"]:
-            raise NotImplementedError(
-                f"Only QEffMistralForCausalLM and QEffLlamaForCausalLM model are supported but get {self.model.__class__.__name__}"
-            )
+            raise NotImplementedError(f"Only QEffMistralForCausalLM and QEffLlamaForCausalLM model are supported but get {self.model.__class__.__name__}")
 
         self.adapter_weights = {}
         self.adapter_configs = {}
@@ -120,9 +118,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
                 self.adapter_weights[adapter_name] = adapter_weight
                 self.adapter_configs[adapter_name] = adapter_config
             else:  # donwload with adapter_model_id
-                self.adapter_weights[adapter_name] = {
-                    k: v.numpy().astype("float16") for k, v in load_peft_weights(adapter_model_id).items()
-                }
+                self.adapter_weights[adapter_name] = {k: v.numpy().astype("float16") for k, v in load_peft_weights(adapter_model_id).items()}
                 self.adapter_configs[adapter_name] = PeftConfig.from_pretrained(adapter_model_id)
 
     def load_adapter(
@@ -150,16 +146,9 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             self.download_adapter(adapter_model_id, adapter_name, adapter_weight, adapter_config)
 
             # starting from the second adapter_name, check if adapters has same target module and rank
-            if list(self.adapter_configs.values())[0] and (
-                self.adapter_configs[adapter_name].target_modules
-                != list(self.adapter_configs.values())[0].target_modules
-            ):
-                raise ValueError(
-                    f"{adapter_name} must have same target_modules as {list(self.adapter_configs.keys())[0]}"
-                )
-            if list(self.adapter_configs.values())[0] and (
-                self.adapter_configs[adapter_name].r != list(self.adapter_configs.values())[0].r
-            ):
+            if list(self.adapter_configs.values())[0] and (self.adapter_configs[adapter_name].target_modules != list(self.adapter_configs.values())[0].target_modules):
+                raise ValueError(f"{adapter_name} must have same target_modules as {list(self.adapter_configs.keys())[0]}")
+            if list(self.adapter_configs.values())[0] and (self.adapter_configs[adapter_name].r != list(self.adapter_configs.values())[0].r):
                 raise ValueError(f"{adapter_name} must have same rank as {list(self.adapter_configs.keys())[0]}")
 
             # set active adapter id to current max if adapter_name is new
@@ -217,16 +206,8 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
                 for lora_name, lora_id in self.active_adapter_to_id.items():
                     if target_module in ["q_proj", "k_proj", "v_proj", "o_proj"]:
-                        a_tensor_list[lora_id] = torch.from_numpy(
-                            self.adapter_weights[lora_name][
-                                f"base_model.model.model.layers.{i}.self_attn.{target_module}.lora_A.weight"
-                            ]
-                        )
-                        b_tensor_list[lora_id] = torch.from_numpy(
-                            self.adapter_weights[lora_name][
-                                f"base_model.model.model.layers.{i}.self_attn.{target_module}.lora_B.weight"
-                            ]
-                        )
+                        a_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f"base_model.model.model.layers.{i}.self_attn.{target_module}.lora_A.weight"])
+                        b_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f"base_model.model.model.layers.{i}.self_attn.{target_module}.lora_B.weight"])
                     else:
                         raise NotImplementedError("Target module not supported!!")
 
@@ -241,15 +222,9 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
                 s_tensor_list[0] = torch.zeros_like(s_tensor_list[1])
 
                 # stack weight tensors
-                stacked_lora_a = (
-                    torch.stack(a_tensor_list, dim=0).unsqueeze(1).transpose(2, 3)
-                )  # <num_loras, 1, in_feature, r>
-                stacked_lora_b = (
-                    torch.stack(b_tensor_list, dim=0).unsqueeze(1).transpose(2, 3)
-                )  # <num_loras, 1, r, out_feature>
-                stacked_lora_s = (
-                    torch.stack(s_tensor_list, dim=0).unsqueeze(1).unsqueeze(2).unsqueeze(3)
-                )  # <num_loras, 1, 1, 1>
+                stacked_lora_a = torch.stack(a_tensor_list, dim=0).unsqueeze(1).transpose(2, 3)  # <num_loras, 1, in_feature, r>
+                stacked_lora_b = torch.stack(b_tensor_list, dim=0).unsqueeze(1).transpose(2, 3)  # <num_loras, 1, r, out_feature>
+                stacked_lora_s = torch.stack(s_tensor_list, dim=0).unsqueeze(1).unsqueeze(2).unsqueeze(3)  # <num_loras, 1, 1, 1>
 
                 # stored weight to corresponding ops
                 if target_module == "q_proj":
@@ -277,9 +252,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         _, transformed = LoraModelInputsTransform.apply(self.model)
 
         self.target_modules_for_all_adapters = list(self.adapter_configs.values())[0].target_modules
-        _, transformed = TargetModulesTransform.apply(
-            self.model, self.target_modules_for_all_adapters, self.lora_rank, len(self.active_adapter_to_id)
-        )
+        _, transformed = TargetModulesTransform.apply(self.model, self.target_modules_for_all_adapters, self.lora_rank, len(self.active_adapter_to_id))
 
         # load_weight to model
         self._load_adapter_weights_to_model()
@@ -298,18 +271,14 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         # initialize the adapter model
         if len(self.active_adapter_to_id) == 0:
-            raise ValueError(
-                "Please use load_adapter() to add at least one adapter; otherwise, refer to QEFFAutoModelForCausalLM for base model usage"
-            )
+            raise ValueError("Please use load_adapter() to add at least one adapter; otherwise, refer to QEFFAutoModelForCausalLM for base model usage")
 
         self._init_adapter_model()
 
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
-        kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
-        )
+        kv_cache_shape = get_padding_shape_from_config(self.model.config, fbs if self.continuous_batching else bs, seq_len)
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(bs, seq_len),
@@ -375,9 +344,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             prompt_to_adapter_mapping = ["base" for _ in range(len(prompts))]
 
         if len(prompt_to_adapter_mapping) != len(prompts):
-            raise RuntimeError(
-                f"Number of prompts should match number of prompt_to_adapter_mapping, got len(prompts) = {len(prompts)}, len(prompt_to_adapter_mapping) = {len(prompt_to_adapter_mapping)}"
-            )
+            raise RuntimeError(f"Number of prompts should match number of prompt_to_adapter_mapping, got len(prompts) = {len(prompts)}, len(prompt_to_adapter_mapping) = {len(prompt_to_adapter_mapping)}")
 
         return QEfficient.cloud_ai_100_exec_kv(
             tokenizer,
@@ -385,7 +352,5 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             prompt=prompts,
             device_id=device_id,
             generation_len=generation_len,
-            prompt_to_lora_id_mapping=[
-                self.active_adapter_to_id[name] if name != "base" else 0 for name in prompt_to_adapter_mapping
-            ],
+            prompt_to_lora_id_mapping=[self.active_adapter_to_id[name] if name != "base" else 0 for name in prompt_to_adapter_mapping],
         )

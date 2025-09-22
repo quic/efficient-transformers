@@ -61,9 +61,7 @@ def run_prefill_on_draft_and_target(
     for i in range(num_chunks):
         chunk_inputs = inputs.copy()
         chunk_inputs["input_ids"] = inputs["input_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
-        chunk_inputs["position_ids"] = inputs["position_ids"][
-            :, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len
-        ]
+        chunk_inputs["position_ids"] = inputs["position_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
 
         tlm_outputs = tlm_session.run(chunk_inputs)
         _ = dlm_session.run(chunk_inputs)
@@ -86,9 +84,7 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert input_len_padded <= ctx_len, (
-        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
-    )
+    assert input_len_padded <= ctx_len, "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
     return input_len_padded
 
 
@@ -135,9 +131,7 @@ def test_spec_decode_inference(
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
     qaic_config = dict(speculative_model_type="target")
-    target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, qaic_config=qaic_config
-    )
+    target_model = AutoModelForCausalLM.from_pretrained(target_model_name, continuous_batching=continuous_batching, qaic_config=qaic_config)
     draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
 
     target_model_qpc_path: str = target_model.compile(
@@ -162,9 +156,7 @@ def test_spec_decode_inference(
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
-    target_model_session.skip_buffers(
-        set([x for x in target_model_session.output_names if x.endswith("_RetainedState")])
-    )
+    target_model_session.skip_buffers(set([x for x in target_model_session.output_names if x.endswith("_RetainedState")]))
     draft_model_session.skip_buffers(set([x for x in draft_model_session.input_names if x.startswith("past_")]))
     draft_model_session.skip_buffers(set([x for x in draft_model_session.output_names if x.endswith("_RetainedState")]))
 
@@ -190,9 +182,7 @@ def test_spec_decode_inference(
     dlm_decode_inputs = dict()
     dlm_decode_inputs["position_ids"] = np.zeros((decode_batch_size, 1), np.int64)
     dlm_decode_inputs["input_ids"] = np.full((decode_batch_size, 1), tokenizer.pad_token_id)
-    dlm_decode_inputs["batch_index"] = np.reshape(
-        np.array(np.arange(decode_batch_size), np.int64), (decode_batch_size, 1)
-    )
+    dlm_decode_inputs["batch_index"] = np.reshape(np.array(np.arange(decode_batch_size), np.int64), (decode_batch_size, 1))
     # mock input key "logits" to store the first batch of output logits
     num_logits_to_keep = num_speculative_tokens + 1
     tlm_precode_inputs = dict(
@@ -230,9 +220,7 @@ def test_spec_decode_inference(
         tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
         input_len = prompts_tokenized[bi]["position_ids"].max(1).item() + 1
         dlm_decode_inputs["position_ids"][bi, 0] = input_len
-        tlm_precode_inputs["position_ids"][bi] = np.arange(
-            input_len, input_len + num_speculative_tokens + 1, dtype=np.int64
-        )
+        tlm_precode_inputs["position_ids"][bi] = np.arange(input_len, input_len + num_speculative_tokens + 1, dtype=np.int64)
         # assumes that prefill queue will always be popped from the front
         input_lengths[bi] = input_len
         max_gen_len[bi] -= input_lengths[bi]
@@ -288,15 +276,8 @@ def test_spec_decode_inference(
             break
         # prepare decode inputs for next decode iteration
         num_valid_batch_indices = valid_batch_indices.sum().item()
-        common_input_ids = target_tokens[valid_batch_indices, num_tokens_selected[valid_batch_indices] - 1].reshape(
-            num_valid_batch_indices, 1
-        )
-        common_position_ids = (
-            tlm_precode_inputs["position_ids"][
-                valid_batch_indices, num_tokens_selected[valid_batch_indices] - 1
-            ].reshape(num_valid_batch_indices, 1)
-            + 1
-        )
+        common_input_ids = target_tokens[valid_batch_indices, num_tokens_selected[valid_batch_indices] - 1].reshape(num_valid_batch_indices, 1)
+        common_position_ids = tlm_precode_inputs["position_ids"][valid_batch_indices, num_tokens_selected[valid_batch_indices] - 1].reshape(num_valid_batch_indices, 1) + 1
         if all_accept.any():
             # all_accept input_ids
             input_ids = np.zeros((decode_batch_size, 2), dtype=np.int64)
@@ -312,9 +293,7 @@ def test_spec_decode_inference(
             dlm_decode_inputs["input_ids"][valid_batch_indices] = common_input_ids
             dlm_decode_inputs["position_ids"][valid_batch_indices] = common_position_ids
         tlm_precode_inputs["input_ids"][valid_batch_indices, 0] = common_input_ids.flatten()
-        tlm_precode_inputs["position_ids"][valid_batch_indices] += num_tokens_selected[valid_batch_indices].reshape(
-            num_valid_batch_indices, 1
-        )
+        tlm_precode_inputs["position_ids"][valid_batch_indices] += num_tokens_selected[valid_batch_indices].reshape(num_valid_batch_indices, 1)
     end = perf_counter()
     decode_end = end - decode_start
     e2e_end = end - e2e_start
@@ -334,17 +313,13 @@ def test_spec_decode_inference(
     for prompt, generation in zip(prompts, batch_decode):
         print(f"{prompt=} {generation=}")
     # validation check
-    assert mean_num_accepted_tokens == float(num_speculative_tokens + 1), (
-        f"mean number of accepted tokens is {mean_num_accepted_tokens} but should be {num_speculative_tokens + 1}"
-    )
+    assert mean_num_accepted_tokens == float(num_speculative_tokens + 1), f"mean number of accepted tokens is {mean_num_accepted_tokens} but should be {num_speculative_tokens + 1}"
     del target_model_session
     del draft_model_session
     generated_ids = np.asarray(generated_ids[0]).flatten()
     gen_len = generated_ids.shape[0]
     exec_info = draft_model.generate(tokenizer, Constants.INPUT_STR)
-    cloud_ai_100_tokens = exec_info.generated_ids[0][
-        :gen_len
-    ]  # Because we always run for single input and single batch size
+    cloud_ai_100_tokens = exec_info.generated_ids[0][:gen_len]  # Because we always run for single input and single batch size
     all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
     assert os.path.isfile(os.path.join(os.path.dirname(target_model_qpc_path), "qconfig.json"))

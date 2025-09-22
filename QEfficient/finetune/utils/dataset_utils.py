@@ -19,9 +19,7 @@ from QEfficient.finetune.utils.helper import get_world_size
 from QEfficient.finetune.utils.logging_utils import logger
 
 
-def get_preprocessed_dataset(
-    tokenizer, dataset_config, split: str = "train", context_length: int = None
-) -> torch.utils.data.Dataset:
+def get_preprocessed_dataset(tokenizer, dataset_config, split: str = "train", context_length: int = None) -> torch.utils.data.Dataset:
     if dataset_config.dataset not in DATASET_PREPROC:
         logger.raise_error(f"{dataset_config.dataset} is not (yet) implemented", NotImplementedError)
 
@@ -57,9 +55,7 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
                     shuffle=False,
                 )
         else:
-            kwargs["sampler"] = torch.utils.data.DistributedSampler(
-                dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=False
-            )
+            kwargs["sampler"] = torch.utils.data.DistributedSampler(dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=False)
             kwargs["batch_size"] = batch_size
             kwargs["drop_last"] = False
     else:

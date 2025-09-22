@@ -104,10 +104,6 @@ if __name__ == "__main__":
     for i in range(0, len(compiler_options)):
         if compiler_options[i].startswith("--"):
             key = compiler_options[i].lstrip("-").replace("-", "_")
-            value = (
-                compiler_options[i + 1]
-                if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-")
-                else True
-            )
+            value = compiler_options[i + 1] if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-") else True
             compiler_options_dict[key] = value
     QEfficient.compile(**args.__dict__, **compiler_options_dict)

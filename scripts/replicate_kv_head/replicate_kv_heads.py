@@ -19,9 +19,7 @@ from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8D
 from QEfficient.utils._utils import login_and_download_hf_lm
 
 
-def duplicate_weights_for_linear_layer(
-    layer: torch.nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
-):
+def duplicate_weights_for_linear_layer(layer: torch.nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int):
     new_kv_heads = repeat * orig_kv_heads
     if isinstance(layer, (WQLinear_GEMM, QuantLinearGPTQ)):
         if head_dim % 8 != 0:
@@ -36,9 +34,7 @@ def duplicate_weights_for_linear_layer(
             )
 
         # Duplication of quantized weights
-        layer.qweight.data = torch.repeat_interleave(
-            layer.qweight.data.view(hidden_size, orig_kv_heads, head_dim // 8), repeat, 1
-        ).view(hidden_size, (new_kv_heads * head_dim) // 8)
+        layer.qweight.data = torch.repeat_interleave(layer.qweight.data.view(hidden_size, orig_kv_heads, head_dim // 8), repeat, 1).view(hidden_size, (new_kv_heads * head_dim) // 8)
         # Duplication of quantized zero points
         layer.qzeros.data = torch.repeat_interleave(
             layer.qzeros.data.view(hidden_size // layer.group_size, orig_kv_heads, head_dim // 8),
@@ -54,21 +50,13 @@ def duplicate_weights_for_linear_layer(
         layer.out_features = layer.out_features * repeat
 
     elif isinstance(layer, FP8DeQuantLinear):
-        layer.weight.data = torch.repeat_interleave(
-            layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
-        ).view(new_kv_heads * head_dim, hidden_size)
-        layer.weight_scale.data = torch.repeat_interleave(
-            layer.weight_scale.data.view(orig_kv_heads, head_dim), repeat, 0
-        ).view(new_kv_heads * head_dim, -1)
+        layer.weight.data = torch.repeat_interleave(layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0).view(new_kv_heads * head_dim, hidden_size)
+        layer.weight_scale.data = torch.repeat_interleave(layer.weight_scale.data.view(orig_kv_heads, head_dim), repeat, 0).view(new_kv_heads * head_dim, -1)
 
     else:
-        layer.weight.data = torch.repeat_interleave(
-            layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
-        ).view(new_kv_heads * head_dim, hidden_size)
+        layer.weight.data = torch.repeat_interleave(layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0).view(new_kv_heads * head_dim, hidden_size)
         if layer.bias is not None:
-            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(
-                new_kv_heads * head_dim
-            )
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(new_kv_heads * head_dim)
 
 
 def replicate_kv_heads(
@@ -154,9 +142,7 @@ def replicate_kv_heads(
     print("Modified:", tokenizer.batch_decode(mod_tokens))
 
     if not torch.all(orig_tokens == mod_tokens):
-        raise RuntimeError(
-            "Something went wrong while duplicating KV heads weights, output token don't match after modification"
-        )
+        raise RuntimeError("Something went wrong while duplicating KV heads weights, output token don't match after modification")
 
     # Export the modified model
     q_model = QEFFAutoModelForCausalLM(model, continuous_batching=(True if full_batch_size else False))

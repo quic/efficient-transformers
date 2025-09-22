@@ -28,13 +28,9 @@ if so_folder_path.is_dir():
         import InferenceSetIOBuffer  # noqa: E402
     except ImportError:
         logger.error("Error importing InferenceSetIOBuffer Module")
-        raise ImportError(
-            "Could not import `InfereceSetIoBuffer` executable, Please refer `examples/cpp_execution/README.md` file for building compiling cpp files."
-        )
+        raise ImportError("Could not import `InfereceSetIoBuffer` executable, Please refer `examples/cpp_execution/README.md` file for building compiling cpp files.")
 else:
-    raise FileNotFoundError(
-        "Please follow `examples/cpp_execution/README.md` instructions to first compile the cpp files"
-    )
+    raise FileNotFoundError("Please follow `examples/cpp_execution/README.md` instructions to first compile the cpp files")
 
 
 def main(
@@ -96,21 +92,15 @@ def main(
     if full_batch_size is not None:
         raise RuntimeError("Continuous batching will be supported in future, please rerun without continuous batching.")
 
-    qpc_dir_path = get_qpc_dir_path(
-        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
-    )
+    qpc_dir_path = get_qpc_dir_path(model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size)
     if qpc_exists(qpc_dir_path):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(
-            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size
-        )
+        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size)
         _ = QEfficient.compile(
             onnx_path=onnx_model_path,
-            qpc_path=os.path.dirname(
-                qpc_dir_path
-            ),  # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
+            qpc_path=os.path.dirname(qpc_dir_path),  # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
             num_cores=num_cores,
             batch_size=batch_size,
             prompt_len=prompt_len,
@@ -155,9 +145,7 @@ def cloud_ai_100_exec_kv_cpp(
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
 
     # ********* CPP Calling ********
-    InferenceSetIOBuffer.generatePrompt(
-        tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_id
-    )
+    InferenceSetIOBuffer.generatePrompt(tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_id)
 
 
 def tokenize_for_prefill(prompt, tokenizer):
@@ -181,13 +169,9 @@ def tokenize_decode_output(tokenizer, generated_ids, prompt):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Inference command, the model will be downloaded from HF, optimized, compiled, executed on Cloud AI 100"
-    )
+    parser = argparse.ArgumentParser(description="Inference command, the model will be downloaded from HF, optimized, compiled, executed on Cloud AI 100")
     parser.add_argument("--model-name", "--model_name", required=True, help="HF Model card name/id")
-    parser.add_argument(
-        "--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files"
-    )
+    parser.add_argument("--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files")
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",
@@ -195,25 +179,17 @@ if __name__ == "__main__":
         required=False,
         help="Cache dir to store HF Downloads",
     )
-    parser.add_argument(
-        "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
-    )
+    parser.add_argument("--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models")
     parser.add_argument("--batch-size", "--batch_size", type=int, default=1, help="Batch size for text generation")
-    parser.add_argument(
-        "--prompt-len", "--prompt_len", default=32, type=int, help="Sequence length for text generation."
-    )
+    parser.add_argument("--prompt-len", "--prompt_len", default=32, type=int, help="Sequence length for text generation.")
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
-    parser.add_argument(
-        "--mxfp6", action="store_true", help="Compress constant MatMul weights to MXFP6 E2M3, default is no compression"
-    )
+    parser.add_argument("--mxfp6", action="store_true", help="Compress constant MatMul weights to MXFP6 E2M3, default is no compression")
     parser.add_argument(
         "--mxint8",
         action="store_true",
         help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
     )
-    parser.add_argument(
-        "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
-    )
+    parser.add_argument("--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100")
     parser.add_argument(
         "--device_group",
         "--device-group",

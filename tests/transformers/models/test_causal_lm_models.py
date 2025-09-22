@@ -174,15 +174,11 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     is_tlm = False if num_speculative_tokens is None else True
-    qeff_model = QEFFAutoModelForCausalLM(
-        copy.deepcopy(model_hf), is_tlm=is_tlm, pretrained_model_name_or_path=model_name
-    )
+    qeff_model = QEFFAutoModelForCausalLM(copy.deepcopy(model_hf), is_tlm=is_tlm, pretrained_model_name_or_path=model_name)
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
     if model_name not in ModelConfig.SWIFTKV_MODELS:
-        assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-            "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-        )
+        assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
@@ -204,17 +200,11 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
-    cloud_ai_100_tokens = exec_info.generated_ids[0][
-        :, :gen_len
-    ]  # Because we always run for single input and single batch size
+    cloud_ai_100_tokens = exec_info.generated_ids[0][:, :gen_len]  # Because we always run for single input and single batch size
     if prefill_only:
-        assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
-            "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
-        )
+        assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
     else:
-        assert (ort_tokens == cloud_ai_100_tokens).all(), (
-            "Tokens don't match for ONNXRT output and Cloud AI 100 output."
-        )
+        assert (ort_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
         assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     if prefill_only is not None:
         return
@@ -236,9 +226,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
         pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
-    qeff_model = QEFFAutoModelForCausalLM(
-        model_hf, continuous_batching=True, is_tlm=is_tlm, pretrained_model_name_or_path=model_name
-    )
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True, is_tlm=is_tlm, pretrained_model_name_or_path=model_name)
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
@@ -259,19 +247,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
     if model_name in ModelConfig.SWIFTKV_MODELS:
-        assert all(
-            [
-                all(ort_token[:24] == cloud_token[:24])
-                for ort_token, cloud_token in zip(ort_tokens, exec_info_fbs.generated_ids)
-            ]
-        ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+        assert all([all(ort_token[:24] == cloud_token[:24]) for ort_token, cloud_token in zip(ort_tokens, exec_info_fbs.generated_ids)]), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
     else:
-        assert all(
-            [
-                all(pt_token[:24] == cloud_token[:24])
-                for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
-            ]
-        ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+        assert all([all(pt_token[:24] == cloud_token[:24]) for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)]), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
 
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
@@ -287,9 +265,7 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     # Again loading model since the export moves model to meta device
     model, _ = load_causal_lm_model(model_name, n_layer=1)
     qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
-    _, old_api_onnx_model_path = qualcomm_efficient_converter(
-        model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer
-    )
+    _, old_api_onnx_model_path = qualcomm_efficient_converter(model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer)
 
     api_runner = ApiRunner(
         batch_size=1,
@@ -303,9 +279,7 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     new_api_ort_tokens = api_runner.run_kv_model_on_ort(new_api_onnx_model_path)
     old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
 
-    assert (new_api_ort_tokens == old_api_ort_tokens).all(), (
-        "New API output does not match old API output for ONNX export function"
-    )
+    assert (new_api_ort_tokens == old_api_ort_tokens).all(), "New API output does not match old API output for ONNX export function"
 
 
 @pytest.mark.on_qaic
@@ -355,9 +329,7 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, custom_c
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name, enable_qnn=True, qnn_config=qnn_config_json_path, config=config
-    )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, enable_qnn=True, qnn_config=qnn_config_json_path, config=config)
 
 
 @pytest.mark.nightly
@@ -375,9 +347,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
     n_layer = get_custom_n_layers(model_name)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=n_layer, enable_qnn=True, qnn_config=qnn_config_json_path
-    )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, enable_qnn=True, qnn_config=qnn_config_json_path)
 
 
 @pytest.mark.regular
@@ -410,9 +380,7 @@ def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     n_layer = get_custom_n_layers(model_name)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=n_layer, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS
-    )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS)
 
 
 @pytest.mark.on_qaic
@@ -438,9 +406,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_qnn():
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, prompt_len=prompt_len, enable_qnn=True, qnn_config=qnn_config_json_path
-    )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len, enable_qnn=True, qnn_config=qnn_config_json_path)
 
 
 @pytest.mark.on_qaic
@@ -461,10 +427,6 @@ def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100_qnn():
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name, n_layer=n_layer, prefill_only=True, enable_qnn=True, qnn_config=qnn_config_json_path
-    )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, prefill_only=True, enable_qnn=True, qnn_config=qnn_config_json_path)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name, n_layer=n_layer, prefill_only=False, enable_qnn=True, qnn_config=qnn_config_json_path
-    )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, prefill_only=False, enable_qnn=True, qnn_config=qnn_config_json_path)

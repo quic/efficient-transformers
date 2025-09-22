@@ -45,9 +45,7 @@ class QEffMixtralRotaryEmbedding(MixtralRotaryEmbedding):
     def __init__(self, config: MixtralConfig, device=None):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
+        self._set_cos_sin_cache(seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype())
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -116,9 +114,7 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+        attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -151,11 +147,7 @@ class QEffMixtralAttention(MixtralAttention):
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
+                raise ValueError(f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} for auto-regressive decoding with k/v caching, please make sure to initialize the attention class with a layer index.")
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
@@ -218,9 +210,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
 
-        final_hidden_states = torch.zeros(
-            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
-        )
+        final_hidden_states = torch.zeros((batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device)
 
         # One hot encode the selected experts to create an expert mask
         # this will be used to easily index which expert is going to be sollicitated
@@ -230,9 +220,11 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
             expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            current_hidden_states = expert_layer(hidden_states) * (((routing_weights * expert_mask_tr).sum(1))[:, None])
+            current_hidden_states = expert_layer(hidden_states) * ((routing_weights * expert_mask_tr).sum(1)[:, None])
             current_hidden_states = torch.where(
-                (routing_weights * expert_mask_tr).sum(1).to(torch.bool)[:, None],
+                (routing_weights * expert_mask_tr)
+                .sum(1)
+                .to(torch.bool)[:, None],
                 current_hidden_states,
                 torch.tensor(0.0),
             )
@@ -350,12 +342,8 @@ class QEffMixtralModel(MixtralModel):
         **flash_attn_kwargs,
     ) -> Union[Tuple, MoeModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_router_logits = (
-            output_router_logits if output_router_logits is not None else self.config.output_router_logits
-        )
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_router_logits = output_router_logits if output_router_logits is not None else self.config.output_router_logits
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -373,16 +361,12 @@ class QEffMixtralModel(MixtralModel):
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
+            cache_position = torch.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device)
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(
-            position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
-        )
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window)
 
         hidden_states = inputs_embeds
 
@@ -492,13 +476,9 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
         ```"""
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_router_logits = (
-            output_router_logits if output_router_logits is not None else self.config.output_router_logits
-        )
+        output_router_logits = output_router_logits if output_router_logits is not None else self.config.output_router_logits
 
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)

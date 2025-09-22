@@ -42,14 +42,10 @@ class InputHandler:
         self.full_batch_size = full_batch_size
         self.config = config
         self.n_layer = get_num_layers_from_config(config)
-        self.padding_shape = get_padding_shape_from_config(
-            config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
-        )
+        self.padding_shape = get_padding_shape_from_config(config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len)
 
         self.is_chunked_attention = get_sliding_window_layers(config)
-        self.global_shape, self.sliding_shape = get_sliding_window_shapes(
-            config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
-        )
+        self.global_shape, self.sliding_shape = get_sliding_window_shapes(config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len)
 
     def prepare_pytorch_inputs(self):
         """
@@ -72,8 +68,7 @@ class InputHandler:
         inputs["input_ids"] = torch.concat(
             [
                 input_ids,
-                torch.ones((batch_size, self.prompt_len - input_len), dtype=torch.int64)
-                * (self.tokenizer.pad_token_id),
+                torch.ones((batch_size, self.prompt_len - input_len), dtype=torch.int64) * (self.tokenizer.pad_token_id),
             ],
             1,
         )
@@ -129,9 +124,7 @@ class InputHandler:
             updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
             updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
 
-        updated_inputs["past_key_values"] = tuple(
-            [(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]]
-        )
+        updated_inputs["past_key_values"] = tuple([(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]])
 
         return updated_inputs
 
@@ -220,9 +213,7 @@ class InputHandler:
 
 
 class InputHandlerVLM:
-    def __init__(
-        self, batch_size, config, image, conversation, processor, prompt, prompt_len, ctx_len, max_gen_len, n_layer
-    ):
+    def __init__(self, batch_size, config, image, conversation, processor, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
         self.ctx_len = ctx_len
         self.prompt_len = prompt_len
         self.max_gen_len = max_gen_len
@@ -299,27 +290,17 @@ class InputHandlerVLM:
             inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
 
-        vision_inputs = {
-            k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
-        }
+        vision_inputs = {k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}}
 
         for i in range(num_hidden_layers):
             if hasattr(txt_cfg, "cross_attention_layers") and i in cross_attention_layers:
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
-                inputs["past_key." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float32
-                )
-                inputs["past_value." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float32
-                )
+                inputs["past_key." + str(i)] = np.zeros((self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float32)
+                inputs["past_value." + str(i)] = np.zeros((self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float32)
             else:
-                inputs["past_key." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
-                )
-                inputs["past_value." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
-                )
+                inputs["past_key." + str(i)] = np.zeros((self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32)
+                inputs["past_value." + str(i)] = np.zeros((self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32)
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         return vision_inputs, lang_inputs
 
@@ -343,12 +324,8 @@ class InputHandlerVLM:
         outputs = {}
         outputs["past_key_values"] = present_key_values
         outputs["logits"] = ort_outputs["logits"]
-        outputs["pixel_values_RetainedState"] = (
-            ort_outputs["pixel_values_RetainedState"] if "pixel_values_RetainedState" in ort_outputs else None
-        )
-        outputs["image_features_RetainedState"] = (
-            ort_outputs["image_features_RetainedState"] if "image_features_RetainedState" in ort_outputs else None
-        )
+        outputs["pixel_values_RetainedState"] = ort_outputs["pixel_values_RetainedState"] if "pixel_values_RetainedState" in ort_outputs else None
+        outputs["image_features_RetainedState"] = ort_outputs["image_features_RetainedState"] if "image_features_RetainedState" in ort_outputs else None
         return outputs
 
     def update_vlm_ort_inputs(self, inputs, ort_outputs):
@@ -375,9 +352,7 @@ class InputHandlerVLM:
 
         if "cross_attention_mask" in inputs.keys():
             bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
-            updated_inputs["cross_attention_mask"] = torch.ones(
-                (bs, 1, num_images, img_tiles), dtype=torch.int64
-            ).numpy()
+            updated_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
 
         for k, v in inputs.items():
             if k not in updated_inputs.keys():
@@ -450,16 +425,10 @@ class InputHandlerInternVL(InputHandlerVLM):
             inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
 
-        vision_inputs = {
-            k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
-        }
+        vision_inputs = {k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}}
 
         for i in range(num_hidden_layers):
-            inputs["past_key." + str(i)] = np.zeros(
-                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
-            )
-            inputs["past_value." + str(i)] = np.zeros(
-                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
-            )
+            inputs["past_key." + str(i)] = np.zeros((self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32)
+            inputs["past_value." + str(i)] = np.zeros((self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32)
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         return vision_inputs, lang_inputs

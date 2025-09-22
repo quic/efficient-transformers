@@ -65,13 +65,9 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
 
     torch_device = torch.device(train_config.device)
     num_available_devices = getattr(torch, torch_device.type).device_count()
-    assert get_world_size() * train_config.num_pp_stages <= num_available_devices, (
-        "Number of devices required should be less than or equal to total available devices."
-    )
+    assert get_world_size() * train_config.num_pp_stages <= num_available_devices, "Number of devices required should be less than or equal to total available devices."
     if train_config.enable_pp:
-        assert train_config.num_pp_stages > 1, (
-            f"For pipeline parallelism, num_pp_stages should be greater than 1. Got {train_config.num_pp_stages}"
-        )
+        assert train_config.num_pp_stages > 1, f"For pipeline parallelism, num_pp_stages should be greater than 1. Got {train_config.num_pp_stages}"
 
     if not train_config.enable_ddp:
         return
@@ -102,9 +98,7 @@ def setup_seeds(seed: int) -> None:
     np.random.seed(seed)
 
 
-def load_model_and_tokenizer(
-    train_config: TrainConfig, dataset_config: Any, **kwargs
-) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
+def load_model_and_tokenizer(train_config: TrainConfig, dataset_config: Any, **kwargs) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
     """Load the pre-trained model and tokenizer from Hugging Face.
 
     Args:
@@ -154,9 +148,7 @@ def load_model_and_tokenizer(
             torch_dtype=torch.float16,
             device_map=device_map,
         )
-    tokenizer = AutoTokenizer.from_pretrained(
-        train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
-    )
+    tokenizer = AutoTokenizer.from_pretrained(train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name)
     if not tokenizer.pad_token_id:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
@@ -178,9 +170,7 @@ def load_model_and_tokenizer(
         if hasattr(model, "supports_gradient_checkpointing") and model.supports_gradient_checkpointing:
             model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": True})
         else:
-            logger.raise_error(
-                "Given model doesn't support gradient checkpointing. Please disable it and run it.", RuntimeError
-            )
+            logger.raise_error("Given model doesn't support gradient checkpointing. Please disable it and run it.", RuntimeError)
 
     model = apply_peft(model, train_config, **kwargs)
 
@@ -257,9 +247,7 @@ def setup_dataloaders(
         else:
             logger.log_rank_zero(f"Number of Validation Set Batches loaded = {len(eval_dataloader)}")
 
-        longest_seq_length, _ = get_longest_seq_length(
-            torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
-        )
+        longest_seq_length, _ = get_longest_seq_length(torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset]))
     else:
         longest_seq_length, _ = get_longest_seq_length(train_dataloader.dataset)
 
@@ -300,11 +288,7 @@ def main(**kwargs) -> None:
 
     # Create DataLoaders for the training and validation dataset
     train_dataloader, eval_dataloader, longest_seq_length = setup_dataloaders(train_config, dataset_config, tokenizer)
-    logger.log_rank_zero(
-        f"The longest sequence length in the train data is {longest_seq_length}, "
-        f"passed context length is {train_config.context_length} and overall model's context length is "
-        f"{model.config.max_position_embeddings}"
-    )
+    logger.log_rank_zero(f"The longest sequence length in the train data is {longest_seq_length}, passed context length is {train_config.context_length} and overall model's context length is {model.config.max_position_embeddings}")
     if not train_config.enable_pp:
         model.to(train_config.device)
     optimizer = optim.AdamW(

@@ -119,8 +119,9 @@ LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 # Gemma3 Constant
 GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
 
-#Wav2Vec2 Constant
+# Wav2Vec2 Constant
 WAV2VEC2_MAX_SEQ_LEN = 480000
+
 
 class Constants:
     # Export Constants.
@@ -144,9 +145,7 @@ class Constants:
     }
     SAMPLER_INPUTS = SAMPLER_OPS | {"last_accepted_output_tokens"}
     SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK apps version.
-    SDK_PLATFORM_XML = (
-        "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.
-    )
+    SDK_PLATFORM_XML = "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.
 
 
 @dataclass

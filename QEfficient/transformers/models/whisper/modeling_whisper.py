@@ -81,9 +81,7 @@ class QEffWhisperAttention(WhisperAttention):
 
                 # Select old or new image KV states based on q_len
                 key_states = torch.where(input_features.shape[2] == torch.tensor(1), key_states_old, key_states_new)
-                value_states = torch.where(
-                    input_features.shape[2] == torch.tensor(1), value_states_old, value_states_new
-                )
+                value_states = torch.where(input_features.shape[2] == torch.tensor(1), value_states_old, value_states_new)
 
                 past_key_value.key_cache[self.layer_idx] = key_states
                 past_key_value.value_cache[self.layer_idx] = value_states
@@ -93,9 +91,7 @@ class QEffWhisperAttention(WhisperAttention):
                 value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
                 if past_key_value is not None:
                     cache_kwargs = {"position_ids": position_ids_layer}
-                    key_states, value_states = past_key_value.update(
-                        key_states, value_states, self.layer_idx, cache_kwargs
-                    )
+                    key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
         else:
             # self_attention Encoder
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
@@ -106,29 +102,19 @@ class QEffWhisperAttention(WhisperAttention):
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3))
 
         if tuple(attn_weights.size()) != (bsz, self.num_heads, tgt_len, src_len):
-            raise ValueError(
-                f"Attention weights should be of size {(bsz, self.num_heads, tgt_len, src_len)}, but is"
-                f" {attn_weights.size()}"
-            )
+            raise ValueError(f"Attention weights should be of size {(bsz, self.num_heads, tgt_len, src_len)}, but is {attn_weights.size()}")
 
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, tgt_len, src_len):
-                raise ValueError(
-                    f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}"
-                )
+                raise ValueError(f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}")
             # updated to use torch.where, to prevent overflow in fp16 computation
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
         if layer_head_mask is not None:
             if layer_head_mask.size() != (self.num_heads,):
-                raise ValueError(
-                    f"Head mask for a single layer should be of size {(self.num_heads,)}, but is"
-                    f" {layer_head_mask.size()}"
-                )
+                raise ValueError(f"Head mask for a single layer should be of size {(self.num_heads,)}, but is {layer_head_mask.size()}")
             attn_weights = layer_head_mask.view(1, -1, 1, 1) * attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
@@ -136,10 +122,7 @@ class QEffWhisperAttention(WhisperAttention):
         attn_output = torch.matmul(attn_weights, value_states)
 
         if tuple(attn_output.size()) != (bsz, self.num_heads, tgt_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.num_heads, tgt_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
+            raise ValueError(f"`attn_output` should be of size {(bsz, self.num_heads, tgt_len, self.head_dim)}, but is {attn_output.size()}")
 
         attn_output = attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim)
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -312,9 +295,7 @@ class QEffWhisperEncoder(WhisperEncoder):
                 Torch.tensor to give shape of cross_attention_values
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         inputs_embeds = nn.functional.gelu(self.conv1(input_features))
         inputs_embeds = nn.functional.gelu(self.conv2(inputs_embeds))
@@ -330,9 +311,7 @@ class QEffWhisperEncoder(WhisperEncoder):
 
         # check if head_mask has a correct number of layers specified if desired
         if head_mask is not None:
-            assert head_mask.size()[0] == (len(self.layers)), (
-                f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
-            )
+            assert head_mask.size()[0] == (len(self.layers)), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
 
         for idx, encoder_layer in enumerate(self.layers):
             if output_hidden_states:
@@ -454,9 +433,7 @@ class QEffWhisperDecoder(WhisperDecoder):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -481,11 +458,7 @@ class QEffWhisperDecoder(WhisperDecoder):
             if not isinstance(past_key_values, Cache):
                 return_legacy_cache = True
                 past_key_values = QEffEncoderDecoderCache.from_legacy_cache(past_key_values)
-                logger.warning_once(
-                    "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
-                    "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
-                    "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
-                )
+                logger.warning_once("We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)")
 
         if cache_position is None:
             cache_position = position_ids
@@ -515,10 +488,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         # check if head_mask/cross_attn_head_mask has a correct number of layers specified if desired
         for attn_mask, mask_name in zip([head_mask, cross_attn_head_mask], ["head_mask", "cross_attn_head_mask"]):
             if attn_mask is not None:
-                assert attn_mask.size()[0] == (len(self.layers)), (
-                    f"The `{mask_name}` should be specified for {len(self.layers)} layers, but it is for"
-                    f" {head_mask.size()[0]}."
-                )
+                assert attn_mask.size()[0] == (len(self.layers)), f"The `{mask_name}` should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
 
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
@@ -559,11 +529,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         if return_legacy_cache:
             next_cache = next_cache.to_legacy_cache()
         if not return_dict:
-            return tuple(
-                v
-                for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
-                if v is not None
-            )
+            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions] if v is not None)
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
@@ -613,9 +579,7 @@ class QEffWhisperDecoder(WhisperDecoder):
                 mask_length = attention_mask.shape[-1]
                 padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
                 padding_mask = padding_mask == 0
-                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
-                    padding_mask, min_dtype
-                )
+                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(padding_mask, min_dtype)
             else:
                 causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
 
@@ -650,9 +614,7 @@ class QEffWhisperModel(WhisperModel):
         cache_position=None,
     ):
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -796,11 +758,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         for i in range(num_layers):
             for self_cross in ["self", "cross"]:
                 for kv in ["key", "value"]:
-                    inputs["past_key_values"][i].append(
-                        torch.zeros(
-                            kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32
-                        )
-                    )
+                    inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32))
 
         return inputs
 
@@ -853,9 +811,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         for i in range(num_layers):
             for self_cross in ["self", "cross"]:
                 for kv in ["key", "value"]:
-                    dynamic_axes[f"past_{kv}_{self_cross}.{i}"] = (
-                        pkv_self_dynamic_axes if self_cross == "self" else pkv_cross_dynamic_axes
-                    )
+                    dynamic_axes[f"past_{kv}_{self_cross}.{i}"] = pkv_self_dynamic_axes if self_cross == "self" else pkv_cross_dynamic_axes
 
         return dynamic_axes
 

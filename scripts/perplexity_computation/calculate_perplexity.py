@@ -161,9 +161,7 @@ def to_torch(inputs):
     return {k: torch.from_numpy(v) if isinstance(v, np.ndarray) else v for k, v in inputs.items()}
 
 
-def torch_perplexity(
-    test_data_loader, batch_size, inference_session, loss, log_file, cnt, prompt_len, ctx_len, model_name
-):
+def torch_perplexity(test_data_loader, batch_size, inference_session, loss, log_file, cnt, prompt_len, ctx_len, model_name):
     loss_list = []
     for inp_ids, attn_mask in tqdm(test_data_loader):
         loop_s = time.time()
@@ -199,9 +197,7 @@ def torch_perplexity(
             cnt += 1
 
         loop_time = time.time() - loop_s
-        logger.info(
-            f"E2E Sample Time: {(loop_time) / batch_size:.4f}s\t E2E TOKENS/S : {((ctx_len - prompt_len) * batch_size) / loop_time:.2f}"
-        )
+        logger.info(f"E2E Sample Time: {(loop_time) / batch_size:.4f}s\t E2E TOKENS/S : {((ctx_len - prompt_len) * batch_size) / loop_time:.2f}")
 
         del outputs
 
@@ -209,9 +205,7 @@ def torch_perplexity(
 
 
 # 3. Perplexity Calculation
-def calculate_perplexity(
-    data_loader, inference_session, ctx_len, prompt_len, model_type, batch_size, log_file, model_name
-):
+def calculate_perplexity(data_loader, inference_session, ctx_len, prompt_len, model_type, batch_size, log_file, model_name):
     loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
     total_loss = 0
     total_tokens = 0
@@ -226,9 +220,7 @@ def calculate_perplexity(
         is_torch = True
 
     if is_torch:
-        loss_list = torch_perplexity(
-            data_loader, batch_size, inference_session, loss_fct, log_file, cnt, prompt_len, ctx_len, model_name
-        )
+        loss_list = torch_perplexity(data_loader, batch_size, inference_session, loss_fct, log_file, cnt, prompt_len, ctx_len, model_name)
         avg_loss = torch.stack(loss_list).mean()
         perplexity = np.exp(avg_loss)
         return perplexity, avg_loss
@@ -272,9 +264,7 @@ def calculate_perplexity(
                 input_names, input_shapes, output_names = inference_session._input_output_specs()
                 for i, iname in enumerate(input_names):
                     if "past" in iname:
-                        inputs[iname] = np.zeros(
-                            (1, input_shapes[i][1], prompt_len, input_shapes[i][3]), dtype="float32"
-                        )
+                        inputs[iname] = np.zeros((1, input_shapes[i][1], prompt_len, input_shapes[i][3]), dtype="float32")
                 cache_index += 1
 
             for token in generate_tokens(ctx_len, input_len, cache_index, model_type):
@@ -299,9 +289,7 @@ def calculate_perplexity(
 
                 if not is_qaic:
                     for i, iname in enumerate(input_names):
-                        if f"{iname}_RetainedState" in outputs.keys() and not (
-                            f"{iname}_RetainedState" == "attention_mask_RetainedState"
-                        ):
+                        if f"{iname}_RetainedState" in outputs.keys() and not (f"{iname}_RetainedState" == "attention_mask_RetainedState"):
                             inputs[iname] = np.concatenate(
                                 (
                                     outputs[f"{iname}_RetainedState"],
@@ -331,9 +319,7 @@ def calculate_perplexity(
             cnt += 1
 
             loop_time = time.time() - loop_s
-            logger.info(
-                f"e2e sample time: {(loop_time) / batch_size:.4f}s\t e2e tokens/s : {((ctx_len - prompt_len) * batch_size) / loop_time:.2f}"
-            )
+            logger.info(f"e2e sample time: {(loop_time) / batch_size:.4f}s\t e2e tokens/s : {((ctx_len - prompt_len) * batch_size) / loop_time:.2f}")
 
     avg_loss = total_loss / total_tokens
     perplexity = np.exp(avg_loss)
@@ -344,9 +330,7 @@ def calculate_perplexity(
 def main():
     parser = argparse.ArgumentParser(description="Calculate perplexity for ONNX or QPC models")
     parser.add_argument("--model_path", required=False, help="Path to ONNX or QPC model")
-    parser.add_argument(
-        "--model_type", choices=["onnx", "qpc", "torch"], required=True, help="Type of model (onnx or qpc or torch)"
-    )
+    parser.add_argument("--model_type", choices=["onnx", "qpc", "torch"], required=True, help="Type of model (onnx or qpc or torch)")
     parser.add_argument("--model_name", required=True, help="Name of the HuggingFace Model Card Name/tokenizer")
     parser.add_argument("--dataset_name", default="wikitext-2-raw-v1", help="Name of the dataset")
     parser.add_argument("--ctx_len", type=int, default=2048, help="Context length")
@@ -373,9 +357,7 @@ def main():
     start_time = time.time()
 
     # Load data
-    data_loader = WikiTextDataLoader(
-        args.dataset_name, args.model_name, args.ctx_len, args.batch_size, args.stride, args.num_samples
-    )
+    data_loader = WikiTextDataLoader(args.dataset_name, args.model_name, args.ctx_len, args.batch_size, args.stride, args.num_samples)
 
     # Create inference session
     if args.model_type == "onnx":

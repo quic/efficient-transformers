@@ -14,9 +14,7 @@ ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
-def CtxScatterCB(
-    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
-) -> onnxscript.FLOAT:
+def CtxScatterCB(data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
     # Find dims
     batch_size = ops.Gather(ops.Shape(batch_index), [0])
     num_heads = ops.Gather(ops.Shape(data), [1])
@@ -50,16 +48,12 @@ class CtxScatterFuncCB(torch.autograd.Function):
         pass
 
     @staticmethod
-    def symbolic(
-        g: torch.Graph, data: torch.Value, batch_index: torch.Value, position_ids: torch.Value, updates: torch.Value
-    ) -> torch.Value:
+    def symbolic(g: torch.Graph, data: torch.Value, batch_index: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxScatterCB, data, batch_index, position_ids, updates).setTypeAs(data)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
-def CtxScatterCB3D(
-    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
-) -> onnxscript.FLOAT:
+def CtxScatterCB3D(data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
     # Find dims
     batch_size = ops.Gather(ops.Shape(batch_index), [0])
     seq_len = ops.Gather(ops.Shape(position_ids), [1])
@@ -89,16 +83,12 @@ class CtxScatterFuncCB3D(torch.autograd.Function):
         pass
 
     @staticmethod
-    def symbolic(
-        g: torch.Graph, data: torch.Value, batch_index: torch.Value, position_ids: torch.Value, updates: torch.Value
-    ) -> torch.Value:
+    def symbolic(g: torch.Graph, data: torch.Value, batch_index: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxScatterCB3D, data, batch_index, position_ids, updates).setTypeAs(data)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
-def CtxGatherCB(
-    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32
-) -> onnxscript.FLOAT:
+def CtxGatherCB(data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
     batch_size = ops.Gather(ops.Shape(batch_index), [0])
     num_heads = ops.Gather(ops.Shape(data), [1])
     ctx_len = ops.Gather(ops.Shape(data), [2])
@@ -134,9 +124,7 @@ class CtxGatherFuncCB(torch.autograd.Function):
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
-def CtxGatherCB3D(
-    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32
-) -> onnxscript.FLOAT:
+def CtxGatherCB3D(data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
     batch_size = ops.Gather(ops.Shape(batch_index), [0])
     ctx_len = ops.Gather(ops.Shape(data), [1])
 

@@ -17,9 +17,7 @@ config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
-qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config
-)
+qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", kv_offload=True, config=config)
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
@@ -81,9 +79,7 @@ else:
     )
 
     ### IMAGE + TEXT ###
-    image_url = (
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    )
+    image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
 
     messages = [
         {

@@ -63,9 +63,7 @@ class QNN:
         self.prefill_only = prefill_only
         self.qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
         if not self.qnn_sdk_path:
-            raise EnvironmentError(
-                f"QNN_SDK_PATH {self.qnn_sdk_path} is not set. Please set {QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME}"
-            )
+            raise EnvironmentError(f"QNN_SDK_PATH {self.qnn_sdk_path} is not set. Please set {QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME}")
 
         # Handle additional keyword arguments
         for key, value in kwargs.items():
@@ -90,9 +88,7 @@ class QNN:
 
         immutable_param = [param for param in immutable_arg_list if param in ext_arg_value]
         if immutable_param:
-            raise AttributeError(
-                f"Immutable Parameters {immutable_param} found in {ext_arg_key}. Please remove {immutable_param} from {ext_arg_key}"
-            )
+            raise AttributeError(f"Immutable Parameters {immutable_param} found in {ext_arg_key}. Please remove {immutable_param} from {ext_arg_key}")
 
     def parse_qnn_config(self):
         """
@@ -181,9 +177,7 @@ class QNN:
         qnn_compiler_config = {
             "backend_extensions": {
                 "config_file_path": self.create_qnn_compile_backend_json(),
-                "shared_library_path": QnnConstants.QNN_CONTEXT_LIB_NET_RUN_EXTENSIONS.format(
-                    self.qnn_sdk_path, self.qnn_target
-                ),
+                "shared_library_path": QnnConstants.QNN_CONTEXT_LIB_NET_RUN_EXTENSIONS.format(self.qnn_sdk_path, self.qnn_target),
             }
         }
         qnn_compiler_config_json_path = os.path.join(self.qpc_base_path, "qnn_compiler_config.json")
@@ -200,18 +194,12 @@ class QNN:
         Returns:
             :str: Path to compiled ``qpc`` package.
         """
-        if not (
-            self.qnn_config
-            and (QnnConstants.SKIP_QNN_CONVERTER_STEP_STR in self.qnn_config)
-            and self.qnn_config[QnnConstants.SKIP_QNN_CONVERTER_STEP_STR]
-        ):
+        if not (self.qnn_config and (QnnConstants.SKIP_QNN_CONVERTER_STEP_STR in self.qnn_config) and self.qnn_config[QnnConstants.SKIP_QNN_CONVERTER_STEP_STR]):
             converter_cmd = self.converter()
             execute_command("converter", converter_cmd, self.qpc_base_path)
 
         if not os.path.isfile(self.dlc_model_path):
-            raise FileNotFoundError(
-                f"file {self.dlc_model_path} needs to exist in the qpc_base_path{self.qpc_base_path}. Please rerun infer/compile Api"
-            )
+            raise FileNotFoundError(f"file {self.dlc_model_path} needs to exist in the qpc_base_path{self.qpc_base_path}. Please rerun infer/compile Api")
 
         if self.qnn_binary_dir is None:
             self.qnn_binary_dir = os.path.join(self.qpc_base_path, "qpcs")
@@ -244,13 +232,7 @@ class QNN:
         """
         converter_tool = QnnConstants.QAIRT_CONVERTER.format(self.qnn_sdk_path, self.qnn_target)
 
-        cmd = (
-            f"{converter_tool} --input_network {self.onnx_path} "
-            f"--output_path {self.dlc_model_path} "
-            f"--config {self.custom_io_path} "
-            f"--float_bias_bitwidth {QnnConstants.FLOAT_BIAS_BITWIDTH} "
-            f"--float_bitwidth {QnnConstants.FLOAT_BITWIDTH} "
-        )
+        cmd = f"{converter_tool} --input_network {self.onnx_path} --output_path {self.dlc_model_path} --config {self.custom_io_path} --float_bias_bitwidth {QnnConstants.FLOAT_BIAS_BITWIDTH} --float_bitwidth {QnnConstants.FLOAT_BITWIDTH} "
         # Add default arguments.
         cmd += QnnConstants.CONVERTER_DEFAULT_ARGS
 
@@ -283,24 +265,13 @@ class QNN:
         backend_lib = QnnConstants.QNN_CONTEXT_LIB_BACKEND.format(self.qnn_sdk_path, self.qnn_target)
         config_file_path = self.create_qnn_compiler_config_json()
 
-        cmd = (
-            f"{binary_gen_tool} --binary_file {QnnConstants.CONTEXT_BIN_NAME} "
-            f"--backend_binary {QnnConstants.CONTEXT_BIN_QPC_NAME} "
-            f"--output_dir {self.qnn_binary_dir} "
-            f"--backend {backend_lib} "
-            f"--dlc_path {self.dlc_model_path} "
-            f"--config_file {config_file_path} "
-        )
+        cmd = f"{binary_gen_tool} --binary_file {QnnConstants.CONTEXT_BIN_NAME} --backend_binary {QnnConstants.CONTEXT_BIN_QPC_NAME} --output_dir {self.qnn_binary_dir} --backend {backend_lib} --dlc_path {self.dlc_model_path} --config_file {config_file_path} "
 
         if self.mxint8:
             data_format_file_path = os.path.join(self.qpc_base_path, QnnConstants.QNN_DATA_FORMAT_CONFIG_NAME)
-            generate_data_format_config(
-                self.onnx_path, model_dlc_name=QnnConstants.MODEL_NAME, file_path=data_format_file_path
-            )
+            generate_data_format_config(self.onnx_path, model_dlc_name=QnnConstants.MODEL_NAME, file_path=data_format_file_path)
             if not os.path.isfile(data_format_file_path):
-                raise FileNotFoundError(
-                    f"file {data_format_file_path} needs to exist in the qpc_base_path for mxint8 compilation. Please rerun infer/compile Api"
-                )
+                raise FileNotFoundError(f"file {data_format_file_path} needs to exist in the qpc_base_path for mxint8 compilation. Please rerun infer/compile Api")
             cmd += f"--data_format_config {data_format_file_path} "
 
         if self.qnn_config and QnnConstants.CONTEXT_BIN_ARGS_EXTENSION_STR in self.qnn_config:
@@ -381,9 +352,7 @@ def compile(
     )
 
     if not os.path.isfile(custom_io_file_path):
-        raise FileNotFoundError(
-            f"file {custom_io_file_path} needs to exist in the qpc_base_path for Compilation. Please rerun infer/compile Api"
-        )
+        raise FileNotFoundError(f"file {custom_io_file_path} needs to exist in the qpc_base_path for Compilation. Please rerun infer/compile Api")
 
     prefill_only = True if len(specializations) == 1 else False
 

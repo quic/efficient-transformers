@@ -28,9 +28,7 @@ qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(base_model_name)
 qeff_model.compile()
 
 ## STEP 4 -- generate output for loaded input and processor
-exec_info = qeff_model.generate(
-    inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len
-)
+exec_info = qeff_model.generate(inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len)
 
 ## STEP 5 (optional) -- use processor to decode output
 print(processor.batch_decode(exec_info.generated_ids)[0])

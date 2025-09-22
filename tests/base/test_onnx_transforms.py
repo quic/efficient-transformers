@@ -12,7 +12,8 @@ from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTrans
 
 
 def test_fp16clip_transform():
-    test_onnx = onnx.parser.parse_model("""
+    test_onnx = onnx.parser.parse_model(
+        """
     <
         ir_version: 8,
         opset_import: ["" : 17]
@@ -30,7 +31,8 @@ def test_fp16clip_transform():
         slice_starts = Constant<value = int64[1] {0}>()
         y = Slice(masked, slice_starts, slice_ends)
     }
-    """)
+    """
+    )
     onnx.checker.check_model(test_onnx, True, True, True)
     transformed_onnx, transformed = FP16ClipTransform.apply(test_onnx)
     assert transformed
@@ -41,7 +43,8 @@ def test_fp16clip_transform():
 
 def test_fp16clip_transform_external(tmp_path):
     external_tensors_file = "fp32_min.raw"
-    test_onnx = onnx.parser.parse_model(f"""
+    test_onnx = onnx.parser.parse_model(
+        f"""
     <
         ir_version: 8,
         opset_import: ["" : 17]
@@ -55,7 +58,8 @@ def test_fp16clip_transform_external(tmp_path):
         mask = Greater(x, zero)
         y = Where(mask, x, min_val)
     }}
-    """)
+    """
+    )
 
     # Write onnx and external_data
     onnx_path = tmp_path / "test_fp16_clip_external.onnx"
@@ -70,7 +74,8 @@ def test_fp16clip_transform_external(tmp_path):
 
 def test_split_tensors_transform(tmp_path):
     external_tensors_file = "tensors.raw"
-    test_onnx = onnx.parser.parse_model(f"""
+    test_onnx = onnx.parser.parse_model(
+        f"""
     <
         ir_version: 8,
         opset_import: ["": 17]
@@ -83,7 +88,8 @@ def test_split_tensors_transform(tmp_path):
     >
     {{
     }}
-    """)
+    """
+    )
 
     # Write onnx and external_data
     onnx_path = tmp_path / "test_split_pre.onnx"

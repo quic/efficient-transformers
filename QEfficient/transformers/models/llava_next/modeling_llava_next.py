@@ -52,24 +52,15 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
             if image_feature.shape[0] > 1:
                 base_image_feature = image_feature[0]
                 image_feature = image_feature[1:]
-                height = width = (
-                    self.model.config.vision_config.image_size // self.model.config.vision_config.patch_size
-                )
+                height = width = self.model.config.vision_config.image_size // self.model.config.vision_config.patch_size
                 num_patch_height, num_patch_width = get_anyres_image_grid_shape(
                     image_sizes[image_idx],
                     self.model.config.image_grid_pinpoints,
                     self.model.config.vision_config.image_size,
                 )
 
-                if (
-                    np.prod(image_feature.shape) % (num_patch_height * num_patch_width * height * width) != 0
-                    and vision_feature_select_strategy == "default"
-                ):
-                    logger.warning_once(
-                        "Image feature shape does not line up with the provided patch size. "
-                        "You may be using the `default` vision_feature_select_strategy with a"
-                        " visual encoder that does not have CLS."
-                    )
+                if np.prod(image_feature.shape) % (num_patch_height * num_patch_width * height * width) != 0 and vision_feature_select_strategy == "default":
+                    logger.warning_once("Image feature shape does not line up with the provided patch size. You may be using the `default` vision_feature_select_strategy with a visual encoder that does not have CLS.")
 
                 image_feature = image_feature.view(num_patch_height, num_patch_width, height, width, -1)
                 image_feature = image_feature.permute(4, 0, 2, 1, 3).contiguous()
@@ -77,9 +68,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
 
                 if not isinstance(image_sizes[image_idx], (list, tuple)):
                     if not isinstance(image_sizes[image_idx], (torch.Tensor, np.ndarray)):
-                        raise TypeError(
-                            f"image_size invalid type: {type(image_sizes[image_idx])} not valid, should be either list, tuple, np.ndarray or tensor"
-                        )
+                        raise TypeError(f"image_size invalid type: {type(image_sizes[image_idx])} not valid, should be either list, tuple, np.ndarray or tensor")
                 original_size = image_sizes[image_idx].tolist()
                 original_height, original_width = original_size
                 current_height, current_width = image_feature.shape[1:]
@@ -96,9 +85,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
                     image_feature = torch.cat(
                         (
                             image_feature,
-                            self.model.image_newline[:, None, None]
-                            .expand(*image_feature.shape[:-1], 1)
-                            .to(image_feature.device, image_feature.dtype),
+                            self.model.image_newline[:, None, None].expand(*image_feature.shape[:-1], 1).to(image_feature.device, image_feature.dtype),
                         ),
                         dim=-1,
                     )
@@ -169,17 +156,11 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 ),
                 dtype=torch.float32,
             ),
-            "image_sizes": torch.tensor(
-                [[constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH]], dtype=torch.int64
-            ),
+            "image_sizes": torch.tensor([[constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH]], dtype=torch.int64),
         }
         lang_inputs = {
-            "input_ids": torch.ones(
-                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64
-            ),
-            "attention_mask": torch.ones(
-                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64
-            ),
+            "input_ids": torch.ones((constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64),
+            "attention_mask": torch.ones((constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64),
             "vision_embeds": torch.ones(
                 (
                     constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -245,15 +226,11 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             num_patches = constants.GRANITEVISION_NUM_PATCHES
 
         if image_size_height != constants.GRANITEVISION_IMG_SIZE_HEIGHT:
-            logger.warning(
-                "Image Size Height Should be fixed to 1109. Please Reshape the image to (w x h) (1610 x 1109)"
-            )
+            logger.warning("Image Size Height Should be fixed to 1109. Please Reshape the image to (w x h) (1610 x 1109)")
             image_size_height = constants.GRANITEVISION_IMG_SIZE_HEIGHT
 
         if image_size_width != constants.GRANITEVISION_IMG_SIZE_WIDTH:
-            logger.warning(
-                "Image Size Width Should be fixed to 1610. Please Reshape the image to (w x h) (1610 x 1109)"
-            )
+            logger.warning("Image Size Width Should be fixed to 1610. Please Reshape the image to (w x h) (1610 x 1109)")
             image_size_width = constants.GRANITEVISION_IMG_SIZE_WIDTH
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.GRANITEVISION_SEQ_LEN

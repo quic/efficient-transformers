@@ -69,9 +69,7 @@ def is_multi_qranium_setup_available():
     command = ["/opt/qti-aic/tools/qaic-util", "-q"]
     try:
         result = subprocess.run(command, stdout=subprocess.PIPE, universal_newlines=True)
-        filtered_result = subprocess.run(
-            ["grep", "Device Capabilities"], input=result.stdout, stdout=subprocess.PIPE, text=True
-        )
+        filtered_result = subprocess.run(["grep", "Device Capabilities"], input=result.stdout, stdout=subprocess.PIPE, text=True)
     except OSError:
         print("Command not found", command)
         return None

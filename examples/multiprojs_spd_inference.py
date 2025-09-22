@@ -106,9 +106,7 @@ def run_prefill(
     for i in range(num_chunks):
         chunk_inputs = inputs.copy()
         chunk_inputs["input_ids"] = inputs["input_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
-        chunk_inputs["position_ids"] = inputs["position_ids"][
-            :, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len
-        ]
+        chunk_inputs["position_ids"] = inputs["position_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
 
         outputs = session.run(chunk_inputs)
         cache_index += prefill_seq_len
@@ -130,9 +128,7 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert input_len_padded <= ctx_len, (
-        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
-    )
+    assert input_len_padded <= ctx_len, "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
     return input_len_padded
 
 
@@ -239,9 +235,7 @@ def multiprojs_spec_decode_inference(
     batch_ttft = perf_counter() - e2e_start
 
     # set decode logits buffers
-    precode_logits_ph = np.zeros(
-        (decode_batch_size, num_logits_to_keep, num_logits_to_keep, vocab_size), dtype=np.float32
-    )
+    precode_logits_ph = np.zeros((decode_batch_size, num_logits_to_keep, num_logits_to_keep, vocab_size), dtype=np.float32)
     session.set_buffers({"logits": precode_logits_ph})
     # start decode phase
     valid_batch_indices = np.full(decode_batch_size, True, dtype=bool)
@@ -255,9 +249,7 @@ def multiprojs_spec_decode_inference(
         # run precode
         target_start = perf_counter()
         tlm_outputs = session.run(precode_inputs)
-        target_logits = tlm_outputs[
-            "logits"
-        ]  # shape: [decode_batch_size, num_logits_to_keep, num_logits_to_keep, vocab_size]
+        target_logits = tlm_outputs["logits"]  # shape: [decode_batch_size, num_logits_to_keep, num_logits_to_keep, vocab_size]
         # greedy sampling from target model
         target_tokens = target_logits[:, :, 0].argmax(-1)  # shape: [decode_batch_size, num_logits_to_keep]
         target_end = perf_counter() - target_start
@@ -275,17 +267,13 @@ def multiprojs_spec_decode_inference(
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             accepted_tokens_arr = target_tokens[bi, :num_tokens_to_append]
             generated_ids[bi].extend(accepted_tokens_arr.tolist())
-            if len(generated_ids[bi]) >= max_gen_len[bi] or (
-                (not ignore_eos_token) and (accepted_tokens_arr == tokenizer.eos_token_id).any()
-            ):
+            if len(generated_ids[bi]) >= max_gen_len[bi] or ((not ignore_eos_token) and (accepted_tokens_arr == tokenizer.eos_token_id).any()):
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
             break
         # prepare decode inputs for next decode iteration
-        next_input_ids = (
-            target_logits[seq_batch_indices, num_tokens_selected - 1].argmax(-1).astype(np.int64)
-        )  # shape: [decode_batch_size, num_logits_to_keep]
+        next_input_ids = target_logits[seq_batch_indices, num_tokens_selected - 1].argmax(-1).astype(np.int64)  # shape: [decode_batch_size, num_logits_to_keep]
         next_position_ids = precode_inputs["position_ids"] + num_tokens_selected[:, np.newaxis]
         next_position_ids[~valid_batch_indices] = -1
         precode_inputs["input_ids"] = next_input_ids

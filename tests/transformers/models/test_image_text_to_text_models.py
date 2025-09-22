@@ -176,9 +176,7 @@ def set_num_layers(config, n_layer=1):
         return config
     elif hasattr(config, "model_type") and "mllama" in config.model_type:
         config.text_config.num_hidden_layers = n_layer
-        config.text_config.cross_attention_layers = [
-            x for x in config.text_config.cross_attention_layers if x < n_layer
-        ]
+        config.text_config.cross_attention_layers = [x for x in config.text_config.cross_attention_layers if x < n_layer]
     elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
@@ -366,12 +364,8 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
-)
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config)
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
     ``Mandatory`` Args:
@@ -394,12 +388,8 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
-)
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config)
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
     ``Mandatory`` Args:
@@ -429,12 +419,8 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
-)
-def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config)
+def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer):
     check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         prompt_len=prompt_len,
@@ -451,12 +437,8 @@ def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
-)
-def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config)
+def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer):
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 

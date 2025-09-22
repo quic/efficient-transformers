@@ -30,9 +30,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 # Fused kernels
 # Use separate functions for each case because conditionals prevent kernel fusion.
 @torch.jit.script
-def upcast_masked_softmax(
-    x: torch.Tensor, mask: torch.Tensor, mask_value: torch.Tensor, scale: float, softmax_dtype: torch.dtype
-):
+def upcast_masked_softmax(x: torch.Tensor, mask: torch.Tensor, mask_value: torch.Tensor, scale: float, softmax_dtype: torch.dtype):
     input_dtype = x.dtype
     x = x.to(softmax_dtype) * scale
     x = torch.where(mask, x, mask_value)
@@ -138,10 +136,7 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
     ]:
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn") or not self.is_cross_attention:
-                raise ValueError(
-                    "If class is used as cross attention, the weights `q_attn` have to be defined. "
-                    "Please make sure to instantiate class with `GPTBigCodeAttention(..., is_cross_attention=True)`."
-                )
+                raise ValueError("If class is used as cross attention, the weights `q_attn` have to be defined. Please make sure to instantiate class with `GPTBigCodeAttention(..., is_cross_attention=True)`.")
 
             query = self.q_attn(hidden_states)
             key_value = self.c_attn(encoder_hidden_states)
@@ -152,12 +147,7 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
             # Note: We split as (self.num_heads, 3, self.head_dim) instead of (3, self.num_heads, self.head_dim),
             # i.e., the memory layout is not the same as GPT2.
             # This makes the concatenation with past_key_value more efficient.
-            query, key_value = (
-                self.c_attn(hidden_states)
-                .view(*hidden_states.shape[:2], self.num_heads, 3 * self.head_dim)
-                .transpose(1, 2)
-                .split((self.head_dim, 2 * self.head_dim), dim=3)
-            )
+            query, key_value = self.c_attn(hidden_states).view(*hidden_states.shape[:2], self.num_heads, 3 * self.head_dim).transpose(1, 2).split((self.head_dim, 2 * self.head_dim), dim=3)
 
         if layer_past is not None:
             cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
@@ -215,10 +205,7 @@ class QEffGPTBigCodeBlock(GPTBigCodeBlock):
         if encoder_hidden_states is not None:
             # add one self-attention block for cross-attention
             if not hasattr(self, "crossattention"):
-                raise ValueError(
-                    f"If `encoder_hidden_states` are passed, {self} has to be instantiated with "
-                    "cross-attention layers by setting `config.add_cross_attention=True`"
-                )
+                raise ValueError(f"If `encoder_hidden_states` are passed, {self} has to be instantiated with cross-attention layers by setting `config.add_cross_attention=True`")
             residual = hidden_states
             hidden_states = self.ln_cross_attn(hidden_states)
             cross_attn_outputs = self.crossattention(
@@ -267,9 +254,7 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -444,9 +429,7 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
         )
 
     @staticmethod
-    def _reorder_cache(
-        past_key_values: Tuple[Tuple[torch.Tensor]], beam_idx: torch.Tensor
-    ) -> Tuple[Tuple[torch.Tensor]]:
+    def _reorder_cache(past_key_values: Tuple[Tuple[torch.Tensor]], beam_idx: torch.Tensor) -> Tuple[Tuple[torch.Tensor]]:
         """
         This function is used to re-order the `past_key_values` cache if [`~PreTrainedModel.beam_search`] or
         [`~PreTrainedModel.beam_sample`] is called. This is required to match `past_key_values` with the correct
