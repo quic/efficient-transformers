@@ -8,9 +8,10 @@
 import os
 import warnings
 
-from QEfficient.utils import custom_format_warning
 import QEfficient.utils.model_registery  # noqa: F401
+from QEfficient.utils import custom_format_warning
 from QEfficient.utils.logging_utils import logger
+
 # For faster downloads via hf_transfer
 # This code is put above import statements as this needs to be executed before
 # hf_transfer is imported (will happen on line 15 via leading imports)
