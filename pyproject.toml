@@ -63,9 +63,9 @@ namespaces = false
 attr = "QEfficient.__version__"
 
 [tool.ruff]
-line-length = 120
+line-length = 500
 # Enable the isort rules.
-lint.extend-select = ["I"]
+extend-select = ["I"]
 target-version = "py310"
 
 [tool.pytest.ini_options]
