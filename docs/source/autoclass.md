@@ -4,12 +4,19 @@
 
 ## `QEFFAutoModelForCausalLM`
 
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
 ### HL API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
-   :members: from_pretrained, export, compile, generate
-   :member-order: bysource
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.from_pretrained
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate
 ```
 
 ### LL API
@@ -17,19 +24,27 @@
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
    :member-order: bysource
+   :no-undoc-members:
    :members:
-   :exclude-members: from_pretrained, generate, export, compile
+   :exclude-members: from_pretrained, export, compile, generate
 ```
 
 (QEFFAutoModel)=
 ## `QEFFAutoModel`
 
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
 ### HL API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
-   :members: from_pretrained, export, compile, generate
-   :member-order: bysource
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.from_pretrained
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.export
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.compile
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.generate
 ```
 
 ### LL API
@@ -37,19 +52,28 @@
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
    :member-order: bysource
+   :no-undoc-members:
    :members:
-   :exclude-members: from_pretrained, generate, export, compile
+   :exclude-members: from_pretrained, export, compile, generate
 ```
 
 (QEffAutoPeftModelForCausalLM)=
 ## `QEffAutoPeftModelForCausalLM`
 
+```{eval-rst}
+.. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
+
 ### HL API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
-   :members: from_pretrained, export, compile, generate
-   :member-order: bysource
+.. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained
+.. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export
+.. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile
+.. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate
 ```
 
 ### LL API
@@ -57,19 +81,29 @@
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
    :member-order: bysource
+   :no-undoc-members:
    :members:
-   :exclude-members: from_pretrained, generate, export, compile
+   :exclude-members: from_pretrained, export, compile, generate
 ```
 
 (QEffAutoLoraModelForCausalLM)=
 ## `QEffAutoLoraModelForCausalLM`
 
-### HL API
-
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
-   :members: from_pretrained, export, compile, generate
-   :member-order: bysource
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
+
+### HL API
+
+
+```{eval-rst}
+.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.from_pretrained
+.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export
+.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.compile
+.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.generate
 ```
 
 ### LL API
@@ -77,19 +111,27 @@
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
    :member-order: bysource
+   :no-undoc-members:
    :members:
-   :exclude-members: from_pretrained, generate, export, compile
+   :exclude-members: from_pretrained, export, compile, generate
 ```
 
 (QEFFAutoModelForImageTextToText)=
 ## `QEFFAutoModelForImageTextToText`
 
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
 ### HL API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
-   :members: from_pretrained, export, compile, generate
-   :member-order: bysource
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.from_pretrained
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.export
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.compile
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.generate
 ```
 
 ### LL API
@@ -97,19 +139,28 @@
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
    :member-order: bysource
+   :no-undoc-members:
    :members:
-   :exclude-members: from_pretrained, generate, export, compile
+   :exclude-members: from_pretrained, export, compile, generate
 ```
 
 (QEFFAutoModelForSpeechSeq2Seq)=
 ## `QEFFAutoModelForSpeechSeq2Seq`
 
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
+
 ### HL API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq
-   :members: from_pretrained, export, compile, generate
-   :member-order: bysource
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.from_pretrained
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate
 ```
 
 ### LL API
@@ -117,6 +168,7 @@
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq
    :member-order: bysource
+   :no-undoc-members:
    :members:
-   :exclude-members: from_pretrained, generate, export, compile
+   :exclude-members: from_pretrained, export, compile, generate
 ```

@@ -1,10 +1,6 @@
 # Fetaures Enablement Guide
 Below guide highlights the steps to enable supported features in QEfficient.
 
-## QNN Compilation via command line interface
-
-QEfficient provides a command line utility which can be used to export, compile and execute onnx models using QNN SDK.
-
 (id-continuous-batching)=
 ## Continuous Batching
 
