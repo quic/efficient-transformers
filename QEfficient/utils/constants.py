@@ -122,6 +122,8 @@ LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 # Gemma3 Constant
 GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
 
+#Wav2Vec2 Constant
+WAV2VEC2_MAX_SEQ_LEN = 480000
 
 class Constants:
     # Export Constants.
