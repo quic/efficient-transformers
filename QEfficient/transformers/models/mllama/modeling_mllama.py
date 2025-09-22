@@ -129,6 +129,7 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
         hidden_states: torch.Tensor,
         cross_attention_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
@@ -207,6 +208,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         position_embeddings: torch.Tensor = None,
         output_attentions: bool = False,
@@ -238,12 +240,15 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
                 "cos": cos,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
+                "CCL": attention_mask.shape[-1],
             }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
@@ -288,6 +293,7 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
         full_text_row_masked_out_mask: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
@@ -326,6 +332,7 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -364,6 +371,7 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
         cross_attention_states: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
@@ -382,13 +390,15 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
             key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
             value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
             if past_key_value is not None:
+                if comp_ctx_lengths is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 # if we have a new image + new tokens, we only computed key_states on that new image
                 # we still update the cross key states, past_image, new_image. And use it!
                 key_states, value_states = past_key_value.update(
                     key_states,
                     value_states,
                     self.layer_idx,
-                    {"batch_index": batch_index, "position_ids": position_ids},
+                    {"batch_index": batch_index, "position_ids": position_ids, "CCL": attention_mask.shape[-1]},
                 )
         elif past_key_value is not None:
             key_states, value_states = (
@@ -439,6 +449,7 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
         full_text_row_masked_out_mask: Tuple[torch.Tensor, torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
@@ -453,6 +464,7 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
             attention_mask=cross_attention_mask,
             cross_attention_states=cross_attention_states,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
             cache_position=cache_position,
@@ -627,6 +639,7 @@ class QEffMllamaTextModel(MllamaTextModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cross_attention_states: Optional[torch.FloatTensor] = None,
         cross_attention_mask: Optional[torch.Tensor] = None,
@@ -705,6 +718,7 @@ class QEffMllamaTextModel(MllamaTextModel):
                 full_text_row_masked_out_mask=full_text_row_masked_out_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
@@ -745,6 +759,7 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cross_attention_states: Optional[torch.LongTensor] = None,
         cross_attention_mask: Optional[torch.LongTensor] = None,
@@ -773,6 +788,7 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
             cross_attention_mask=cross_attention_mask,
             full_text_row_masked_out_mask=full_text_row_masked_out_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
@@ -849,6 +865,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         cross_attention_states: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -915,6 +932,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             cross_attention_mask=cross_attention_mask,
             full_text_row_masked_out_mask=full_text_row_masked_out_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=use_cache,
             inputs_embeds=inputs_embeds,
@@ -927,7 +945,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
 
         return outputs.logits, image_idx, outputs.past_key_values, pixel_values
 
-    def get_dummy_inputs(self, kv_offload: bool = False):
+    def get_dummy_inputs(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
         BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         SEQ_LEN = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         CTX_LEN = constants.ONNX_EXPORT_CTX_LEN
@@ -992,6 +1010,10 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
 
         lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
+
+        if comp_ctx_lengths is not None:
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+
         inputs = {}
 
         if kv_offload:
@@ -1008,6 +1030,8 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
+        comp_ctx_lengths: List[int] = None,
+        prefill_ccl_len: int = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -1022,22 +1046,53 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             logger.warning("Setting `img_size=448` as it was neither passed nor found in vision_config")
 
         vision = [{"batch_size": batch_size, "max_num_images": max_num_images, "img_size": img_size}]
-        lang = [
-            {
-                "batch_size": batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "max_num_images": max_num_images,
-                "img_size": img_size,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
-                "ctx_len": ctx_len,
-                "max_num_images": max_num_images,
-                "img_size": img_size,
-            },
-        ]
+
+        if comp_ctx_lengths is not None:
+            lang = []
+
+            # prefill_ccl_len elements of comp_ctx_lengths will be used for prefilling
+            for i in range(0, prefill_ccl_len):
+                lang.append(
+                    {
+                        "batch_size": batch_size,
+                        "seq_len": prefill_seq_len,
+                        "ctx_len": ctx_len,
+                        "comp_ctx_lengths": comp_ctx_lengths[i],
+                        "max_num_images": max_num_images,
+                        "img_size": img_size,
+                    }
+                )
+
+            # Remaining elements use comp_ctx_lengths[1:] in a loop
+            for i in range(prefill_ccl_len, len(comp_ctx_lengths)):
+                lang.append(
+                    {
+                        "batch_size": batch_size,
+                        "seq_len": "1",
+                        "ctx_len": ctx_len,
+                        "comp_ctx_lengths": comp_ctx_lengths[i],
+                        "max_num_images": max_num_images,
+                        "img_size": img_size,
+                    }
+                )
+
+        else:
+            lang = [
+                {
+                    "batch_size": batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "max_num_images": max_num_images,
+                    "img_size": img_size,
+                },
+                {
+                    "batch_size": batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "max_num_images": max_num_images,
+                    "img_size": img_size,
+                },
+            ]
         specializations = {}
 
         if kv_offload:
@@ -1047,7 +1102,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
         txt_cfg = self.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         cross_attention_layers = txt_cfg.cross_attention_layers
@@ -1071,6 +1126,9 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             else:
                 lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
                 lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+
+        if comp_ctx_lengths is not None:
+            lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         dynamic_axes = {}
         if kv_offload:
