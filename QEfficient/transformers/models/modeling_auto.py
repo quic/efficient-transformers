@@ -16,6 +16,7 @@ import torch.nn as nn
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
+    AutoModelForCTC,
     AutoModelForImageTextToText,
     AutoModelForSpeechSeq2Seq,
     PreTrainedTokenizer,
@@ -2123,3 +2124,540 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             generated_ids=generated_ids,
             perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
         )
+
+
+class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin):
+    """
+    The QEFFAutoModelForSpeechSeq2Seq class is designed for transformers models with a sequence-to-sequence speech-to-text modeling head, including Whisper and other Encoder-Decoder speech models.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model
+
+    .. code-block:: python
+
+        from QEfficient import QEFFAutoModelForSpeechSeq2Seq
+        from processors import AutoProcessor
+
+        # Initialize the model using from_pretrained similar to transformers.AutoModelForSpeechSeq2Seq.
+        model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained("model_name")
+
+        # Now you can directly compile the model for Cloud AI 100
+        model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU
+
+        #prepare inputs
+        processor = AutoProcessor.from_pretrained(model_name)
+        input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
+        input_features = (
+            processor(data, sampling_rate=sample_rate, return_tensors="pt").input_features.numpy().astype(np.float32)
+        )
+        decoder_input_ids = (
+            torch.ones((batch_size, 1), dtype=torch.int64) * model.model.config.decoder_start_token_id
+        ).numpy()
+        decoder_position_ids = torch.arange(1, dtype=torch.int64).view(1, 1).repeat(batch_size, 1).numpy()
+        inputs = dict(
+            input_features=input_features,
+            decoder_input_ids=decoder_input_ids,
+            decoder_position_ids=decoder_position_ids,
+        )
+
+        # You can now execute the model
+        model.generate(inputs, generation_len=150)
+    """
+
+    _hf_auto_class = AutoModelForSpeechSeq2Seq
+    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    def __init__(self, model: nn.Module, **kwargs):
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForConditionalGeneration")):
+            raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
+
+        model.config.use_cache = True
+        super().__init__(model, **kwargs)
+        self.num_layers = model.config.num_hidden_layers
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
+
+    def export(self, export_dir: Optional[str] = None) -> str:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+
+        ``Optional`` Args:
+        :export_dir (str, optional): The directory path to store ONNX-graph.
+
+        Returns:
+            :str: Path of the generated ``ONNX`` graph.
+        """
+        inputs = self.model.get_dummy_inputs()
+        dynamic_axes = self.model.get_onnx_dynamic_axes()
+        output_names = self.model.get_output_names()
+        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        prefill_seq_len: Optional[int] = 1,
+        encoder_ctx_len: Optional[int] = None,
+        ctx_len: int = 150,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
+        batch_size: int = 1,
+        num_devices: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        num_speculative_tokens: Optional[int] = None,
+        **compiler_options,
+    ) -> str:
+        """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :encoder_ctx_len (int, optional): The maximum length of context for encoder, based on the AutoProcessor output. ``Defaults to checking config, if None in config then 1500``
+            :ctx_len (int, optional): The maximum length of context to keep for decoding. ``Defaults to 150``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+            :num_cores (int): Number of cores used to compile the model.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+            :compiler_options (dict, optional): Additional compiler options. ``Defaults to None``.
+
+                - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                - aic_hw_version=ai200 -> -aic-hw-version=ai200
+
+            Other args are not yet implemented for AutoModelForSpeechSeq2Seq
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        """
+        specializations, compiler_options = self.model.get_specializations(
+            batch_size,
+            encoder_ctx_len,
+            ctx_len,
+            **compiler_options,
+        )
+
+        if full_batch_size:
+            logger.warning("Continuous batching is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if kv_cache_batch_size:
+            logger.warning("Prefix caching is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if mxint8_kv_cache:
+            logger.warning("mxint8 cache is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if num_speculative_tokens:
+            logger.warning("Speculative decoding is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        output_names = self.model.get_output_names()
+
+        kv_cache_dtype = "float16"
+        custom_io = {}
+
+        custom_io["input_features"] = kv_cache_dtype
+
+        # Slice output_names to get input names
+        for output_name in output_names:
+            if output_name.endswith("_RetainedState"):
+                custom_io[output_name[: -len("_RetainedState")]] = kv_cache_dtype
+
+        # Get output names
+        for output_name in output_names:
+            if output_name.endswith("_RetainedState"):
+                custom_io[output_name] = kv_cache_dtype
+
+        return self._compile(
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
+            compile_only=True,
+            retained_state=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            custom_io=custom_io,
+            **compiler_options,
+        )
+
+    def generate(
+        self,
+        inputs: torch.Tensor,
+        generation_len: int,
+        streamer: Optional[TextStreamer] = None,
+        device_ids: List[int] = None,
+    ) -> Union[torch.Tensor, np.ndarray]:
+        """
+        This method generates output until ``endoftranscript`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of audio tensor passed.
+
+        ``Mandatory`` Args:
+            :processor: autoprocessor to process inputs and decode logits
+            :inputs (torch.Tensor): inputs to run the execution.
+            :generation_len (int): length upto which to generate
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+        Returns:
+            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        """
+        if not isinstance(self.qpc_path, Path):
+            raise TypeError("Please run compile API first!")
+
+        inputs = self.auto_correct_inputs(inputs)
+        if self.qpc_session is None:
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+            self.batch_size = self.qpc_session.bindings[0].dims[0]
+
+        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
+
+        # add start token id and initial position ids to inputs
+        seq_len = 1
+        inputs["input_ids"] = (
+            torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
+        ).numpy()
+        inputs["position_ids"] = (
+            torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
+        )
+
+        self.qpc_session.skip_buffers(
+            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
+        )
+
+        outputs = {
+            "logits": np.random.randn(self.batch_size, 1, self.model.config.vocab_size).astype(np.float32),
+        }
+        self.qpc_session.set_buffers(outputs)
+
+        # encoder run
+        start = perf_counter()
+        outputs = self.qpc_session.run(inputs)
+
+        # array to hold generated tokens
+        generated_ids = np.full((self.batch_size, generation_len + 1), self.model.config.eos_token_id)
+        generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
+        logits = outputs["logits"]
+        next_token = logits.argmax(-1)
+        generated_ids[:, 1] = next_token.squeeze(1)
+
+        if streamer:
+            streamer.put(next_token)
+
+        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float16)
+
+        loop_start = perf_counter()
+        for num_tokens in range(generation_len):
+            outputs = self.qpc_session.run(inputs)
+            logits = outputs["logits"]
+            next_token = logits.argmax(-1)
+            generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
+
+            if next_token[0][0] == self.model.config.eos_token_id:
+                break
+
+            inputs["input_ids"] = next_token
+            inputs["position_ids"] += 1
+
+            if streamer:
+                streamer.put(next_token)
+        end = perf_counter()
+
+        prefill_time, decode_perf, total_perf, total_time = calculate_latency(num_tokens, loop_start, start, end)
+
+        return CloudAI100ExecInfoNew(
+            batch_size=self.batch_size,
+            generated_ids=generated_ids,
+            perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
+        )
+
+
+class QEFFAutoModelForCTC(QEFFTransformersBase):
+    """
+    The QEFFAutoModelForCTC class is designed for transformer models with a Connectionist Temporal Classification (CTC) speech-to-text head, 
+    including Wav2Vec2 and other encoder-only speech models optimized for alignment-free transcription.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model
+
+    .. code-block:: python
+
+        import torchaudio 
+        import soundfile
+        from QEfficient import QEFFAutoModelForCTC
+        from transformers import AutoProcessor
+        torchaudio.set_audio_backend("soundfile")
+
+        # Initialize the model using from_pretrained similar to transformers.AutoModelForCTC.
+        model=QEFFAutoModelForCTC.from_pretrained("facebook/wav2vec2-base-960h")
+
+        # Now you can directly compile the model for Cloud AI 100
+        model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
+
+        #prepare input
+        waveform,sample_rate=torchaudio.load("Path to .wav file.")
+        processor = AutoProcessor.from_pretrained("facebook/wav2vec2-base-960h") 
+        # Resample the waveform if necessary
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0)
+        if sample_rate != 16000:
+            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
+            waveform = resampler(waveform)
+
+        # You can now execute the model
+        out, logits = model.generate(processor,inputs=waveform)
+    """
+    _hf_auto_class = AutoModelForCTC
+    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    def __init__(self, model: nn.Module, **kwargs):
+        super().__init__(model, **kwargs)
+        self.model.base_model.config.use_cache = True
+
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    @classmethod
+    @with_replaced_quantizers
+    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
+        """
+        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCTC.
+        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+
+        Args:
+            pretrained_model_name_or_path (str): The name or path of the pre-trained model.
+
+        .. code-block:: python
+
+        import torchaudio 
+        import soundfile
+        from QEfficient import QEFFAutoModelForCTC
+        from transformers import AutoProcessor
+        torchaudio.set_audio_backend("soundfile")
+
+        # Initialize the model using from_pretrained similar to transformers.AutoModelForCTC.
+        model=QEFFAutoModelForCTC.from_pretrained("facebook/wav2vec2-base-960h")
+
+        # Now you can directly compile the model for Cloud AI 100
+        model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
+
+        #prepare input
+        waveform,sample_rate=torchaudio.load("Path to .wav file.")
+        processor = AutoProcessor.from_pretrained("facebook/wav2vec2-base-960h") 
+        # Resample the waveform if necessary
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0)
+        if sample_rate != 16000:
+            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
+            waveform = resampler(waveform)
+
+        # You can now execute the model
+        out, logits = model.generate(processor,inputs=waveform)
+        """
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
+            logger.warning('Updating attn_implementation="eager"')
+
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        # This is support models that should be classified to in a different auto class but transformers load them via this class
+        kv_offload = kwargs.pop("kv_offload", None)
+        if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
+            return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
+                model, kv_offload=kv_offload, **kwargs
+            )
+
+        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, pooling=pooling, **kwargs)
+
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
+
+    def export(self, export_dir: Optional[str] = None) -> str:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+
+        ``Optional`` Args:
+           :export_dir (str, optional): The directory path to store ONNX-graph.
+
+        Returns:
+            :str: Path of the generated ``ONNX`` graph.
+        """
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        seq_len = constants.WAV2VEC2_MAX_SEQ_LEN
+
+        example_inputs = {
+            "input_values": torch.zeros((bs, seq_len), dtype=torch.float32),
+        }
+
+        dynamic_axes = {"input_values": {0: "batch_size", 1: "seq_len"}}
+
+        output_names = ["logits"]
+
+        return self._export(
+            example_inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+        )
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        seq_len: Union[int, List[int]] = 480000,
+        batch_size: int = 1,
+        num_devices: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
+        mxfp6_matmul: bool = False,
+        **compiler_options,
+    ) -> str:
+        """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :seq_len (Union[int, List[int]]): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+            :num_cores (int): Number of cores used to compile the model.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :compiler_options (dict, optional): Additional compiler options.
+
+                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
+                    :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+                    :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+
+                    Params are converted to flags as below:
+
+                    - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                    - aic_hw_version=ai200 -> -aic-hw-version=ai200
+
+                For QNN Compiler: Following arguments can be passed.
+                    :enable_qnn (bool): Enables QNN Compilation.
+                    :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        """
+
+        specializations = [
+            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
+        ]
+
+        return self._compile(
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
+            compile_only=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
+
+    def generate(
+        self,
+        processor,
+        inputs: torch.Tensor,
+        device_ids: List[int] = None,
+        runtime_ai100: bool = True,
+    ) -> Union[torch.Tensor, np.ndarray]:
+        """
+        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        ``Mandatory`` Args:
+            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+            :processor (AutoProcessor): The Processor to use for encoding the waveform.
+        ``optional`` Args:
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+        Returns:
+            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        """
+        # AI_100 runtime
+        if runtime_ai100:
+            if not isinstance(self.qpc_path, Path):
+                raise TypeError("Please run compile API first!")
+
+            return self.cloud_ai_100_feature_generate(processor,inputs=inputs, device_ids=device_ids)
+        # PyTorch runtime
+        else:
+            return self.pytorch_feature_generate(processor,model=self.model, inputs=inputs)
+
+    def cloud_ai_100_feature_generate(
+        self,
+        processor,
+        inputs: torch.Tensor,
+        device_ids: List[int] = [0],
+    ) -> np.ndarray:
+        """
+        Generates features with list of prompts using AI 100 runtime.
+
+        ``Mandatory`` Args:
+            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+            :processor (AutoProcessor): The Processor to use for encoding the waveform.
+        ``Optional`` Args:
+            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
+     
+        """
+
+        if self.qpc_session is None:
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+            self.batch_size = self.qpc_session.bindings[0].dims[0]
+
+        # Dynamic switching to closest seq_Len based on input_ids_len
+        inputs=processor(inputs, return_tensors="pt")
+        input_ids_len = inputs["input_values"].shape[-1]
+
+        for allowed_shape in self.qpc_session.allowed_shapes:
+            seq_len_allowed = allowed_shape[1][1][1]
+
+            if seq_len_allowed >= input_ids_len:
+                self.seq_len = seq_len_allowed
+                break
+
+        # To handle single seq_len as we can't fetch allowed shapes for single seq_len
+        self.seq_len = self.qpc_session.bindings[0].dims[1] if not hasattr(self, "seq_len") else self.seq_len
+        input_values = np.array(
+            torch.nn.functional.pad(inputs["input_values"], (0, self.seq_len - input_ids_len), "constant", 0)
+        )
+        inputs = dict(input_values=input_values)
+        outputs = self.qpc_session.run(inputs)
+        logits=outputs['logits']
+        predicted_ids = np.argmax(logits, axis=-1)
+        transcriptions = processor.decode(torch.tensor(predicted_ids[0]))
+        return transcriptions, logits
+
+    def pytorch_feature_generate(self,processor, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
+        """
+        Generates features from a list of text prompts using a PyTorch model.
+
+        ``Mandatory`` Args:
+            :model: The transformed PyTorch model used for generating features.
+            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+            :processor (AutoProcessor): The Processor to use for encoding the waveform.
+
+        """
+        input_values=processor(inputs[0],return_tensors="pt", max_length=self.seq_len,truncation=True,padding='max_length').input_values
+        logits=model(input_values[0]).logits
+        logits=logits.detach().numpy()
+        predicted_ids=np.argmax(logits,axis=-1)
+        transcriptions=processor.batch_decode(predicted_ids)
+        return transcriptions, logits 
