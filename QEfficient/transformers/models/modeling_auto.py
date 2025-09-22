@@ -2402,7 +2402,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :processor (AutoProcessor): The Processor to use for encoding the waveform.
 
         """
-        processor(inputs[0],return_tensors="pt", max_length=self.seq_len,truncation=True,padding='max_length').input_values
+        input_values=processor(inputs[0],return_tensors="pt", max_length=self.seq_len,truncation=True,padding='max_length').input_values
         logits=model(input_values[0]).logits
         logits=logits.detach().numpy()
         predicted_ids=np.argmax(logits,axis=-1)

@@ -97,7 +97,8 @@ So he runs 9*60=<<9*60=540>>540 meters a week
 #### 540
 
 <2>
-Researchers at Harvard have created a microrobot that is smaller than a penny. The robot is made of a flexible polymer that can be folded and unfolded to move. It is powered by a laser and can be controlled by a computer. The robot is able to move on its own, but it can also be controlled remotely. It can be used to deliver drugs or to perform other tasks. A 1-minute video that shows the robot in action is available in the article.
+Researchers at Harvard have created a microrobot that is smaller than a penny. The robot is made of a flexible polymer that can be folded and unfolded to move. 
+It is powered by a laser and can be controlled by a computer. The robot is able to move on its own, but it can also be controlled remotely. It can be used to deliver drugs or to perform other tasks. A 1-minute video that shows the robot in action is available in the article.
 
 <3>
 He has been on 34-23=<<34-23=11>>11 vacations
@@ -105,11 +106,15 @@ He has 11*4=<<11*4=44>>44 blocks
 #### 44
 
 <4>
-A new study has found that old people can still make fresh brain cells. The study was conducted by researchers at the University of California, San Francisco. They found that the brains of people in their 70s and 80s were still able brain cells
+A new study has found that old people can still make fresh brain cells. The study was conducted by researchers at the University of California, San Francisco. 
+They found that the brains of people in their 70s and 80s were still able brain cells
 
 Content:
 
-A new study has found that the brain of an old person can still make new neurons. The study was conducted by a team of researchers from the University of California, Los Angeles. The team studied the brains that were able to make new neurons. The team found that the brains of these people were able to make new neurons in the hippocampus, which is the part of the brain that is responsible for memory and learning. The team also found that the brains of these people were able to make new neurons in the cortex, which is the part of the brain that is responsible for thinking and reasoning. The team also found that the brains of these people were able to make new neurons in the cerebellum, which
+A new study has found that the brain of an old person can still make new neurons. The study was conducted by a team of researchers from the University of California, Los Angeles. 
+The team studied the brains that were able to make new neurons. The team found that the brains of these people were able to make new neurons in the hippocampus, 
+which is the part of the brain that is responsible for memory and learning. The team also found that the brains of these people were able to make new neurons in the cortex, 
+which is the part of the brain that is responsible for thinking and reasoning. The team also found that the brains of these people were able to make new neurons in the cerebellum, which
 
 <5>
 James slept 2/3 * 9 = <<2/3*9=6>>6 hours.
@@ -129,5 +134,7 @@ He has 11*4=<<11*4=44>>44 blocks.
 #### 44
 
 <8>
-TikTok has partnered with Audius to power its new Sounds library. The Sounds library will allow users to discover and share sounds from a wide range of creators. Audius is a music streaming platform that allows artists to upload their music and share it with fans. It has a community of over 1.5 million users. TikTok has been working on the Sounds library for over a year. The library will be available in the US, Canada, and Australia.
+TikTok has partnered with Audius to power its new Sounds library. The Sounds library will allow users to discover and share sounds from a wide range of creators. 
+Audius is a music streaming platform that allows artists to upload their music and share it with fans. It has a community of over 1.5 million users. 
+TikTok has been working on the Sounds library for over a year. The library will be available in the US, Canada, and Australia.
 """
