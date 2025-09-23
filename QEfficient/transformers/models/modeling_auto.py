@@ -3082,7 +3082,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
 class QEFFAutoModelForCTC(QEFFTransformersBase):
     """
-    The QEFFAutoModelForCTC class is designed for transformer models with a Connectionist Temporal Classification (CTC) speech-to-text head, 
+    The QEFFAutoModelForCTC class is designed for transformer models with a Connectionist Temporal Classification (CTC) speech-to-text head,
     including Wav2Vec2 and other encoder-only speech models optimized for alignment-free transcription.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
 
@@ -3091,7 +3091,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
     .. code-block:: python
 
-        import torchaudio 
+        import torchaudio
         import soundfile
         from QEfficient import QEFFAutoModelForCTC
         from transformers import AutoProcessor
@@ -3105,7 +3105,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         #prepare input
         waveform,sample_rate=torchaudio.load("Path to .wav file.")
-        processor = AutoProcessor.from_pretrained("facebook/wav2vec2-base-960h") 
+        processor = AutoProcessor.from_pretrained("facebook/wav2vec2-base-960h")
         # Resample the waveform if necessary
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0)
@@ -3116,6 +3116,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         # You can now execute the model
         out, logits = model.generate(processor,inputs=waveform)
     """
+
     _hf_auto_class = AutoModelForCTC
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
@@ -3138,7 +3139,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         .. code-block:: python
 
-        import torchaudio 
+        import torchaudio
         import soundfile
         from QEfficient import QEFFAutoModelForCTC
         from transformers import AutoProcessor
@@ -3152,7 +3153,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         #prepare input
         waveform,sample_rate=torchaudio.load("Path to .wav file.")
-        processor = AutoProcessor.from_pretrained("facebook/wav2vec2-base-960h") 
+        processor = AutoProcessor.from_pretrained("facebook/wav2vec2-base-960h")
         # Resample the waveform if necessary
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0)
@@ -3297,10 +3298,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
 
-            return self.cloud_ai_100_feature_generate(processor,inputs=inputs, device_ids=device_ids)
+            return self.cloud_ai_100_feature_generate(processor, inputs=inputs, device_ids=device_ids)
         # PyTorch runtime
         else:
-            return self.pytorch_feature_generate(processor,model=self.model, inputs=inputs)
+            return self.pytorch_feature_generate(processor, model=self.model, inputs=inputs)
 
     def cloud_ai_100_feature_generate(
         self,
@@ -3316,7 +3317,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :processor (AutoProcessor): The Processor to use for encoding the waveform.
         ``Optional`` Args:
             device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
-     
+
         """
 
         if self.qpc_session is None:
@@ -3324,7 +3325,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
         # Dynamic switching to closest seq_Len based on input_ids_len
-        inputs=processor(inputs, return_tensors="pt")
+        inputs = processor(inputs, return_tensors="pt")
         input_ids_len = inputs["input_values"].shape[-1]
 
         for allowed_shape in self.qpc_session.allowed_shapes:
@@ -3341,12 +3342,12 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         )
         inputs = dict(input_values=input_values)
         outputs = self.qpc_session.run(inputs)
-        logits=outputs['logits']
+        logits = outputs["logits"]
         predicted_ids = np.argmax(logits, axis=-1)
         transcriptions = processor.decode(torch.tensor(predicted_ids[0]))
         return transcriptions, logits
 
-    def pytorch_feature_generate(self,processor, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
+    def pytorch_feature_generate(self, processor, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """
         Generates features from a list of text prompts using a PyTorch model.
 
@@ -3356,9 +3357,11 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :processor (AutoProcessor): The Processor to use for encoding the waveform.
 
         """
-        input_values=processor(inputs[0],return_tensors="pt", max_length=self.seq_len,truncation=True,padding='max_length').input_values
-        logits=model(input_values[0]).logits
-        logits=logits.detach().numpy()
-        predicted_ids=np.argmax(logits,axis=-1)
-        transcriptions=processor.batch_decode(predicted_ids)
-        return transcriptions, logits 
+        input_values = processor(
+            inputs[0], return_tensors="pt", max_length=self.seq_len, truncation=True, padding="max_length"
+        ).input_values
+        logits = model(input_values[0]).logits
+        logits = logits.detach().numpy()
+        predicted_ids = np.argmax(logits, axis=-1)
+        transcriptions = processor.batch_decode(predicted_ids)
+        return transcriptions, logits
