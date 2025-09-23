@@ -1,3 +1,61 @@
+/*
+   ======================================================================
+   Sidebar Width & Navigation Link Wrapping (Adjusted to fix nested overflow)
+   ======================================================================
+*/
+
+/* Increase the width of the main navigation sidebar */
+.wy-nav-side {
+    width: 320px; /* Adjust this value as needed. e.g., 280px, 300px, 350px. */
+    overflow-x: hidden; /* Hide horizontal scrollbar if content exceeds width */
+}
+
+/* Adjust the left margin of the content area to match the new sidebar width */
+.wy-nav-content-wrap {
+    margin-left: 320px; /* IMPORTANT: This MUST match the .wy-nav-side width */
+}
+
+/* Make sure the search input also adjusts to the new sidebar width */
+.wy-side-nav-search input[type="text"] {
+    width: calc(100% - 20px); /* Adjusts for padding within the search container */
+}
+
+/* Force ALL navigation links (including nested headings) within the sidebar to wrap text */
+.wy-menu-vertical li a {
+    white-space: normal !important;     /* Allows text to wrap */
+    word-break: break-all !important;   /* Breaks long words at any character if needed */
+    overflow-wrap: break-word !important; /* Alternative for breaking words */
+}
+
+/* Crucial: Force <code> tags within navigation links to wrap */
+.wy-menu-vertical li a code {
+    white-space: normal !important;
+    word-break: break-all !important;
+    overflow-wrap: break-word !important;
+    /* Optional: Remove any minimum width if it's causing issues */
+    min-width: 0 !important;
+}
+
+
+/*
+   ======================================================================
+   Responsive Behavior for Smaller Screens
+   ======================================================================
+*/
+@media screen and (max-width: 768px) {
+    .wy-nav-side {
+        width: 100%; /* On small screens, let it be full width when expanded */
+        overflow-x: hidden;
+    }
+    .wy-nav-content-wrap {
+        margin-left: 0; /* On small screens, no margin */
+    }
+}
+
+
+
+/* Limit content width for better readability on very wide screens,
+   while allowing it to be larger than the default RTD theme. */
 .wy-nav-content {
     max-width: 1200px !important;
 }

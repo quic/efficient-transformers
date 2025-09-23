@@ -11,7 +11,7 @@ We support wide range of [models](validated_models) architectures, for easy effi
 For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).
 
 **Typically for LLMs, the library provides:**
-1. Reimplemented blocks from Transformers which enable efficient on-device retention of intermediate states. read more [here](kv_cache)
+1. Reimplemented blocks from Transformers which enable efficient on-device retention of intermediate states.
 2. Graph transformations to enable execution of key operations in lower precision
 3. Graph transformations to replace some operations to other mathematically equivalent operations that are efficient/supported on HW backend
 4. Handling for underflow and overflows in lower precision

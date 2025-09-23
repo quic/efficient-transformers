@@ -1,11 +1,10 @@
-.. \home\abukhoye\efficient-transformers\docs\index.rst
 .. QEfficient documentation master file, created by
    sphinx-quickstart on Tue May 28 09:19:122024.
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
 Welcome to Efficient-Transformers Documentation!
-========================================
+================================================
 
 .. toctree::
    :caption: Release Documents
@@ -29,11 +28,11 @@ Welcome to Efficient-Transformers Documentation!
 
 .. toctree::
    :caption: Inference on Cloud AI 100
-   :maxdepth: -1
+   :maxdepth: 4
 
    source/quick_start
    source/features_enablement
-   source/autoclass
+   source/qeff_autoclass
    source/cli_api
 
 .. toctree::

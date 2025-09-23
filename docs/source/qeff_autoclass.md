@@ -1,8 +1,7 @@
-**This page give you an overview about the all the Auto Classes that you might need to integrate the `QEfficient` into your python applications.**
+# QEfficient Auto Class
 
-# Auto Classes
-
-## `QEFFAutoModelForCausalLM`
+(QEFFAutoModelForCausalLM)=
+## QEFFAutoModelForCausalLM
 
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
@@ -10,7 +9,8 @@
    :no-members:
    :no-show-inheritance:
 ```
-### HL API
+
+### High-Level API
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.from_pretrained
@@ -19,18 +19,20 @@
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate
 ```
 
-### LL API
+### Low-Level API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
-   :member-order: bysource
-   :no-undoc-members:
-   :members:
-   :exclude-members: from_pretrained, export, compile, generate
+.. autoproperty:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.model_name
+.. autoproperty:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.get_model_config
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.get_sampling_inputs_and_outputs
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.build_prefill_specialization
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.build_decode_specialization
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.check_and_get_num_speculative_tokens
 ```
 
+---
 (QEFFAutoModel)=
-## `QEFFAutoModel`
+## QEFFAutoModel
 
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
@@ -38,7 +40,8 @@
    :no-members:
    :no-show-inheritance:
 ```
-### HL API
+
+### High-Level API
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.from_pretrained
@@ -47,18 +50,17 @@
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.generate
 ```
 
-### LL API
+### Low-Level API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
-   :member-order: bysource
-   :no-undoc-members:
-   :members:
-   :exclude-members: from_pretrained, export, compile, generate
+.. autoproperty:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.get_model_config
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.cloud_ai_100_feature_generate
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel.pytorch_feature_generate
 ```
 
+---
 (QEffAutoPeftModelForCausalLM)=
-## `QEffAutoPeftModelForCausalLM`
+## QEffAutoPeftModelForCausalLM
 
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
@@ -67,7 +69,7 @@
    :no-show-inheritance:
 ```
 
-### HL API
+### High-Level API
 
 ```{eval-rst}
 .. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained
@@ -76,18 +78,21 @@
 .. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate
 ```
 
-### LL API
+### Low-Level API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
-   :member-order: bysource
-   :no-undoc-members:
-   :members:
-   :exclude-members: from_pretrained, export, compile, generate
+.. autoproperty:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.model_name
+.. autoproperty:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.model_hash
+.. autoproperty:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.get_model_config
+.. autoproperty:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.active_adapter
+.. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.load_adapter
+.. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.set_adapter
+.. automethod:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.disable_adapter
 ```
 
+---
 (QEffAutoLoraModelForCausalLM)=
-## `QEffAutoLoraModelForCausalLM`
+## QEffAutoLoraModelForCausalLM
 
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
@@ -96,8 +101,7 @@
    :no-show-inheritance:
 ```
 
-### HL API
-
+### High-Level API
 
 ```{eval-rst}
 .. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.from_pretrained
@@ -106,18 +110,20 @@
 .. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.generate
 ```
 
-### LL API
+### Low-Level API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
-   :member-order: bysource
-   :no-undoc-members:
-   :members:
-   :exclude-members: from_pretrained, export, compile, generate
+.. autoproperty:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.model_hash
+.. autoproperty:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.get_model_config
+.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.download_adapter
+.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.load_adapter
+.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.unload_adapter
+.. automethod:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.set_adapter
 ```
 
+---
 (QEFFAutoModelForImageTextToText)=
-## `QEFFAutoModelForImageTextToText`
+## QEFFAutoModelForImageTextToText
 
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
@@ -125,27 +131,16 @@
    :no-members:
    :no-show-inheritance:
 ```
-### HL API
+
+### High-Level API
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.from_pretrained
-.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.export
-.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.compile
-.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.generate
 ```
 
-### LL API
-
-```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
-   :member-order: bysource
-   :no-undoc-members:
-   :members:
-   :exclude-members: from_pretrained, export, compile, generate
-```
-
+---
 (QEFFAutoModelForSpeechSeq2Seq)=
-## `QEFFAutoModelForSpeechSeq2Seq`
+## QEFFAutoModelForSpeechSeq2Seq
 
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq
@@ -154,7 +149,7 @@
    :no-show-inheritance:
 ```
 
-### HL API
+### High-Level API
 
 ```{eval-rst}
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.from_pretrained
@@ -163,12 +158,8 @@
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate
 ```
 
-### LL API
+### Low-Level API
 
 ```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq
-   :member-order: bysource
-   :no-undoc-members:
-   :members:
-   :exclude-members: from_pretrained, export, compile, generate
+.. autoproperty:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.get_model_config
 ```

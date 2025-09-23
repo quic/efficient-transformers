@@ -14,6 +14,9 @@ Users can leverage multi-Qranium and other supported features along with continu
 python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth
 theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first --full_batch_size 3
 ```
+
+---
+
 (id-multi-qranium-inference)=
 ## Multi-Qranium Inference
 
@@ -34,6 +37,8 @@ To disable MQ, just pass single soc like below, below step will compile the mode
 ```bash
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
 ```
+
+---
 
 (id-qnn-compilation-via-python-api)=
 ## QNN Compilation via Python API
@@ -60,6 +65,7 @@ generated_qpc_path = qeff_model.compile(
 
 qeff_model.generate(prompts=["My name is"])
 ```
+---
 
 (id-draft-based-speculative-decoding)=
 ## Draft-Based Speculative Decoding

@@ -35,6 +35,9 @@
 |                         | Qwen2, Qwen2.5     | [Qwen/Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)                                                            | ✔️          |
 | **LlamaSwiftKVForCausalLM**  | swiftkv            | [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)                                                  | ✔️          |
 | **Grok1ModelForCausalLM**  |  grok-1          | [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)                                                  | ✔️          |
+
+---
+
 ## Embedding Models
 
 ### Text Embedding Task
@@ -51,6 +54,8 @@
 | **RobertaModel**     | RoBERTa |  [ibm-granite/granite-embedding-30m-english](https://huggingface.co/ibm-granite/granite-embedding-30m-english)<br> [ibm-granite/granite-embedding-125m-english](https://huggingface.co/ibm-granite/granite-embedding-125m-english) |
 | **XLMRobertaForSequenceClassification** | XLM-RoBERTa | [bge-reranker-v2-m3bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) |
 | **XLMRobertaModel**    | XLM-RoBERTa  |[ibm-granite/granite-embedding-107m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual)<br> [ibm-granite/granite-embedding-278m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual)  |
+
+---
 
 ## Multimodal Language Models
 
@@ -86,6 +91,7 @@ The choice between Single and Dual QPC is determined during model instantiation 
 If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
 
 ---
+
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
 **QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`
@@ -93,6 +99,8 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 | Architecture | Model Family | Representative Models                                                                 |
 |--------------|--------------|----------------------------------------------------------------------------------------|
 | **Whisper**  | Whisper      | [openai/whisper-tiny](https://huggingface.co/openai/whisper-tiny)<br>[openai/whisper-base](https://huggingface.co/openai/whisper-base)<br>[openai/whisper-small](https://huggingface.co/openai/whisper-small)<br>[openai/whisper-medium](https://huggingface.co/openai/whisper-medium)<br>[openai/whisper-large](https://huggingface.co/openai/whisper-large)<br>[openai/whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) |
+
+---
 
 (models_coming_soon)=
 # Models Coming Soon
