@@ -28,15 +28,21 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
-skip_vision = False
+skip_vision = True
 
 if skip_vision:
     ## Only Text ##
+
+    ## Set Batch_Size ##
+    batch_size = 2
     qeff_model.compile(
+        batch_size=batch_size,
         prefill_seq_len=128,
-        ctx_len=6000,
+        ctx_len=4096,
         num_cores=16,
         num_devices=8,
+        height=354,
+        width=536,
         mxfp6_matmul=False,
         aic_enable_depth_first=True,
         skip_vision=True,
@@ -51,6 +57,8 @@ if skip_vision:
             ],
         },
     ]
+
+    messages = [messages] * batch_size
 
     inputs = processor.apply_chat_template(
         messages,
@@ -81,18 +89,20 @@ if skip_vision:
     )
 
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 
 else:
+    batch_size = 1
     ## Vision + Text ##
     qeff_model.compile(
+        batch_size=batch_size,
         prefill_seq_len=128,
         ctx_len=4096,
         num_cores=16,
-        num_devices=16,
+        num_devices=8,
         height=354,
         width=536,
         mxfp6_matmul=True,
@@ -106,7 +116,7 @@ else:
 
     image = Image.open(requests.get(image_url, stream=True).raw)
 
-    messages = [
+    messages_1 = [
         {
             "role": "user",
             "content": [
@@ -116,18 +126,31 @@ else:
         },
     ]
 
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    messages_2 = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": "Describe about the color of the dog."},
+            ],
+        },
+    ]
+
+    messages = [messages_2] * batch_size
+
+    texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
 
     image_inputs, video_inputs = process_vision_info(messages)
     inputs = processor(
-        text=[text],
+        text=texts,
         images=image_inputs,
         videos=video_inputs,
         padding=True,
         return_tensors="pt",
     )
     input_ids_length = inputs["input_ids"].shape[1]
-    inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length)
+
+    inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
 
     pos_ids, rope_deltas = qeff_model.model.get_rope_index(
         inputs["input_ids"],
