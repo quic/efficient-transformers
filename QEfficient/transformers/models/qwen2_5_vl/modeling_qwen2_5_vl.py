@@ -175,8 +175,8 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
         pos_ids = torch.cat(pos_ids, dim=0)
 
-        x_expanded = pos_ids.unsqueeze(0) 
-        x_expanded = x_expanded.expand(bs, -1, -1) 
+        x_expanded = pos_ids.unsqueeze(0)
+        x_expanded = x_expanded.expand(bs, -1, -1)
         pos_ids = x_expanded.reshape(-1, pos_ids.size(1))
 
         max_grid_size = max(grid_thw.shape)
@@ -187,7 +187,6 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
     def get_window_index(self, grid_thw):
         window_index: list = []
         cu_window_seqlens: list = [0]
-        window_index_id = 0
         vit_merger_window_size = self.window_size // self.spatial_merge_size // self.patch_size
 
         bs, grid_t, grid_h, grid_w = grid_thw.shape
@@ -221,9 +220,8 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
 
         seqlens = (index_padded != -100).sum([2, 3]).reshape(-1)
 
-
-        x_expanded = seqlens.unsqueeze(0)  
-        x_expanded = x_expanded.expand(bs, -1)  
+        x_expanded = seqlens.unsqueeze(0)
+        x_expanded = x_expanded.expand(bs, -1)
         seqlens = x_expanded.reshape(-1)
 
         index_padded = index_padded.reshape(-1)
@@ -622,7 +620,9 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         self.language_model = self.model.model
 
     def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
-        import ipdb; ipdb.set_trace()
+        import ipdb
+
+        ipdb.set_trace()
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_id
