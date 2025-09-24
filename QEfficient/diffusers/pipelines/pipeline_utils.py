@@ -124,9 +124,9 @@ class QEffClipTextEncoder(QEFFBaseModel):
         super().__init__(model)
         self.model = copy.deepcopy(model)
 
-    def get_onnx_config(self, output_hidden_states= False):
+    def get_onnx_config(self, seq_len= 77 ):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = self.tokenizer.model_max_length
+        # seq_len = self.tokenizer.model_max_length
 
         example_inputs = { "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
                             "attention_mask": None,
@@ -541,31 +541,17 @@ class QEffFluxTransformerModel(QEFFBaseModel):
     def __init__(self, model: nn.modules):
         super().__init__(model)
         self.model = model
-    def get_onnx_config(self):
+    def get_onnx_config(self, batch_size=1, seq_length = 256):
         example_inputs = {
-            "hidden_states": torch.randn(
-            1, self.model.config.joint_attention_dim, self.model.config.in_channels, dtype=torch.float32
-            ), # bs as 1
-            "encoder_hidden_states": torch.randn(
-                1, 512, self.model.config.joint_attention_dim, dtype=torch.float32
-            ),  # sequence_length = 512
-            "pooled_projections": torch.randn(
-                1, self.model.config.pooled_projection_dim, dtype=torch.float32
-            ),
+            "hidden_states": torch.randn(batch_size, self.model.config.joint_attention_dim, self.model.config.in_channels, dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(batch_size, seq_length , self.model.config.joint_attention_dim, dtype=torch.float32),
+            "pooled_projections": torch.randn(batch_size, self.model.config.pooled_projection_dim, dtype=torch.float32),
             "timestep": torch.tensor([1.0], dtype=torch.float32),
-            "img_ids": torch.randn(
-                self.model.config.joint_attention_dim, 3, dtype=torch.float32
-            ),
-            "txt_ids": torch.randn(
-                512, 3, dtype=torch.float32
-            ),  # sequence_length = 512
-            "adaln_emb": torch.randn(
-                self.model.config.num_layers, 12, 3072, dtype=torch.float32
-            ),  #num_layers, #chunks, # Adalan_hidden_dim
-            "adaln_single_emb": torch.randn(
-                self.model.config.num_single_layers, 3, 3072, dtype=torch.float32
-            ),
-            "adaln_out": torch.randn(1, 6144, dtype=torch.float32),
+            "img_ids": torch.randn(self.model.config.joint_attention_dim, 3, dtype=torch.float32),
+            "txt_ids": torch.randn(seq_length, 3, dtype=torch.float32),
+            "adaln_emb": torch.randn(self.model.config.num_layers, 12, 3072, dtype=torch.float32),  #num_layers, #chunks, # Adalan_hidden_dim
+            "adaln_single_emb": torch.randn(self.model.config.num_single_layers, 3, 3072, dtype=torch.float32),
+            "adaln_out": torch.randn(batch_size, 6144, dtype=torch.float32),
         }
 
         output_names = ["output"]
