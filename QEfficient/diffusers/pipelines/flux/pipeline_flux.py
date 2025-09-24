@@ -93,7 +93,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # text_encoder - CLIP
         example_inputs_text_encoder, dynamic_axes_text_encoder, output_names_text_encoder = (
-            self.text_encoder.get_onnx_config(self.tokenizer.model_max_length)
+            self.text_encoder.get_onnx_config(seq_len = self.tokenizer.model_max_length)
         )
         self.text_encoder.export(
             inputs=example_inputs_text_encoder,
@@ -104,7 +104,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # text_encoder_2 - T5
         example_inputs_text_encoder_2, dynamic_axes_text_encoder_2, output_names_text_encoder_2 = (
-            self.text_encoder_2.get_onnx_config(self.text_encoder_2.tokenizer.model_max_length)
+            self.text_encoder_2.get_onnx_config(seq_len = self.text_encoder_2.tokenizer.model_max_length)
         )
         self.text_encoder_2.export(
             inputs=example_inputs_text_encoder_2,
@@ -139,7 +139,7 @@ class QEFFFluxPipeline(FluxPipeline):
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
-        seq_len: Union[int, List[int]] = 512,
+        seq_len: Union[int, List[int]] = 256,
         batch_size: int = 1,
         num_devices_text_encoder: int = 1,
         num_devices_transformer: int = 4,
@@ -197,7 +197,6 @@ class QEFFFluxPipeline(FluxPipeline):
             ]
         ):
             self.export()
-
         # text_encoder - CLIP
         specializations_text_encoder = self.text_encoder.get_specializations(
             batch_size, self.tokenizer.model_max_length
@@ -217,7 +216,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # text encoder 2 - T5
         specializations_text_encoder_2 = self.text_encoder_2.get_specializations(
-            batch_size, self.text_encoder_2.tokenizer.model_max_length
+            batch_size, seq_len
         )
 
         self.text_encoder_2_compile_path = self.text_encoder_2._compile(
@@ -234,8 +233,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # transformer
         specializations_transformer = self.transformer.get_specializations(batch_size, seq_len)
-
-        compiler_options = {"mos": 1, "ols": 2, "mdts-mos":1}
+        compiler_options = {"mos": 1, "mdts-mos":1}
         self.trasformer_compile_path = self.transformer._compile(
             onnx_path,
             compile_dir,
@@ -250,7 +248,6 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # vae
         specializations_vae = self.vae_decode.get_specializations(batch_size)
-
         self.vae_decoder_compile_path = self.vae_decode._compile(
             onnx_path,
             compile_dir,
@@ -291,7 +288,7 @@ class QEFFFluxPipeline(FluxPipeline):
         text_inputs = self.text_encoder_2.tokenizer(
             prompt,
             padding="max_length",
-            max_length= self.text_encoder_2.tokenizer.model_max_length,
+            max_length= max_sequence_length,
             truncation= True,
             return_length= False,
             return_overflowing_tokens= False,
@@ -311,7 +308,7 @@ class QEFFFluxPipeline(FluxPipeline):
             self.text_encoder_2.qpc_session = QAICInferenceSession(str(self.text_encoder_2_compile_path), device_ids=device_ids)
 
         text_encoder_2_output = {
-            "last_hidden_state": np.random.rand(batch_size, self.text_encoder_2.tokenizer.model_max_length, embed_dim).astype(np.int32),
+            "last_hidden_state": np.random.rand(batch_size, max_sequence_length, embed_dim).astype(np.int32),
         }
         self.text_encoder_2.qpc_session.set_buffers(text_encoder_2_output)
 
