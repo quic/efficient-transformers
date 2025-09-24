@@ -132,24 +132,29 @@ class InternProcessor:
         IMG_CONTEXT_TOKEN="<IMG_CONTEXT>",
         verbose=False,
     ) -> str:
-        if history is None and pixel_values is not None and "<image>" not in question:
-            question = "<image>\n" + question
         if num_patches_list is None:
             num_patches_list = [pixel_values.shape[0]] if pixel_values is not None else []
         assert pixel_values is None or len(pixel_values) == sum(num_patches_list)
         img_context_token_id = self.tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
         self.model.img_context_token_id = img_context_token_id
 
-        messages.append([roles[0], question])
-        messages.append([roles[1], None])
-        query = self.get_prompt(messages)
         if verbose and pixel_values is not None:
             image_bs = pixel_values.shape[0]
             print(f"dynamic ViT batch size: {image_bs}")
-        for num_patches in num_patches_list:
+        queries = []
+        for idx, num_patches in enumerate(num_patches_list):
+            query = question[idx]
+            if history is None and pixel_values is not None and "<image>" not in query:
+                query = "<image>\n" + query
+            template = messages.copy()
+            template.append([roles[0], query])
+            template.append([roles[1], None])
+            query = self.get_prompt(template)
+
             image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * self.num_image_token * num_patches + IMG_END_TOKEN
             query = query.replace("<image>", image_tokens, 1)
-        return query
+            queries.append(query)
+        return queries
 
 
 class ModelConfig:

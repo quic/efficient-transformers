@@ -38,6 +38,7 @@ class QEffInternDecoderWrapper(nn.Module):
         input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
+        input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
         # TODO: Find a better way to decide which token value to use
         image_context_token = (
@@ -52,6 +53,7 @@ class QEffInternDecoderWrapper(nn.Module):
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
+        inputs_embeds = inputs_embeds.reshape(B, N, C)
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
@@ -93,12 +95,13 @@ class QEffInternVLModel(nn.Module):
             raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
 
         per_patch_embed_size = (img_size // self.config.vision_config.patch_size * self.config.downsample_ratio) ** 2
-        vision_size = int(num_patches * per_patch_embed_size)
+        vision_size = int(batch_size * num_patches * per_patch_embed_size)
         vision = [
             {
                 "batch_size": batch_size,
                 "num_patches": num_patches,
                 "img_size": img_size,
+                "batched_num_patches": batch_size * num_patches,
             }
         ]
         lang = [
@@ -135,8 +138,8 @@ class QEffInternVLModel(nn.Module):
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "vision_size"}
-        vision_dynamic_axes["pixel_values"] = {0: "num_patches", 2: "img_size", 3: "img_size"}
+        lang_dynamic_axes["vision_embeds"] = {1: "vision_size"}
+        vision_dynamic_axes["pixel_values"] = {0: "batched_num_patches", 2: "img_size", 3: "img_size"}
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
         for i in range(self.language_model.config.num_hidden_layers):
@@ -191,8 +194,8 @@ class QEffInternVLModel(nn.Module):
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         inputs_shapes["vision_embeds"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            computed_feature_size,
+            1,
+            computed_feature_size * constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             self.language_model.config.hidden_size,
         )
         inputs_shapes["position_ids"] = (
@@ -200,7 +203,7 @@ class QEffInternVLModel(nn.Module):
             constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
         inputs_shapes["pixel_values"] = (
-            constants.INTERN_NUM_PATCHES,
+            constants.INTERN_NUM_PATCHES * constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             constants.INTERN_NUM_CHANNELS,
             img_size,
             img_size,
@@ -246,6 +249,7 @@ class QEffInternVLModel(nn.Module):
         vision_embeds = self.extract_feature(pixel_values)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
+        input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
         # TODO: Find a better way to decide which token value to use
         image_context_token = (
@@ -260,6 +264,7 @@ class QEffInternVLModel(nn.Module):
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
+        inputs_embeds = inputs_embeds.reshape(B, N, C)
         outputs = self.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
