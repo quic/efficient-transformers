@@ -31,6 +31,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
     PerfMetrics,
+    TextGeneration,
     calculate_latency,
     get_compilation_dims,
 )
@@ -545,6 +546,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def __init__(
         self,
         model: nn.Module,
+        continuous_batching,
         **kwargs,
     ):
         if kwargs.pop("full_batch_size", None):
@@ -553,6 +555,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.config = model.config
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
+        self.continuous_batching = continuous_batching
         self.input_shapes, self.output_names = None, None
 
     @property
@@ -592,8 +595,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        inputs = self.model.get_dummy_inputs(kv_offload=True)
-        dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True)
+        inputs = self.model.get_dummy_inputs(kv_offload=True, continuous_batching=self.continuous_batching)
+        dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True, continuous_batching=self.continuous_batching)
         output_names = self.model.get_output_names(kv_offload=True)
 
         self.vision_model.export(
@@ -630,14 +633,20 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_lang: Optional[bool] = False,
         **compiler_options,
     ) -> str:
-        if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
-            raise ValueError(
-                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
-                f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
-            )
-
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
+
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+
+        if kv_cache_batch_size and not full_batch_size:
+            raise ValueError(
+                "KV caching requires continuous batching. Please set `full_batch_size` and "
+                "enable `continuous_batching=True` in `from_pretrained`."
+            )
+
+        # Infer kv_cache_batch_size if not provided
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
         output_names = self.model.get_output_names(kv_offload=True)
 
@@ -647,6 +656,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ctx_len=ctx_len,
             img_size=img_size,
             kv_offload=True,
+            continuous_batching=self.continuous_batching,
+            kv_cache_batch_size=kv_cache_batch_size,
+            full_batch_size=full_batch_size,
             **compiler_options,
         )
 
@@ -715,6 +727,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def generate(
         self,
         inputs: torch.Tensor,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer] = None,
+        prompts: List[str] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
@@ -733,9 +747,115 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
+        # Handle CB for multiple prompts with same image
+        if self.continuous_batching and tokenizer and prompts and len(prompts) > 1:
+            return self.continuous_batching_multi_prompt_generate(
+                inputs=inputs,
+                tokenizer=tokenizer,
+                prompts=prompts,
+                device_ids=device_ids,
+                generation_len=generation_len,
+                streamer=streamer,
+            )
+        if tokenizer and prompts:
+            return QEfficient.cloud_ai_100_exec_kv(
+                tokenizer,
+                self.lang_model.qpc_path,
+                prompt=prompts,
+                device_id=device_ids,
+                generation_len=generation_len,
+            )
+
         return self.kv_offload_generate(
             inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
         )
+
+    def continuous_batching_multi_prompt_generate(
+        self,
+        inputs: torch.Tensor,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompts: List[str],
+        device_ids: List[int] = None,
+        generation_len: Optional[int] = None,
+        streamer: Optional[TextStreamer] = None,
+    ):
+        """
+        Optimized continuous batching generate function for multiple prompts with same image.
+        This method processes a single image with multiple text prompts in a continuous batching manner, by:
+        1. Running the vision encoder once for the shared image.
+        2. Using continuous batching for multiplt prompts in the language decoder.
+        3. Sharing vision embeddings across all prompts to save memory and computation.
+        """
+        if not self.lang_model.qpc_path:
+            raise TypeError("Please run compile API for language model first!")
+
+        vision_session = None
+        lang_session = None
+        if self.vision_model.qpc_path:
+            vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
+
+        lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
+
+        # Get compilation dimensions
+        batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
+
+        # Skip inputs/outputs
+        lang_session.skip_buffers(
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
+        )
+
+        # Process vision inputs once for all prompts
+        vision_inputs = {
+            k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
+        }
+        if vision_inputs:
+            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].to(torch.float16).cpu().numpy()
+        vision_start = perf_counter()
+        vision_outputs = {}
+        if vision_inputs:
+            vision_outputs = vision_session.run(vision_inputs)
+        vision_end = perf_counter()
+
+        # Deactivate vision session after use
+        if self.vision_model.qpc_path:
+            vision_session.deactivate()
+
+        # Text generation instance for continuous batching
+        text_generator = TextGeneration(
+            tokenizer=tokenizer,
+            qpc_path=self.lang_model.qpc_path,
+            device_id=device_ids,
+            ctx_len=ctx_len,
+            enable_debug_logs=False,
+            full_batch_size=fbs,
+        )
+
+        # Prepare prompts for CB
+        # Each prompt processed with same vision embeddings
+        tokenized_prompts = []
+        for prompt in prompts:
+            tokenized_prompt = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+            tokenized_prompts.append(tokenized_prompt)
+
+        # Run CB with shared vision embeddings
+        lang_session.activate()
+
+        if vision_outputs:
+            lang_session.set_buffers(vision_outputs)
+
+        # Execute continuous batching generate
+        exec_info = text_generator.generate(
+            prompt=prompts,
+            generation_len=generation_len,
+            streamer=streamer is not None,
+        )
+
+        print("Vision encoding time (s): ", vision_end - vision_start)
+        return exec_info
 
     def kv_offload_generate(
         self,
@@ -808,7 +928,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         }
 
         if vision_inputs:
-            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
+            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].to(torch.float16).cpu().numpy()
         vision_start = perf_counter()
 
         vision_outputs = {}
@@ -1259,15 +1379,21 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
 
-    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, **kwargs):
+    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, continuous_batching: bool = False, **kwargs):
         if kv_offload:
-            return _QEffAutoModelForImageTextToTextDualQPC(model, **kwargs)
+            return _QEffAutoModelForImageTextToTextDualQPC(model, continuous_batching, **kwargs)
         else:
             return _QEFFAutoModelForImageTextToTextSingleQPC(model, **kwargs)
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, kv_offload: Optional[bool] = None, **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        kv_offload: Optional[bool] = None,
+        continuous_batching: bool = False,
+        **kwargs,
+    ):
         """Used to load models supported by transformers.AutoModelForImageTextToText for Cloud AI 100.
 
         Args:
@@ -1284,12 +1410,18 @@ class QEFFAutoModelForImageTextToText:
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
 
-        if kwargs.pop("continuous_batching", None):
-            NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+        if continuous_batching and not kv_offload:
+            NotImplementedError("Continuous batching is not supported for kv_offload = False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
+        return cls(
+            model,
+            kv_offload=kv_offload,
+            continuous_batching=continuous_batching,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            **kwargs,
+        )
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}

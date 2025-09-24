@@ -831,20 +831,69 @@ class QEffLlama4DecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
         self.config = self.model.config
 
-    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
+    def forward(
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        batch_index: Optional[torch.LongTensor] = None,
+    ):
         inputs_embeds = self.model.language_model.get_input_embeddings()(input_ids)
+        batch_size = None
+
+        # Handle CB case with multiple prompts sharing same image
+        if batch_index is not None and batch_index.numel() > 1:
+            # For CB with multiple prompts sharing same image, reuse vision embeds accross batches
+            batch_size = input_ids.shape[0]
+
+            # Expanfd vision_embeds to match batch size if needed
+            if vision_embeds.shape[0] == 1 and batch_size > 1:
+                vision_embeds = vision_embeds.expand(batch_size, -1, -1)
+
         selected = input_ids == self.model.config.image_token_index
         indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+        # indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+        # indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        # image_features_expanded = vision_embeds.unsqueeze(0)[indices0, indices1]
+
+        # Handle batch aware image indexing for CB
+        if batch_size is not None:
+            # For CB, use per-batch image indices
+            batch_image_idx = image_idx.expand_as(selected[:, :1])
+            indices1 = torch.where(indices1 != -1, indices1 + batch_image_idx, indices1)
+        else:
+            # For non-CB, use global image indices
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vision_embeds.unsqueeze(0)[indices0, indices1]
+
+        # Handle vision embeddings indexing for batch processing
+        if vision_embeds.dim() == 3 and vision_embeds.shape[0] == input_ids.shape[0]:
+            # Batch wise vision embeddings
+            image_features_expanded = vision_embeds[indices0, indices1]
+        else:
+            # Single vision embeddings for all batches/ single image shared accross all batches
+            image_features_expanded = vision_embeds.unsqueeze(0)[indices0, indices1]
+
         image_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
         outputs = self.model.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            batch_index=batch_index,
+            use_cache=True,
         )
-        next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
+        # Update image_idx to point to the next available vision_embeds index - handle batch case
+        if batch_index is not None and indices1.numel() > 0:
+            # For CB, update image_idx per batch
+            next_idx = (indices1.max(dim=1, keepdim=True)[0] + 1).unsqueeze(1)
+            image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
+        else:
+            next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+            image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
+
         return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
 
 
@@ -888,6 +937,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         ctx_len: int,
         img_size: int,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         max_num_tiles = compiler_options.pop("max_num_tiles", None)
@@ -931,33 +983,49 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         vision = [
             {
-                "batch_size": batch_size,
+                "batch_size": 1,  # To process image only once for all batch_sizes(prompts) in continuous batching
                 "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
             }
         ]
-        lang = [
-            {
-                "batch_size": batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "max_num_tiles": max_num_tiles,
-                "img_size": img_size,
-                "vision_size": vision_size,
-                "chunk_length": prefill_seq_len,
-                "chunk_ctx_len": chunk_ctx_len,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
-                "ctx_len": ctx_len,
-                "max_num_tiles": max_num_tiles,
-                "img_size": img_size,
-                "vision_size": vision_size,
-                "chunk_length": prefill_seq_len,
-                "chunk_ctx_len": chunk_ctx_len,
-            },
-        ]
+
+        lang_prefill = {
+            "batch_size": 1 if continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+            "max_num_tiles": max_num_tiles,
+            "img_size": img_size,
+            "vision_size": vision_size,
+            "chunk_length": prefill_seq_len,
+            "chunk_ctx_len": chunk_ctx_len,
+        }
+        if continuous_batching:
+            lang_prefill["full_batch_size"] = full_batch_size or kv_cache_batch_size
+            # Enable multi-prompt support with shared vision embeddings
+            lang_prefill["shared_vision"] = 1
+        else:
+            lang_prefill["batch_size"] = kv_cache_batch_size
+        if full_batch_size:
+            lang_prefill["full_batch_exec_size"] = full_batch_size
+
+        lang_decode = {
+            "batch_size": full_batch_size if continuous_batching else batch_size,
+            "seq_len": 1,
+            "ctx_len": ctx_len,
+            "max_num_tiles": max_num_tiles,
+            "img_size": img_size,
+            "vision_size": vision_size,
+            "chunk_length": prefill_seq_len,
+            "chunk_ctx_len": chunk_ctx_len,
+        }
+        if continuous_batching:
+            lang_decode["full_batch_size"] = full_batch_size or kv_cache_batch_size
+        else:
+            lang_decode["batch_size"] = kv_cache_batch_size
+
+        lang = []
+        lang.append(lang_prefill)
+        lang.append(lang_decode)
 
         specializations = {}
 
@@ -966,18 +1034,22 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
+            lang[0].pop("vision_size")
+            lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False, continuous_batching: bool = False):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["vision_embeds"] = {0: "vision_size"}
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
         vision_dynamic_axes["pixel_values"] = {0: "max_num_tiles", 2: "img_size", 3: "img_size"}
 
-        pkv_dynamic_axes = {0: "batch_size"}
+        pkv_dynamic_axes = {0: "full_batch_size" if continuous_batching else "batch_size"}
         for i in range(self.language_model.config.num_hidden_layers):
             # switch between chunk_ctx_len and ctx_len for RoPE and NoPE layers.
             if int((i + 1) % 4 != 0):
@@ -1040,7 +1112,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             past_key_values.append(pkv)
         return past_key_values
 
-    def get_dummy_inputs(self, kv_offload: bool = False):
+    def get_dummy_inputs(self, kv_offload: bool = False, continuous_batching: bool = False):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 336)
         else:
@@ -1085,10 +1157,14 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
+
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
         # Add data for KV
         past_key_values = self.get_dummy_pkv_cache(
             config=self.language_model.config,
-            batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
@@ -1097,6 +1173,8 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(past_key_values[0][0].shape, dtype=torch.float32))
 
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
         inputs = {}
         if kv_offload:
             inputs["vision"] = vision_inputs
