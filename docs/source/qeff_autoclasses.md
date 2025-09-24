@@ -1,7 +1,7 @@
-# QEfficient Auto Class
+# QEfficient Auto Classes
 
 (QEFFAutoModelForCausalLM)=
-## QEFFAutoModelForCausalLM
+## `QEFFAutoModelForCausalLM`
 
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
@@ -32,7 +32,7 @@
 
 ---
 (QEFFAutoModel)=
-## QEFFAutoModel
+## `QEFFAutoModel`
 
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
@@ -60,7 +60,7 @@
 
 ---
 (QEffAutoPeftModelForCausalLM)=
-## QEffAutoPeftModelForCausalLM
+## `QEffAutoPeftModelForCausalLM`
 
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
@@ -92,7 +92,7 @@
 
 ---
 (QEffAutoLoraModelForCausalLM)=
-## QEffAutoLoraModelForCausalLM
+## `QEffAutoLoraModelForCausalLM`
 
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
@@ -123,7 +123,7 @@
 
 ---
 (QEFFAutoModelForImageTextToText)=
-## QEFFAutoModelForImageTextToText
+## `QEFFAutoModelForImageTextToText`
 
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
@@ -140,7 +140,7 @@
 
 ---
 (QEFFAutoModelForSpeechSeq2Seq)=
-## QEFFAutoModelForSpeechSeq2Seq
+## `QEFFAutoModelForSpeechSeq2Seq`
 
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq

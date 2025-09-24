@@ -32,7 +32,12 @@ Welcome to Efficient-Transformers Documentation!
 
    source/quick_start
    source/features_enablement
-   source/qeff_autoclass
+
+.. toctree::
+   :caption: API Reference
+   :maxdepth: 4
+
+   source/qeff_autoclasses
    source/cli_api
 
 .. toctree::

@@ -10,6 +10,7 @@ Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group`` shou
 .. autofunction:: QEfficient.cloud.infer.main
     :noindex:
 ```
+---
 
 (execute_api)=
 ## `QEfficient.cloud.execute`
@@ -17,6 +18,7 @@ Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group`` shou
 .. autofunction:: QEfficient.cloud.execute.main
     :noindex:
 ```
+---
 
 (compile_api)=
 ## `QEfficient.cloud.compile`
@@ -24,6 +26,7 @@ Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group`` shou
 .. autofunction:: QEfficient.compile.compile_helper.compile
     :noindex:
 ```
+---
 
 (export_api)=
 ## `QEfficient.cloud.export`
@@ -31,6 +34,8 @@ Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group`` shou
 .. autofunction:: QEfficient.cloud.export.main
     :noindex:
 ```
+
+---
 
 (finetune_api)=
 ## `QEfficient.cloud.finetune`

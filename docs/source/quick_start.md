@@ -25,7 +25,7 @@ By default, the library exported models and Qaic Program Container (QPC) files, 
 ```{NOTE}
 Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
 ```
-### Infernce
+### Inference
 Below are the CLI API we support for infernce.
 
 #### Export
@@ -145,9 +145,9 @@ For more details on finetune, checkout the subsection.
 
 ---
 
-## High Level Execution
+## QEFF Auto Class Execution
 Here is the high level API to compile and run the model on Cloud AI 100 via Python using Qeff Autoclasses.
-To Know more about the Qeff Autoclasses, refer the link [QEFFAutoClasses](qeff_autoclass.md)
+To Know more about the QEFF Auto Classes, refer the link [QEFFAutoClasses](qeff_autoclasses.md)
 
 
 ### 1. Model download and Optimize for Cloud AI 100
