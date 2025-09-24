@@ -27,7 +27,7 @@ ONNX_EXPORT_CTX_LEN = 1024
 
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
-DEFAULT_AIC_MXPF6_MATMUL = False
+DEFAULT_AIC_MXFP6_MATMUL = False
 # Hashing defaults
 HASH_HEXDIGEST_STR_LEN = 16
 KWARGS_INCLUSION_LIST = [
@@ -217,6 +217,10 @@ class QnnConstants:
         "--model ",
         "--dlc_path ",
         "--config_file ",
+    ]
+
+    IMMUTABLE_COMPILATION_BACKEND_ARGS = [
+        "compiler_mxfp6_matmul_weights",
     ]
 
     QNN_SAMPLE_CONFIG = {
