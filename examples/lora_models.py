@@ -109,7 +109,8 @@ A new study has found that old people can still make fresh brain cells. The stud
 
 Content:
 
-A new study has found that the brain of an old person can still make new neurons. The study was conducted by a team of researchers from the University of California, Los Angeles. The team studied the brains that were able to make new neurons. The team found that the brains of these people were able to make new neurons in the hippocampus, which is the part of the brain that is responsible for memory and learning. The team also found that the brains of these people were able to make new neurons in the cortex, which is the part of the brain that is responsible for thinking and reasoning. The team also found that the brains of these people were able to make new neurons in the cerebellum, which
+A new study has found that the brain of an old person can still make new neurons. The study was conducted by a team of researchers from the University of California, Los Angeles. The team studied the brains that were able to make new neurons. The team found that the brains of these people were able to make new neurons in the hippocampus, which is the part of the brain that is responsible for memory and learning. 
+The team also found that the brains of these people were able to make new neurons in the cortex, which is the part of the brain that is responsible for thinking and reasoning. The team also found that the brains of these people were able to make new neurons in the cerebellum, which
 
 <5>
 James slept 2/3 * 9 = <<2/3*9=6>>6 hours.
