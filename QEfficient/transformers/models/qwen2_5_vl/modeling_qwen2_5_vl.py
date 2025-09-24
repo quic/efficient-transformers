@@ -620,9 +620,6 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         self.language_model = self.model.model
 
     def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
-        import ipdb
-
-        ipdb.set_trace()
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_id
