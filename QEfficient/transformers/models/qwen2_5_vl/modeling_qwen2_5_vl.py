@@ -151,7 +151,7 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
     def rot_pos_emb(self, grid_thw):
         pos_ids = []
 
-        t, h, w = grid_thw.shape
+        bs, t, h, w = grid_thw.shape
 
         hpos_ids = torch.arange(h).unsqueeze(1).expand(-1, w)
         hpos_ids = hpos_ids.reshape(
@@ -174,6 +174,11 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         wpos_ids = wpos_ids.flatten()
         pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
         pos_ids = torch.cat(pos_ids, dim=0)
+
+        x_expanded = pos_ids.unsqueeze(0) 
+        x_expanded = x_expanded.expand(bs, -1, -1) 
+        pos_ids = x_expanded.reshape(-1, pos_ids.size(1))
+
         max_grid_size = max(grid_thw.shape)
         rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
         rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
@@ -185,9 +190,8 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         window_index_id = 0
         vit_merger_window_size = self.window_size // self.spatial_merge_size // self.patch_size
 
-        grid_t, grid_h, grid_w = grid_thw.shape
+        bs, grid_t, grid_h, grid_w = grid_thw.shape
 
-        # for grid_t, grid_h, grid_w in grid_thw:
         llm_grid_h, llm_grid_w = (
             grid_h // self.spatial_merge_size,
             grid_w // self.spatial_merge_size,
@@ -201,7 +205,6 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
 
         index_padded = F.pad(index, (0, pad_w, 0, pad_h), "constant", -100)
 
-        # return index_padded, index_padded
         index_padded = index_padded.reshape(
             grid_t,
             num_windows_h,
@@ -218,6 +221,11 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
 
         seqlens = (index_padded != -100).sum([2, 3]).reshape(-1)
 
+
+        x_expanded = seqlens.unsqueeze(0)  
+        x_expanded = x_expanded.expand(bs, -1)  
+        seqlens = x_expanded.reshape(-1)
+
         index_padded = index_padded.reshape(-1)
 
         mask = (index_padded == -100).to(torch.int32)
@@ -230,14 +238,16 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         index_new = index_padded[order]
         index_new = index_new[: index.reshape(-1).size(0)]
 
-        window_index.append(index_new + window_index_id)
+        step = grid_t * llm_grid_h * llm_grid_w
+        batch_indices = torch.arange(bs)
+        batch_indices = batch_indices.view(-1, 1)
+        offsets = batch_indices * step
+        window_index_tmp = index_new.unsqueeze(0) + offsets
+        window_index = window_index_tmp.reshape(-1)
 
         cu_seqlens_tmp = seqlens.cumsum(0) * self.spatial_merge_unit + cu_window_seqlens[-1]
 
         cu_window_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens_tmp.dtype), cu_seqlens_tmp])
-
-        window_index_id += grid_t * llm_grid_h * llm_grid_w
-        window_index = torch.cat(window_index, dim=0)
 
         return window_index, cu_window_seqlens
 
@@ -276,11 +286,11 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
         position_embeddings = (emb.cos(), emb.sin())
 
-        t, h, w = grid_thw.shape
+        bs, t, h, w = grid_thw.shape
 
-        t = torch.arange(t, t + 1).squeeze()
-        h = torch.arange(h, h + 1).squeeze()
-        w = torch.arange(w, w + 1).squeeze()
+        t = torch.arange(t, t + 1).squeeze().expand(bs)
+        h = torch.arange(h, h + 1).squeeze().expand(bs)
+        w = torch.arange(w, w + 1).squeeze().expand(bs)
 
         cu_seqlens = (
             (h * w)
@@ -598,6 +608,10 @@ class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
 
     def forward(self, pixel_values, image_grid_thw):
         image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)
+        bs = image_grid_thw.shape[0]
+        split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
+        image_embeds = image_embeds.reshape(bs, split_size, image_embeds.size(1))
+
         return image_embeds
 
 
@@ -608,6 +622,7 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         self.language_model = self.model.model
 
     def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
+        import ipdb; ipdb.set_trace()
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_id
@@ -639,10 +654,11 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
         vision_size = 3577
         inputs_shapes["vision_embeds"] = (
+            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             vision_size,
             self.model.config.hidden_size,
         )
-        inputs_shapes["image_grid_thw"] = (1, 98, 146)
+        inputs_shapes["image_grid_thw"] = (1, 1, 98, 146)
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -767,9 +783,11 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         grid_height = grid_h * grid_w
         grid_width = patch_size * patch_size * temporal_patch_size * channel
         vision_size = grid_height // 4
+        grid_height = grid_height * batch_size
 
         vision = [
             {
+                "batch_size": batch_size,
                 "vision_size": vision_size,
                 "grid_height": grid_height,
                 "grid_width": grid_width,
@@ -807,13 +825,13 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
-            "image_grid_thw": {1: "grid_h", 2: "grid_w"},
+            "image_grid_thw": {0: "batch_size", 2: "grid_h", 3: "grid_w"},
         }
 
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {1: "batch_size", 2: "seq_len"},
-            "vision_embeds": {0: "vision_size"},
+            "vision_embeds": {0: "batch_size", 1: "vision_size"},
         }
 
         for i in range(num_layers):
