@@ -11,13 +11,9 @@ from transformers import AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-# Add HuggingFace Token to access the model
-HF_TOKEN = ""
-
 
 def run_model(
     model_name,
-    token,
     query,
     image_url,
     kv_offload=False,
@@ -89,7 +85,6 @@ if __name__ == "__main__":
 
     run_model(
         model_name=model_name,
-        token=HF_TOKEN,
         query=query,
         kv_offload=kv_offload,
         image_url=image_url,
