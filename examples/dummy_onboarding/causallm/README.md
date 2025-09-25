@@ -2,8 +2,12 @@
 
 ## Prerequisites
 
-Before beginning the onboarding process, ensure you have `qefficient-transformers` library installed in editable mode.
-
+Install `qefficient-transformers` library in editable mode.
+```sh
+git clone https://github.com/quic/efficient-transformers.git
+cd efficient-transformers
+pip install -e .
+```
 
 ## Introduction
 
@@ -16,7 +20,7 @@ We will use a dummy model named `Blueprint` as an example and walk through the c
 1. **Look into the original modelling files in the `transformers` library:**
     - Locate the original model in the `transformers` library.
         - `/src/transformers/models/blueprint/modeling_blueprint.py` has all the modeling classes used to construct the model.
-    - Locate the `pytorch_transforms.py` file in `qefficient_transformers` to see if the corresponding classes are already implemented in `qefficient_transformers`.
+    - Locate the `pytorch_transforms.py` file in `efficient-transformers/QEfficient/transformers/models/` to see if the corresponding classes are already implemented in `qefficient_transformers`.
         - It's a good reference point to see if some functionalities have already been used in a prior model.
     - Check the architecture class of the model that you want to on-board.
         - If it is not in `pytorch_transforms.py`, you will need to implement them and then map the class along with the other required classes in the `pytorch_transforms.py` file.
@@ -27,8 +31,8 @@ We will use a dummy model named `Blueprint` as an example and walk through the c
     - For our example we will create the following directory :
         `/QEfficient/transformers/models/blueprint`
     - Then we will add the modeling and __init__ files in this directory.
-    - The modeling file 'modeling_blueprint.py` will have all the necessary modified modeling classes.
-    - The file has been annotated to explain why the changes are required for the model.
+    - The modeling file `modeling_blueprint.py` will have all the necessary modified modeling classes.
+    - The file has been annotated to explain where and why the changes are required for the model.
 
 2. **Add the mapping to the corresponding classes in `pytorch_transforms.py` file:**
     - You will need to map the classes of the model to the ones in the `pytorch_transforms.py` file.
