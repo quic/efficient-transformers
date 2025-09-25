@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -285,7 +285,6 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
-            # return vision, compiler_options
             lang[0].pop("vision_size")
             lang[1].pop("vision_size")
             return lang, compiler_options
@@ -314,7 +313,6 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         else:
             lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
-            # dynamic_axes = vision_dynamic_axes
         return dynamic_axes
 
     def get_output_names(self, kv_offload: bool = False):
