@@ -16,7 +16,7 @@ from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
 from diffusers.pipelines.stable_diffusion_3.pipeline_output import StableDiffusion3PipelineOutput
 
-from QEfficient.diffusers.pipelines.pipeline_utils import QEffSD3Transformer2DModel, QEffTextEncoder, QEffVAE
+from QEfficient.diffusers.pipelines.pipeline_utils import QEffSD3Transformer2DBaseModel, QEffTextEncoder, QEffVAE
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 
@@ -31,11 +31,12 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
     It provides methods for text-to-image generation leveraging these optimized components.
     """
 
-    def __init__(self, model, *args, **kwargs):
+    def __init__(self, model, use_onnx_function, *args, **kwargs):
+        self.use_onnx_function = use_onnx_function
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
         self.text_encoder_3 = QEffTextEncoder(model.text_encoder_3)
-        self.transformer = QEffSD3Transformer2DModel(model.transformer)
+        self.transformer = QEffSD3Transformer2DBaseModel(model.transformer, self.use_onnx_function)
         self.vae_decode = QEffVAE(model, "decoder")
 
         self.tokenizer = model.tokenizer
@@ -69,7 +70,9 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         )
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], use_onnx_function=True, **kwargs
+    ):
         """
         Instantiate a QEFFStableDiffusion3Pipeline from pretrained Diffusers models.
 
@@ -86,7 +89,11 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             **kwargs,
         )
         model.to("cpu")
-        return cls(model, pretrained_model_name_or_path)
+        return cls(
+            model=model,
+            use_onnx_function=use_onnx_function,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+        )
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
@@ -153,12 +160,16 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         example_inputs_transformer, dynamic_axes_transformer, output_names_transformer = (
             self.transformer.get_onnx_config()
         )
+        export_kwargs = {}
+        if self.use_onnx_function:
+            export_kwargs = {"export_modules_as_functions": self.transformer.model._block_classes}
 
         self.transformer.export(
             inputs=example_inputs_transformer,
             output_names=output_names_transformer,
             dynamic_axes=dynamic_axes_transformer,
             export_dir=export_dir,
+            export_kwargs=export_kwargs,
         )
 
         # vae
