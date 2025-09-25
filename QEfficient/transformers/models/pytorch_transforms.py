@@ -100,6 +100,10 @@ from transformers.models.mistral.modeling_mistral import (
     MistralModel,
     MistralRMSNorm,
 )
+from transformers.models.mistral3.modeling_mistral3 import (
+    Mistral3ForConditionalGeneration,
+    Mistral3RMSNorm,
+)
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralDecoderLayer,
@@ -129,6 +133,7 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Model,
     Phi3RMSNorm,
 )
+from transformers.models.pixtral.modeling_pixtral import PixtralRMSNorm, PixtralVisionModel
 from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Attention,
     Qwen2DecoderLayer,
@@ -269,6 +274,10 @@ from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralForCausalLM,
     QEffMistralModel,
 )
+from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
+    QEffMistral3ForConditionalGeneration,
+    QEffPixtralVisionModel,
+)
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
     QeffMixtralDecoderLayer,
@@ -349,11 +358,13 @@ class CustomOpsTransform(ModuleMappingTransform):
         LlamaRMSNorm: CustomRMSNormAIC,
         Llama4TextRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
+        Mistral3RMSNorm: CustomRMSNormAIC,
         MixtralRMSNorm: CustomRMSNormAIC,
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
+        PixtralRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
         Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
@@ -451,6 +462,8 @@ class KVCacheTransform(ModuleMappingTransform):
         MistralDecoderLayer: QEffMistralDecoderLayer,
         MistralModel: QEffMistralModel,
         MistralForCausalLM: QEffMistralForCausalLM,
+        # Mistral3
+        Mistral3ForConditionalGeneration: QEffMistral3ForConditionalGeneration,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
@@ -472,6 +485,8 @@ class KVCacheTransform(ModuleMappingTransform):
         PhiDecoderLayer: QEffPhiDecoderLayer,
         PhiModel: QEffPhiModel,
         PhiForCausalLM: QEffPhiForCausalLM,
+        # Pixtral
+        PixtralVisionModel: QEffPixtralVisionModel,
         # Qwen2
         Qwen2Attention: QEffQwen2Attention,
         Qwen2DecoderLayer: QEffQwen2DecoderLayer,
