@@ -24,19 +24,18 @@ from transformers.models.blueprint.modeling_blueprint import (
     BlueprintForCausalLM,
     BlueprintModel,
     BlueprintRotaryEmbedding,
-    repeat_kv,
     rotate_half,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffBlueprintRotaryEmbedding(BlueprintRotaryEmbedding):
     """
     Add the required Rotary Embedding functionality to the model based on the Class in the transformers modeling file.
     The purpose of this class is to precompute sin and cos values for the rotary embedding and cache it for faster inference.
+    This class is more or less the same for all models that are onboarded.
     """
 
     def __init__(self, config: BlueprintConfig, device=None):
@@ -74,7 +73,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     instead of seq_len. This is needed as our modified modelling accepts position_ids and not
     the attention_mask as an input.
     """
-
+    # <values from specific position_ids are used to apply the rotary embedding instead.>
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
@@ -99,20 +98,7 @@ def eager_attention_forward(
     The method would mostly be generic so we don't expect it to have much changes.
     MIN_MASKED_ATTENTION_VALUE is a special value which helps our compiler know what -inf should be represented by.
     """
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
-
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
-
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_output = torch.matmul(attn_weights, value_states)
-    attn_output = attn_output.transpose(1, 2).contiguous()
-
-    return attn_output, attn_weights
+    pass
 
 
 class QEffBlueprintAttention(BlueprintAttention):
@@ -121,6 +107,10 @@ class QEffBlueprintAttention(BlueprintAttention):
     We initialize our own RotaryEmbedding module via __qeff_init__ method call.
 
     """
+
+    # < We load our own custom class for the rotary embedding to enable supporting position_ids>
+    # Since we map the custom classes to the original classes, __init__ method wouldn't work as expected,
+    # Hence we use __qeff_init__ method to initialize something while the mapping happens.
 
     def __qeff_init__(self):
         self.rotary_emb = QEffBlueprintRotaryEmbedding(config=self.config)
@@ -143,23 +133,28 @@ class QEffBlueprintAttention(BlueprintAttention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query_states = self.q_proj(hidden_states, **kwargs)
+        key_states = self.k_proj(hidden_states, **kwargs)
+        value_states = self.v_proj(hidden_states, **kwargs)
+
+        query_states = query_states.view(hidden_shape).transpose(1, 2)
+        key_states = key_states.view(hidden_shape).transpose(1, 2)
+        value_states = value_states.view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = key_states.shape[-2]
 
         # We build the rotary embeddings different from the transformers method.
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        # Apllication of the rotary embeddings requires position_ids as well.
+        # Application of the rotary embeddings requires position_ids as well.
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
+            # < We add all the required items for cache kwargs which would enable updating QEffDynamicCache >
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
+        # < We override the attention_interface method with our own to enable Eager Attention>
         attention_interface: Callable = eager_attention_forward
 
         attn_output, attn_weights = attention_interface(
@@ -205,6 +200,7 @@ class QEffBlueprintDecoderLayer(BlueprintDecoderLayer):
 
         hidden_states = self.input_layernorm(hidden_states)
 
+        # < Self attention would also have to return the past_key_value as well and we capture it here>
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
@@ -272,6 +268,7 @@ class QEffBlueprintModel(BlueprintModel):
                 "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
             )
 
+        # < We create the custom QEffDynamicCache here to be used during the AIC execution>
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
@@ -366,6 +363,7 @@ class QEffBlueprintForCausalLM(BlueprintForCausalLM):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        # < We add the additional parameters that we use for our models here and pass them down the line >
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
