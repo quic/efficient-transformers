@@ -1302,12 +1302,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
-        molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
+        vision_inputs_fp16 = {"pixel_values", "image_masks"}
+        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
 
-        if vision_inputs:
-            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
-            if molmo:
-                vision_inputs["image_masks"] = vision_inputs["image_masks"].astype("float16")
         vision_start = perf_counter()
 
         vision_outputs = {}

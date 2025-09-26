@@ -19,6 +19,7 @@ from transformers import (
     AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
+    GenerationConfig,
     TextStreamer,
 )
 
@@ -27,7 +28,7 @@ from QEfficient.utils import hf_download
 from QEfficient.utils._utils import create_json, get_num_layers_vlm
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
-from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerVlm
+from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import InternProcessor
 
 NEW_GENERATION_TOKENS = 10
@@ -157,6 +158,19 @@ intern_model_config = [
     # ), # commented becuase QNN Convertor is not supported for this model yet.
 ]
 
+molmo_model_config = [
+    (
+        "allenai/Molmo-7B-D-0924",
+        True,
+        1,
+        128,
+        4096,
+        "https://picsum.photos/id/237/536/354",
+        "Can you describe the image in detail.",
+        2,
+    ),
+]
+
 
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
@@ -196,6 +210,8 @@ def set_num_layers(config, n_layer=1):
     elif hasattr(config, "llm_config"):
         config.llm_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
+    else:
+        config.num_hidden_layers = n_layer
     return config
 
 
@@ -280,6 +296,77 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+    print("QPC Outputs (QAIC):")
+    output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    qpc_tokens = output.generated_ids[:, :-1]
+    assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+    return
+
+
+def check_molmo_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+    model_name: str,
+    img_url: str,
+    query: str,
+    prompt_len: int,
+    ctx_len: int,
+    max_gen_len: int = 20,
+    batch_size: int = 1,
+    n_layer: int = 1,
+    kv_offload: bool = False,
+    num_devices: int = 1,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
+):
+    model_config = {"model_name": model_name}
+
+    config = AutoConfig.from_pretrained(model_config["model_name"], trust_remote_code=True)
+    config._attn_implementation = "eager"
+    config = set_num_layers(config, n_layer=n_layer)
+    model_hf, _ = load_image_text_to_text_model(config)
+    n_layer = (n_layer, n_layer)
+
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
+    img = requests.get(img_url, stream=True)
+    image = Image.open(BytesIO(img.content)).convert("RGB")
+    image = image.resize((536, 354))
+
+    api_runner = ApiRunnerMolmo(
+        batch_size,
+        processor,
+        config,
+        image,
+        query,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+    )
+
+    inputs = processor.process(images=[image], text=query)
+    inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
+
+    generation_config = GenerationConfig(max_new_tokens=NEW_GENERATION_TOKENS, stop_strings="<|endoftext|>")
+    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
+
+    batch_size, prompt_len = inputs["input_ids"].shape
+    inputs["attention_mask"] = torch.ones((inputs["input_ids"].shape), dtype=torch.int64)
+    valid = inputs["image_input_idx"] > 0
+    valid = valid.reshape(1, -1)
+    inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
+    inputs["pixel_values"] = inputs.pop("images")
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_config["model_name"],
+        kv_offload=kv_offload,
+        config=config,
+    )
+
+    streamer = TextStreamer(processor.tokenizer)
+    qeff_model.export()
+
+    if not get_available_device_id():
+        pytest.skip("No available devices to run model on Cloud AI 100")
+    qeff_model.compile(num_devices=num_devices, prefill_seq_len=prompt_len, ctx_len=ctx_len, mxfp6=False)
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
@@ -456,6 +543,27 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
         kv_offload=kv_offload,
         enable_qnn=True,
         qnn_config=qnn_config_json_path,
+    )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", molmo_model_config
+)
+def test_image_text_to_text_molmo_pytorch_vs_kv_vs_ort_vs_ai100(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
+):
+    check_molmo_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
     )
 
 

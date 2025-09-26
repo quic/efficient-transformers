@@ -235,10 +235,7 @@ class QEffMolmoSequentialBlock(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         if not self.config.norm_after:
-            if self._activation_checkpoint_fn is not None:
-                atten_in = self._activation_checkpoint_fn(self.attn_norm, x)
-            else:
-                atten_in = self.attn_norm(x)
+            atten_in = self.attn_norm(x)
         else:
             atten_in = x
         qkv = self.att_proj(atten_in)
@@ -249,34 +246,19 @@ class QEffMolmoSequentialBlock(nn.Module):
         q, k, v = qkv.split(self.fused_dims, dim=-1)
 
         # Get attention scores.
-        if self._activation_checkpoint_fn is not None:
-            att, cache = self._activation_checkpoint_fn(  # type: ignore
-                self.attention,
-                q,
-                k,
-                v,
-                attention_bias,
-                position_ids=position_ids,
-                layer_past=layer_past,
-                use_cache=use_cache,
-            )
-        else:
-            att, cache = self.attention(
-                q,
-                k,
-                v,
-                attention_bias,
-                position_ids=position_ids,
-                layer_past=layer_past,
-                batch_index=batch_index,
-                use_cache=use_cache,
-            )
+        att, cache = self.attention(
+            q,
+            k,
+            v,
+            attention_bias,
+            position_ids=position_ids,
+            layer_past=layer_past,
+            batch_index=batch_index,
+            use_cache=use_cache,
+        )
 
         if self.config.norm_after:
-            if self._activation_checkpoint_fn is not None:
-                att = self._activation_checkpoint_fn(self.attn_norm, att)
-            else:
-                att = self.attn_norm(att)
+            att = self.attn_norm(att)
 
         # Add attention scores.
         # shape: (B, T, C)
@@ -287,23 +269,15 @@ class QEffMolmoSequentialBlock(nn.Module):
         og_x = x
 
         if not self.config.norm_after:
-            if self._activation_checkpoint_fn is not None:
-                x = self._activation_checkpoint_fn(self.ff_norm, x)  # type: ignore
-            else:
-                x = self.ff_norm(x)
+            x = self.ff_norm(x)
 
         x = self.ff_proj(x)
-        if self._activation_checkpoint_fn is not None:
-            x = self._activation_checkpoint_fn(self.act, x)  # type: ignore
-        else:
-            x = self.act(x)
+
+        x = self.act(x)
         x = self.ff_out(x)
 
         if self.config.norm_after:
-            if self._activation_checkpoint_fn is not None:
-                x = self._activation_checkpoint_fn(self.ff_norm, x)  # type: ignore
-            else:
-                x = self.ff_norm(x)
+            x = self.ff_norm(x)
 
         x = self.dropout(x)
         x = og_x + x
