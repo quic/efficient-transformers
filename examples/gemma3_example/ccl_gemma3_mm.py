@@ -50,7 +50,7 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        node_precision_info="examples/gemma3_example/fp32_mm.yaml",
+        node_precision_info="examples/gemma3_example/fp32_nodes_gemma3_4b.yaml",
     )
 
     messages = [
@@ -86,7 +86,7 @@ else:
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mos=1,
-        node_precision_info="examples/gemma3_example/fp32_mm.yaml",
+        node_precision_info="examples/gemma3_example/fp32_nodes_gemma3_4b.yaml",
     )
 
     ### IMAGE + TEXT ###
