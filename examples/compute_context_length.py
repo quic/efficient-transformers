@@ -44,5 +44,5 @@ model.generate(
     prompts=[
         "My name is ",
     ],
-    tokenizer=tokenizer
+    tokenizer=tokenizer,
 )

@@ -91,7 +91,6 @@ def run_model(
 if __name__ == "__main__":
     # Model name and Input parameters
     model_name = "llava-hf/llava-1.5-7b-hf"
-    # model_name = "meta-llama/Llama-3.2-11B-Vision-Instruct"
     query = "Describe this image."
     image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
 
@@ -101,10 +100,9 @@ if __name__ == "__main__":
     ctx_len = 8192
     generation_len = 128
     img_size = 336
-    # img_size = 560
     num_cores = 16
     num_devices = 4
-    comp_ctx_lengths = [4096,6144,8192]
+    comp_ctx_lengths = [4096, 6144, 8192]
     prefill_ccl_len = 1
 
     run_model(
