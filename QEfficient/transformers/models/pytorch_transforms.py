@@ -74,6 +74,7 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
+    LlamaRotaryEmbedding,
 )
 from transformers.models.llama4.modeling_llama4 import (
     Llama4ForCausalLM,
@@ -112,6 +113,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
     MllamaForCausalLM,
     MllamaForConditionalGeneration,
+    MllamaModel,
     MllamaRotaryEmbedding,
     MllamaSelfAttentionDecoderLayer,
     MllamaTextCrossAttention,
@@ -166,7 +168,7 @@ from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
-    QeffCodeGenBlock,
+    QEffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
@@ -245,6 +247,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+    QEffLlamaRotaryEmbedding,
 )
 from QEfficient.transformers.models.llama4.modeling_llama4 import (
     QEffLlama4ForCausalLM,
@@ -280,6 +283,7 @@ from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
     QEffMllamaForCausalLM,
     QEffMllamaForConditionalGeneration,
+    QEffMllamaModel,
     QEffMllamaRotaryEmbedding,
     QEffMllamaSelfAttentionDecoderLayer,
     QEffMllamaTextCrossAttentionSingleQPC,
@@ -364,7 +368,7 @@ class KVCacheTransform(ModuleMappingTransform):
     _module_mapping = {
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
-        CodeGenBlock: QeffCodeGenBlock,
+        CodeGenBlock: QEffCodeGenBlock,
         CodeGenModel: QEffCodeGenModel,
         CodeGenForCausalLM: QEffCodeGenForCausalLM,
         # Falcon
@@ -387,6 +391,7 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaDecoderLayer: QEffLlamaDecoderLayer,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        LlamaRotaryEmbedding: QEffLlamaRotaryEmbedding,
         # Llama4
         Llama4TextAttention: QEffLlama4TextAttention,
         Llama4ForCausalLM: QEffLlama4ForCausalLM,
@@ -440,6 +445,7 @@ class KVCacheTransform(ModuleMappingTransform):
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
         MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
+        MllamaModel: QEffMllamaModel,
         MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
         MllamaRotaryEmbedding: QEffMllamaRotaryEmbedding,
         MllamaVisionModel: QEffMllamaVisionModel,
