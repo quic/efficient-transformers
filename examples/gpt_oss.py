@@ -5,36 +5,18 @@
 #
 # -----------------------------------------------------------------------------
 
-## BEFORE RUNNING PLS, RUN THE CONVERT SCRIPT TO CONVERT THE SAFETENSORS FROM FP4 to BF16
-## SEE DETAILS HERE: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt_oss/convert_gpt_oss_weights_to_hf.py
-## ONCE CONVERTED, PASS THE MODIFIED WEIGHTS TO THE MODEL_ID BELOW
-import torch
-from transformers import AutoConfig, GptOssForCausalLM, TextStreamer
+from transformers import AutoTokenizer, TextStreamer
 
 from QEfficient import QEFFAutoModelForCausalLM
-from QEfficient.utils._utils import load_hf_tokenizer
-from QEfficient.utils.constants import Constants
-from QEfficient.utils.run_utils import ApiRunner
 
-torch.manual_seed(42)
-model_id = "CONVERTED_WEIGHTS"  # See Comments above to convert saftensors to BF16
-config = AutoConfig.from_pretrained(model_id)
+model_id = "openai/gpt-oss-20b"
 
-model = GptOssForCausalLM.from_pretrained(
-    model_id, torch_dtype=torch.float32, attn_implementation="eager", config=config
-)
-model.eval()
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-120b")
 
-tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_id)
-config = model.config
-batch_size = len(Constants.INPUT_STR)
-
-api_runner = ApiRunner(batch_size, tokenizer, config, Constants.INPUT_STR, Constants.PROMPT_LEN, Constants.CTX_LEN)
-
-qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
 onnx_model_path = qeff_model.export()
 qpc_path = qeff_model.compile(
-    prefill_seq_len=32,
+    prefill_seq_len=1,
     ctx_len=256,
     num_cores=16,
     mxfp6_matmul=True,
