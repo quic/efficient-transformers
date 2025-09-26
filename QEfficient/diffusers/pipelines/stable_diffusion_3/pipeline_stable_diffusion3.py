@@ -71,7 +71,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
     @classmethod
     def from_pretrained(
-        cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], use_onnx_function=True, **kwargs
+        cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], use_onnx_function=False, **kwargs
     ):
         """
         Instantiate a QEFFStableDiffusion3Pipeline from pretrained Diffusers models.

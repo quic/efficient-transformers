@@ -17,8 +17,7 @@ class QEffSD3Transformer2DModel(SD3Transformer2DModel):
         self._block_classes = set()
 
         for i in range(self.config.num_layers):
-            block_class_name = f"QEffJointTransformerBlock_{i:02d}"
-            BlockClass = type(block_class_name, (QEffJointTransformerBlock,), {})
+            BlockClass = QEffJointTransformerBlock
             block = BlockClass(
                 dim=self.inner_dim,
                 num_attention_heads=self.config.num_attention_heads,

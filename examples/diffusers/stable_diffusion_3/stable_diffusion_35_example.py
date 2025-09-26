@@ -7,7 +7,9 @@
 
 from QEfficient import QEFFStableDiffusion3Pipeline
 
-pipeline = QEFFStableDiffusion3Pipeline.from_pretrained("stabilityai/stable-diffusion-3.5-large-turbo")
+pipeline = QEFFStableDiffusion3Pipeline.from_pretrained(
+    "stabilityai/stable-diffusion-3.5-large-turbo", use_onnx_function=False
+)
 pipeline.compile(num_devices_text_encoder=1, num_devices_transformer=4, num_devices_vae_decoder=1)
 
 # NOTE: guidance_scale <=1 is not supported
