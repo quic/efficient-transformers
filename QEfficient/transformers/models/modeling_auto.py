@@ -1550,14 +1550,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
+        block_size = 1
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+            "block_size_indicator": torch.zeros((1, block_size), dtype=torch.int64),
             "past_key_values": [[] for _ in range(self.num_layers)],
+            
         }
         dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
+            "block_size_indicator": {1:"block_size"}
         }
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
             pkv_dynamic_axes = {

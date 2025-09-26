@@ -412,20 +412,27 @@ def eager_attention_forward_blocked(
     attention_mask: Optional[torch.Tensor],
     scaling: float,
     dropout: float = 0.0,
-    num_blocks_indicator=None,
+    block_size_indicator=None,
     **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
-    attn_output = torch.zeros_like(query)
+    attn_outputs = []
     q_len = query.shape[2]
-    num_blocks_indicator = os.environ['NUM_BLOCKS']
-    runtime_block_size = q_len // num_blocks_indicator
-    for iteration in range(num_blocks_indicator):
-        curr_attn_weights = torch.matmul(query[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :], key_states.transpose(2, 3)) * scaling
+    # num_blocks_indicator = int(os.environ['NUM_BLOCKS'])
+    import ipdb; ipdb.set_trace()
+    bs, runtime_block_size = block_size_indicator.shape
+    #block_positions = [(i * q_len) // 64 for i in range(num_blocks_indicator)]
+    block_positions = [j for j in range(0, q_len, runtime_block_size)]
+    block_count = 0
+    import ipdb; ipdb.set_trace()
+    for block_pos in block_positions:
+        q_block = query[:, :, block_pos:block_pos + runtime_block_size, :]
+        attn_mask_block = attention_mask[:, :, block_pos:block_pos+runtime_block_size, :]
+        curr_attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
         if attention_mask is not None:  # no matter the length, we just slice it
-            curr_attn_weights = torch.where(attention_mask[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :], torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), curr_attn_weights)
+            curr_attn_weights = torch.where(attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), curr_attn_weights)
         
         sinks = module.sinks.reshape(1, -1, 1, 1).expand(curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1)
         combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
@@ -433,8 +440,9 @@ def eager_attention_forward_blocked(
         curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
         curr_attn_weights = curr_attn_weights[..., :-1]
         curr_attn_output = torch.matmul(curr_attn_weights, value_states)
-        attn_output[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :] = curr_attn_output
-
+        attn_outputs.append(curr_attn_output)
+    
+    attn_output = torch.cat(attn_outputs, dim=2)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_output
 
@@ -455,6 +463,7 @@ class QEffGptOssAttention(GptOssAttention):
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         sliding_mask=None,
+        block_size_indicator = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -499,9 +508,10 @@ class QEffGptOssAttention(GptOssAttention):
             scaling=self.scaling,
             sliding_window=self.sliding_window,
             s_aux=self.sinks,  # diff with Llama
+            block_size_indicator = block_size_indicator,
             **kwargs,
         )
-
+        
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights, past_key_value
@@ -520,6 +530,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         sliding_mask=None,
+        block_size_indicator = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor]:
         residual = hidden_states
@@ -535,6 +546,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
             cache_position=cache_position,
             position_embeddings=position_embeddings,
             sliding_mask=sliding_mask,
+            block_size_indicator = block_size_indicator,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -570,6 +582,7 @@ class QEffGptOssModel(GptOssModel):
         return_dict: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        block_size_indicator = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> MoeModelOutputWithPast:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -628,6 +641,7 @@ class QEffGptOssModel(GptOssModel):
                 output_attentions=output_attentions,
                 cache_position=cache_position,
                 sliding_mask=sliding_mask,
+                block_size_indicator = block_size_indicator,
                 **kwargs,
             )
             hidden_states = layer_outputs[0]
@@ -655,6 +669,7 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        block_size_indicator = None,
         past_key_values: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -715,6 +730,7 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
             output_router_logits=output_router_logits,
             return_dict=return_dict,
             cache_position=cache_position,
+            block_size_indicator = block_size_indicator,
             **kwargs,
         )
 
