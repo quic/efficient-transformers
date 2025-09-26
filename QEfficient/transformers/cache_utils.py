@@ -6,10 +6,11 @@
 # -----------------------------------------------------------------------------
 
 
+from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from transformers.cache_utils import DynamicCache, EncoderDecoderCache, HybridCache, HybridChunkedCache
+from transformers.cache_utils import DynamicCache, DynamicLayer, EncoderDecoderCache, HybridCache, HybridChunkedCache
 
 from QEfficient.customop import (
     CtxGatherFunc,
@@ -23,72 +24,20 @@ from QEfficient.customop import (
 )
 
 
-class QEffDynamicCache(DynamicCache):
-    """
-    A cache that grows dynamically as more tokens are generated. This is the default for generative models.
-
-    It stores the Key and Value states as a list of tensors, one for each layer. The expected shape for each tensor is
-    `[batch_size, num_heads, seq_len, head_dim]`.
-
-    - Optimized implementation for the Cloud AI 100 to reuse KV Cache.
-    - get the position_ids input using kwargs.
-    - Use custom Onnxscript ops to write optimized version to generate Onnx model.
-
-    """
-
-    def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
+class QEffDynamicLayer(DynamicLayer):
+    def read_only(self, cache_kwargs):
         """
-        Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+        Reads the `key_states` and `value_states` for the layer.
 
         Parameters:
-            key_states (`torch.Tensor`):
-                The new key states to cache.
-            value_states (`torch.Tensor`):
-                The new value states to cache.
-            layer_idx (`int`):
-                The index of the layer to cache the states for.
-            cache_kwargs (`Dict[str, Any]`, `optional`):
-                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
-        """
-        # Update the cache
-        if len(self.key_cache) <= layer_idx:
-            self.key_cache.append(key_states)
-            self.value_cache.append(value_states)
-        else:
-            position_ids = cache_kwargs.get("position_ids")
-            batch_index = cache_kwargs.get("batch_index", None)
-
-            # Scatter
-            if batch_index is not None:
-                invalid_scatter_index = torch.iinfo(torch.int32).max
-                scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
-
-                self.key_cache[layer_idx] = CtxScatterFuncCB.apply(
-                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-                )
-                self.value_cache[layer_idx] = CtxScatterFuncCB.apply(
-                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-                )
-            else:
-                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
-                self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                    self.value_cache[layer_idx], position_ids, value_states
-                )
-
-    def read_only(self, layer_idx, cache_kwargs):
-        """
-        Reads the `key_states` and `value_states` for the layer `layer_idx`.
-
-        Parameters:
-            layer_idx (`int`):
-                The index of the layer to cache the states for.
             cache_kwargs (`Dict[str, Any]`, `optional`):
                 Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
 
         Return:
             A tuple containing the updated key and value states.
         """
-        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+        # Gather
+        k_out, v_out = self.keys, self.values
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         ctx_len = k_out.shape[2]
@@ -113,34 +62,22 @@ class QEffDynamicCache(DynamicCache):
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
 
-    def update(
-        self,
-        key_states: torch.Tensor,
-        value_states: torch.Tensor,
-        layer_idx: int,
-        cache_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def write_only(self, key_states, value_states, cache_kwargs):
         """
-        Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+        Write in the cache with the new `key_states` and `value_states` for the layer.
 
         Parameters:
             key_states (`torch.Tensor`):
                 The new key states to cache.
             value_states (`torch.Tensor`):
                 The new value states to cache.
-            layer_idx (`int`):
-                The index of the layer to cache the states for.
             cache_kwargs (`Dict[str, Any]`, `optional`):
                 Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
-
-        Return:
-            A tuple containing the updated key and value states.
         """
         # Update the cache
-        if len(self.key_cache) <= layer_idx:
-            self.key_cache.append(key_states)
-            self.value_cache.append(value_states)
-            k_out, v_out = key_states, value_states
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
         else:
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
@@ -150,20 +87,54 @@ class QEffDynamicCache(DynamicCache):
                 invalid_scatter_index = torch.iinfo(torch.int32).max
                 scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
 
-                self.key_cache[layer_idx] = CtxScatterFuncCB.apply(
-                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-                )
-
-                self.value_cache[layer_idx] = CtxScatterFuncCB.apply(
-                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-                )
+                self.keys = CtxScatterFuncCB.apply(self.keys, batch_index, scatter_position_ids, key_states)
+                self.values = CtxScatterFuncCB.apply(self.values, batch_index, scatter_position_ids, value_states)
             else:
-                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
-                self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                    self.value_cache[layer_idx], position_ids, value_states
-                )
+                self.keys = CtxScatterFunc.apply(self.keys, position_ids, key_states)
+                self.values = CtxScatterFunc.apply(self.values, position_ids, value_states)
 
-            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+    def update(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        cache_kwargs: Optional[dict[str, Any]] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Updates the cache with the new `key_states` and `value_states` for the layer.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        # Update the cache
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
+            k_out, v_out = self.keys, self.values
+        else:
+            position_ids = cache_kwargs.get("position_ids")
+            batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
+
+            # Scatter
+            if batch_index is not None:
+                invalid_scatter_index = torch.iinfo(torch.int32).max
+                scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+
+                self.keys = CtxScatterFuncCB.apply(self.keys, batch_index, scatter_position_ids, key_states)
+
+                self.values = CtxScatterFuncCB.apply(self.values, batch_index, scatter_position_ids, value_states)
+            else:
+                self.keys = CtxScatterFunc.apply(self.keys, position_ids, key_states)
+                self.values = CtxScatterFunc.apply(self.values, position_ids, value_states)
+
+            k_out, v_out = self.keys, self.values
 
             # Gather
             ctx_len = k_out.shape[2]
@@ -187,23 +158,21 @@ class QEffDynamicCache(DynamicCache):
 
         return k_out, v_out
 
+    # TODO:This function will be depercated in future.
     def update3D(
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
-        layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+        Updates the cache with the new `key_states` and `value_states` for the layer.
 
         Parameters:
             key_states (`torch.Tensor`):
                 The new key states to cache.
             value_states (`torch.Tensor`):
                 The new value states to cache.
-            layer_idx (`int`):
-                The index of the layer to cache the states for.
             cache_kwargs (`Dict[str, Any]`, `optional`):
                 Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
 
@@ -211,32 +180,27 @@ class QEffDynamicCache(DynamicCache):
             A tuple containing the updated key and value states.
         """
         # Update the cache
-        if len(self.key_cache) <= layer_idx:
-            self.key_cache.append(key_states)
-            self.value_cache.append(value_states)
-            k_out, v_out = key_states, value_states
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
+            k_out, v_out = self.keys, self.values
         else:
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)
 
+            # Scatter
             if batch_index is not None:
                 invalid_scatter_index = torch.iinfo(torch.int32).max
                 scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
 
-                self.key_cache[layer_idx] = CtxScatterFuncCB3D.apply(
-                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-                )
+                self.keys = CtxScatterFuncCB3D.apply(self.keys, batch_index, scatter_position_ids, key_states)
 
-                self.value_cache[layer_idx] = CtxScatterFuncCB3D.apply(
-                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-                )
-
+                self.values = CtxScatterFuncCB3D.apply(self.values, batch_index, scatter_position_ids, value_states)
             else:
-                self.key_cache[layer_idx] = CtxScatterFunc3D.apply(self.key_cache[layer_idx], position_ids, key_states)
-                self.value_cache[layer_idx] = CtxScatterFunc3D.apply(
-                    self.value_cache[layer_idx], position_ids, value_states
-                )
-            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+                self.keys = CtxScatterFunc3D.apply(self.keys, position_ids, key_states)
+                self.values = CtxScatterFunc3D.apply(self.values, position_ids, value_states)
+
+            k_out, v_out = self.keys, self.values
 
             # Gather
             ctx_len = k_out.shape[1]
@@ -258,6 +222,89 @@ class QEffDynamicCache(DynamicCache):
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out
+
+
+class QEffDynamicCache(DynamicCache):
+    """
+    A cache that grows dynamically as more tokens are generated. This is the default for generative models.
+
+    It stores the Key and Value states as a list of tensors, one for each layer. The expected shape for each tensor is
+    `[batch_size, num_heads, seq_len, head_dim]`.
+
+    - Optimized implementation for the Cloud AI 100 to reuse KV Cache.
+    - get the position_ids input using kwargs.
+    - Use custom Onnxscript ops to write optimized version to generate Onnx model.
+
+    """
+
+    def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
+        # Remove layer_classes if present to avoid duplicate argument
+        kwargs.pop("layer_classes", None)
+        from transformers.cache_utils import Cache  # Import here to avoid circular import
+
+        Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
+        if ddp_cache_data is not None:
+            for key_states, value_states in ddp_cache_data:
+                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+
+    def read_only(self, layer_idx, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        return self.layers[layer_idx].read_only(cache_kwargs)
+
+    def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
+        """
+        Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+        """
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only(key_states, value_states, cache_kwargs)
+
+    # TODO:This function will be depercated in future.
+    def update3D(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[dict[str, Any]] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].update3D(key_states, value_states, cache_kwargs)
 
 
 class QEffEncoderDecoderCache(EncoderDecoderCache):
@@ -285,6 +332,7 @@ class QEffEncoderDecoderCache(EncoderDecoderCache):
         return cache
 
 
+# TODO:This function will be depercated in future.
 class QEffHybridCache(HybridCache):
     def __init__(self, config, batch_size, max_cache_len):
         super().__init__(config, batch_size, max_cache_len=max_cache_len)
@@ -388,6 +436,7 @@ class QEffHybridCache(HybridCache):
         return k_out, v_out
 
 
+# TODO:This function will be depercated in future.
 class QEffHybridChunkedCache(HybridChunkedCache):
     def __len__(self):
         """

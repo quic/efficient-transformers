@@ -165,7 +165,34 @@ class ModelConfig:
     }
 
     EXTERNAL_MODELS = {
-        "hpcai-tech/grok-1",
+        "hpcai-tech/grok-1": {
+            "pytorch_hf_tokens": [
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+            ]
+        }
     }
 
     SWIFTKV_MODELS = {

@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
-from typing import Callable, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -52,16 +52,14 @@ def eager_attention_forward_vision(
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
-    if attention_mask is not None:
-        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-        attn_weights = attn_weights + causal_mask
+
     if attention_mask is not None:
         attn_weights = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights.float(), dim=-1).to(query.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -183,7 +181,7 @@ class QEffLlama4VisionAttention(Llama4VisionAttention):
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
 
-        attention_interface: Callable = eager_attention_forward_vision
+        attention_interface = eager_attention_forward_vision
 
         attn_output, attn_weights = attention_interface(
             self,
@@ -378,7 +376,6 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
-    **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
@@ -403,55 +400,16 @@ class QEffLlama4TextExperts(Llama4TextExperts):
 
 
 class QEffLlama4TextMoe(Llama4TextMoe):
-    def forward(self, hidden: torch.Tensor):
-        B, S, H = hidden.shape
-        T = B * S
-        hidden = hidden.view(T, H)
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_scores, router_logits = self.router(hidden_states)
+        routed_in = hidden_states.repeat(router_scores.shape[1], 1)
 
-        router_logits = self.router(hidden)
-        # *top-k = 1*  → LLama4
-        top_w, top_i = torch.topk(router_logits, self.top_k, dim=-1)  # both [T, K]
-        masked_logits = torch.full_like(router_logits, float("-inf"))
-        masked_logits.scatter_(1, top_i, top_w)
-
-        # Here we multiply by scores before experts, different only for Llama4
-        x = hidden * torch.sigmoid(top_w.float())
-
-        # ── Book-keeping: create one boolean mask per expert once  ───────────────
-        # routing_weights[e]  ==  True where token routed to that expert. Shape [E, T]
-        routing_weights = torch.sigmoid(masked_logits.float()).to(hidden.dtype)
-
-        # ────────────────── allocate the two big tensors ─────
-        ffn_dim = self.experts.intermediate_size  # = 8/3 · H
-        upgate = x.new_zeros((T, ffn_dim))
-        expert_out = x.new_zeros((T, H))  # accum-out buffer
-
-        # ───────────────────────── Stage-1 : Up-Gate ─────────────────────────────
-        # Loop over experts
-        for e in range(self.num_experts):
-            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-            masked_up = torch.where(
-                routing_weights[:, e].unsqueeze(-1) > 0,
-                ((self.experts.act_fn(x @ W_g)) * (x @ W_u)),
-                torch.zeros_like(upgate),
-            )
-            upgate += masked_up
-
-        # At this point  upgate[t]  holds   UpGate(x_t)   for that token’s expert,
-        # and arbitrary (zeros) data for tokens not routed to that expert.
-        # ───────────────────────── Stage-2 : Down ────────────────────────────────
-        for e in range(self.num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-            masked_down = torch.where(
-                routing_weight > 0, (upgate @ self.experts.down_proj[e]), torch.zeros_like(expert_out)
-            )
-            expert_out += masked_down
-
-        # ───────────────────────── Stage-3 : Shared expert ───────────────────────
-        shared_out = self.shared_expert(hidden)  # [T, H]
-        final = shared_out + expert_out  # restore [B,S,H]
-        return final.view(B, S, H), router_logits
+        routed_in = routed_in * router_scores.reshape(-1, 1)
+        routed_out = self.experts(routed_in)
+        out = self.shared_expert(hidden_states)
+        out.add_(routed_out.reshape(router_scores.shape[1], -1, routed_out.shape[-1]).sum(dim=0))
+        return out, router_logits
 
 
 class QEffLlama4TextAttention(Llama4TextAttention):
@@ -475,10 +433,6 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         key_states = self.k_proj(hidden_states).view(*input_shape, -1, self.head_dim)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
-
-        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        ##
         if self.use_rope:  # the 16E model skips rope for long context on certain layers
             query_states, key_states = qeff_apply_rotary_emb(
                 query_states, key_states, position_embeddings.to(query_states.device)
@@ -506,12 +460,11 @@ class QEffLlama4TextAttention(Llama4TextAttention):
                 chunk_position_ids = torch.where(
                     chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
                 )
-
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        attention_interface: Callable = eager_attention_forward
+        attention_interface = eager_attention_forward
 
         attn_output, attn_weights = attention_interface(
             self,
@@ -520,7 +473,6 @@ class QEffLlama4TextAttention(Llama4TextAttention):
             value_states,
             attention_mask,
             scaling=self.scaling,
-            **kwargs,
         )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
@@ -551,10 +503,6 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
-
-        # use local attention mask for ROPE layers
-        if self.use_chunked_attention:
-            attention_mask = chunk_causal_mask
 
         hidden_states = self.input_layernorm(hidden_states)
 
@@ -654,12 +602,12 @@ class QEffLlama4TextModel(Llama4TextModel):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = _create_causal_mask(
-            position_ids=position_ids, target_length=past_key_values.key_cache[3].shape[-2]
+            position_ids=position_ids, target_length=past_key_values.layers[3].keys.shape[-2]
         )
         chunk_position_ids = torch.where(
             position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
         )
-        target_length = min(past_key_values.key_cache[0].shape[-2], torch.tensor(self.config.attention_chunk_size))
+        target_length = min(past_key_values.layers[0].keys.shape[-2], torch.tensor(self.config.attention_chunk_size))
         chunk_causal_mask = _create_causal_mask(position_ids=chunk_position_ids, target_length=target_length)
 
         # embed positions
