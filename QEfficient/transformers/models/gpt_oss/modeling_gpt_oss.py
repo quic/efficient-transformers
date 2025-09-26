@@ -418,23 +418,27 @@ def eager_attention_forward_blocked(
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
-    attn_output = torch.zeros_like(query)
+    attn_outputs = []
     q_len = query.shape[2]
-    num_blocks_indicator = os.environ['NUM_BLOCKS']
+    num_blocks_indicator = int(os.environ['NUM_BLOCKS'])
     runtime_block_size = q_len // num_blocks_indicator
-    for iteration in range(num_blocks_indicator):
-        curr_attn_weights = torch.matmul(query[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :], key_states.transpose(2, 3)) * scaling
+    block_positions = [j for j in range(0, q_len, runtime_block_size)]
+    for block_pos in block_positions:
+        q_block = query[:, :, block_pos:block_pos + runtime_block_size, :]
+        attn_mask_block = attention_mask[:, :, block_pos:block_pos+runtime_block_size, :]
+        curr_attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
         if attention_mask is not None:  # no matter the length, we just slice it
-            curr_attn_weights = torch.where(attention_mask[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :], torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), curr_attn_weights)
-        
+            curr_attn_weights = torch.where(attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), curr_attn_weights)
+
         sinks = module.sinks.reshape(1, -1, 1, 1).expand(curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1)
         combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
         # upcast attention to fp32
         curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
         curr_attn_weights = curr_attn_weights[..., :-1]
         curr_attn_output = torch.matmul(curr_attn_weights, value_states)
-        attn_output[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :] = curr_attn_output
+        attn_outputs.append(curr_attn_output)
 
+    attn_output = torch.cat(attn_outputs, dim=2)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_output
 
