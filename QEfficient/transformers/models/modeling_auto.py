@@ -51,6 +51,7 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
+    Mxfp4GptOssExpertDequantizeTransform,
 )
 from QEfficient.utils import (
     constants,
@@ -1378,6 +1379,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         FP8DeQuantLinearToLinearTransform,
+        Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,
