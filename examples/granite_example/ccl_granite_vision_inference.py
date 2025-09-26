@@ -95,7 +95,7 @@ if __name__ == "__main__":
     img_size = 384
     num_cores = 16
     num_devices = 4
-    comp_ctx_lengths = [5500,6144,8192]
+    comp_ctx_lengths = [5500, 6144, 8192]
     prefill_ccl_len = 1
 
     run_model(
