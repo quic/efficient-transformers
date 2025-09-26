@@ -9,7 +9,7 @@
 ## SEE DETAILS HERE: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt_oss/convert_gpt_oss_weights_to_hf.py
 ## ONCE CONVERTED, PASS THE MODIFIED WEIGHTS TO THE MODEL_ID BELOW
 import torch
-from transformers import AutoConfig, GptOssForCausalLM, TextStreamer
+from transformers import AutoConfig, GptOssForCausalLM, TextStreamer, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.utils._utils import load_hf_tokenizer
