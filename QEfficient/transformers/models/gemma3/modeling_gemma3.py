@@ -80,7 +80,7 @@ class QEffGemma3RotaryEmbedding(nn.Module):
         self.base = base
         inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
 
-        if hasattr(config, "rope_scaling") and "factor" in config.rope_scaling:
+        if hasattr(config, "rope_scaling") and config.rope_scaling is not None and "factor" in config.rope_scaling:
             factor = config.rope_scaling["factor"]
             inv_freq /= factor
         self.register_buffer("inv_freq", inv_freq, persistent=False)
