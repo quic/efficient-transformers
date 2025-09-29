@@ -193,11 +193,11 @@ class QEffVAE(QEFFBaseModel):
         self.model = copy.deepcopy(model.vae)
         self.type = type
 
-    def get_onnx_config(self):
+    def get_onnx_config(self, latent_height = None , latent_width = None):
         # VAE decode
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         example_inputs = {
-            "latent_sample": torch.randn(bs, 16, 64, 64),
+            "latent_sample": torch.randn(bs, 16, latent_height, latent_width),  #  64, 64
             "return_dict": False,
         }
 
@@ -214,13 +214,15 @@ class QEffVAE(QEFFBaseModel):
     def get_specializations(
         self,
         batch_size: int,
+        latent_height:int ,
+        latent_width: int,
     ):
         sepcializations = [
             {
                 "batch_size": batch_size,
                 "channels": 16,
-                "height": 128,
-                "width": 128,
+                "height":  latent_height,  # 128,
+                "width": latent_width #128,
             }
         ]
         return sepcializations
@@ -347,20 +349,24 @@ class QEffSD3Transformer2DBaseModel(QEFFBaseModel):
     that uses transformer-based diffusion models instead of traditional UNet architectures.
     """
 
-    def __init__(self, model: nn.modules, use_onnx_function):
+    def __init__(self, model: nn.modules, use_onnx_function, height, width):
         super().__init__(model)
         if use_onnx_function:
             self._pytorch_transforms.append(OnnxFunctionTransform)
             model, _ = OnnxFunctionTransform.apply(model)
         self.model = model
+        self.height = height
+        self.width = width
+        self.lat_height = self.height // 8 # self.vae_scale_factor
+        self.lat_width = self.width // 8 
 
-    def get_onnx_config(self):
+    def get_onnx_config(self, latent_height=None, latent_width= None):
         example_inputs = {
             "hidden_states": torch.randn(
                 2,
                 self.model.config.in_channels,
-                self.model.config.sample_size,
-                self.model.config.sample_size,
+                latent_height,
+                latent_width
             ),
             "encoder_hidden_states": torch.randn(2, 333, self.model.config.joint_attention_dim),
             "pooled_projections": torch.randn(2, self.model.config.pooled_projection_dim),
@@ -398,13 +404,15 @@ class QEffSD3Transformer2DBaseModel(QEFFBaseModel):
         self,
         batch_size: int,
         seq_len: int,
+        latent_height: int,
+        latent_width: int,
     ):
         specializations = [
             {
                 "batch_size": 2 * batch_size,
                 "latent_channels": 16,
-                "latent_height": self.model.config.sample_size,
-                "latent_width": self.model.config.sample_size,
+                "latent_height": latent_height,  #self.model.config.sample_size,
+                "latent_width":  latent_width, # self.model.config.sample_size,
                 "seq_len": seq_len,
                 "steps": 1,
             }

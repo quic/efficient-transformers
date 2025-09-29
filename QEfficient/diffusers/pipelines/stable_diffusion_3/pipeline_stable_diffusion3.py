@@ -31,12 +31,14 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
     It provides methods for text-to-image generation leveraging these optimized components.
     """
 
-    def __init__(self, model, use_onnx_function, *args, **kwargs):
+    def __init__(self, model, use_onnx_function,  height=1024, width=1024, *args, **kwargs):
         self.use_onnx_function = use_onnx_function
+        self.height = height
+        self.width =  width
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
         self.text_encoder_3 = QEffTextEncoder(model.text_encoder_3)
-        self.transformer = QEffSD3Transformer2DBaseModel(model.transformer, self.use_onnx_function)
+        self.transformer = QEffSD3Transformer2DBaseModel(model.transformer, self.use_onnx_function, self.height, self.width)
         self.vae_decode = QEffVAE(model, "decoder")
 
         self.tokenizer = model.tokenizer
@@ -68,10 +70,13 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             if hasattr(model, "transformer") and model.transformer is not None
             else 2
         )
+        # initializing with default values
+        self.lat_height = self.height // self.vae_scale_factor
+        self.lat_width = self.width // self.vae_scale_factor
 
     @classmethod
     def from_pretrained(
-        cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], use_onnx_function=False, **kwargs
+        cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], use_onnx_function=False, height= 1024, width= 1024, **kwargs
     ):
         """
         Instantiate a QEFFStableDiffusion3Pipeline from pretrained Diffusers models.
@@ -92,6 +97,8 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         return cls(
             model=model,
             use_onnx_function=use_onnx_function,
+            height = height,
+            width = width,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
         )
 
@@ -158,13 +165,13 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
         # transformers
         example_inputs_transformer, dynamic_axes_transformer, output_names_transformer = (
-            self.transformer.get_onnx_config()
+            self.transformer.get_onnx_config(self.lat_height, self.lat_width)
         )
         export_kwargs = {}
         if self.use_onnx_function:
             export_kwargs = {"export_modules_as_functions": self.transformer.model._block_classes}
 
-        self.transformer.export(
+        self.transformer_onnx_path =self.transformer.export(
             inputs=example_inputs_transformer,
             output_names=output_names_transformer,
             dynamic_axes=dynamic_axes_transformer,
@@ -173,7 +180,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         )
 
         # vae
-        example_inputs_vae, dynamic_axes_vae, output_names_vae = self.vae_decode.get_onnx_config()
+        example_inputs_vae, dynamic_axes_vae, output_names_vae = self.vae_decode.get_onnx_config(self.lat_height, self.lat_width)
 
         self.vae_decoder_onnx_path = self.vae_decode.export(
             example_inputs_vae,
@@ -194,6 +201,8 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         num_devices_vae_decoder: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
+        height : int = 1024,
+        width: int = 1024, 
         **compiler_options,
     ) -> str:
         """
@@ -235,6 +244,15 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             `str`: A message indicating the compilation status or path to compiled artifacts.
             (Note: The current implementation might need to return specific paths for each compiled model).
         """
+        # import pdb; pdb.set_trace() #TODO - recheck to avoid passing from pretrained
+        # if height :
+        #     self.height  = height  # Use pipeline default
+        # if width :
+        #     self.width = width   # Use pipeline default
+        
+        # self.lat_height = self.height // self.vae_scale_factor
+        # self.lat_width = self.width // self.vae_scale_factor
+        
         if any(
             path is None
             for path in [
@@ -297,7 +315,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         )
 
         # transformer
-        specializations_transformer = self.transformer.get_specializations(batch_size, 333)
+        specializations_transformer = self.transformer.get_specializations(batch_size, 333 , self.lat_height, self.lat_width)
 
         compiler_options = {"mos": 1, "ols": 2}
         self.trasformers_compile_path = self.transformer._compile(
@@ -311,9 +329,9 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             aic_num_cores=num_cores,
             **compiler_options,
         )
-
+        
         # vae
-        specializations_vae = self.vae_decode.get_specializations(batch_size)
+        specializations_vae = self.vae_decode.get_specializations(batch_size, self.lat_height, self.lat_width)
 
         self.vae_decoder_compile_path = self.vae_decode._compile(
             onnx_path,
@@ -741,8 +759,15 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             image.save("girl_laughing.png")
             ```
         """
-        height = height or self.default_sample_size * self.vae_scale_factor
-        width = width or self.default_sample_size * self.vae_scale_factor
+        # height = height or self.default_sample_size * self.vae_scale_factor
+        # width = width or self.default_sample_size * self.vae_scale_factor
+        if height is None:
+            height  = self.height # Use pipeline default
+        if width is None:
+            width  = self.width  # Use pipeline default
+        
+        # self.lat_height = height // self.vae_scale_factor
+        # self.lat_width = width // self.vae_scale_factor
         device = "cpu"
 
         self.check_inputs(
@@ -823,8 +848,8 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
             output_buffer = {
                 "output": np.random.rand(
-                    2 * batch_size, num_channels_latents, self.default_sample_size, self.default_sample_size
-                ).astype(np.int32),
+                    2 * batch_size, num_channels_latents, self.lat_height, self.lat_width
+                ).astype(np.int32), #  self.default_sample_size, self.default_sample_size
             }
 
             self.transformer.qpc_session.set_buffers(output_buffer)
@@ -901,13 +926,14 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             ) + self.vae_decode.model.config.shift_factor
 
             # image_torch = self.vae_decode.model(latents, return_dict=False)[0]
-
             vae_session = QAICInferenceSession(str(self.vae_decoder_compile_path))
+            output_height = self.lat_height * self.vae_scale_factor
+            output_width = self.lat_width * self.vae_scale_factor
 
             output_buffer = {
                 "sample": np.random.rand(
-                    batch_size, 3, self.vae_decode.model.config.sample_size, self.vae_decode.model.config.sample_size
-                ).astype(np.int32)
+                    batch_size, 3, output_height, output_width
+                ).astype(np.int32) #self.vae_decode.model.config.sample_size, self.vae_decode.model.config.sample_size
             }
 
             vae_session.set_buffers(output_buffer)
