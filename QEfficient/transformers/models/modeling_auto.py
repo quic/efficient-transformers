@@ -3090,31 +3090,29 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         :model (nn.Module): PyTorch model
 
     .. code-block:: python
-
         import torchaudio
-        import soundfile
         from QEfficient import QEFFAutoModelForCTC
         from transformers import AutoProcessor
-        torchaudio.set_audio_backend("soundfile")
 
         # Initialize the model using from_pretrained similar to transformers.AutoModelForCTC.
-        model=QEFFAutoModelForCTC.from_pretrained("facebook/wav2vec2-base-960h")
+        model=QEFFAutoModelForCTC.from_pretrained(model_name)
 
         # Now you can directly compile the model for Cloud AI 100
         model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
 
         #prepare input
-        waveform,sample_rate=torchaudio.load("Path to .wav file.")
-        processor = AutoProcessor.from_pretrained("facebook/wav2vec2-base-960h")
-        # Resample the waveform if necessary
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0)
+        processor = AutoProcessor.from_pretrained(model_name)
+        input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
+
+        # Resample the input_audio if necessary
+        if input_audio.shape[0] > 1:
+            input_audio = input_audio.mean(dim=0)
         if sample_rate != 16000:
             resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
-            waveform = resampler(waveform)
+            input_audio = resampler(input_audio)
 
         # You can now execute the model
-        out, logits = model.generate(processor,inputs=waveform)
+        out = model.generate(processor,inputs=input_audio)
     """
 
     _hf_auto_class = AutoModelForCTC
@@ -3140,29 +3138,28 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         .. code-block:: python
 
         import torchaudio
-        import soundfile
         from QEfficient import QEFFAutoModelForCTC
         from transformers import AutoProcessor
-        torchaudio.set_audio_backend("soundfile")
 
         # Initialize the model using from_pretrained similar to transformers.AutoModelForCTC.
-        model=QEFFAutoModelForCTC.from_pretrained("facebook/wav2vec2-base-960h")
+        model=QEFFAutoModelForCTC.from_pretrained(model_name)
 
         # Now you can directly compile the model for Cloud AI 100
         model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
 
         #prepare input
-        waveform,sample_rate=torchaudio.load("Path to .wav file.")
-        processor = AutoProcessor.from_pretrained("facebook/wav2vec2-base-960h")
-        # Resample the waveform if necessary
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0)
+        processor = AutoProcessor.from_pretrained(model_name)
+        input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
+
+        # Resample the input_audio if necessary
+        if input_audio.shape[0] > 1:
+            input_audio = input_audio.mean(dim=0)
         if sample_rate != 16000:
             resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
-            waveform = resampler(waveform)
+            input_audio = resampler(input_audio)
 
         # You can now execute the model
-        out, logits = model.generate(processor,inputs=waveform)
+        out = model.generate(processor,inputs=input_audio)
         """
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -3344,8 +3341,8 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         outputs = self.qpc_session.run(inputs)
         logits = outputs["logits"]
         predicted_ids = np.argmax(logits, axis=-1)
-        transcriptions = processor.decode(torch.tensor(predicted_ids[0]))
-        return transcriptions, logits
+        transcriptions = processor.batch_decode(torch.tensor(predicted_ids))
+        return transcriptions
 
     def pytorch_feature_generate(self, processor, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """
@@ -3364,4 +3361,4 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         logits = logits.detach().numpy()
         predicted_ids = np.argmax(logits, axis=-1)
         transcriptions = processor.batch_decode(predicted_ids)
-        return transcriptions, logits
+        return transcriptions

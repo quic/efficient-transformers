@@ -123,7 +123,7 @@ LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
 
 # Wav2Vec2 Constant
-WAV2VEC2_MAX_SEQ_LEN = 480000
+WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16,000 samples/sec × 30 sec)
 
 
 class Constants:
