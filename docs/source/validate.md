@@ -85,11 +85,12 @@ In the Dual QPC(Qualcomm Program Container) setup, the model is split across two
 **Single QPC:**
 In the single QPC(Qualcomm Program Container) setup, the entire model—including both image encoding and text generation—runs within a single QPC. There is no model splitting, and all components operate within the same execution environment.
 
+**For more details click [here](#QEFFAutoModelForImageTextToText)**
 
-
-**Note:**
+```{NOTE}
 The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
 If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
+```
 
 ---
 
