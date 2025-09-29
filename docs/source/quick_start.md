@@ -52,7 +52,6 @@ Without QNN Config
 ```bash
 python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0]  --prompt_len 32 --mos 1 --aic_enable_depth_first --enable_qnn
 ```
-### Device Selection for Inference
 
 With QNN Config
 
