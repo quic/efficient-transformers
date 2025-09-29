@@ -6,10 +6,6 @@ Supported Features
 
    * - Feature
      - Impact
-   * - Context Length Specializations (upcoming)
-     - Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text.
-   * - Block Attention (in progress)
-     - Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.
    * - Sentence embedding, Flexible Pooling configuration and compilation with multiple sequence lengths
      - Supports standard/custom pooling with AI 100 acceleration and sentence embedding. Enables efficient sentence embeddings via Efficient-Transformers. Compile with one or multiple seq_len; optimal graph auto-selected at runtime. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/embedding_model.py>`_ for more **details**.
    * - `SpD, multiprojection heads <https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding>`_
@@ -58,3 +54,7 @@ Supported Features
      - A script for computing the perplexity of a model, allowing for the evaluation of model performance and comparison across different models and datasets. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/scripts/perplexity_computation/calculate_perplexity.py>`_ for more **details**.
    * - KV Heads Replication Script
      - A sample script for replicating key-value (KV) heads for the Llama-3-8B-Instruct model, running inference with the original model, replicating KV heads, validating changes, and exporting the modified model to ONNX format. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/scripts/replicate_kv_head/replicate_kv_heads.py>`_ for more **details**.
+   * - Context Length Specializations (upcoming)
+     - Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text.
+   * - Block Attention (in progress)
+     - Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.

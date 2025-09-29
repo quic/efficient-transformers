@@ -41,7 +41,9 @@ sudo chmod a+x /opt/qti-aic/exec/*
 
 ### Using GitHub Repository
 
-``Warning: Efficient Transformers have been validated to work with the same compatible SDK. Upgrading this may result in certain models becoming incompatible.``
+```{warning}
+Efficient Transformers have been validated to work with the same compatible SDK. Upgrading this may result in certain models becoming incompatible.
+```
 
 ```bash
 # Create Python virtual env and activate it. (Required Python 3.10)

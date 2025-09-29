@@ -42,21 +42,27 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     Example:
         .. code-block:: python
 
+            from transformers import AutoTokenizer, TextStreamer
             from QEfficient import QEffAutoPeftModelForCausalLM
 
-            # Load a model with a LoRA adapter
+            base_model_name = "mistralai/Mistral-7B-v0.1"
+            tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+            streamer = TextStreamer(tokenizer)
+
             m = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/magicoder", "magicoder")
             m.export()
             m.compile(prefill_seq_len=32, ctx_len=1024)
 
-            # Generate with the current adapter
-            inputs = ...  # A coding prompt
-            outputs = m.generate(**inputs)
+            # Magicoder adapter
+            m.set_adapter("magicoder")
+            inputs = tokenizer("def fibonacci", return_tensors="pt")
+            m.generate(**inputs, streamer=streamer, max_new_tokens=1024)
 
-            # Switch to another adapter
+            # Math problems
             m.load_adapter("predibase/gsm8k", "gsm8k")
             m.set_adapter("gsm8k")
-            outputs = m.generate(**inputs)
+            inputs = tokenizer("James decides to run 3 sprints 3 times a week. He runs 60 meters each sprint. How many total meters does he run a week?",return_tensors="pt")
+            m.generate(**inputs, streamer=streamer, max_new_tokens=1024)
     """
 
     _pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
@@ -313,6 +319,22 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             mxfp6_matmul (bool, optional): Use MXFP6 compression for weights. Default is False.
             mxint8_kv_cache (bool, optional): Use MXINT8 compression for KV cache. Default is False.
             **compiler_options: Additional compiler options for QAIC.
+
+                **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+                - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+                - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+                - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
+                Params are converted to flags as below:
+
+                - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+                - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
+
+                **For QNN Compiler:** Following arguments can be passed as:
+
+                - enable_qnn (bool): Enables QNN Compilation.
+                - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
 
         Returns:
             str: Path to the compiled QPC package.

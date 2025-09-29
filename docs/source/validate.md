@@ -4,7 +4,7 @@
 ## Text-only Language Models
 
 ### Text Generation Task
-**QEff Auto Class:** `QEFFAutoModelForCausalLM`
+**QEff Auto Class:** [`QEFFAutoModelForCausalLM`](#QEFFAutoModelForCausalLM)
 
 | Architecture            | Model Family       | Representative Models                                                                 | CB Support |
 |-------------------------|--------------------|--------------------------------------------------------------------------------------|------------|
@@ -41,7 +41,7 @@
 ## Embedding Models
 
 ### Text Embedding Task
-**QEff Auto Class:** `QEFFAutoModel`
+**QEff Auto Class:** [`QEFFAutoModel`](#QEFFAutoModel)
 
 | Architecture | Model Family | Representative Models          |
 |--------------|--------------|---------------------------------|
@@ -60,7 +60,7 @@
 ## Multimodal Language Models
 
 ### Vision-Language Models (Text + Image Generation)
-**QEff Auto Class:** `QEFFAutoModelForImageTextToText`
+**QEff Auto Class:** [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
 
 | Architecture                | Model Family | Representative Models                                                                 | CB Support | Single Qpc Support | Dual Qpc Support |
 |-----------------------------|--------------|----------------------------------------------------------------------------------------|------------|--------------------|------------------|
@@ -94,7 +94,8 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
-**QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`
+
+**QEff Auto Class:** [`QEFFAutoModelForSpeechSeq2Seq`](#QEFFAutoModelForSpeechSeq2Seq)
 
 | Architecture | Model Family | Representative Models                                                                 |
 |--------------|--------------|----------------------------------------------------------------------------------------|

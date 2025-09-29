@@ -99,8 +99,8 @@ class QEFFTransformersBase(QEFFBaseModel):
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
         **kwargs :
             Keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
-            Note: `attn_implementation` and `low_cpu_mem_usage` are automatically
-            set to "eager" and False respectively to ensure compatibility.
+
+            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically set to "eager" and False respectively to ensure compatibility.
 
         Returns
         -------
@@ -208,9 +208,9 @@ class QEFFAutoModel(QEFFTransformersBase):
         from QEfficient import QEFFAutoModel
         from transformers import AutoTokenizer
 
-        model = QEFFAutoModel.from_pretrained("bert-base-uncased", pooling="mean")
+        model = QEFFAutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="mean")
         model.compile(num_cores=16)
-        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
         inputs = tokenizer("My name is", return_tensors="pt")
         output = model.generate(inputs)
         print(output) # Output will be a dictionary containing extracted features.
@@ -270,7 +270,8 @@ class QEFFAutoModel(QEFFTransformersBase):
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
         **kwargs :
             Additional keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
-            Note: `attn_implementation` and `low_cpu_mem_usage` are automatically
+
+            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically
             set to "eager" and False respectively to ensure compatibility.
 
         Returns
@@ -385,6 +386,22 @@ class QEFFAutoModel(QEFFTransformersBase):
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers. These are passed directly
             to the underlying compilation command.
+
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+            - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
+            Params are converted to flags as below:
+
+            - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+            - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
+
+            **For QNN Compiler:** Following arguments can be passed as:
+
+            - enable_qnn (bool): Enables QNN Compilation.
+            - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
 
         Returns
         -------
@@ -1932,8 +1949,8 @@ class QEFFAutoModelForImageTextToText:
             If None, the default behavior of the internal classes is used (typically dual QPC).
         **kwargs :
             Additional arguments passed to HuggingFace's ``from_pretrained``.
-            Note: `attn_implementation` and `low_cpu_mem_usage` are automatically
-            set to "eager" and False respectively to ensure compatibility.
+
+            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically set to "eager" and False respectively to ensure compatibility.
             `continuous_batching` is not supported for image-text-to-text models.
 
         Returns
@@ -2123,9 +2140,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
         **kwargs :
             Additional keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
-            Note: `attn_implementation` and `low_cpu_mem_usage` are automatically
+
+            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically
             set to "eager" and False respectively to ensure compatibility.
-            `kv_offload` is explicitly handled.
 
         Returns
         -------
@@ -2503,6 +2520,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+            - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
+            Params are converted to flags as below:
+
+            - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+            - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
+
+            **For QNN Compiler:** Following arguments can be passed as:
+
+            - enable_qnn (bool): Enables QNN Compilation.
+            - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+
         Returns
         -------
         str
@@ -2712,42 +2745,30 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
     -------
     .. code-block:: python
 
-        from QEfficient import QEFFAutoModelForSpeechSeq2Seq
+        from datasets import load_dataset
         from transformers import AutoProcessor
-        import torch
-        import numpy as np
+        from QEfficient import QEFFAutoModelForSpeechSeq2Seq
 
-        model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained("openai/whisper-tiny")
-        model.compile(num_cores=16, num_devices=1) # Corrected device_group to num_devices
+        base_model_name = "openai/whisper-tiny"
+        ## STEP 1 -- load audio sample, using a standard english dataset, can load specific files if longer audio needs to be tested; also load initial processor
+        ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+        data = ds[0]["audio"]["array"]
+        # reshape to so shape corresponds to data with batch size 1
+        data = data.reshape(-1)
+        sample_rate = ds[0]["audio"]["sampling_rate"]
+        processor = AutoProcessor.from_pretrained(base_model_name)
 
-        processor = AutoProcessor.from_pretrained("openai/whisper-tiny")
-        # Assume input_audio and sample_rate are loaded from somewhere
-        input_audio = np.random.rand(16000 * 5).astype(np.float32) # 5 seconds of audio
-        sample_rate = 16000
+        ## STEP 2 -- init base model
+        qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(base_model_name)
 
-        input_features = (
-            processor(input_audio, sampling_rate=sample_rate, return_tensors="pt")
-            .input_features.numpy()
-            .astype(np.float16) # Should match custom_io dtype
-        )
-        batch_size = input_features.shape[0]
-        decoder_start_token_id = model.model.config.decoder_start_token_id
+        ## STEP 3 -- export and compile model
+        qeff_model.compile()
 
-        # Initial decoder inputs for generation
-        decoder_input_ids = (
-            torch.ones((batch_size, 1), dtype=torch.int64) * decoder_start_token_id
-        ).numpy()
-        decoder_position_ids = torch.arange(1, dtype=torch.int64).view(1, 1).repeat(batch_size, 1).numpy()
+        ## STEP 4 -- generate output for loaded input and processor
+        exec_info = qeff_model.generate(inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=25)
 
-        inputs = dict(
-            input_features=input_features,
-            decoder_input_ids=decoder_input_ids,
-            decoder_position_ids=decoder_position_ids,
-        )
-
-        output_info = model.generate(inputs, generation_len=150)
-        # You can now process output_info.generated_ids to get the decoded text
-        print(output_info)
+        ## STEP 5 (optional) -- use processor to decode output
+        print(processor.batch_decode(exec_info.generated_ids)[0])
     """
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
@@ -2873,6 +2894,17 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             Not yet supported for this model.
         **compiler_options : dict
             Additional compiler options for QAIC.
+
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+            - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
+            Params are converted to flags as below:
+
+            - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+            - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
 
         Returns
         -------

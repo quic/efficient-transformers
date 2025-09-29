@@ -11,8 +11,7 @@ When enabling continuous batching, batch size should not be specified.
 Users can leverage multi-Qranium and other supported features along with continuous batching.
 
 ```bash
-python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth
-theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first --full_batch_size 3
+python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first --full_batch_size 3
 ```
 
 ---
@@ -56,14 +55,14 @@ model_name = "gpt2"  # Similar, we can change model name and generate correspond
 
 qeff_model = AutoModelForCausalLM.from_pretrained(model_name)
 
+qnn_config_file_path = "QEfficient/compile/qnn_config.json"
+
 generated_qpc_path = qeff_model.compile(
     num_cores=14,
     mxfp6=True,
     enable_qnn=True,
     qnn_config = qnn_config_file_path # QNN compilation configuration is passed.
 )
-
-qeff_model.generate(prompts=["My name is"])
 ```
 ---
 
@@ -74,6 +73,8 @@ Draft-based speculative decoding is a technique where a small Draft Language Mod
 To export and compile both DLM/TLM, add corresponding `qaic_config` and `num_speculative_tokens` for TLM and export DLM as you would any other QEfficient LLM model:
 
 ```Python
+from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
+
 tlm_name = "meta-llama/Llama-2-70b-chat-hf"
 dlm_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 k = 3 # DLM will make `k` speculations

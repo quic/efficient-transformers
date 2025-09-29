@@ -26,29 +26,35 @@ By default, the library exported models and Qaic Program Container (QPC) files, 
 Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
 ```
 ### Inference
-Below are the CLI API we support for infernce.
+Below are the Command Line APIs we support for infernce in the library.
 
 #### Export
+**CLI API:** [`QEfficient.cloud.export`](#export_api)
+
 User can export a model to ONNX using the CLI command. This will convert the model to an ONNX format and store the resulting ONNX model file in the QEfficient cache folder. [Click here](#export_api) for more information about the export command and arguments explanation.
 
-**QEfficient.cloud.export**
 ```bash
 python -m QEfficient.cloud.export --model_name gpt2
 ```
+---
 
 #### Compile
-**CLI Compile Command**
+**CLI API:** [`QEfficient.cloud.compile`](#compile_api)
 
+```{warning}
+The `QEfficient.cloud.compile` API is **deprecated** and **not supported** for direct use. It will be removed in future versions.
+Please use the unified `QEfficient.cloud.infer` API instead, which handles both compilation and execution.
+```
 Users can also use `compile` API to compile pre exported onnx models using QNN SDK. Refer [Compile API doc](#compile_api) for more details.
 
 Without QNN Config
 ```bash
-python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn
+python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0]  --prompt_len 32 --mos 1 --aic_enable_depth_first --enable_qnn
 ```
 
 With QNN Config
 ```bash
-python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
+python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0]  --prompt_len 32 --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
 ```
 
 **QNN Compilation**
@@ -80,10 +86,11 @@ QNN Context Binary Stage:
     COMPILER_STATS_BATCH_SIZE = 1
     COMPILER_TIME_PASSES = False
 
+---
 
 #### Execute
 
-**QEfficient.cloud.execute**
+**CLI API:** [`QEfficient.cloud.execute`](#execute_api)
 
 Once we have compiled the QPC using `infer` or `compile` API, we can now use the precompiled QPC in `execute` API to run for different prompts.
 
@@ -92,9 +99,11 @@ Make sure to pass same `--device_group` as used during infer. Refer [Execute API
 ```bash
 python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2/qpc_qnn_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_group [0]
 ```
+---
+
 
 #### Infer
-**QEfficient.cloud.infer**
+**CLI API:** [`QEfficient.cloud.infer`](#infer_api)
 
 This is the single e2e CLI API, which takes `model_card` name as input along with other compilation arguments. Check [Infer API doc](#infer_api) for more details.
 
@@ -111,8 +120,7 @@ If executing for batch size>1,
 You can pass input prompts in single string but separate with pipe (|) symbol". Example below
 
 ```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth
-theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
 ```
 
 You can also pass path of txt file with input prompts when you want to run inference on lot of prompts, Example below, sample txt file(prompts.txt) is present in examples folder.
@@ -134,14 +142,17 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 
 **Users can also take advantage of features like multi-Qranium inference and continuous batching with QNN SDK Compilation.**
 
+---
+
 ### Finetune
-**QEfficient.cloud.finetune**
+**CLI API:** [`QEfficient.cloud.finetune`](#finetune_api)
+
 You can run the finetune with set of predefined existing datasets on QAIC using the eager pipeline. Check [Finetune API doc](#finetune_api) for more details.
 
 ```bash
 python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256
 ```
-For more details on finetune, checkout the subsection.
+For more details on finetune, please refer to the [**finetune**](finetune.md) page.
 
 ---
 
@@ -162,7 +173,7 @@ Please raise an [issue](https://github.com/quic/efficient-transformers/issues), 
 # import os
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
-
+from transformers import AutoTokenizer
 # Please uncomment and use appropriate Cache Directory for transformers, in case you don't want to use default ~/.cache dir.
 # os.environ["TRANSFORMERS_CACHE"] = "/local/mnt/workspace/hf_cache"
 
@@ -193,7 +204,7 @@ Use the qualcomm_efficient_converter API to export the KV transformed Model to O
 # Please use platform SDk to Check num_cores for your card.
 
 generated_qpc_path = qeff_model.compile(
-    num_cores=14,
+    num_cores=16,
     mxfp6_matmul=True,
 )
 ```
@@ -208,4 +219,4 @@ Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/s
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 qeff_model.generate(prompts=["My name is"],tokenizer=tokenizer)
 ```
-End to End demo examples for various models are available in **notebooks** directory. Please check them out.
+End to End demo examples for various models are available in [**notebooks**](https://github.com/quic/efficient-transformers/tree/main/notebooks) directory. Please check them out.

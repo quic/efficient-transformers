@@ -225,7 +225,7 @@ def main(
 
         python -m QEfficient.cloud.infer --model-name meta-llama/Llama-3.2-11B-Vision-Instruct \\
             --num-cores 16 --prompt "Describe this image." --image-url "https://example.com/image.jpg" \\
-            --prefill-seq-len 32 --ctx-len 512 --img-size 560 --mxfp6-matmul
+            --ctx-len 512 --img-size 560 --mxfp6-matmul
 
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
