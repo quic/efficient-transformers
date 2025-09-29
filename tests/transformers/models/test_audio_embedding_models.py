@@ -7,16 +7,13 @@
 
 import os
 from typing import List, Optional
-
 import numpy as np
 import onnx
 import onnxruntime
 import pytest
 import torch
-import torchaudio
 from datasets import load_dataset
 from transformers import AutoModelForCTC, AutoProcessor
-
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCTC
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import hf_download
@@ -77,7 +74,7 @@ def run_CTC_pytorch_hf(model, processor: AutoProcessor, inputs: np.ndarray, samp
     model_inputs = dict(
         input_values=input_features,
     )
-    outputs = model(**model_inputs).logits
+    outputs = torch.tensor(model(**model_inputs).logits)
     return outputs
 
 
@@ -121,7 +118,7 @@ def run_CTC_ort(onnx_path, config, processor: AutoProcessor, inputs: np.ndarray,
 
     model_inputs = dict(input_values=(input_features).numpy())
     outputs = session.run(None, model_inputs)
-    logits = outputs[0]
+    logits = torch.tensor(outputs[0])
     return logits
 
 
@@ -150,13 +147,18 @@ def check_CTC_pytorch_vs_kv_vs_ort_vs_ai100(
     data = ds[0]["audio"]["array"]
     data = torch.tensor(data).unsqueeze(0).numpy()
     sample_rate = ds[0]["audio"]["sampling_rate"]
-    if sample_rate != 16000:
-        resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
-        data = resampler(data)
-    run_CTC_pytorch_hf(model_hf, processor, data, sample_rate)
+    pytorch_tokens=run_CTC_pytorch_hf(model_hf, processor, data, sample_rate)
+    predicted_ids = torch.argmax(pytorch_tokens, dim=-1)
+    pytorch_output = processor.batch_decode(predicted_ids)
+    
     qeff_model = QEFFAutoModelForCTC(model_hf, pretrained_model_name_or_path=model_name)
     qeff_model.export()
-    run_CTC_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate)
+    ort_tokens=run_CTC_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate)
+    predicted_ids = torch.argmax(ort_tokens, dim=-1)
+    ort_output = processor.batch_decode(predicted_ids)
+    assert (pytorch_output == ort_output), (
+        "Tokens don't match for pytorch output and ORT output."
+    )
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
     qeff_model.compile(
@@ -165,8 +167,12 @@ def check_CTC_pytorch_vs_kv_vs_ort_vs_ai100(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )
-    cloud_ai_100_tokens = qeff_model.generate(processor, data)
+    cloud_ai_100_output = qeff_model.generate(processor, data)
+    assert (pytorch_output == cloud_ai_100_output), (
+        "Tokens don't match for pytorch output and Cloud AI 100 output."
+    )
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+    
 
 
 @pytest.mark.on_qaic
