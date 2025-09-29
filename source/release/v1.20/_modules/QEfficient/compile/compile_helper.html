@@ -6,7 +6,7 @@
   <title>QEfficient.compile.compile_helper &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
-      <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=547657ed" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=f6ee2d30" />
 
   
   <!--[if lt IE 9]>
@@ -44,11 +44,12 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html">🚀 Efficient Transformer Library - Release 1.20.0 (Beta)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/supported_features.html">Supported Features</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html">Validated Models</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
@@ -58,15 +59,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html">Command Line Interface Use (CLI)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/python_api.html">Python API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/features_enablement.html">Fetaures Enablement Guide</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/qeff_autoclasses.html">QEfficient Auto Classes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html">CLI API Reference</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
@@ -129,6 +130,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.compile.qnn_compiler</span><span class="w"> </span><span class="kn">import</span> <span class="nb">compile</span> <span class="k">as</span> <span class="n">qnn_compile</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">constants</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils._utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_json</span><span class="p">,</span> <span class="n">load_yaml</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils.logging_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 
@@ -175,6 +177,61 @@
     <span class="n">device_group</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compiles an ONNX Key-Value (KV) model for Cloud AI 100 hardware using `qaic-exec`.</span>
+
+<span class="sd">    This function sets up and executes the Qualcomm AI 100 compiler with various options</span>
+<span class="sd">    to generate a QPC package.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    onnx_path : str</span>
+<span class="sd">        Path to the ONNX model file to be compiled.</span>
+<span class="sd">    specializations_json : str</span>
+<span class="sd">        Path to the JSON file defining compilation specializations (batch size, sequence length, etc.).</span>
+<span class="sd">    num_cores : int</span>
+<span class="sd">        Number of cores to use for compilation on Cloud AI 100.</span>
+<span class="sd">    base_path : str</span>
+<span class="sd">        Base directory where QPC binaries will be stored (a `qpcs` subdirectory will be created).</span>
+<span class="sd">    mxfp6 : bool</span>
+<span class="sd">        If True, enables MXFP6 precision for MatMul weights.</span>
+<span class="sd">    custom_io_path : str</span>
+<span class="sd">        Path to the Custom IO list file (e.g., YAML format) specifying input/output data types.</span>
+<span class="sd">    aic_enable_depth_first : bool</span>
+<span class="sd">        If True, enables Depth-First Search (DFS) optimization with default memory size.</span>
+<span class="sd">    allow_mxint8_mdp_io : bool</span>
+<span class="sd">        If True, allows MXINT8 compression of MDP IO traffic.</span>
+
+<span class="sd">    Other Parameters</span>
+<span class="sd">    ----------------</span>
+<span class="sd">    mos : int, optional</span>
+<span class="sd">        Effort level to reduce on-chip memory. A value greater than 0 applies this effort. Default is -1 (no effort).</span>
+<span class="sd">    device_group : List[int], optional</span>
+<span class="sd">        List of device IDs for multi-device compilation (tensor slicing). If `len(device_group) &gt; 1`,</span>
+<span class="sd">        a multi-device partition configuration is generated. Default is None.</span>
+<span class="sd">    **kwargs :</span>
+<span class="sd">        Additional compiler options passed directly to `qaic-exec`. These are formatted as</span>
+<span class="sd">        `-key=value` or `-key` for boolean flags.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    Tuple[bool, str]</span>
+<span class="sd">        A tuple containing:</span>
+<span class="sd">        - bool: True if compilation was successful, False otherwise.</span>
+<span class="sd">        - str: Path to the generated QPC binary directory.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    FileNotFoundError</span>
+<span class="sd">        If the `specializations_json` or `custom_io_path` files are not found.</span>
+<span class="sd">    RuntimeError</span>
+<span class="sd">        If the `qaic-exec` compilation process fails.</span>
+
+<span class="sd">    Warnings</span>
+<span class="sd">    --------</span>
+<span class="sd">    DeprecationWarning</span>
+<span class="sd">        This method will be removed soon; use `QEFFAutoModelForCausalLM.compile` instead.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
         <span class="s2">&quot;</span><span class="se">\033</span><span class="s2">[93mUse `QEFFAutoModelForCausalLM.compile` instead, this method will be removed soon.</span><span class="se">\033</span><span class="s2">[0m&quot;</span><span class="p">,</span>
         <span class="ne">DeprecationWarning</span><span class="p">,</span>
@@ -193,7 +250,7 @@
         <span class="s2">&quot;/opt/qti-aic/exec/qaic-exec&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-m=</span><span class="si">{</span><span class="n">onnx_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
         <span class="s2">&quot;-aic-hw&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;-aic-hw-version=2.0&quot;</span><span class="p">,</span>
+        <span class="sa">f</span><span class="s2">&quot;-aic-hw-version=</span><span class="si">{</span><span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s1">&#39;aic_hw_version&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s1">&#39;aic-hw-version&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_AIC_HW_VERSION</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-network-specialization-config=</span><span class="si">{</span><span class="n">specializations_json</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
         <span class="s2">&quot;-convert-to-fp16&quot;</span><span class="p">,</span>
         <span class="s2">&quot;-retained-state&quot;</span><span class="p">,</span>
@@ -240,7 +297,7 @@
     <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="n">aic_binary_dir</span>
 
 
-<div class="viewcode-block" id="compile"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.compile.compile_helper.compile">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">compile</span><span class="p">(</span>
+<div class="viewcode-block" id="compile"><a class="viewcode-back" href="../../../source/cli_api.html#QEfficient.compile.compile_helper.compile">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">compile</span><span class="p">(</span>
     <span class="n">onnx_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">num_cores</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -260,32 +317,75 @@
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Compiles the given ``ONNX`` model using Cloud AI 100 platform SDK compiler and saves the compiled ``qpc`` package at ``qpc_path``.</span>
-<span class="sd">    Generates tensor-slicing configuration if multiple devices are passed in ``device_group``.</span>
+<span class="sd">    Compiles the given ONNX model using either the Cloud AI 100 platform SDK compiler</span>
+<span class="sd">    or the QNN compiler, and saves the compiled QPC package.</span>
 
-<span class="sd">    This function will be deprecated soon and will be replaced by ``QEFFAutoModelForCausalLM.compile``.</span>
+<span class="sd">    This function handles the creation of specialization files, selection of custom IO</span>
+<span class="sd">    configurations, and execution of the appropriate compiler (QAIC or QNN).</span>
+<span class="sd">    It supports multi-device compilation for tensor slicing.</span>
 
-<span class="sd">    ``Mandatory`` Args:</span>
-<span class="sd">        :onnx_path (str): Generated ``ONNX`` Model Path.</span>
-<span class="sd">        :qpc_path (str): Path for saving compiled qpc binaries.</span>
-<span class="sd">        :num_cores (int): Number of cores to compile the model on.</span>
-<span class="sd">    ``Optional`` Args:</span>
-<span class="sd">        :device_group (List[int]): Used for finding the number of devices to compile for. ``Defaults to None.``</span>
-<span class="sd">        :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``</span>
-<span class="sd">        :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``</span>
-<span class="sd">        :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``</span>
-<span class="sd">        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Default to None``</span>
-<span class="sd">        :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32``</span>
-<span class="sd">        :ctx_len (int): Maximum context length to compile the model. ``Defaults to 128``</span>
-<span class="sd">        :mxfp6 (bool): Enable compilation for ``MXFP6`` precision.  ``Defaults to True.``</span>
-<span class="sd">        :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``</span>
-<span class="sd">        :custom_io_file_path (str): Path to ``customIO`` file (formatted as a string). ``Defaults to None.``</span>
-<span class="sd">        :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic ``Defaults to False.``</span>
-<span class="sd">        :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``</span>
-<span class="sd">        :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``</span>
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    onnx_path : str</span>
+<span class="sd">        Path to the generated ONNX model file.</span>
+<span class="sd">    qpc_path : str</span>
+<span class="sd">        Target directory path for saving the compiled QPC binaries.</span>
+<span class="sd">    num_cores : int</span>
+<span class="sd">        Number of cores to use for compilation.</span>
 
-<span class="sd">    Returns:</span>
-<span class="sd">        :str: Path to compiled ``qpc`` package.</span>
+<span class="sd">    Other Parameters</span>
+<span class="sd">    ----------------</span>
+<span class="sd">    device_group : List[int], optional</span>
+<span class="sd">        List of device IDs. Used to determine the number of devices for multi-device compilation.</span>
+<span class="sd">        Default is None.</span>
+<span class="sd">    aic_enable_depth_first : bool, optional</span>
+<span class="sd">        If True, enables Depth-First Search (DFS) optimization with default memory size during QAIC compilation.</span>
+<span class="sd">        Default is False.</span>
+<span class="sd">    mos : int, optional</span>
+<span class="sd">        Effort level to reduce on-chip memory during QAIC compilation. A value greater than 0 applies this effort.</span>
+<span class="sd">        Default is -1 (no effort).</span>
+<span class="sd">    batch_size : int, optional</span>
+<span class="sd">        Batch size to compile the model for. Default is 1.</span>
+<span class="sd">    full_batch_size : int, optional</span>
+<span class="sd">        Sets the full batch size to enable continuous batching mode. If provided, `batch_size` must be 1.</span>
+<span class="sd">        Default is None.</span>
+<span class="sd">    prompt_len : int, optional</span>
+<span class="sd">        Prompt length for the model to compile. Default is 32.</span>
+<span class="sd">    ctx_len : int, optional</span>
+<span class="sd">        Maximum context length to compile the model for. Default is 128.</span>
+<span class="sd">    mxfp6 : bool, optional</span>
+<span class="sd">        If True, enables MXFP6 precision for MatMul weights during compilation. Default is True.</span>
+<span class="sd">    mxint8 : bool, optional</span>
+<span class="sd">        If True, compresses Present/Past KV to MXINT8 using a CustomIO configuration. Default is False.</span>
+<span class="sd">    custom_io_file_path : str, optional</span>
+<span class="sd">        Explicit path to a Custom IO file (e.g., YAML format). If None, it&#39;s inferred based on `mxint8`.</span>
+<span class="sd">        Default is None.</span>
+<span class="sd">    allow_mxint8_mdp_io : bool, optional</span>
+<span class="sd">        If True, allows MXINT8 compression of MDP IO traffic during QAIC compilation. Default is False.</span>
+<span class="sd">    enable_qnn : bool, optional</span>
+<span class="sd">        If True, enables compilation using the QNN compiler instead of QAIC. Default is False.</span>
+<span class="sd">    qnn_config : str, optional</span>
+<span class="sd">        Path to the QNN Config parameters file, used if `enable_qnn` is True. Default is None.</span>
+<span class="sd">    **kwargs :</span>
+<span class="sd">        Additional compiler options passed directly to the chosen compiler.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        Path to the compiled QPC package directory.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If both `batch_size` and `full_batch_size` are greater than one (mutually exclusive in some contexts).</span>
+<span class="sd">    FileNotFoundError</span>
+<span class="sd">        If required Custom IO files are not found.</span>
+
+<span class="sd">    Warnings</span>
+<span class="sd">    --------</span>
+<span class="sd">    DeprecationWarning</span>
+<span class="sd">        This method will be removed soon; use `QEFFAutoModelForCausalLM.compile` instead.</span>
+
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">and</span> <span class="n">batch_size</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Only either batch_size or full_batch_size should be greater than one&quot;</span><span class="p">)</span>
@@ -360,7 +460,7 @@
   <hr/>
 
   <div role="contentinfo">
-    <p>&#169; Copyright 2024, Qualcomm.</p>
+    <p>&#169; Copyright 2025, Qualcomm.</p>
   </div>
 
   Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a

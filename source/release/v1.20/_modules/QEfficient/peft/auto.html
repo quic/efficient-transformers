@@ -6,7 +6,7 @@
   <title>QEfficient.peft.auto &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
-      <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=547657ed" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=f6ee2d30" />
 
   
   <!--[if lt IE 9]>
@@ -44,11 +44,12 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html">🚀 Efficient Transformer Library - Release 1.20.0 (Beta)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/supported_features.html">Supported Features</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html">Validated Models</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
@@ -58,15 +59,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html">Command Line Interface Use (CLI)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/python_api.html">Python API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/features_enablement.html">Fetaures Enablement Guide</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/qeff_autoclasses.html">QEfficient Auto Classes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html">CLI API Reference</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
@@ -143,34 +144,42 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.transformers.models.pytorch_transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">CustomOpsTransform</span><span class="p">,</span> <span class="n">KVCacheTransform</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">constants</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils._utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_padding_shape_from_config</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils.cache</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_hashable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils.hash_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_hashable</span>
 
 <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
 
 
-<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM">[docs]</a><span class="k">class</span><span class="w"> </span><span class="nc">QEffAutoPeftModelForCausalLM</span><span class="p">(</span><span class="n">QEFFBaseModel</span><span class="p">):</span>
+<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM"><a class="viewcode-back" href="../../../source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM">[docs]</a><span class="k">class</span><span class="w"> </span><span class="nc">QEffAutoPeftModelForCausalLM</span><span class="p">(</span><span class="n">QEFFBaseModel</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    QEff class for loading models with PEFT adapters (Only LoRA is supported currently).</span>
-<span class="sd">    Once exported and compiled for an adapter, the same can be utilized for another adapter with same base model and adapter config.</span>
+<span class="sd">    QEfficient class for loading and running Causal Language Models with PEFT adapters (currently only LoRA is supported).</span>
 
-<span class="sd">    Args:</span>
-<span class="sd">        :model (nn.Module): PyTorch model</span>
+<span class="sd">    This class enables efficient inference and deployment of PEFT-adapted models on Cloud AI 100 hardware.</span>
+<span class="sd">    Once exported and compiled for an adapter, the same base model can be reused with other compatible adapters.</span>
 
-<span class="sd">    .. code-block:: python</span>
+<span class="sd">    Example:</span>
+<span class="sd">        .. code-block:: python</span>
 
-<span class="sd">        from QEfficient import QEffAutoPeftModelForCausalLM</span>
+<span class="sd">            from transformers import AutoTokenizer, TextStreamer</span>
+<span class="sd">            from QEfficient import QEffAutoPeftModelForCausalLM</span>
 
-<span class="sd">        m = QEffAutoPeftModelForCausalLM.from_pretrained(&quot;predibase/magicoder&quot;, &quot;magicoder&quot;)</span>
-<span class="sd">        m.export()</span>
-<span class="sd">        m.compile(prefill_seq_len=32, ctx_len=1024)</span>
+<span class="sd">            base_model_name = &quot;mistralai/Mistral-7B-v0.1&quot;</span>
+<span class="sd">            tokenizer = AutoTokenizer.from_pretrained(base_model_name)</span>
+<span class="sd">            streamer = TextStreamer(tokenizer)</span>
 
-<span class="sd">        inputs = ...  # A coding prompt</span>
-<span class="sd">        outputs = m.generate(**inputs)</span>
+<span class="sd">            m = QEffAutoPeftModelForCausalLM.from_pretrained(&quot;predibase/magicoder&quot;, &quot;magicoder&quot;)</span>
+<span class="sd">            m.export()</span>
+<span class="sd">            m.compile(prefill_seq_len=32, ctx_len=1024)</span>
 
-<span class="sd">        inputs = ...  # A math prompt</span>
-<span class="sd">        m.load_adapter(&quot;predibase/gsm8k&quot;, &quot;gsm8k&quot;)</span>
-<span class="sd">        m.set_adapter(&quot;gsm8k&quot;)</span>
-<span class="sd">        outputs = m.generate(**inputs)</span>
+<span class="sd">            # Magicoder adapter</span>
+<span class="sd">            m.set_adapter(&quot;magicoder&quot;)</span>
+<span class="sd">            inputs = tokenizer(&quot;def fibonacci&quot;, return_tensors=&quot;pt&quot;)</span>
+<span class="sd">            m.generate(**inputs, streamer=streamer, max_new_tokens=1024)</span>
+
+<span class="sd">            # Math problems</span>
+<span class="sd">            m.load_adapter(&quot;predibase/gsm8k&quot;, &quot;gsm8k&quot;)</span>
+<span class="sd">            m.set_adapter(&quot;gsm8k&quot;)</span>
+<span class="sd">            inputs = tokenizer(&quot;James decides to run 3 sprints 3 times a week. He runs 60 meters each sprint. How many total meters does he run a week?&quot;,return_tensors=&quot;pt&quot;)</span>
+<span class="sd">            m.generate(**inputs, streamer=streamer, max_new_tokens=1024)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">_pytorch_transforms</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">PytorchTransform</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">CustomOpsTransform</span><span class="p">,</span> <span class="n">KVCacheTransform</span><span class="p">,</span> <span class="n">PeftModelInputsTransform</span><span class="p">]</span>
@@ -178,6 +187,15 @@
     <span class="n">_hf_auto_class</span> <span class="o">=</span> <span class="n">AutoPeftModelForCausalLM</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize the QEffAutoPeftModelForCausalLM instance.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            model (nn.Module): A PyTorch model of type PeftModelForCausalLM with a LoRA adapter.</span>
+<span class="sd">        Raises:</span>
+<span class="sd">            TypeError: If the provided model is not a PeftModelForCausalLM.</span>
+<span class="sd">            NotImplementedError: If the adapter type is not LoRA.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">PeftModelForCausalLM</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Required pytorch module of type PeftModel, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
@@ -202,6 +220,12 @@
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">model_name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the model name with &quot;-lora&quot; suffix.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            str: The base model class name with &quot;-lora&quot; appended.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">mname</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_base_model</span><span class="p">()</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span> <span class="o">+</span> <span class="s2">&quot;-lora&quot;</span>
         <span class="k">if</span> <span class="n">mname</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;QEff&quot;</span><span class="p">):</span>
             <span class="n">mname</span> <span class="o">=</span> <span class="n">mname</span><span class="p">[</span><span class="mi">4</span><span class="p">:]</span>
@@ -209,6 +233,12 @@
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">model_hash</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Compute a unique hash for the model configuration and adapter.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            str: A 16-character SHA256 hash string.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># NOTE: model_config.to_diff_dict() has &quot;_name_or_path&quot; attribute which is the model card name or path.</span>
         <span class="c1"># Using same card name will result in same hash. But, using a relative path for one run and</span>
         <span class="c1"># absolute path for another run will result in different hash.</span>
@@ -225,36 +255,62 @@
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_model_config</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the configuration dictionary of the underlying base model.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            dict: The configuration dictionary.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_base_model</span><span class="p">()</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="vm">__dict__</span>
 
-<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.load_adapter"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.load_adapter">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">load_adapter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">adapter_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Loads a new adapter from huggingface hub or local path</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">active_adapter</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the currently active adapter name.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            str: Name of the active adapter.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">active_adapter</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_adapter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">adapter_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Load a new adapter from the HuggingFace Hub or a local path.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            :model_id (str): Adapter model ID from huggingface hub or local path</span>
-<span class="sd">            :adapter_name (str): Adapter name to be used to set this adapter as current</span>
+<span class="sd">            model_id (str): Adapter model ID from HuggingFace Hub or local path.</span>
+<span class="sd">            adapter_name (str): Name to assign to the loaded adapter.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">load_adapter</span><span class="p">(</span><span class="n">model_id</span><span class="p">,</span> <span class="n">adapter_name</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">adapter_weights</span><span class="p">[</span><span class="n">adapter_name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
             <span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">load_peft_weights</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
-        <span class="p">}</span></div>
+        <span class="p">}</span>
 
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">active_adapter</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="s2">&quot;Currently active adapter to be used for inference&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">active_adapter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_adapter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">adapter_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Set the active adapter from the loaded adapters.</span>
 
-<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.set_adapter"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.set_adapter">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">set_adapter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">adapter_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="s2">&quot;Sets active adapter from one of the loaded adapters&quot;</span>
+<span class="sd">        Args:</span>
+<span class="sd">            adapter_name (str): Name of the adapter to activate.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: If the adapter is incompatible with the export-time adapter.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">exported_peft_config</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">exported_peft_config</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">peft_config</span><span class="p">[</span><span class="n">adapter_name</span><span class="p">]:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
                 <span class="s2">&quot;Unable to activate incompatible adapter. &quot;</span>
                 <span class="s2">&quot;Use an adapter compatible with export-time adapter &quot;</span>
                 <span class="s2">&quot;or re-export with this adapter&quot;</span>
             <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">set_adapter</span><span class="p">(</span><span class="n">adapter_name</span><span class="p">)</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">set_adapter</span><span class="p">(</span><span class="n">adapter_name</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">disable_adapter</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Disable the currently active adapter.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            NotImplementedError: Disabling adapters is not currently supported.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># TODO: Set zero tensors as adapter weights</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Disabling adapters not supported currently&quot;</span><span class="p">)</span>
 
@@ -264,14 +320,24 @@
         <span class="n">model</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_hf_auto_class</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
 
-<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.from_pretrained"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained">[docs]</a>    <span class="nd">@classmethod</span>
+<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.from_pretrained"><a class="viewcode-back" href="../../../source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained">[docs]</a>    <span class="nd">@classmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_pretrained</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">pretrained_name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Load a QEffAutoPeftModelForCausalLM from a pretrained model and adapter.</span>
+
 <span class="sd">        Args:</span>
-<span class="sd">            :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.</span>
-<span class="sd">            :finite_adapters (bool): set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.</span>
-<span class="sd">            :adapter_name (str): Name used to identify loaded adapter.</span>
-<span class="sd">            :args, kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.</span>
+<span class="sd">            pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.</span>
+<span class="sd">            finite_adapters (bool, optional): Set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class.</span>
+<span class="sd">            adapter_name (str, optional): Name used to identify the loaded adapter.</span>
+<span class="sd">            *args: Additional positional arguments for peft.AutoPeftModelForCausalLM.</span>
+<span class="sd">            **kwargs: Additional keyword arguments for peft.AutoPeftModelForCausalLM.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            QEffAutoPeftModelForCausalLM: An instance initialized with the pretrained weights and adapter.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            NotImplementedError: If continuous batching is requested (not supported).</span>
+<span class="sd">            TypeError: If adapter name is missing in finite adapter mode.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Continuous batching currently not supported for PEFT models&quot;</span><span class="p">)</span>
@@ -296,7 +362,20 @@
             <span class="n">obj</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_from_pretrained</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">obj</span></div>
 
-<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.export"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.export"><a class="viewcode-back" href="../../../source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Export the model with the active adapter to ONNX format.</span>
+
+<span class="sd">        This method prepares example inputs and dynamic axes based on the model and adapter configuration,</span>
+<span class="sd">        then exports the model to an ONNX graph suitable for compilation and deployment on Cloud AI 100 hardware.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            export_dir (str, optional): Directory path where the exported ONNX graph will be saved.</span>
+<span class="sd">                If not provided, the default export directory is used.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            str: Path to the generated ONNX graph file.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">exported_peft_config</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">active_peft_config</span>
 
         <span class="n">example_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">constants</span><span class="o">.</span><span class="n">ONNX_EXPORT_EXAMPLE_BATCH_SIZE</span><span class="p">,</span> <span class="n">constants</span><span class="o">.</span><span class="n">ONNX_EXPORT_EXAMPLE_SEQ_LEN</span><span class="p">)</span>
@@ -326,7 +405,7 @@
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
         <span class="p">)</span></div>
 
-<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.compile"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">compile</span><span class="p">(</span>
+<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.compile"><a class="viewcode-back" href="../../../source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">compile</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">onnx_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">compile_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -340,6 +419,43 @@
         <span class="n">mxint8_kv_cache</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Compile the exported ONNX model for Cloud AI 100 hardware.</span>
+
+<span class="sd">        This method generates a QPC package. If the model has not been exported yet, this method will handle the export process.</span>
+<span class="sd">        Additional arguments for the QAIC compiler can be passed as keyword arguments.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            onnx_path (str, optional): Path to a pre-exported ONNX model.</span>
+<span class="sd">            compile_dir (str, optional): Directory to save the generated QPC package.</span>
+<span class="sd">            batch_size (int, optional): Batch size for compilation. Default is 1.</span>
+<span class="sd">            prefill_seq_len (int): Length of the prefill prompt.</span>
+<span class="sd">            ctx_len (int): Maximum context length the compiled model can remember.</span>
+<span class="sd">            num_devices (int, optional): Number of devices to compile for. Default is 1.</span>
+<span class="sd">            num_cores (int, optional): Number of cores to use for compilation. Default is 16.</span>
+<span class="sd">            mxfp6_matmul (bool, optional): Use MXFP6 compression for weights. Default is False.</span>
+<span class="sd">            mxint8_kv_cache (bool, optional): Use MXINT8 compression for KV cache. Default is False.</span>
+<span class="sd">            **compiler_options: Additional compiler options for QAIC.</span>
+
+<span class="sd">                **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:</span>
+
+<span class="sd">                - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.</span>
+<span class="sd">                - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.</span>
+<span class="sd">                - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.</span>
+
+<span class="sd">                Params are converted to flags as below:</span>
+
+<span class="sd">                - ``aic_num_cores=16`` -&gt; ``-aic-num-cores=16``</span>
+<span class="sd">                - ``convert_to_fp16=True`` -&gt; ``-convert-to-fp16``</span>
+
+<span class="sd">                **For QNN Compiler:** Following arguments can be passed as:</span>
+
+<span class="sd">                - enable_qnn (bool): Enables QNN Compilation.</span>
+<span class="sd">                - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            str: Path to the compiled QPC package.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># Specializations</span>
         <span class="n">specializations</span> <span class="o">=</span> <span class="p">[</span>
             <span class="p">{</span><span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="n">batch_size</span><span class="p">,</span> <span class="s2">&quot;seq_len&quot;</span><span class="p">:</span> <span class="n">prefill_seq_len</span><span class="p">,</span> <span class="s2">&quot;ctx_len&quot;</span><span class="p">:</span> <span class="n">ctx_len</span><span class="p">},</span>
@@ -371,7 +487,7 @@
             <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
         <span class="p">)</span></div>
 
-<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.generate"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span>
+<div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.generate"><a class="viewcode-back" href="../../../source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">inputs</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">device_ids</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -381,14 +497,20 @@
         <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Generate tokens from compiled binary. This method takes same parameters as HuggingFace transformers model.generate() method.</span>
+<span class="sd">        Generate tokens from the compiled binary using the active adapter.</span>
+
+<span class="sd">        This method takes similar parameters as HuggingFace&#39;s ``model.generate()`` method.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            :inputs: input_ids</span>
-<span class="sd">            :generation_config: Merge this generation_config with model-specific for the current generation.</span>
-<span class="sd">            :stopping_criteria: Pass custom stopping_criteria to stop at a specific point in generation.</span>
-<span class="sd">            :streamer: Streamer to put the generated tokens into.</span>
-<span class="sd">            :kwargs: Additional parameters for generation_config or to be passed to the model while generating.</span>
+<span class="sd">            inputs (torch.Tensor or np.ndarray, optional): Input IDs for generation.</span>
+<span class="sd">            device_ids (List[int], optional): Device IDs for running inference.</span>
+<span class="sd">            generation_config (GenerationConfig, optional): Generation configuration to merge with model-specific config.</span>
+<span class="sd">            stopping_criteria (StoppingCriteria, optional): Custom stopping criteria for generation.</span>
+<span class="sd">            streamer (BaseStreamer, optional): Streamer to receive generated tokens.</span>
+<span class="sd">            **kwargs: Additional parameters for generation_config or to be passed to the model.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            np.ndarray: Generated token IDs.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># Initialize session</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">qpc_session</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
@@ -403,7 +525,7 @@
 
         <span class="n">generation_config</span> <span class="o">=</span> <span class="n">generation_config</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">generation_config</span>
         <span class="n">generation_config</span><span class="p">,</span> <span class="n">model_kwargs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">_prepare_generation_config</span><span class="p">(</span><span class="n">generation_config</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">_prepare_special_tokens</span><span class="p">(</span><span class="n">generation_config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">_prepare_special_tokens</span><span class="p">(</span><span class="n">generation_config</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">generation_config</span><span class="o">.</span><span class="n">do_sample</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;do_sample=True not supported currently&quot;</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">generation_config</span><span class="o">.</span><span class="n">num_beams</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
@@ -493,7 +615,7 @@
   <hr/>
 
   <div role="contentinfo">
-    <p>&#169; Copyright 2024, Qualcomm.</p>
+    <p>&#169; Copyright 2025, Qualcomm.</p>
   </div>
 
   Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a

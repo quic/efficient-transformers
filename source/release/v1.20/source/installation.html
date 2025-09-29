@@ -7,7 +7,7 @@
   <title>Pre-requisites &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
-      <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
+      <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=f6ee2d30" />
 
   
   <!--[if lt IE 9]>
@@ -22,7 +22,7 @@
     <script src="../_static/js/theme.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Using GitHub Repository" href="upgrade.html" />
+    <link rel="next" title="Quick Start" href="quick_start.html" />
     <link rel="prev" title="Validated Models" href="validate.html" /> 
 </head>
 
@@ -47,11 +47,12 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="release_docs.html">🚀 Efficient Transformer Library - Release 1.20.0 (Beta)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="supported_features.html">Supported Features</a></li>
 <li class="toctree-l1"><a class="reference internal" href="validate.html">Validated Models</a></li>
 <li class="toctree-l1"><a class="reference internal" href="validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
@@ -59,21 +60,24 @@
 <ul class="current">
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Pre-requisites</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#installation">Installation</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#download-apps-sdk"><small> 1. Download Apps SDK</small></a></li>
-<li class="toctree-l2"><a class="reference internal" href="#install-efficient-transformers"><small> 2. Install Efficient-Transformers</small></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#download-apps-sdk">1. Download Apps SDK</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#install-efficient-transformers">2. Install Efficient-Transformers</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#using-github-repository">Using GitHub Repository</a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="#sanity-check">Sanity Check</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="upgrade.html">Using GitHub Repository</a></li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html">Command Line Interface Use (CLI)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="python_api.html">Python API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="features_enablement.html">Fetaures Enablement Guide</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="qeff_autoclasses.html">QEfficient Auto Classes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html">CLI API Reference</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
@@ -130,16 +134,14 @@
 <li><p><a class="reference external" href="https://github.com/quic/cloud-ai-sdk/tree/1.12/utils/multi-device">Multi-device support enabled for model sharding</a></p></li>
 </ol>
 </section>
+<hr class="docutils" />
 <section id="installation">
 <h1>Installation<a class="headerlink" href="#installation" title="Permalink to this heading"></a></h1>
 <section id="download-apps-sdk">
-<h2><small> 1. Download Apps SDK</small><a class="headerlink" href="#download-apps-sdk" title="Permalink to this heading"></a></h2>
+<h2>1. Download Apps SDK<a class="headerlink" href="#download-apps-sdk" title="Permalink to this heading"></a></h2>
 <ul class="simple">
 <li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/">Cloud AI 100 Apps SDK install</a></p></li>
 </ul>
-</section>
-<section id="install-efficient-transformers">
-<h2><small> 2. Install Efficient-Transformers</small><a class="headerlink" href="#install-efficient-transformers" title="Permalink to this heading"></a></h2>
 <p>Uninstall existing Apps SDK</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">sudo</span> <span class="o">./</span><span class="n">uninstall</span><span class="o">.</span><span class="n">sh</span>
 </pre></div>
@@ -163,7 +165,29 @@
 </pre></div>
 </div>
 </section>
+<hr class="docutils" />
+<section id="install-efficient-transformers">
+<h2>2. Install Efficient-Transformers<a class="headerlink" href="#install-efficient-transformers" title="Permalink to this heading"></a></h2>
+<section id="using-github-repository">
+<h3>Using GitHub Repository<a class="headerlink" href="#using-github-repository" title="Permalink to this heading"></a></h3>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Efficient Transformers have been validated to work with the same compatible SDK. Upgrading this may result in certain models becoming incompatible.</p>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create Python virtual env and activate it. (Required Python 3.10)</span>
+
+python3.10<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>qeff_env
+<span class="nb">source</span><span class="w"> </span>qeff_env/bin/activate
+pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>pip
+
+<span class="c1"># Clone and Install the QEfficient Repo.</span>
+pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/quic/efficient-transformers
+</pre></div>
+</div>
 </section>
+</section>
+</section>
+<hr class="docutils" />
 <section id="sanity-check">
 <h1>Sanity Check<a class="headerlink" href="#sanity-check" title="Permalink to this heading"></a></h1>
 <p>After above installation methods, you can check if <code class="docutils literal notranslate"><span class="pre">QEfficient</span></code> is installed correctly by using</p>
@@ -178,13 +202,13 @@
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
         <a href="validate.html" class="btn btn-neutral float-left" title="Validated Models" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="upgrade.html" class="btn btn-neutral float-right" title="Using GitHub Repository" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="quick_start.html" class="btn btn-neutral float-right" title="Quick Start" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>
 
   <div role="contentinfo">
-    <p>&#169; Copyright 2024, Qualcomm.</p>
+    <p>&#169; Copyright 2025, Qualcomm.</p>
   </div>
 
   Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
@@ -199,7 +223,7 @@
   </div>
   <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
-      Version: release/v1.20(beta)
+      Version: release/v1.20
       <span class="fa fa-caret-down"></span>
     </span>
     <div class="rst-other-versions">
@@ -208,7 +232,7 @@
         <dd><a href="../../../../index.html">main</a></dd>
         <dd><a href="../../v1.18/index.html">release/v1.18</a></dd>
         <dd><a href="../../v1.19/index.html">release/v1.19</a></dd>
-        <dd><a href="../index.html">release/v1.20(beta)</a></dd>
+        <dd><a href="../index.html">release/v1.20</a></dd>
       </dl>
     </div>
 </div><script>
