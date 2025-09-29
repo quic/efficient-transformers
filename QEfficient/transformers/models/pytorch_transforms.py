@@ -136,6 +136,15 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Model,
     Qwen2RMSNorm,
 )
+from transformers.models.qwen3_moe.modeling_qwen3_moe import (
+    Qwen3MoeAttention,
+    Qwen3MoeDecoderLayer,
+    Qwen3MoeForCausalLM,
+    Qwen3MoeModel,
+    Qwen3MoeRMSNorm,
+    Qwen3MoeRotaryEmbedding,
+    Qwen3MoeSparseMoeBlock,
+)
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -310,6 +319,14 @@ from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2ForCausalLM,
     QEffQwen2Model,
 )
+from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
+    QEffQwen3MoeAttention,
+    QEffQwen3MoeDecoderLayer,
+    QEffQwen3MoeForCausalLM,
+    QEffQwen3MoeModel,
+    QEffQwen3MoeRotaryEmbedding,
+    QEffQwen3MoeSparseMoeBlock,
+)
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
@@ -352,6 +369,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
+        Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
     }
 
@@ -402,6 +420,13 @@ class KVCacheTransform(ModuleMappingTransform):
         GemmaDecoderLayer: QEffGemmaDecoderLayer,
         GemmaModel: QEffGemmaModel,
         GemmaForCausalLM: QEffGemmaForCausalLM,
+        # Qwen3Moe
+        Qwen3MoeForCausalLM: QEffQwen3MoeForCausalLM,
+        Qwen3MoeModel: QEffQwen3MoeModel,
+        Qwen3MoeDecoderLayer: QEffQwen3MoeDecoderLayer,
+        Qwen3MoeAttention: QEffQwen3MoeAttention,
+        Qwen3MoeRotaryEmbedding: QEffQwen3MoeRotaryEmbedding,
+        Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
         # Gemma2
         Gemma2Attention: QEffGemma2Attention,
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
