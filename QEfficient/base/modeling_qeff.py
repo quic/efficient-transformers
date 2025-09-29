@@ -47,11 +47,12 @@ class QEFFBaseModel(ABC):
     """
 
     _pytorch_transforms: List[PytorchTransform]
-    _onnx_transforms: List[OnnxTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     @classmethod
     def _transform_names(cls) -> List[str]:
-        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
+        pytorch_names = [x.__name__ for x in cls._pytorch_transforms]
+        return pytorch_names + cls._onnx_transforms
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -321,9 +322,10 @@ class QEFFBaseModel(ABC):
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
-
-            for transform in self._onnx_transforms:
-                model, transformed = transform.apply(model, **transform_kwargs)
+            # import pdb; pdb.set_trace()
+            transform_kwargs["transforms"] = self._onnx_transforms
+            # for transform in self._onnx_transforms:
+            model, transformed = OnnxTransform.apply(model, **transform_kwargs)
 
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
