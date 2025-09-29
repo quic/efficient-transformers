@@ -407,6 +407,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         -------
         str
             Path to the compiled QPC package.
+
         """
 
         if isinstance(seq_len, list) and len(seq_len) >= 15:
@@ -2064,7 +2065,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
-        super().__init__(model, **kwargs)
+        super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
@@ -2078,6 +2079,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
         self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
+        # TODO : Update in qaic_config isn't updated in the hash due to SpDTransforms. Need to move
+        # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
@@ -2552,6 +2555,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `include_sampler` is True and `num_speculative_tokens` is greater than 0.
             If `num_speculative_tokens` is not an integer greater than 1.
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
+
         """
         # --- Validation ---
         if prefill_only is not None and not isinstance(prefill_only, bool):
@@ -2683,6 +2687,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 device_id=device_id,
                 generation_len=generation_len,
                 is_tlm=self.is_tlm,
+                **kwargs,
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
@@ -2910,6 +2915,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         -------
         str
             Path to the compiled QPC package.
+
         """
         specializations, compiler_options = self.model.get_specializations(
             batch_size,

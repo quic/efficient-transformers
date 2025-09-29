@@ -13,6 +13,7 @@ import warnings
 from typing import List, Optional, Tuple
 
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.utils import constants
 from QEfficient.utils._utils import load_json, load_yaml
 from QEfficient.utils.logging_utils import logger
 
@@ -132,7 +133,7 @@ def compile_kv_model_on_cloud_ai_100(
         "/opt/qti-aic/exec/qaic-exec",
         f"-m={onnx_path}",
         "-aic-hw",
-        "-aic-hw-version=2.0",
+        f"-aic-hw-version={kwargs.pop('aic_hw_version', kwargs.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}",
         f"-network-specialization-config={specializations_json}",
         "-convert-to-fp16",
         "-retained-state",
