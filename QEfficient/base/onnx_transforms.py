@@ -8,6 +8,7 @@
 from typing import Optional, Tuple
 
 import numpy as np
+import onnx
 import onnxslim
 from onnx import ModelProto, external_data_helper, numpy_helper
 
@@ -102,7 +103,7 @@ class SplitTensorsTransform(OnnxTransform):
         return model, transformed
 
 
-class OnnxSlimTransform:
+class OnnxSlimTransform(OnnxTransform):
     """
     Applies onnx-slim transformations on the given ONNX graph.
     """
@@ -116,14 +117,18 @@ class OnnxSlimTransform:
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
         """
-        :param onnx_base_dir: Base directory to load tensors
-        :param onnx_path: Path to save the slimmed ONNX model.
+        :param enable_onnx_slim_transform: If True, applies onnx-slim transformations.
+        :param temp_onnx_path: Path to save the slimmed ONNX model.
         """
         transformed = False
         onnx_slim_transform = True  # kwargs.get("enable_onnx_slim_transform", False)
+        temp_onnx_path = kwargs.get("temp_onnx_path", None)
+        if not temp_onnx_path:
+            err_str = "temp_onnx_path is required for onnx-slim transform."
+            raise RuntimeError(err_str)
         if onnx_slim_transform:
             transformed = True
             slimmed_model = onnxslim.slim(model)
-            # Don't save here - let the caller handle saving
+            onnx.save(slimmed_model, temp_onnx_path)
             return slimmed_model, transformed
         return model, transformed

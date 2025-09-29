@@ -162,7 +162,10 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         )
         export_kwargs = {}
         if self.use_onnx_function:
-            export_kwargs = {"export_modules_as_functions": self.transformer.model._block_classes}
+            export_kwargs = {
+                "export_modules_as_functions": self.transformer.model._block_classes,
+                "do_constant_folding": True,
+            }
 
         self.transformer.export(
             inputs=example_inputs_transformer,

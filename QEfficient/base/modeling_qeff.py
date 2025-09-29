@@ -172,6 +172,7 @@ class QEFFBaseModel(ABC):
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
+            print("Export_kwargs:", export_kwargs)
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -188,6 +189,7 @@ class QEFFBaseModel(ABC):
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
+                "temp_onnx_path": tmp_onnx_path,
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
