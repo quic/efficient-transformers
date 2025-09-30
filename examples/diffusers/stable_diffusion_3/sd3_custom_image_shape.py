@@ -1,5 +1,4 @@
 from QEfficient import QEFFStableDiffusion3Pipeline
-import torch
 pipeline = QEFFStableDiffusion3Pipeline.from_pretrained("stabilityai/stable-diffusion-3.5-large-turbo",  height = 1152, width=768)
 # for single layer check
 # original_blocks = pipeline.transformer.model.transformer_blocks
