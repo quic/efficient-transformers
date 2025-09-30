@@ -70,9 +70,6 @@
 <li class="toctree-l3"><a class="reference internal" href="#inference">Inference</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="#export">Export</a></li>
 <li class="toctree-l4"><a class="reference internal" href="#compile">Compile</a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="#device-selection-for-inference">Device Selection for Inference</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="#execute">Execute</a></li>
 <li class="toctree-l4"><a class="reference internal" href="#infer">Infer</a></li>
 </ul>
@@ -191,10 +188,6 @@ Please use the unified <code class="docutils literal notranslate"><span class="p
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.compile<span class="w"> </span>--onnx_path<span class="w"> </span>&lt;path<span class="w"> </span>to<span class="w"> </span>gpt2<span class="w"> </span>onnx<span class="w"> </span>file&gt;<span class="w"> </span>--qpc-path<span class="w"> </span>&lt;path<span class="w"> </span>to<span class="w"> </span>save<span class="w"> </span>qpc<span class="w"> </span>files&gt;<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w">  </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w"> </span>--enable_qnn
 </pre></div>
 </div>
-</section>
-</section>
-<section id="device-selection-for-inference">
-<h3>Device Selection for Inference<a class="headerlink" href="#device-selection-for-inference" title="Permalink to this heading"></a></h3>
 <p>With QNN Config</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.compile<span class="w"> </span>--onnx_path<span class="w"> </span>&lt;path<span class="w"> </span>to<span class="w"> </span>gpt2<span class="w"> </span>onnx<span class="w"> </span>file&gt;<span class="w"> </span>--qpc-path<span class="w"> </span>&lt;path<span class="w"> </span>to<span class="w"> </span>save<span class="w"> </span>qpc<span class="w"> </span>files&gt;<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w">  </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w"> </span>--enable_qnn<span class="w"> </span>QEfficient/compile/qnn_config.json
 </pre></div>
@@ -226,6 +219,7 @@ COMPILER_STATS_BATCH_SIZE = 1
 COMPILER_TIME_PASSES = False
 </pre></div>
 </div>
+</section>
 <hr class="docutils" />
 <section id="execute">
 <h4>Execute<a class="headerlink" href="#execute" title="Permalink to this heading"></a></h4>
