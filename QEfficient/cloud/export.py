@@ -25,16 +25,32 @@ def get_onnx_model_path(
     local_model_dir: Optional[str] = None,
 ):
     """
-    exports the model to onnx if pre-exported file is not found and returns onnx_model_path
+    Exports the PyTorch model to ONNX format if a pre-exported file is not found,
+    and returns the path to the ONNX model.
 
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``.
-    ``Optional`` Args:
-        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
-        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Pass model tokenizer. ``Defaults to None.``
-        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
-        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
-        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Defaults to None.``
+    This function loads a Hugging Face model via QEFFCommonLoader, then calls
+    its export method to generate the ONNX graph.
+
+    Parameters
+    ----------
+    model_name : str
+        Hugging Face Model Card name (e.g., ``gpt2``).
+
+    Other Parameters
+    ----------------
+    cache_dir : str, optional
+        Cache directory where downloaded HuggingFace files are stored. Default is None.
+    hf_token : str, optional
+        HuggingFace login token to access private repositories. Default is None.
+    full_batch_size : int, optional
+        Sets the full batch size to enable continuous batching mode. Default is None.
+    local_model_dir : str, optional
+        Path to custom model weights and config files. Default is None.
+
+    Returns
+    -------
+    str
+        Path of the generated ONNX graph file.
     """
     logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
 
@@ -58,20 +74,35 @@ def main(
     full_batch_size: Optional[int] = None,
 ) -> None:
     """
-    Helper function used by export CLI app for exporting to ONNX Model.
+    Main function for the QEfficient ONNX export CLI application.
 
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``.
+    This function serves as the entry point for exporting a PyTorch model, loaded
+    via QEFFCommonLoader, to the ONNX format. It prepares the necessary
+    paths and calls `get_onnx_model_path`.
 
-    ``Optional`` Args:
-        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
-        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
-        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
-        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Defaults to None.``
+    Parameters
+    ----------
+    model_name : str
+        Hugging Face Model Card name (e.g., ``gpt2``).
+
+    Other Parameters
+    ----------------
+    cache_dir : str, optional
+        Cache directory where downloaded HuggingFace files are stored. Default is None.
+    hf_token : str, optional
+        HuggingFace login token to access private repositories. Default is None.
+    local_model_dir : str, optional
+        Path to custom model weights and config files. Default is None.
+    full_batch_size : int, optional
+        Sets the full batch size to enable continuous batching mode. Default is None.
+
+    Example
+    -------
+    To export a model from the command line:
 
     .. code-block:: bash
 
-        python -m QEfficient.cloud.export OPTIONS
+        python -m QEfficient.cloud.export --model-name gpt2 --cache-dir /path/to/cache
 
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)

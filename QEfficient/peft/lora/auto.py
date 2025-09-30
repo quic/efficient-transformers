@@ -24,28 +24,39 @@ from QEfficient.utils.logging_utils import logger
 
 class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
     """
-    QEff class for loading models with multiple LoRA adapters. Currently only Mistral and Llama model are supported.
-    Once exported and compiled, the qpc can perform mixed batch inference with provided `prompt_to_adapter_mapping`.
+    QEfficient class for loading models with multiple LoRA adapters for causal language modeling.
 
-    Args:
-        :model (nn.Module): PyTorch model
-        :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+    This class enables mixed batch inference with different adapters on Cloud AI 100 hardware.
+    Currently, only Mistral and Llama models are supported. Once exported and compiled, the QPC can perform
+    mixed batch inference using the `prompt_to_adapter_mapping` argument.
 
-    .. code-block:: python
+    Example:
+        .. code-block:: python
 
-        from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
+            from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
+            from transformers import AutoTokenizer
 
-        m = QEffAutoPeftModelForCausalLM.from_pretrained("mistralai/Mistral-7B-v0.1")
-        m.load_adapter("predibase/gsm8k", "gsm8k")
-        m.load_adapter("predibase/magicoder", "magicoder")
-        m.compile(num_cores=16, device_group=[0])
+            m = QEffAutoLoraModelForCausalLM.from_pretrained("mistralai/Mistral-7B-v0.1", num_hidden_layers=1)
+            tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")
+            m.load_adapter("predibase/gsm8k", "gsm8k")
+            m.load_adapter("predibase/magicoder", "magicoder")
+            m.compile()
 
-        prompts=["code prompt", "math prompt", "generic"]
-        m.generate(prompts, device_group=[0], prompt_to_adapter_mapping=["magicoder","gsm8k_id","base"])
-
+            prompts = ["code prompt", "math prompt", "generic"]
+            m.generate(prompts=prompts, tokenizer=tokenizer,prompt_to_adapter_mapping=["magicoder", "gsm8k", "base"])
     """
 
     def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs) -> None:
+        """
+        Initialize a QEffAutoLoraModelForCausalLM instance.
+
+        Args:
+            model (nn.Module): The underlying PyTorch model.
+            continuous_batching (bool, optional): Whether to enable continuous batching support. Default is False.
+
+        Raises:
+            NotImplementedError: If the model is not a supported type (Mistral or Llama).
+        """
         super().__init__(model, continuous_batching)
         if self.model.__class__.__name__ not in ["QEffMistralForCausalLM", "QEffLlamaForCausalLM"]:
             raise NotImplementedError(
@@ -64,6 +75,12 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
     @property
     def model_hash(self) -> str:
+        """
+        Compute a unique hash for the model configuration and all loaded adapters.
+
+        Returns:
+            str: A 16-character SHA256 hash string representing the model and adapter state.
+        """
         mhash = hashlib.sha256()
 
         # should use model config here
@@ -92,6 +109,12 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
     @property
     def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying base model.
+
+        Returns:
+            dict: The configuration dictionary.
+        """
         return self.model.model.config.__dict__
 
     def download_adapter(
@@ -102,14 +125,16 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         adapter_config: Optional[PeftConfig] = None,
     ):
         """
-        Loads a new adapter from huggingface hub or local path into CPU cache
+        Download a new adapter from the HuggingFace Hub or a local path into CPU cache.
 
-        ``Mandatory`` Args:
-            :adapter_model_id (str): Adapter model ID from huggingface hub or local path
-            :adapter_name (str): Adapter name to be used to downloaded this adapter
-        ``Optional`` Args:
-            :adapter_weight (dict): Adapter weight tensors in dictionary format
-            :adapter_config (PeftConfig): Adapter config in the format of PeftConfig
+        Args:
+            adapter_model_id (str): Adapter model ID from HuggingFace Hub or local path.
+            adapter_name (str): Name to assign to the downloaded adapter.
+            adapter_weight (dict, optional): Adapter weight tensors in dictionary format.
+            adapter_config (PeftConfig, optional): Adapter configuration object.
+
+        Notes:
+            If both `adapter_weight` and `adapter_config` are provided, downloading from the Hub is skipped.
         """
 
         # check if adapter name already loaded
@@ -133,14 +158,19 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         adapter_config: Optional[PeftConfig] = None,
     ):
         """
-        Load adapter into CPU cache and set it as active
+        Load an adapter into CPU cache and set it as active.
 
-        ``Mandatory`` Args:
-            :adapter_model_id (str): Adapter model ID from huggingface hub or local path
-            :adapter_name (str): Adapter name to be used to load this adapter
-        ``Optional`` Args:
-            :adapter_weight (dict): Adapter weight tensors in dictionary format
-            :adapter_config (PeftConfig): Adapter config in the format of PeftConfig
+        Args:
+            adapter_model_id (str): Adapter model ID from HuggingFace Hub or local path.
+            adapter_name (str): Name to assign to the loaded adapter.
+            adapter_weight (dict, optional): Adapter weight tensors in dictionary format.
+            adapter_config (PeftConfig, optional): Adapter configuration object.
+
+        Returns:
+            int: The adapter ID assigned to the loaded adapter.
+
+        Raises:
+            ValueError: If the adapter's target modules or rank do not match existing adapters.
         """
 
         # check if adapter name already exist and activated
@@ -170,10 +200,17 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
     def unload_adapter(self, adapter_name: str):
         """
-        Deactivate adpater and remove it from CPU cache
+        Deactivate and remove an adapter from CPU cache.
 
-        ``Mandatory`` Args:
-            :adapter_name (str): Adapter name to be unloaded
+        Args:
+            adapter_name (str): Name of the adapter to unload.
+
+        Returns:
+            bool: True if the adapter was unloaded, False otherwise.
+
+        Notes:
+            If the adapter is active, it will be deactivated and removed from cache.
+            You must re-export and re-compile the model after unloading adapters.
         """
 
         # step1: remove from active list if it's there
@@ -202,6 +239,12 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         return True
 
     def set_adapter(self, adapter_name: str):
+        """
+        Not supported in finite_adapters mode.
+
+        Raises:
+            NotImplementedError: Always raised, as this operation is not supported.
+        """
         raise NotImplementedError("Set adapter is not supported in finite_adapters mode")
 
     def _load_adapter_weights_to_model(self):
@@ -286,14 +329,18 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
-        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
+        Export the model with all loaded adapters to ONNX format using ``torch.onnx.export``.
 
-        ``Optional`` Args:
-            does not any arguments.
+        The exported ONNX graph will support mixed batch inference with multiple adapters.
+
+        Args:
+            export_dir (str, optional): Directory to save the exported ONNX graph. If not provided, the default export directory is used.
 
         Returns:
-            :str: Path of the generated ``ONNX`` graph.
+            str: Path to the generated ONNX graph.
+
+        Raises:
+            ValueError: If no adapters are loaded.
         """
 
         # initialize the adapter model
@@ -352,18 +399,27 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         **kwargs,
     ):
         """
-        This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
-        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
+        Generate output for a batch of prompts using the compiled QPC on Cloud AI 100 hardware.
 
-        ``Mandatory`` Args:
-            :tokenizer (PreTrainedTokenizerFast or PreTrainedTokenizer): The tokenizer used in the inference
-            :prompts (List[str]): List of prompts to run the execution.
-            :prompt_to_adapter_mapping (List[str]): The sequence of the adapter names will be matched with sequence of prompts and corresponding adapters will be used for the prompts."base" for base model (no adapter).
-        ``optional`` Args:
-            :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
-            :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
+        This method supports mixed batch inference, where each prompt can use a different adapter as specified
+        by `prompt_to_adapter_mapping`. If the number of prompts is not divisible by the compiled batch size,
+        the last incomplete batch will be dropped.
 
+        Args:
+            tokenizer (PreTrainedTokenizerFast or PreTrainedTokenizer): Tokenizer used for inference.
+            prompts (List[str]): List of prompts to generate outputs for.
+            prompt_to_adapter_mapping (List[str]): List of adapter names to use for each prompt. Use "base" for the base model (no adapter).
+            device_id (List[int], optional): Device IDs to use for execution. If `None`, auto-device-picker is used.
+            runtime (str, optional): Runtime to use. Only "AI_100" is currently supported. Default is "AI_100".
+            **kwargs: Additional generation parameters.
+
+        Returns:
+            Model outputs for each prompt.
+
+        Raises:
+            ValueError: If runtime is not "AI_100".
+            TypeError: If the model has not been compiled.
+            RuntimeError: If the number of prompts does not match the number of adapter mappings.
         """
         if runtime != "AI_100":
             raise ValueError("Only AI_100 runtime is supported right now via generate API")
