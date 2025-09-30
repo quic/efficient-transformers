@@ -59,7 +59,11 @@ from QEfficient.utils.logging_utils import logger
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
-    Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from transformers/models/modeling_auto.py file.
+    Base class for QEfficient wrappers around HuggingFace transformer models.
+
+    This class provides common functionality for loading, representing, and managing
+    HuggingFace models within the QEfficient framework. It serves as a parent
+    for specific model types like `AutoModel`, `AutoModelForCausalLM`, etc.
     """
 
     _hf_auto_class: type
@@ -80,6 +84,28 @@ class QEFFTransformersBase(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+        """
+        Load a QEfficient transformer model from a pretrained HuggingFace model or local path.
+
+        This is the recommended way to initialize any QEfficient transformer model.
+        The interface is similar to ``transformers.AutoModel.from_pretrained``.
+
+        Parameters
+        ----------
+        pretrained_model_name_or_path : str
+            Model card name from HuggingFace or local path to model directory.
+        *args :
+            Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
+        **kwargs :
+            Keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
+
+            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically set to "eager" and False respectively to ensure compatibility.
+
+        Returns
+        -------
+        QEFFTransformersBase
+            An instance of the specific QEFFAutoModel subclass, initialized with the pretrained weights.
+        """
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -93,6 +119,14 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @property
     def model_name(self) -> str:
+        """
+        Get the name of the underlying HuggingFace model.
+
+        Returns
+        -------
+        str
+            The model's class name, with "QEff" or "QEFF" prefix removed if present.
+        """
         mname = self.model.__class__.__name__
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
@@ -100,12 +134,41 @@ class QEFFTransformersBase(QEFFBaseModel):
 
 
 class MultimodalUtilityMixin:
+    """
+    Mixin for multimodal models providing utilities like input auto-correction.
+
+    This mixin ensures that inputs to multimodal models conform to the expected
+    names, shapes, and dtypes defined by the model's `get_inputs_info` method.
+    """
+
     def __new__(cls, *args, **kwargs):
         if cls is MultimodalUtilityMixin:
             raise TypeError(f"only children of '{cls.__name__}' may be instantiated")
         return object.__new__(cls)
 
     def auto_correct_inputs(self, inputs):
+        """
+        Validates and corrects model inputs to match expected specifications.
+
+        Checks if the provided inputs dictionary contains all required keys and
+        if the data types of the tensors match the model's specifications.
+        It then filters the input dictionary to only include expected inputs.
+
+        Parameters
+        ----------
+        inputs : Dict[str, torch.Tensor]
+            A dictionary of input tensors, where keys are input names and values are `torch.Tensor` objects.
+
+        Returns
+        -------
+        Dict[str, torch.Tensor]
+            A filtered dictionary of input tensors that match the model's expected inputs.
+
+        Raises
+        ------
+        RuntimeError
+            If any expected input is missing or has a mismatched data type.
+        """
         checked = True
         inputs_info = self.model.get_inputs_info()
         for valid_input_info in inputs_info:
@@ -131,29 +194,25 @@ class MultimodalUtilityMixin:
 
 class QEFFAutoModel(QEFFTransformersBase):
     """
-    The QEFFAutoModel class is designed for manipulating any transformer model from the HuggingFace hub.
-    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+    QEfficient class for general transformer models from the HuggingFace hub (e.g., BERT, Sentence Transformers).
 
-    ``Mandatory`` Args:
-        :model (nn.Module): PyTorch model
+    This class provides a unified interface for loading, exporting, compiling, and running
+    various encoder-only transformer models on Cloud AI 100 hardware. It supports pooling
+    for embedding extraction.
 
+    Example
+    -------
     .. code-block:: python
 
         from QEfficient import QEFFAutoModel
         from transformers import AutoTokenizer
 
-        # Initialize the model using from_pretrained similar to transformers.AutoModel.
-        model = QEFFAutoModel.from_pretrained("model_name")
-
-        # Now you can directly compile the model for Cloud AI 100
-        model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
-
-        #prepare input
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = QEFFAutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="mean")
+        model.compile(num_cores=16)
+        tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
         inputs = tokenizer("My name is", return_tensors="pt")
-
-        # You can now execute the model
-        model.generate(inputs)
+        output = model.generate(inputs)
+        print(output) # Output will be a dictionary containing extracted features.
     """
 
     _hf_auto_class = AutoModel
@@ -161,6 +220,20 @@ class QEFFAutoModel(QEFFTransformersBase):
     _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
+        """
+        Initializes a QEFFAutoModel instance.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The underlying HuggingFace PyTorch model.
+        pooling : str or Callable, optional
+            The pooling method to use for feature extraction.
+            Options include: "mean", "max", "cls", "avg", or a custom Callable.
+            Default is None (no pooling applied).
+        **kwargs :
+            Additional keyword arguments passed to the base class constructor.
+        """
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling
@@ -175,38 +248,35 @@ class QEFFAutoModel(QEFFTransformersBase):
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
         """
-        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
-        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+        Load a QEfficient transformer model from a pretrained HuggingFace model or local path.
 
-        This API can also be used as exception for VLM model since transformers support loading InternChatVL models via AutoModel API we support it via AutoModelForCausalLM API
-        Args:
-            pretrained_model_name_or_path (str): The name or path of the pre-trained model.
-            pooling (Optional[Union[str, Callable]], optional): The pooling method to use. Defaults to None.
-            Options:
-                - "mean": Mean pooling
-                - "max": Max pooling
-                - "cls": CLS token pooling
-                - "avg": Average pooling
-                - Callable: A custom pooling function
-                - None: No pooling applied
+        This is the recommended way to initialize a QEfficient transformer model. The interface is similar to
+        ``transformers.AutoModel.from_pretrained``. Once initialized, you can use methods such as ``export``, ``compile``, and ``generate``.
 
-        .. code-block:: python
+        Parameters
+        ----------
+        pretrained_model_name_or_path : str
+            Model card name from HuggingFace or local path to model directory.
+        pooling : str or Callable, optional
+            The pooling method to use. Options include:
+            - "mean": Mean pooling
+            - "max": Max pooling
+            - "cls": CLS token pooling
+            - "avg": Average pooling
+            - Callable: A custom pooling function
+            - None: No pooling applied. Default is None.
+        *args :
+            Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
+        **kwargs :
+            Additional keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
 
-            from QEfficient import QEFFAutoModel
-            from transformers import AutoTokenizer
+            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically
+            set to "eager" and False respectively to ensure compatibility.
 
-            # Initialize the model using from_pretrained similar to transformers.AutoModel.
-            model = QEFFAutoModel.from_pretrained("model_name", pooling="mean")
-
-            # Now you can directly compile the model for Cloud AI 100
-            model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
-
-            #prepare input
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            inputs = tokenizer("My name is", return_tensors="pt")
-
-            # You can now execute the model
-            model.generate(inputs)
+        Returns
+        -------
+        QEFFAutoModel
+            An instance initialized with the pretrained weights.
         """
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -229,17 +299,33 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     @property
     def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
         return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
-        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        Export the model to ONNX format using ``torch.onnx.export``.
 
-        ``Optional`` Args:
-           :export_dir (str, optional): The directory path to store ONNX-graph.
+        This method prepares example inputs and dynamic axes based on the model configuration,
+        then exports the model to an ONNX graph suitable for compilation and deployment on Cloud AI 100 hardware.
 
-        Returns:
-            :str: Path of the generated ``ONNX`` graph.
+        Parameters
+        ----------
+        export_dir : str, optional
+            Directory path where the exported ONNX graph will be saved. If not provided,
+            the default export directory is used.
+
+        Returns
+        -------
+        str
+            Path to the generated ONNX graph file.
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -273,27 +359,54 @@ class QEFFAutoModel(QEFFTransformersBase):
         **compiler_options,
     ) -> str:
         """
-        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
-        If the model has not been exported yet, this method will handle the export process.
-        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
-        ``Optional`` Args:
-            :onnx_path (str, optional): Path to pre-exported onnx model.
-            :compile_dir (str, optional): Path for saving the qpc generated.
-            :seq_len (Union[int, List[int]]): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
-            :batch_size (int, optional): Batch size. ``Defaults to 1``.
-            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
-            :num_cores (int): Number of cores used to compile the model.
-            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
-            :compiler_options (dict, optional): Additional compiler options.
-                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
-                    :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
-                    :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
-                For QNN Compiler: Following arguments can be passed.
-                    :enable_qnn (bool): Enables QNN Compilation.
-                    :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
-        Returns:
-            :str: Path of the compiled ``qpc`` package.
+        This method generates a ``qpc`` package. If the model has not been exported yet,
+        this method will handle the export process. Additional arguments for the `qaic-exec`
+        compiler can be passed as keyword arguments.
+
+        Parameters
+        ----------
+        onnx_path : str, optional
+            Path to a pre-exported ONNX model. If not provided, the model will be exported first.
+        compile_dir : str, optional
+            Directory to save the generated QPC package. If not provided, a default directory is used.
+        seq_len : int or list of int, optional
+            The length(s) of the prompt(s) to compile for. Can be a single integer or a list of integers
+            to create multiple specializations. Default is 32.
+        batch_size : int, optional
+            Batch size. Default is 1.
+        num_devices : int, optional
+            Number of devices to compile for. Default is 1.
+        num_cores : int, optional
+            Number of cores to use for compilation.
+        mxfp6_matmul : bool, optional
+            Use MXFP6 compression for weights. Default is False.
+        **compiler_options : dict
+            Additional compiler options for QAIC or QNN compilers. These are passed directly
+            to the underlying compilation command.
+
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+            - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
+            Params are converted to flags as below:
+
+            - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+            - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
+
+            **For QNN Compiler:** Following arguments can be passed as:
+
+            - enable_qnn (bool): Enables QNN Compilation.
+            - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+
+        Returns
+        -------
+        str
+            Path to the compiled QPC package.
+
         """
 
         if isinstance(seq_len, list) and len(seq_len) >= 15:
@@ -322,14 +435,26 @@ class QEFFAutoModel(QEFFTransformersBase):
         runtime_ai100: bool = True,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
-        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        ``Mandatory`` Args:
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-        ``optional`` Args:
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
-        Returns:
-            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        Generate output by executing the compiled QPC on Cloud AI 100 hardware or using PyTorch runtime.
+
+        This method runs sequential execution based on the compiled model's batch size and the number of prompts.
+        If the number of prompts is not divisible by the batch size, the last batch will be dropped.
+
+        Parameters
+        ----------
+        inputs : torch.Tensor or np.ndarray
+            Input data for the model. For AI 100 runtime, this typically includes
+            `input_ids` and `attention_mask`.
+        device_ids : list of int, optional
+            Device IDs for running the QPC. Defaults to `[0]` if not specified and `runtime_ai100` is True.
+        runtime_ai100 : bool, optional
+            Whether to use the AI 100 runtime for inference. If False, the PyTorch
+            runtime will be used. Default is True.
+
+        Returns
+        -------
+        torch.Tensor or np.ndarray
+            Output from the AI 100 or PyTorch runtime. The type depends on the runtime and model.
         """
         # AI_100 runtime
         if runtime_ai100:
@@ -347,15 +472,23 @@ class QEFFAutoModel(QEFFTransformersBase):
         device_ids: List[int] = [0],
     ) -> np.ndarray:
         """
-        Generates features with list of prompts using AI 100 runtime.
+        Generate features for a batch of inputs using the Cloud AI 100 hardware runtime.
 
-        ``Mandatory`` Args:
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-        ``Optional`` Args:
-            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
+        This method runs inference on the compiled QPC using the Cloud AI 100 accelerator.
+        It automatically pads input tensors to match the compiled sequence length and handles session setup.
 
-        Returns:
-           np.ndarray: A list of dictionaries containing the generated output features.
+        Parameters
+        ----------
+        inputs : torch.Tensor or np.ndarray
+            Input tensors for feature extraction. Must be a dictionary-like object
+            including `input_ids` and `attention_mask`.
+        device_ids : List[int], optional
+            List of device IDs to use for inference. Defaults to [0].
+
+        Returns
+        -------
+        np.ndarray
+            Array containing the generated output features for each input in the batch.
         """
 
         if self.qpc_session is None:
@@ -405,19 +538,33 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """
-        Generates features from a list of text prompts using a PyTorch model.
+        Generate features from a batch of inputs using the PyTorch model.
 
-        ``Mandatory`` Args:
-            :model: The transformed PyTorch model used for generating features.
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+        This method runs the model in PyTorch (CPU/GPU) mode for feature extraction.
 
-        Returns:
-            torch.Tensor: A list of output features generated by the model for each prompt.
+        Parameters
+        ----------
+        model : nn.Module
+            The PyTorch model to use for inference.
+        inputs : torch.Tensor or np.ndarray
+            Input tensors for feature extraction. Expected to be a dictionary-like object.
+
+        Returns
+        -------
+        List[torch.Tensor]
+            List of output features generated by the model for each input.
         """
         return model(**inputs)
 
 
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
+    """
+    QEfficient wrapper for the Vision Encoder component of a Text-to-Image-to-Text model.
+
+    This class handles the export and compilation of the vision encoder part
+    of multimodal models for optimal performance on Cloud AI 100 hardware.
+    """
+
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
@@ -428,11 +575,42 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model: nn.modules, **kwargs):
+        """
+        Initializes the vision encoder component for multimodal models.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The full HuggingFace multimodal model from which the vision encoder is extracted.
+        **kwargs :
+            Additional keyword arguments passed to the base class constructor.
+        """
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
+        """
+        Exports the vision encoder component to ONNX format.
+
+        Parameters
+        ----------
+        inputs : Dict[str, torch.Tensor]
+            Example inputs for the ONNX export.
+        output_names : List[str]
+            List of output names for the ONNX graph.
+        dynamic_axes : Dict[str, Dict[int, str]]
+            Dynamic axes configuration for the ONNX graph.
+        export_dir : str, optional
+            Directory path where the exported ONNX graph will be saved. Default is None.
+        offload_pt_weights : bool, optional
+            If True, PyTorch weights will be offloaded after export. Default is True.
+
+        Returns
+        -------
+        str
+            Path to the generated ONNX graph file for the vision encoder.
+        """
         return self._export(
             inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
         )
@@ -449,6 +627,35 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         custom_io,
         **compiler_options,
     ) -> str:
+        """
+        Compiles the vision encoder component to a QPC package.
+
+        Parameters
+        ----------
+        compile_dir : str
+            Directory to save the generated QPC package.
+        compile_only : bool
+            If True, only compilation occurs without running inference.
+        specializations : List[Dict[str, Union[int, str]]]
+            List of dictionaries, each specifying a compilation specialization.
+        convert_to_fp16 : bool
+            If True, converts model to FP16 precision during compilation.
+        mxfp6_matmul : bool
+            If True, uses MXFP6 compression for MatMul weights.
+        mdp_ts_num_devices : int
+            Number of devices for multi-device (tensor slicing) compilation.
+        aic_num_cores : int
+            Number of cores to use for compilation.
+        custom_io : Dict[str, str]
+            Custom I/O configurations for the compiler.
+        **compiler_options :
+            Additional compiler options passed to the underlying compilation command.
+
+        Returns
+        -------
+        str
+            Path to the compiled QPC package for the vision encoder.
+        """
         return self._compile(
             compile_dir=compile_dir,
             compile_only=compile_only,
@@ -463,6 +670,14 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
 
     @property
     def model_name(self) -> str:
+        """
+        Get the name of the underlying vision encoder model.
+
+        Returns
+        -------
+        str
+            The model's class name, with "QEff" or "QEFF" prefix removed if present.
+        """
         mname = self.model.__class__.__name__
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
@@ -470,10 +685,25 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
 
     @property
     def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying HuggingFace vision model.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary.
+        """
         return self.model.model.vision_model.config.__dict__
 
 
 class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
+    """
+    QEfficient wrapper for the Causal Language Model (decoder) component of a Text-to-Image-to-Text model.
+
+    This class handles the export and compilation of the language decoder part
+    of multimodal models for optimal performance on Cloud AI 100 hardware.
+    """
+
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
@@ -485,11 +715,42 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model, **kwargs):
+        """
+        Initializes the language decoder component for multimodal models.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The full HuggingFace multimodal model from which the language decoder is extracted.
+        **kwargs :
+            Additional keyword arguments passed to the base class constructor.
+        """
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
+        """
+        Exports the language decoder component to ONNX format.
+
+        Parameters
+        ----------
+        inputs : Dict[str, torch.Tensor]
+            Example inputs for the ONNX export.
+        output_names : List[str]
+            List of output names for the ONNX graph.
+        dynamic_axes : Dict[str, Dict[int, str]]
+            Dynamic axes configuration for the ONNX graph.
+        export_dir : str, optional
+            Directory path where the exported ONNX graph will be saved. Default is None.
+        offload_pt_weights : bool, optional
+            If True, PyTorch weights will be offloaded after export. Default is True.
+
+        Returns
+        -------
+        str
+            Path to the generated ONNX graph file for the language decoder.
+        """
         return self._export(
             inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
         )
@@ -506,6 +767,35 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         custom_io,
         **compiler_options,
     ) -> str:
+        """
+        Compiles the language decoder component to a QPC package.
+
+        Parameters
+        ----------
+        compile_dir : str
+            Directory to save the generated QPC package.
+        compile_only : bool
+            If True, only compilation occurs without running inference.
+        specializations : List[Dict[str, Union[int, str]]]
+            List of dictionaries, each specifying a compilation specialization.
+        convert_to_fp16 : bool
+            If True, converts model to FP16 precision during compilation.
+        mxfp6_matmul : bool
+            If True, uses MXFP6 compression for MatMul weights.
+        mdp_ts_num_devices : int
+            Number of devices for multi-device (tensor slicing) compilation.
+        aic_num_cores : int
+            Number of cores to use for compilation.
+        custom_io : Dict[str, str]
+            Custom I/O configurations for the compiler.
+        **compiler_options :
+            Additional compiler options passed to the underlying compilation command.
+
+        Returns
+        -------
+        str
+            Path to the compiled QPC package for the language decoder.
+        """
         return self._compile(
             compile_dir=compile_dir,
             compile_only=compile_only,
@@ -520,6 +810,14 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
     @property
     def model_name(self) -> str:
+        """
+        Get the name of the underlying language decoder model.
+
+        Returns
+        -------
+        str
+            The model's class name, with "QEff" or "QEFF" prefix removed if present.
+        """
         mname = self.model.__class__.__name__
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
@@ -527,10 +825,26 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
     @property
     def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying HuggingFace language model.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary.
+        """
         return self.model.language_model.config.__dict__
 
 
 class _QEffAutoModelForImageTextToTextDualQPC:
+    """
+    Internal class handling multimodal image-text-to-text models using a dual QPC approach.
+
+    In this approach, the vision encoder and language model decoder are compiled
+    into separate QPC packages. The vision encoder's KV cache might be offloaded
+    to CPU or managed differently from the language model's KV cache.
+    """
+
     _hf_auto_class = AutoModelForImageTextToText
 
     def __init__(
@@ -538,6 +852,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         model: nn.Module,
         **kwargs,
     ):
+        """
+        Initializes the dual QPC multimodal model wrapper.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The full HuggingFace multimodal model.
+        **kwargs :
+            Additional keyword arguments. `full_batch_size` is not supported here.
+
+        Raises
+        ------
+        NotImplementedError
+            If `full_batch_size` is provided.
+        """
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         self.model = model
@@ -548,6 +877,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     @property
     def model_name(self) -> str:
+        """
+        Get the name of the underlying multimodal model.
+
+        Returns
+        -------
+        str
+            The model's class name, with "QEff" or "QEFF" prefix removed if present.
+        """
         mname = self.model.__class__.__name__
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
@@ -555,6 +892,23 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
+        """
+        Load a QEfficient multimodal model for dual QPC from a pretrained HuggingFace model or local path.
+
+        Parameters
+        ----------
+        pretrained_model_name_or_path : str
+            Model card name from HuggingFace or local path to model directory.
+        **kwargs :
+            Additional keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
+            Note: `attn_implementation` and `low_cpu_mem_usage` are automatically
+            set to "eager" and False respectively to ensure compatibility.
+
+        Returns
+        -------
+        _QEffAutoModelForImageTextToTextDualQPC
+            An instance initialized with the pretrained weights.
+        """
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -567,10 +921,27 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     @property
     def onnx_path(self):
+        """
+        Get the ONNX paths for the vision and language model components.
+
+        Returns
+        -------
+        List[str]
+            A list containing the ONNX paths of the vision model and the language model.
+        """
         return [self.vision_model.onnx_path, self.lang_model.onnx_path]
 
     @property
     def qpc_path(self):
+        """
+        Get the QPC paths for the vision and language model components.
+
+        Returns
+        -------
+        Union[List[str], str, None]
+            A list containing both QPC paths if both are compiled, or just one if only one is,
+            or None if neither is compiled.
+        """
         if self.vision_model.qpc_path and self.lang_model.qpc_path:
             return [self.vision_model.qpc_path, self.lang_model.qpc_path]
         elif self.vision_model.qpc_path:
@@ -583,6 +954,24 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
+        """
+        Exports both the vision encoder and language decoder components to ONNX format.
+
+        This method exports the vision component (optionally without offloading PyTorch weights)
+        and the language component (with offloading PyTorch weights).
+
+        Parameters
+        ----------
+        export_dir : str, optional
+            Directory path where the exported ONNX graphs will be saved. Default is None.
+        **kwargs :
+            Additional keyword arguments.
+
+        Returns
+        -------
+        List[str]
+            A list containing the paths to the generated ONNX graph files for both components.
+        """
         inputs = self.model.get_dummy_inputs(kv_offload=True)
         dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True)
         output_names = self.model.get_output_names(kv_offload=True)
@@ -621,6 +1010,58 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_lang: Optional[bool] = False,
         **compiler_options,
     ) -> str:
+        """
+        Compiles both the vision encoder and language decoder components into QPC packages.
+
+        Parameters
+        ----------
+        img_size : int, optional
+            The image size to compile the vision model for. Default is None.
+        vision_onnx_path : str, optional
+            Path to a pre-exported ONNX file for the vision encoder. If None, it will be exported.
+        lang_onnx_path : str, optional
+            Path to a pre-exported ONNX file for the language decoder. If None, it will be exported.
+        compile_dir : str, optional
+            Directory to save the generated QPC packages.
+        prefill_seq_len : int, optional
+            Length of the prefill prompt for the language model. Default is None.
+        ctx_len : int, optional
+            Maximum context length for the language model. Default is None.
+        batch_size : int, optional
+            Batch size. Default is 1.
+        full_batch_size : int, optional
+            Not supported for this model; must be None.
+        kv_cache_batch_size : int, optional
+            Not supported for this model; must be None.
+        num_devices : int, optional
+            Number of devices to compile for. Default is 1.
+        num_cores : int, optional
+            Number of cores to use for compilation.
+        mxfp6_matmul : bool, optional
+            Use MXFP6 compression for weights in the language model. Default is False.
+        mxint8_kv_cache : bool, optional
+            Use MXINT8 compression for KV cache. Default is False.
+        num_speculative_tokens : int, optional
+            Not supported for this model; must be None.
+        skip_vision : bool, optional
+            If True, skips compilation of the vision encoder. Default is False.
+        skip_lang : bool, optional
+            If True, skips compilation of the language decoder. Default is False.
+        **compiler_options : dict
+            Additional compiler options for QAIC or QNN compilers.
+
+        Returns
+        -------
+        Union[List[str], str, None]
+            A list of paths to the compiled QPC packages, or a single path if only
+            one component is compiled, or None if neither is compiled.
+
+        Raises
+        ------
+        ValueError
+            If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
+            If both `skip_lang` and `skip_vision` are True.
+        """
         if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
                 f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
@@ -712,14 +1153,35 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         generation_len: Optional[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
-        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        ``Mandatory`` Args:
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-        ``optional`` Args:
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
-        Returns:
-            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        Generates output by executing the compiled QPC(s) on Cloud AI 100 Hardware cards.
+
+        This method coordinates inference between the vision encoder and language model decoder.
+
+        Parameters
+        ----------
+        inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
+            Inputs to run the execution, typically includes `pixel_values`, `input_ids`,
+            `attention_mask`, etc.
+        streamer : TextStreamer, optional
+            A streamer object to display generated tokens in real-time. Default is None.
+        device_ids : List[int], optional
+            IDs of devices for running the QPC. E.g., `[0]` for a single device or
+            `[0, 1, 2, 3]` for tensor slicing. Defaults to `[0]` if not specified.
+        runtime_ai100 : bool, optional
+            If True, uses the AI 100 runtime. PyTorch runtime is not supported for this model.
+            Default is True.
+        generation_len : int, optional
+            The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
+
+        Returns
+        -------
+        CloudAI100ExecInfoNew or np.ndarray
+            Output from the AI 100 runtime, including generated IDs and performance metrics.
+
+        Raises
+        ------
+        NotImplementedError
+            If `runtime_ai100` is False.
         """
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
@@ -735,6 +1197,35 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         device_ids: List[int] = None,
         generation_len: int = None,
     ):
+        """
+        Performs generation for multimodal models with KV offloading to CPU.
+
+        This method orchestrates the inference by running the vision encoder (if compiled)
+        and then iteratively running the language decoder, managing KV cache states.
+
+        Parameters
+        ----------
+        inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
+            Input tensors for the multimodal model.
+        streamer : TextStreamer, optional
+            A streamer object to display generated tokens in real-time. Default is None.
+        device_ids : List[int], optional
+            IDs of devices for running the QPC. Defaults to `[0]` if not specified.
+        generation_len : int, optional
+            The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
+
+        Returns
+        -------
+        CloudAI100ExecInfoNew
+            Execution information including generated IDs and performance metrics.
+
+        Raises
+        ------
+        TypeError
+            If the language model QPC is not compiled.
+        AssertionError
+            If `generation_len` is not greater than zero.
+        """
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
@@ -887,6 +1378,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
 
 class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, MultimodalUtilityMixin):
+    """
+    Internal class handling multimodal image-text-to-text models using a single QPC approach.
+
+    In this approach, the entire multimodal model (vision encoder + language model decoder)
+    is compiled into a single QPC package.
+    """
+
     _hf_auto_class = AutoModelForImageTextToText
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
@@ -904,6 +1402,21 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         model: nn.Module,
         **kwargs,
     ):
+        """
+        Initializes the single QPC multimodal model wrapper.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The full HuggingFace multimodal model.
+        **kwargs :
+            Additional keyword arguments. `full_batch_size` is not supported here.
+
+        Raises
+        ------
+        NotImplementedError
+            If `full_batch_size` is provided.
+        """
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         super().__init__(model, **kwargs)
@@ -924,6 +1437,26 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         *args,
         **kwargs,
     ):
+        """
+        Load a QEfficient multimodal model for single QPC from a pretrained HuggingFace model or local path.
+
+        Parameters
+        ----------
+        pretrained_model_name_or_path : str
+            Model card name from HuggingFace or local path to model directory.
+        *args :
+            Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
+        **kwargs :
+            Additional keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
+            Note: `attn_implementation` and `low_cpu_mem_usage` are automatically
+            set to "eager" and False respectively to ensure compatibility.
+            Also, `_attn_implementation` and `use_flash_attn` are configured for VLM models.
+
+        Returns
+        -------
+        _QEFFAutoModelForImageTextToTextSingleQPC
+            An instance initialized with the pretrained weights.
+        """
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -945,6 +1478,21 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
+        """
+        Exports the entire multimodal model to ONNX format.
+
+        Parameters
+        ----------
+        export_dir : str, optional
+            Directory path where the exported ONNX graph will be saved. Default is None.
+        **kwargs :
+            Additional keyword arguments.
+
+        Returns
+        -------
+        str
+            Path to the generated ONNX graph file.
+        """
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
@@ -968,6 +1516,52 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         num_speculative_tokens: Optional[int] = None,
         **compiler_options,
     ) -> str:
+        """
+        Compiles the exported ONNX model (single QPC) using the Cloud AI 100 Platform SDK compiler.
+
+        This method generates a single ``qpc`` package for the entire multimodal model.
+
+        Parameters
+        ----------
+        onnx_path : str, optional
+            Path to a pre-exported ONNX model. If not provided, the model will be exported first.
+        img_size : int, optional
+            The image size to compile the vision part of the model for. Default is None.
+        compile_dir : str, optional
+            Directory to save the generated QPC package.
+        prefill_seq_len : int, optional
+            Length of the prefill prompt. Default is None.
+        ctx_len : int, optional
+            Maximum context length the compiled model can remember. Default is None.
+        batch_size : int, optional
+            Batch size. Default is 1.
+        full_batch_size : int, optional
+            Not supported for this model; must be None.
+        kv_cache_batch_size : int, optional
+            Not supported for this model; must be None.
+        num_devices : int, optional
+            Number of devices to compile for. Default is 1.
+        num_cores : int, optional
+            Number of cores to use for compilation.
+        mxfp6_matmul : bool, optional
+            Use MXFP6 compression for weights. Default is False.
+        mxint8_kv_cache : bool, optional
+            Use MXINT8 compression for KV cache. Default is False.
+        num_speculative_tokens : int, optional
+            Not supported for this model; must be None.
+        **compiler_options : dict
+            Additional compiler options for QAIC or QNN compilers.
+
+        Returns
+        -------
+        str
+            Path to the compiled QPC package.
+
+        Raises
+        ------
+        ValueError
+            If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
+        """
         if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
                 f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
@@ -1017,6 +1611,14 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         return self.qpc_path
 
     def get_onnx_dynamic_axes(self):
+        """
+        Retrieves the dynamic axes configuration for ONNX export for this model.
+
+        Returns
+        -------
+        Dict[str, Dict[int, str]]
+            A dictionary specifying the dynamic axes for inputs.
+        """
         return self.model.get_onnx_dynamic_axes()
 
     def generate(
@@ -1028,14 +1630,33 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         generation_len: Optional[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
-        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        ``Mandatory`` Args:
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-        ``optional`` Args:
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
-        Returns:
-            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        Generates output by executing the compiled single QPC on Cloud AI 100 Hardware cards.
+
+        Parameters
+        ----------
+        inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
+            Inputs to run the execution, typically includes `pixel_values`, `input_ids`,
+            `attention_mask`, etc.
+        streamer : TextStreamer, optional
+            A streamer object to display generated tokens in real-time. Default is None.
+        device_ids : List[int], optional
+            IDs of devices for running the QPC. E.g., `[0]` for a single device or
+            `[0, 1, 2, 3]` for tensor slicing. Defaults to `[0]` if not specified.
+        runtime_ai100 : bool, optional
+            If True, uses the AI 100 runtime. PyTorch runtime is not supported for this model.
+            Default is True.
+        generation_len : int, optional
+            The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
+
+        Returns
+        -------
+        CloudAI100ExecInfoNew or np.ndarray
+            Output from the AI 100 runtime, including generated IDs and performance metrics.
+
+        Raises
+        ------
+        NotImplementedError
+            If `runtime_ai100` is False.
         """
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
@@ -1052,6 +1673,32 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         generation_len: int = None,
         streamer: Optional[TextStreamer] = None,
     ) -> np.ndarray:
+        """
+        Performs generation for multimodal models using a single QPC on Cloud AI 100 hardware.
+
+        Parameters
+        ----------
+        inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
+            Input tensors for the multimodal model.
+        device_ids : List[int]
+            IDs of devices for running the QPC.
+        enable_debug_logs : bool, optional
+            If True, enables debug logging for the QAIC inference session. Default is False.
+        generation_len : int, optional
+            The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
+        streamer : TextStreamer, optional
+            A streamer object to display generated tokens in real-time. Default is None.
+
+        Returns
+        -------
+        CloudAI100ExecInfoNew
+            Execution information including generated IDs and performance metrics.
+
+        Raises
+        ------
+        AssertionError
+            If `generation_len` is not greater than zero.
+        """
         inputs = self.auto_correct_inputs(inputs)
         qpc_session = QAICInferenceSession(
             self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
@@ -1170,6 +1817,14 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
     @property
     def model_name(self) -> str:
+        """
+        Get the name of the underlying multimodal model.
+
+        Returns
+        -------
+        str
+            The model's class name, with "QEff" or "QEFF" prefix removed if present.
+        """
         mname = self.model.__class__.__name__
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
@@ -1177,41 +1832,45 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
     @property
     def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying HuggingFace model.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary.
+        """
         return self.model.config.__dict__
 
 
 class QEFFAutoModelForImageTextToText:
     """
-    The QEFFAutoModelForImageTextToText class is used to work with multimodal language models from the HuggingFace hub.
-    While you can initialize the class directly, it's best to use the ``from_pretrained`` method for this purpose. This class supports both single and dual QPC approaches.
-    Attributes:
-        _hf_auto_class (class): The Hugging Face AutoModel class for ImageTextToText models.
+    QEfficient class for multimodal (image-text-to-text) models from the HuggingFace hub.
 
-    ``Mandatory`` Args:
-        :pretrained_model_name_or_path (str): Model card name from HuggingFace or local path to model directory.
+    This class supports both single and dual QPC (Quantized Package Compilation) approaches for efficient deployment on Cloud AI 100 hardware.
+    It is recommended to use the ``from_pretrained`` method for initialization.
 
-    ``Optional`` Args:
-        :kv_offload (bool): Flag to toggle between single and dual QPC approaches. If set to False, the Single QPC approach will be used; otherwise, the dual QPC approach will be applied. Defaults to True.
-
+    Example
+    -------
     .. code-block:: python
 
         import requests
         from PIL import Image
         from transformers import AutoProcessor, TextStreamer
-
         from QEfficient import QEFFAutoModelForImageTextToText
 
-        # Add HuggingFace Token to access the model
-        HF_TOKEN = ""
+        HF_TOKEN = "" # Your HuggingFace token if needed
         model_name = "meta-llama/Llama-3.2-11B-Vision-Instruct"
         query = "Describe this image."
         image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
 
-        ## STEP - 1 Load the Processor and Model, and kv_offload=True/False for dual and single qpc
+        # STEP 1: Load processor and model
         processor = AutoProcessor.from_pretrained(model_name, token=HF_TOKEN)
-        model = QEFFAutoModelForImageTextToText.from_pretrained(model_name, token=HF_TOKEN, attn_implementation="eager", kv_offload=False)
+        model = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_name, token=HF_TOKEN, attn_implementation="eager", kv_offload=False # kv_offload=False for single QPC
+        )
 
-        ## STEP - 2 Export & Compile the Model
+        # STEP 2: Export & Compile
         model.compile(
             prefill_seq_len=32,
             ctx_len=512,
@@ -1221,7 +1880,7 @@ class QEFFAutoModelForImageTextToText:
             mxfp6_matmul=False,
         )
 
-        ## STEP - 3 Load and process the inputs for Inference
+        # STEP 3: Prepare inputs
         image = Image.open(requests.get(image_url, stream=True).raw)
         messages = [
             {
@@ -1238,19 +1897,37 @@ class QEFFAutoModelForImageTextToText:
             images=image,
             return_tensors="pt",
             add_special_tokens=False,
-            padding="max_length",
+            padding="max_length", # Consider padding strategy if max_length is crucial
             max_length=32,
         )
 
-        ## STEP - 4 Run Inference on the compiled model
+        # STEP 4: Run inference
         streamer = TextStreamer(processor.tokenizer)
         model.generate(inputs=inputs, streamer=streamer, generation_len=512)
-
     """
 
     _hf_auto_class = AutoModelForImageTextToText
 
     def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, **kwargs):
+        """
+        Instantiate the appropriate internal class for single or dual QPC mode.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The loaded HuggingFace multimodal model.
+        kv_offload : bool, optional
+            If True, uses the dual QPC approach (vision encoder KV offloaded).
+            If False, uses the single QPC approach (entire model in one QPC).
+            Default is True.
+        **kwargs :
+            Additional keyword arguments passed to the constructor of the selected internal class.
+
+        Returns
+        -------
+        Union[_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC]
+            The wrapped model instance, configured for either dual or single QPC.
+        """
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(model, **kwargs)
         else:
@@ -1259,14 +1936,32 @@ class QEFFAutoModelForImageTextToText:
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, kv_offload: Optional[bool] = None, **kwargs):
-        """Used to load models supported by transformers.AutoModelForImageTextToText for Cloud AI 100.
+        """
+        Load a QEfficient image-text-to-text model from a pretrained HuggingFace model or local path.
 
-        Args:
-            pretrained_model_name_or_path (str): Path or model card name on HuggingFace
-            kv_offload (Optional[bool], optional): Should the KV of vision encoder be offloaded to CPU and use Two QPC. Defaults to None.
+        Parameters
+        ----------
+        pretrained_model_name_or_path : str
+            Model card name from HuggingFace or local path to model directory.
+        kv_offload : bool, optional
+            If True, uses the dual QPC approach (vision encoder KV offloaded).
+            If False, uses the single QPC approach (entire model in one QPC).
+            If None, the default behavior of the internal classes is used (typically dual QPC).
+        **kwargs :
+            Additional arguments passed to HuggingFace's ``from_pretrained``.
 
-        Returns:
-            _type_: _description_
+            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically set to "eager" and False respectively to ensure compatibility.
+            `continuous_batching` is not supported for image-text-to-text models.
+
+        Returns
+        -------
+        QEFFAutoModelForImageTextToText
+            An instance initialized with the pretrained weights, wrapped for QEfficient.
+
+        Raises
+        ------
+        NotImplementedError
+            If `continuous_batching` is provided as True.
         """
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -1288,34 +1983,22 @@ MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoM
 
 class QEFFAutoModelForCausalLM(QEFFBaseModel):
     """
-    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
-    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+    QEfficient class for Causal Language Models from the HuggingFace hub (e.g., GPT-2, Llama).
 
-    ``Mandatory`` Args:
-        :model (nn.Module):  PyTorch model
-        :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-    ``Optional`` Args:
-        :qaic_config (dict): QAIC config dictionary with the following supported keys:
-            :speculative_model_type (str): To specify Speculative Decoding Target Language Models.
-            :include_sampler (bool): Enable/Disable sampling of next tokens.
-            :return_pdfs (bool): Return probability distributions along with sampled
-            next tokens. For Speculative Decoding Target Language Model,
-            `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
-            Decoding Draft Language Model and `return_pdfs`=False for regular model.
-            :max_top_k_ids (int): Specify the maximum number of top K tokens
-            (<= vocab size) to consider during sampling. The values provided in
-            `top_ks` tensor must be less than this maximum limit.
+    This class provides a unified interface for loading, exporting, compiling, and generating
+    text with causal language models on Cloud AI 100 hardware. It supports features like
+    continuous batching, speculative decoding (TLM), and on-device sampling.
 
+    Example
+    -------
     .. code-block:: python
 
         from QEfficient import QEFFAutoModelForCausalLM
         from transformers import AutoTokenizer
 
-        model_name = "gpt2"
-        model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
-        model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16, num_devices=1)
-
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
+        model.compile(num_cores=16)
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
         model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
     """
 
@@ -1338,6 +2021,31 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         qaic_config: Optional[dict] = None,
         **kwargs,
     ):
+        """
+        Initializes a QEFFAutoModelForCausalLM instance.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The underlying HuggingFace PyTorch Causal Language Model.
+        continuous_batching : bool, optional
+            If True, enables continuous batching mode for future compilation and execution.
+            This setting must be consistent across `from_pretrained` and `compile` calls. Default is False.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations. Supported keys include:
+            - **speculative_model_type** (str): Specifies the type of Speculative Decoding model (e.g., "target").
+            - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
+            - **return_pdfs** (bool): If True, returns probability distributions along with sampled tokens.
+              For Speculative Decoding Target Language Models, this is always True.
+            - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+        **kwargs :
+            Additional keyword arguments passed to the base class constructor.
+
+        Raises
+        ------
+        TypeError
+            If the provided `model` is not a CausalLM or LMHeadModel type.
+        """
         model_class_name = model.__class__.__name__
         if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
             raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
@@ -1377,6 +2085,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     @property
     def model_name(self) -> str:
+        """
+        Get the name of the underlying Causal Language Model.
+
+        Returns
+        -------
+        str
+            The model's class name, with "QEff" or "QEFF" prefix removed if present.
+        """
         mname = self.model.__class__.__name__
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
@@ -1396,40 +2112,44 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs,
     ):
         """
-        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
-        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+        Load a QEfficient Causal Language Model from a pretrained HuggingFace model or local path.
 
-        This API can also be used as exception for VLM model since transformers support loading InternChatVL models via AutoModel API we support it via AutoModelForCausalLM API
-        Args:
-            :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
-            :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-        ``Optional`` Args:
-            :qaic_config (dict): QAIC config dictionary with the following supported keys:
-                :speculative_model_type (str): To specify Speculative Decoding Target Language Models.
-                :include_sampler (bool): Enable/Disable sampling of next tokens.
-                :return_pdfs (bool): Return probability distributions along with sampled
-                next tokens. For Speculative Decoding Target Language Model,
-                `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
-                Decoding Draft Language Model and `return_pdfs`=False for regular model.
-                :max_top_k_ids (int): Specify the maximum number of top K tokens
-                (<= vocab size) to consider during sampling. The values provided in
-                `top_ks` tensor must be less than this maximum limit.
+        This is the recommended way to initialize a QEfficient Causal Language Model.
+        The interface is similar to ``transformers.AutoModelForCausalLM.from_pretrained``.
+        Once initialized, you can use methods such as ``export``, ``compile``, and ``generate``.
 
-        .. code-block:: python
+        Parameters
+        ----------
+        pretrained_model_name_or_path : str
+            Model card name from HuggingFace or local path to model directory.
+        continuous_batching : bool, optional
+            Whether this model will be used for continuous batching in the future.
+            If not set to True here, the model cannot be exported/compiled for
+            continuous batching later. Default is False.
+        qaic_config : dict, optional
+            QAIC config dictionary. Supported keys include:
 
-            from QEfficient import QEFFAutoModelForCausalLM
-            from transformers import AutoTokenizer
+            - **speculative_model_type** (str): Specify Speculative Decoding Target Language Models.
+            - **include_sampler** (bool): Enable/Disable sampling of next tokens.
+            - **return_pdfs** (bool): Return probability distributions along with sampled next tokens.
+              For Speculative Decoding Target Language Model, ``return_pdfs=True`` always.
+              Otherwise, ``return_pdfs=True`` for Speculative Decoding Draft Language Model
+              and ``return_pdfs=False`` for regular model.
+            - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+              The values provided in ``top_ks`` tensor must be less than this maximum limit.
 
-            # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM
-            model_name = "gpt2"
-            model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
+        *args :
+            Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
+        **kwargs :
+            Additional keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
 
-            # Now you can directly compile the model for Cloud AI 100
-            model.compile(num_cores=16) # Considering you have a Cloud AI 100 Standard SKU
+            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically
+            set to "eager" and False respectively to ensure compatibility.
 
-            # You can now execute the model
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
+        Returns
+        -------
+        QEFFAutoModelForCausalLM
+            An instance initialized with the pretrained weights.
         """
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -1466,17 +2186,34 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     @property
     def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
         return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
-        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        Export the model to ONNX format using ``torch.onnx.export``.
 
-        ``Optional`` Args:
-            :export_dir (str, optional): The directory path to store ONNX-graph.
+        This method prepares example inputs and dynamic axes based on the model configuration,
+        then exports the model to an ONNX graph suitable for compilation and deployment
+        on Cloud AI 100 hardware. It handles KV cache inputs/outputs and sampler-related inputs.
 
-        Returns:
-            :str: Path of the generated ``ONNX`` graph.
+        Parameters
+        ----------
+        export_dir : str, optional
+            Directory path where the exported ONNX graph will be saved.
+            If not provided, the default export directory is used.
+
+        Returns
+        -------
+        str
+            Path to the generated ONNX graph file.
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -1562,8 +2299,23 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         dynamic_axes: Dict[str, Dict[int, str]],
     ):
         """
-        Update the example inputs and outputs with respect to the On Device Sampler
-        for the ONNX export.
+        Updates the example inputs, output names, and dynamic axes to include
+        parameters relevant for on-device sampling during ONNX export.
+
+        Parameters
+        ----------
+        example_inputs : Dict[str, torch.Tensor]
+            Current dictionary of example inputs.
+        output_names : List[str]
+            Current list of output names.
+        dynamic_axes : Dict[str, Dict[int, str]]
+            Current dictionary of dynamic axes configurations.
+
+        Returns
+        -------
+        Tuple[Dict[str, torch.Tensor], List[str], Dict[str, Dict[int, str]]]
+            Updated example inputs, output names, and dynamic axes including
+            sampling-related parameters.
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
@@ -1627,6 +2379,27 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
     ):
+        """
+        Builds a dictionary representing a compilation specialization for the prefill phase.
+
+        Parameters
+        ----------
+        prefill_seq_len : int, optional
+            Length of the prefill prompt. Default is 32.
+        ctx_len : int, optional
+            Maximum context length the compiled model can remember. Default is 128.
+        batch_size : int, optional
+            Batch size for the prefill. Default is 1.
+        kv_cache_batch_size : int, optional
+            Batch size for KV cache. If not provided, it defaults based on `full_batch_size` or `batch_size`.
+        full_batch_size : int, optional
+            Continuous batching batch size. Used if `continuous_batching` is enabled. Default is None.
+
+        Returns
+        -------
+        Dict[str, Union[int, str]]
+            A dictionary defining the prefill specialization.
+        """
         spec = {
             "batch_size": 1 if self.continuous_batching else batch_size,
             "seq_len": prefill_seq_len,
@@ -1650,6 +2423,30 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         full_batch_size: Optional[int] = None,
         num_speculative_tokens: Optional[int] = None,
     ):
+        """
+        Builds a dictionary representing a compilation specialization for the decode phase.
+
+        Parameters
+        ----------
+        prefill_seq_len : int, optional
+            Length of the prefill prompt. Used to avoid duplicate specializations. Default is 32.
+        ctx_len : int, optional
+            Maximum context length the compiled model can remember. Default is 128.
+        batch_size : int, optional
+            Batch size for the decode phase. Default is 1.
+        kv_cache_batch_size : int, optional
+            Batch size for KV cache. If not provided, it defaults based on `full_batch_size` or `batch_size`.
+        full_batch_size : int, optional
+            Continuous batching batch size. Used if `continuous_batching` is enabled. Default is None.
+        num_speculative_tokens : int, optional
+            Number of speculative tokens for Speculative Decoding Target Language Model. Default is None.
+
+        Returns
+        -------
+        Optional[Dict[str, Union[int, str]]]
+            A dictionary defining the decode specialization, or None if it would be a duplicate
+            of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
+        """
         if prefill_seq_len == 1 and not self.continuous_batching:
             return None  # Avoid duplication with prefill
         spec = {
@@ -1684,10 +2481,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **compiler_options,
     ) -> str:
         """
-        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
-        If the model has not been exported yet, this method will handle the export process.
-        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
+<<<<<<< HEAD
         ``Optional`` Args:
             :onnx_path (str, optional): Path to pre-exported onnx model.
             :compile_dir (str, optional): Path for saving the qpc generated.
@@ -1712,9 +2508,80 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 For QNN Compiler: Following arguments can be passed.
                     :enable_qnn (bool): Enables QNN Compilation.
                     :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+=======
+        This method generates a ``qpc`` package. If the model has not been exported yet,
+        this method will handle the export process. Additional arguments for the `qaic-exec`
+        compiler can be passed as keyword arguments.
 
-        Returns:
-            :str: Path of the compiled ``qpc`` package.
+        Parameters
+        ----------
+        onnx_path : str, optional
+            Path to a pre-exported ONNX model. If not provided, the model will be exported first.
+        compile_dir : str, optional
+            Directory to save the generated QPC package. If not provided, a default directory is used.
+        prefill_seq_len : int, optional
+            Length of the prefill prompt. Default is 32.
+        ctx_len : int, optional
+            Maximum context length the compiled model can remember. Default is 128.
+        batch_size : int, optional
+            Batch size. Default is 1.
+        full_batch_size : int, optional
+            Continuous batching batch size. Required if `continuous_batching=True` was
+            set during `from_pretrained`.
+        kv_cache_batch_size : int, optional
+            Batch size for KV cache. If not provided, it defaults to `full_batch_size` (if
+            continuous batching) or `batch_size`.
+        num_devices : int, optional
+            Number of devices to compile for. Default is 1.
+        num_cores : int, optional
+            Number of cores to use for compilation.
+        mxfp6_matmul : bool, optional
+            Use MXFP6 compression for weights. Default is False.
+        mxint8_kv_cache : bool, optional
+            Use MXINT8 compression for KV cache. Default is False.
+        num_speculative_tokens : int, optional
+            Number of speculative tokens for Speculative Decoding Target Language Model.
+            Required if the model is configured as a Target Language Model (`is_tlm=True`).
+        prefill_only : bool, optional
+            If True, compiles only for the prefill stage. If False, compiles only for
+            the decode stage. If None, compiles for both stages. Default is None.
+        **compiler_options : dict
+            Additional compiler options for QAIC or QNN compilers.
+
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+            - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
+            Params are converted to flags as below:
+
+            - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+            - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
+
+            **For QNN Compiler:** Following arguments can be passed as:
+
+            - enable_qnn (bool): Enables QNN Compilation.
+            - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+
+        Returns
+        -------
+        str
+            Path to the compiled QPC package.
+
+        Raises
+        ------
+        TypeError
+            If `prefill_only` is not a boolean.
+            If `full_batch_size` is None when `continuous_batching` is True.
+            If `num_speculative_tokens` is None when the model is a TLM.
+        ValueError
+            If KV caching is requested without continuous batching (`full_batch_size`).
+            If `include_sampler` is True and `num_speculative_tokens` is greater than 0.
+            If `num_speculative_tokens` is not an integer greater than 1.
+            If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
+>>>>>>> 4d2a4d8 ([Docs Update:] Auto Classes are Separated from Python API (#550))
+
         """
         # --- Validation ---
         if prefill_only is not None and not isinstance(prefill_only, bool):
@@ -1804,18 +2671,36 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs,
     ):
         """
-        This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
-        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
+        Generate output by executing the compiled QPC on Cloud AI 100 hardware.
 
-        ``Mandatory`` Args:
-            :tokenizer (Union[PreTrainedTokenizerFast, PreTrainedTokenizer]): Pass tokenizer of the model.
-            :prompts (List[str]): List of prompts to run the execution.
+        This method runs sequential execution based on the compiled model's batch size and the number of prompts.
+        If the number of prompts is not divisible by the batch size, the last batch will be dropped.
 
-        ``optional`` Args:
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+        Parameters
+        ----------
+        tokenizer : PreTrainedTokenizer or PreTrainedTokenizerFast
+            Tokenizer for the model.
+        prompts : list of str
+            List of prompts to generate output for.
+        device_id : list of int, optional
+            Device IDs for running the QPC. Defaults to `[0]` if not specified.
+        runtime_ai100 : bool, optional
+            Whether to use AI 100 runtime. Default is True.
+        **kwargs :
+            Additional keyword arguments. Currently supports:
+            - `generation_len (int, optional)`: The maximum number of tokens to generate.
 
+        Returns
+        -------
+        CloudAI100ExecInfoNew
+            Output from the AI 100 runtime, containing generated IDs and performance metrics.
+
+        Raises
+        ------
+        TypeError
+            If the QPC path is not set (i.e., `compile` was not run).
+        NotImplementedError
+            If `runtime_ai100` is False.
         """
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
@@ -1834,6 +2719,29 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
 
     def check_and_get_num_speculative_tokens(self, num_speculative_tokens: Optional[int], prefill_seq_len: int):
+        """
+        Validates and retrieves the number of speculative tokens for TLM models.
+
+        Parameters
+        ----------
+        num_speculative_tokens : int, optional
+            The number of speculative tokens provided by the user.
+        prefill_seq_len : int
+            The prefill sequence length.
+
+        Returns
+        -------
+        int
+            The determined number of speculative tokens.
+
+        Raises
+        ------
+        TypeError
+            If `num_speculative_tokens` is None when `is_tlm` is True.
+        ValueError
+            If `num_speculative_tokens` is not an integer greater than 1.
+            If `prefill_seq_len` is less than `num_speculative_tokens + 1`.
+        """
         if hasattr(self.model.config, "speculative_config"):
             num_speculative_tokens_ = self.model.config.speculative_config["num_speculative_tokens"]
             if num_speculative_tokens is not None:
@@ -1859,41 +2767,39 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
 class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin):
     """
-    The QEFFAutoModelForSpeechSeq2Seq class is designed for transformers models with a sequence-to-sequence speech-to-text modeling head, including Whisper and other Encoder-Decoder speech models.
-    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+    QEfficient class for sequence-to-sequence speech-to-text models (e.g., Whisper, Encoder-Decoder speech models).
 
-    ``Mandatory`` Args:
-        :model (nn.Module): PyTorch model
+    This class enables efficient export, compilation, and inference of speech models on Cloud AI 100 hardware.
+    It is recommended to use the ``from_pretrained`` method for initialization.
 
+    Example
+    -------
     .. code-block:: python
 
+        from datasets import load_dataset
+        from transformers import AutoProcessor
         from QEfficient import QEFFAutoModelForSpeechSeq2Seq
-        from processors import AutoProcessor
 
-        # Initialize the model using from_pretrained similar to transformers.AutoModelForSpeechSeq2Seq.
-        model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained("model_name")
+        base_model_name = "openai/whisper-tiny"
+        ## STEP 1 -- load audio sample, using a standard english dataset, can load specific files if longer audio needs to be tested; also load initial processor
+        ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+        data = ds[0]["audio"]["array"]
+        # reshape to so shape corresponds to data with batch size 1
+        data = data.reshape(-1)
+        sample_rate = ds[0]["audio"]["sampling_rate"]
+        processor = AutoProcessor.from_pretrained(base_model_name)
 
-        # Now you can directly compile the model for Cloud AI 100
-        model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU
+        ## STEP 2 -- init base model
+        qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(base_model_name)
 
-        #prepare inputs
-        processor = AutoProcessor.from_pretrained(model_name)
-        input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
-        input_features = (
-            processor(data, sampling_rate=sample_rate, return_tensors="pt").input_features.numpy().astype(np.float32)
-        )
-        decoder_input_ids = (
-            torch.ones((batch_size, 1), dtype=torch.int64) * model.model.config.decoder_start_token_id
-        ).numpy()
-        decoder_position_ids = torch.arange(1, dtype=torch.int64).view(1, 1).repeat(batch_size, 1).numpy()
-        inputs = dict(
-            input_features=input_features,
-            decoder_input_ids=decoder_input_ids,
-            decoder_position_ids=decoder_position_ids,
-        )
+        ## STEP 3 -- export and compile model
+        qeff_model.compile()
 
-        # You can now execute the model
-        model.generate(inputs, generation_len=150)
+        ## STEP 4 -- generate output for loaded input and processor
+        exec_info = qeff_model.generate(inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=25)
+
+        ## STEP 5 (optional) -- use processor to decode output
+        print(processor.batch_decode(exec_info.generated_ids)[0])
     """
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
@@ -1901,6 +2807,21 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
     _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model: nn.Module, **kwargs):
+        """
+        Initialize a QEFFAutoModelForSpeechSeq2Seq instance.
+
+        Parameters
+        ----------
+        model : nn.Module
+            A PyTorch model with a sequence-to-sequence speech-to-text head (e.g., Whisper).
+        **kwargs :
+            Additional keyword arguments passed to the base class constructor.
+
+        Raises
+        ------
+        TypeError
+            If the model is not a supported speech-to-text model (i.e., not a `ForConditionalGeneration` model).
+        """
         model_class_name = model.__class__.__name__
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
@@ -1912,17 +2833,33 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
     @property
     def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying HuggingFace model.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary.
+        """
         return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
-        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        Export the model to ONNX format using ``torch.onnx.export``.
 
-        ``Optional`` Args:
-        :export_dir (str, optional): The directory path to store ONNX-graph.
+        This method prepares example inputs and dynamic axes based on the model configuration,
+        then exports the model to an ONNX graph suitable for compilation and deployment on Cloud AI 100 hardware.
 
-        Returns:
-            :str: Path of the generated ``ONNX`` graph.
+        Parameters
+        ----------
+        export_dir : str, optional
+            Directory path where the exported ONNX graph will be saved.
+            If not provided, the default export directory is used.
+
+        Returns
+        -------
+        str
+            Path to the generated ONNX graph file.
         """
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
@@ -1948,10 +2885,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         **compiler_options,
     ) -> str:
         """
-        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
-        If the model has not been exported yet, this method will handle the export process.
-        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
+<<<<<<< HEAD
         ``Optional`` Args:
             :onnx_path (str, optional): Path to pre-exported onnx model.
             :compile_dir (str, optional): Path for saving the qpc generated.
@@ -1962,10 +2898,63 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+=======
+        This method generates a ``qpc`` package. If the model has not been exported yet,
+        this method will handle the export process. Additional arguments for the `qaic-exec`
+        compiler can be passed as keyword arguments.
 
-            Other args are not yet implemented for AutoModelForSpeechSeq2Seq
-        Returns:
-            :str: Path of the compiled ``qpc`` package.
+        Parameters
+        ----------
+        onnx_path : str, optional
+            Path to a pre-exported ONNX model. If not provided, the model will be exported first.
+        compile_dir : str, optional
+            Directory to save the generated QPC package.
+        prefill_seq_len : int, optional
+            Prefill sequence length. This parameter is typically not critically used for
+            SpeechSeq2Seq models' decoder compilation as the first decoder input is `seq_len=1`.
+            Default is 1.
+        encoder_ctx_len : int, optional
+            Maximum context length for the encoder part of the model. If None, it's inferred
+            from the model configuration or defaults (e.g., 1500 for Whisper).
+        ctx_len : int, optional
+            Maximum decoder context length. This defines the maximum output sequence length
+            the compiled model can handle. Default is 150.
+        batch_size : int, optional
+            Batch size. Default is 1.
+        num_devices : int, optional
+            Number of devices to compile for. Default is 1.
+        num_cores : int, optional
+            Number of cores to use for compilation.
+        mxfp6_matmul : bool, optional
+            Use MXFP6 compression for weights. Default is False.
+        mxint8_kv_cache : bool, optional
+            Use MXINT8 compression for KV cache. Default is False.
+        full_batch_size : int, optional
+            Not yet supported for this model.
+        kv_cache_batch_size : int, optional
+            Not yet supported for this model.
+        num_speculative_tokens : int, optional
+            Not yet supported for this model.
+        **compiler_options : dict
+            Additional compiler options for QAIC.
+
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+            - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
+            Params are converted to flags as below:
+
+            - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+            - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
+
+        Returns
+        -------
+        str
+            Path to the compiled QPC package.
+>>>>>>> 4d2a4d8 ([Docs Update:] Auto Classes are Separated from Python API (#550))
+
         """
         specializations, compiler_options = self.model.get_specializations(
             batch_size,
@@ -2025,16 +3014,37 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         device_ids: List[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
-        This method generates output until ``endoftranscript`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of audio tensor passed.
+        Generate output until ``<|endoftext|>`` token or `generation_len` is reached,
+        by executing the compiled QPC on Cloud AI 100 hardware.
 
-        ``Mandatory`` Args:
-            :processor: autoprocessor to process inputs and decode logits
-            :inputs (torch.Tensor): inputs to run the execution.
-            :generation_len (int): length upto which to generate
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-        Returns:
-            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        This method performs sequential execution based on the compiled model's batch size
+        and the provided audio tensors. It manages the iterative decoding process and KV cache.
+
+        Parameters
+        ----------
+        inputs : Dict[str, np.ndarray]
+            Model inputs for inference, typically a dictionary containing:
+            - `input_features` (np.ndarray): Preprocessed audio features.
+            - `decoder_input_ids` (np.ndarray): Initial decoder input IDs (e.g., start token).
+            - `decoder_position_ids` (np.ndarray): Initial decoder position IDs.
+            These should be prepared to match the compiled model's expectations.
+        generation_len : int
+            Maximum number of tokens to generate. The generation stops if this limit is reached
+            or the model generates an end-of-sequence token.
+        streamer : TextStreamer, optional
+            Streamer to receive generated tokens in real-time. Default is None.
+        device_ids : List[int], optional
+            Device IDs for running the QPC. Defaults to `[0]` if not specified.
+
+        Returns
+        -------
+        CloudAI100ExecInfoNew
+            Output from the AI 100 runtime, including generated IDs and performance metrics.
+
+        Raises
+        ------
+        TypeError
+            If the QPC path is not set (i.e., `compile` was not run).
         """
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")

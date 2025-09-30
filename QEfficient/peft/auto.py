@@ -34,27 +34,35 @@ logger = logging.getLogger(__name__)
 
 class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     """
-    QEff class for loading models with PEFT adapters (Only LoRA is supported currently).
-    Once exported and compiled for an adapter, the same can be utilized for another adapter with same base model and adapter config.
+    QEfficient class for loading and running Causal Language Models with PEFT adapters (currently only LoRA is supported).
 
-    Args:
-        :model (nn.Module): PyTorch model
+    This class enables efficient inference and deployment of PEFT-adapted models on Cloud AI 100 hardware.
+    Once exported and compiled for an adapter, the same base model can be reused with other compatible adapters.
 
-    .. code-block:: python
+    Example:
+        .. code-block:: python
 
-        from QEfficient import QEffAutoPeftModelForCausalLM
+            from transformers import AutoTokenizer, TextStreamer
+            from QEfficient import QEffAutoPeftModelForCausalLM
 
-        m = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/magicoder", "magicoder")
-        m.export()
-        m.compile(prefill_seq_len=32, ctx_len=1024)
+            base_model_name = "mistralai/Mistral-7B-v0.1"
+            tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+            streamer = TextStreamer(tokenizer)
 
-        inputs = ...  # A coding prompt
-        outputs = m.generate(**inputs)
+            m = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/magicoder", "magicoder")
+            m.export()
+            m.compile(prefill_seq_len=32, ctx_len=1024)
 
-        inputs = ...  # A math prompt
-        m.load_adapter("predibase/gsm8k", "gsm8k")
-        m.set_adapter("gsm8k")
-        outputs = m.generate(**inputs)
+            # Magicoder adapter
+            m.set_adapter("magicoder")
+            inputs = tokenizer("def fibonacci", return_tensors="pt")
+            m.generate(**inputs, streamer=streamer, max_new_tokens=1024)
+
+            # Math problems
+            m.load_adapter("predibase/gsm8k", "gsm8k")
+            m.set_adapter("gsm8k")
+            inputs = tokenizer("James decides to run 3 sprints 3 times a week. He runs 60 meters each sprint. How many total meters does he run a week?",return_tensors="pt")
+            m.generate(**inputs, streamer=streamer, max_new_tokens=1024)
     """
 
     _pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
@@ -62,6 +70,15 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     _hf_auto_class = AutoPeftModelForCausalLM
 
     def __init__(self, model: nn.Module):
+        """
+        Initialize the QEffAutoPeftModelForCausalLM instance.
+
+        Args:
+            model (nn.Module): A PyTorch model of type PeftModelForCausalLM with a LoRA adapter.
+        Raises:
+            TypeError: If the provided model is not a PeftModelForCausalLM.
+            NotImplementedError: If the adapter type is not LoRA.
+        """
         if not isinstance(model, PeftModelForCausalLM):
             raise TypeError(f"Required pytorch module of type PeftModel, got {type(model)}")
 
@@ -86,6 +103,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     @property
     def model_name(self) -> str:
+        """
+        Get the model name with "-lora" suffix.
+
+        Returns:
+            str: The base model class name with "-lora" appended.
+        """
         mname = self.model.get_base_model().__class__.__name__ + "-lora"
         if mname.startswith("QEff"):
             mname = mname[4:]
@@ -93,6 +116,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     @property
     def model_hash(self) -> str:
+        """
+        Compute a unique hash for the model configuration and adapter.
+
+        Returns:
+            str: A 16-character SHA256 hash string.
+        """
         # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
         # Using same card name will result in same hash. But, using a relative path for one run and
         # absolute path for another run will result in different hash.
@@ -109,27 +138,47 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     @property
     def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying base model.
+
+        Returns:
+            dict: The configuration dictionary.
+        """
         return self.model.get_base_model().config.__dict__
 
+    @property
+    def active_adapter(self) -> str:
+        """
+        Get the currently active adapter name.
+
+        Returns:
+            str: Name of the active adapter.
+        """
+        return self.model.active_adapter
+
     def load_adapter(self, model_id: str, adapter_name: str):
-        """Loads a new adapter from huggingface hub or local path
+        """
+        Load a new adapter from the HuggingFace Hub or a local path.
 
         Args:
-            :model_id (str): Adapter model ID from huggingface hub or local path
-            :adapter_name (str): Adapter name to be used to set this adapter as current
+            model_id (str): Adapter model ID from HuggingFace Hub or local path.
+            adapter_name (str): Name to assign to the loaded adapter.
         """
         self.model.load_adapter(model_id, adapter_name)
         self.adapter_weights[adapter_name] = {
             k: v.numpy().astype("float16") for k, v in load_peft_weights(model_id).items()
         }
 
-    @property
-    def active_adapter(self) -> str:
-        "Currently active adapter to be used for inference"
-        return self.model.active_adapter
-
     def set_adapter(self, adapter_name: str):
-        "Sets active adapter from one of the loaded adapters"
+        """
+        Set the active adapter from the loaded adapters.
+
+        Args:
+            adapter_name (str): Name of the adapter to activate.
+
+        Raises:
+            ValueError: If the adapter is incompatible with the export-time adapter.
+        """
         if self.exported_peft_config is not None and self.exported_peft_config != self.model.peft_config[adapter_name]:
             raise ValueError(
                 "Unable to activate incompatible adapter. "
@@ -139,6 +188,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         self.model.set_adapter(adapter_name)
 
     def disable_adapter(self):
+        """
+        Disable the currently active adapter.
+
+        Raises:
+            NotImplementedError: Disabling adapters is not currently supported.
+        """
         # TODO: Set zero tensors as adapter weights
         raise NotImplementedError("Disabling adapters not supported currently")
 
@@ -151,11 +206,21 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, *args, **kwargs):
         """
+        Load a QEffAutoPeftModelForCausalLM from a pretrained model and adapter.
+
         Args:
-            :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.
-            :finite_adapters (bool): set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.
-            :adapter_name (str): Name used to identify loaded adapter.
-            :args, kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.
+            pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
+            finite_adapters (bool, optional): Set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class.
+            adapter_name (str, optional): Name used to identify the loaded adapter.
+            *args: Additional positional arguments for peft.AutoPeftModelForCausalLM.
+            **kwargs: Additional keyword arguments for peft.AutoPeftModelForCausalLM.
+
+        Returns:
+            QEffAutoPeftModelForCausalLM: An instance initialized with the pretrained weights and adapter.
+
+        Raises:
+            NotImplementedError: If continuous batching is requested (not supported).
+            TypeError: If adapter name is missing in finite adapter mode.
         """
         if kwargs.get("full_batch_size"):
             raise NotImplementedError("Continuous batching currently not supported for PEFT models")
@@ -181,6 +246,19 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         return obj
 
     def export(self, export_dir: Optional[str] = None) -> str:
+        """
+        Export the model with the active adapter to ONNX format.
+
+        This method prepares example inputs and dynamic axes based on the model and adapter configuration,
+        then exports the model to an ONNX graph suitable for compilation and deployment on Cloud AI 100 hardware.
+
+        Args:
+            export_dir (str, optional): Directory path where the exported ONNX graph will be saved.
+                If not provided, the default export directory is used.
+
+        Returns:
+            str: Path to the generated ONNX graph file.
+        """
         self.exported_peft_config = self.model.active_peft_config
 
         example_shape = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -224,6 +302,43 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
+        """
+        Compile the exported ONNX model for Cloud AI 100 hardware.
+
+        This method generates a QPC package. If the model has not been exported yet, this method will handle the export process.
+        Additional arguments for the QAIC compiler can be passed as keyword arguments.
+
+        Args:
+            onnx_path (str, optional): Path to a pre-exported ONNX model.
+            compile_dir (str, optional): Directory to save the generated QPC package.
+            batch_size (int, optional): Batch size for compilation. Default is 1.
+            prefill_seq_len (int): Length of the prefill prompt.
+            ctx_len (int): Maximum context length the compiled model can remember.
+            num_devices (int, optional): Number of devices to compile for. Default is 1.
+            num_cores (int, optional): Number of cores to use for compilation. Default is 16.
+            mxfp6_matmul (bool, optional): Use MXFP6 compression for weights. Default is False.
+            mxint8_kv_cache (bool, optional): Use MXINT8 compression for KV cache. Default is False.
+            **compiler_options: Additional compiler options for QAIC.
+
+                **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+                - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+                - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+                - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
+                Params are converted to flags as below:
+
+                - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+                - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
+
+                **For QNN Compiler:** Following arguments can be passed as:
+
+                - enable_qnn (bool): Enables QNN Compilation.
+                - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+
+        Returns:
+            str: Path to the compiled QPC package.
+        """
         # Specializations
         specializations = [
             {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
@@ -265,14 +380,20 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         **kwargs,
     ) -> np.ndarray:
         """
-        Generate tokens from compiled binary. This method takes same parameters as HuggingFace transformers model.generate() method.
+        Generate tokens from the compiled binary using the active adapter.
+
+        This method takes similar parameters as HuggingFace's ``model.generate()`` method.
 
         Args:
-            :inputs: input_ids
-            :generation_config: Merge this generation_config with model-specific for the current generation.
-            :stopping_criteria: Pass custom stopping_criteria to stop at a specific point in generation.
-            :streamer: Streamer to put the generated tokens into.
-            :kwargs: Additional parameters for generation_config or to be passed to the model while generating.
+            inputs (torch.Tensor or np.ndarray, optional): Input IDs for generation.
+            device_ids (List[int], optional): Device IDs for running inference.
+            generation_config (GenerationConfig, optional): Generation configuration to merge with model-specific config.
+            stopping_criteria (StoppingCriteria, optional): Custom stopping criteria for generation.
+            streamer (BaseStreamer, optional): Streamer to receive generated tokens.
+            **kwargs: Additional parameters for generation_config or to be passed to the model.
+
+        Returns:
+            np.ndarray: Generated token IDs.
         """
         # Initialize session
         if self.qpc_session is None:
