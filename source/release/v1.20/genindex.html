@@ -1,13 +1,12 @@
 <!DOCTYPE html>
 <html class="writer-html5" lang="en">
 <head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Docs &mdash; efficient-transformers main documentation</title>
+  <title>Index &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
-      <link rel="stylesheet" type="text/css" href="_static/my_theme.css?v=547657ed" />
+      <link rel="stylesheet" type="text/css" href="_static/my_theme.css?v=f6ee2d30" />
 
   
   <!--[if lt IE 9]>
@@ -20,7 +19,7 @@
         <script src="_static/doctools.js?v=888ff710"></script>
         <script src="_static/sphinx_highlight.js?v=4825356b"></script>
     <script src="_static/js/theme.js"></script>
-    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="index" title="Index" href="#" />
     <link rel="search" title="Search" href="search.html" /> 
 </head>
 
@@ -43,9 +42,14 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+              <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="source/release_docs.html">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/supported_features.html">Supported Features</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/validate.html">Validated Models</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
@@ -55,15 +59,15 @@
 <li class="toctree-l1"><a class="reference internal" href="source/installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/installation.html#sanity-check">Sanity Check</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="source/upgrade.html">Using GitHub Repository</a></li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html">Command Line Interface Use (CLI)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/python_api.html">Python API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/features_enablement.html">Fetaures Enablement Guide</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="source/qeff_autoclasses.html">QEfficient Auto Classes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html">CLI API Reference</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
@@ -100,9 +104,8 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Docs</li>
+      <li class="breadcrumb-item active">Index</li>
       <li class="wy-breadcrumbs-aside">
-            <a href="_sources/README.md.txt" rel="nofollow"> View page source</a>
       </li>
   </ul>
   <hr/>
@@ -110,33 +113,90 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="docs">
-<h1>Docs<a class="headerlink" href="#docs" title="Permalink to this heading"></a></h1>
-<p>This directory contains the instructions for building static html documentations based on <a class="reference external" href="https://www.sphinx-doc.org/en/master/">sphinx</a>.</p>
-<section id="build-the-docs">
-<h2>Build the docs<a class="headerlink" href="#build-the-docs" title="Permalink to this heading"></a></h2>
-<p>Install the packages required for building documentation:</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>docs/requirements.txt
-</pre></div>
+
+<h1 id="index">Index</h1>
+
+<div class="genindex-jumpbox">
+ <a href="#C"><strong>C</strong></a>
+ | <a href="#E"><strong>E</strong></a>
+ | <a href="#F"><strong>F</strong></a>
+ | <a href="#G"><strong>G</strong></a>
+ 
 </div>
-<p>And then, change directory to docs folder to build the docs.</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>docs/
-<span class="c1"># To build docs specific to branch</span>
-sphinx-build<span class="w"> </span>-M<span class="w"> </span>html<span class="w"> </span>.<span class="w"> </span>build
-<span class="c1"># [Optional] To build docs for all the supporting branches</span>
-sphinx-multiversion<span class="w"> </span>.<span class="w"> </span>build
-</pre></div>
-</div>
-</section>
-<section id="preview-the-docs-locally">
-<h2>Preview the docs locally<a class="headerlink" href="#preview-the-docs-locally" title="Permalink to this heading"></a></h2>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>build/html
-python<span class="w"> </span>-m<span class="w"> </span>http.server
-</pre></div>
-</div>
-<p>You can visit the page with your web browser with url <code class="docutils literal notranslate"><span class="pre">http://localhost:8080</span></code>.</p>
-</section>
-</section>
+<h2 id="C">C</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile">compile() (QEfficient.peft.auto.QEffAutoPeftModelForCausalLM method)</a>
+
+      <ul>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.compile">(QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModel.compile">(QEfficient.transformers.models.modeling_auto.QEFFAutoModel method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+</tr></table>
+
+<h2 id="E">E</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export">export() (QEfficient.peft.auto.QEffAutoPeftModelForCausalLM method)</a>
+
+      <ul>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export">(QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModel.export">(QEfficient.transformers.models.modeling_auto.QEFFAutoModel method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+</tr></table>
+
+<h2 id="F">F</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained">from_pretrained() (QEfficient.peft.auto.QEffAutoPeftModelForCausalLM class method)</a>
+
+      <ul>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.from_pretrained">(QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM class method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModel.from_pretrained">(QEfficient.transformers.models.modeling_auto.QEFFAutoModel class method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.from_pretrained">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM class method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.from_pretrained">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText class method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.from_pretrained">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq class method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+</tr></table>
+
+<h2 id="G">G</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate">generate() (QEfficient.peft.auto.QEffAutoPeftModelForCausalLM method)</a>
+
+      <ul>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.generate">(QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModel.generate">(QEfficient.transformers.models.modeling_auto.QEFFAutoModel method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+</tr></table>
+
 
 
            </div>
@@ -146,7 +206,7 @@ python<span class="w"> </span>-m<span class="w"> </span>http.server
   <hr/>
 
   <div role="contentinfo">
-    <p>&#169; Copyright 2024, Qualcomm.</p>
+    <p>&#169; Copyright 2025, Qualcomm.</p>
   </div>
 
   Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
@@ -161,7 +221,7 @@ python<span class="w"> </span>-m<span class="w"> </span>http.server
   </div>
   <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
-      Version: release/v1.19
+      Version: release/v1.20
       <span class="fa fa-caret-down"></span>
     </span>
     <div class="rst-other-versions">
@@ -169,7 +229,8 @@ python<span class="w"> </span>-m<span class="w"> </span>http.server
       <dl>
         <dd><a href="../../../index.html">main</a></dd>
         <dd><a href="../v1.18/index.html">release/v1.18</a></dd>
-        <dd><a href="index.html">release/v1.19</a></dd>
+        <dd><a href="../v1.19/index.html">release/v1.19</a></dd>
+        <dd><a href="index.html">release/v1.20</a></dd>
       </dl>
     </div>
 </div><script>
