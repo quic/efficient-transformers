@@ -15,12 +15,12 @@ import pytest
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForCTC, AutoProcessor
+
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCTC
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import create_json, load_hf_processor
-from QEfficient.utils.constants import QnnConstants, WAV2VEC2_MAX_SEQ_LEN
-
+from QEfficient.utils.constants import WAV2VEC2_MAX_SEQ_LEN, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 
 test_models = [
