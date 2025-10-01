@@ -11,17 +11,17 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 model_id = "openai/gpt-oss-20b"
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
-tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-120b")
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 onnx_model_path = qeff_model.export()
 qpc_path = qeff_model.compile(
-    prefill_seq_len=1,
+    prefill_seq_len=1,  # Currently we can get best perf using PL=1 i.e. decode-only model, prefill optimizations are being worked on.
     ctx_len=256,
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=4,
+    num_devices=8,
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
