@@ -722,7 +722,7 @@ def dump_qconfig(func):
                 self.onnx_path,
                 self.get_model_config,
                 [cls.__name__ for cls in self._pytorch_transforms],
-                [cls.__name__ for cls in self._onnx_transforms],
+                [transform for transform in self._onnx_transforms],
                 kwargs.get("specializations"),
                 kwargs.get("mdp_ts_num_devices", 1),
                 kwargs.get("num_speculative_tokens"),
