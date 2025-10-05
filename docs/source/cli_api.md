@@ -1,33 +1,45 @@
-
-# Command Line Interface Use (CLI)
+# CLI API Reference
 
 ```{NOTE}
-Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
+Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group`` should be in single quotes e.g.  ``'--device_group [0]'``
 ```
 
 (infer_api)=
 ## `QEfficient.cloud.infer`
 ```{eval-rst}
-.. automodule:: QEfficient.cloud.infer.main
-``` 
+.. autofunction:: QEfficient.cloud.infer.main
+    :noindex:
+```
+---
+
+(execute_api)=
 ## `QEfficient.cloud.execute`
 ```{eval-rst}
-.. automodule:: QEfficient.cloud.execute.main
+.. autofunction:: QEfficient.cloud.execute.main
+    :noindex:
 ```
+---
+
+(compile_api)=
 ## `QEfficient.cloud.compile`
 ```{eval-rst}
-   .. automodule:: QEfficient.compile.compile_helper.compile
-   .. code-block:: bash
-    
-        python -m QEfficient.cloud.compile OPTIONS
+.. autofunction:: QEfficient.compile.compile_helper.compile
+    :noindex:
 ```
+---
+
+(export_api)=
 ## `QEfficient.cloud.export`
 ```{eval-rst}
-   .. automodule:: QEfficient.cloud.export.main
-   
+.. autofunction:: QEfficient.cloud.export.main
+    :noindex:
 ```
+
+---
+
+(finetune_api)=
 ## `QEfficient.cloud.finetune`
 ```{eval-rst}
-   .. automodule:: QEfficient.cloud.finetune.main
-   
+.. autofunction:: QEfficient.cloud.finetune.main
+    :noindex:
 ```
