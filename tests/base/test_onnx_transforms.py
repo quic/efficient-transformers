@@ -8,7 +8,7 @@
 import numpy as np
 import onnx
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransform
 
 
 def test_fp16clip_transform():
@@ -33,8 +33,8 @@ def test_fp16clip_transform():
     """)
     onnx.checker.check_model(test_onnx, True, True, True)
     if "model" in locals():
-        OnnxTransform._cleanup_external_data_and_cache(test_onnx)
-        OnnxTransform._cleanup_memory()
+        BaseOnnxTransform._cleanup_external_data_and_cache(test_onnx)
+        BaseOnnxTransform._cleanup_memory()
     transformed_onnx, transformed = OnnxTransform.apply(test_onnx, model_name="", transforms=["FP16ClipTransform"])
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == 65504.0
@@ -67,8 +67,8 @@ def test_fp16clip_transform_external(tmp_path):
     onnx.checker.check_model(onnx_path, True, True, True)
 
     if "model" in locals():
-        OnnxTransform._cleanup_external_data_and_cache(test_onnx)
-        OnnxTransform._cleanup_memory()
+        BaseOnnxTransform._cleanup_external_data_and_cache(test_onnx)
+        BaseOnnxTransform._cleanup_memory()
 
     transformed_onnx, transformed = OnnxTransform.apply(
         test_onnx, model_name="", onnx_base_dir=str(tmp_path), transforms=["FP16ClipTransform"]
@@ -111,7 +111,6 @@ def test_split_tensors_transform(tmp_path):
         onnx_base_dir=str(tmp_path),
         file_chunk_size=32 * 4,
         size_threshold=16 * 4,
-        apply_clip=True,
         transforms=["SplitTensorsTransform"],
     )
 

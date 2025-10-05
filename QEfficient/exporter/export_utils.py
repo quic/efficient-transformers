@@ -17,7 +17,7 @@ import onnxruntime
 import torch
 from onnx import external_data_helper
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransform
 
 
 def export_onnx(
@@ -219,8 +219,8 @@ def fix_onnx_fp16(
     """
     model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
     if "model" in locals():
-        OnnxTransform._cleanup_external_data_and_cache(gen_models_path)
-        OnnxTransform._cleanup_memory()
+        BaseOnnxTransform._cleanup_external_data_and_cache(gen_models_path)
+        BaseOnnxTransform._cleanup_memory()
 
     model, fp16_fix = OnnxTransform.apply(
         model, model_name="", onnx_base_dir=gen_models_path, transforms=["FP16ClipTransform"]

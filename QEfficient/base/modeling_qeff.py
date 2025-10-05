@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -47,7 +47,7 @@ class QEFFBaseModel(ABC):
     """
 
     _pytorch_transforms: List[PytorchTransform]
-    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
+    _onnx_transforms = [BaseOnnxTransform]
 
     @classmethod
     def _transform_names(cls) -> List[str]:
@@ -322,7 +322,7 @@ class QEFFBaseModel(ABC):
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
-            # import pdb; pdb.set_trace()
+
             transform_kwargs["transforms"] = self._onnx_transforms
             # for transform in self._onnx_transforms:
             model, transformed = OnnxTransform.apply(model, **transform_kwargs)
@@ -344,8 +344,8 @@ class QEFFBaseModel(ABC):
             # Clear external data from memory and cache after all transforms and saving
             # Make sure model exists before trying to clean it up
             if "model" in locals():
-                OnnxTransform._cleanup_external_data_and_cache(model)
-                OnnxTransform._cleanup_memory()
+                BaseOnnxTransform._cleanup_external_data_and_cache(model)
+                BaseOnnxTransform._cleanup_memory()
             logger.info("Cleanup complete.")
 
         self.onnx_path = onnx_path
