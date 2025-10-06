@@ -48,6 +48,18 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
 
+        self.register_modules(
+            vae=self.vae_decode,
+            text_encoder= self.text_encoder,
+            text_encoder_2= self.text_encoder_2,
+            text_encoder_3= self.text_encoder_3,
+            tokenizer= self.tokenizer ,
+            tokenizer_2= self.tokenizer,
+            tokenizer_3= self.tokenizer ,
+            transformer=self.transformer,
+            scheduler=self.scheduler,
+        )
+
         self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
             latent_sample, return_dict
         )
@@ -318,7 +330,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         specializations_transformer = self.transformer.get_specializations(batch_size, 333 , self.lat_height, self.lat_width)
 
         compiler_options = {"mos": 1, "ols": 2}
-        self.trasformers_compile_path = self.transformer._compile(
+        self.transformer_compile_path = self.transformer._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
@@ -442,7 +454,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         prompt: Union[str, List[str]] = None,
         num_images_per_prompt: int = 1,
         max_sequence_length: int = 256,
-        device: Optional[torch.device] = None,
+        device_ids: List[int] = None,
         dtype: Optional[torch.dtype] = None,
     ):
         """
@@ -452,8 +464,8 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             prompt (Union[str, List[str]], optional): The input prompt(s) to encode.
             num_images_per_prompt (int, defaults to 1): Number of images to generate per prompt.
             max_sequence_length (int, defaults to 256): Maximum sequence length for tokenization.
-            device (Optional[torch.device], optional): The device to place tensors on.
             dtype (Optional[torch.dtype], optional): The data type for tensors.
+            device_ids (List[int], optional): List of device IDs to use for inference.
 
         Returns:
             torch.Tensor: The T5 prompt embeddings with shape (batch_size * num_images_per_prompt, seq_len, hidden_size).
@@ -481,7 +493,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 f" {max_sequence_length} tokens: {removed_text}"
             )
         if self.text_encoder_3.qpc_session is None:
-            self.text_encoder_3.qpc_session = QAICInferenceSession(str(self.text_encoder_3_compile_path))
+            self.text_encoder_3.qpc_session = QAICInferenceSession(str(self.text_encoder_3_compile_path), device_ids=device_ids)
 
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
         prompt_embeds = torch.tensor(self.text_encoder_3.qpc_session.run(aic_text_input)["last_hidden_state"])
@@ -504,7 +516,6 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         prompt: Union[str, List[str]],
         prompt_2: Union[str, List[str]],
         prompt_3: Union[str, List[str]],
-        device_ids: List[int] = None,
         num_images_per_prompt: int = 1,
         do_classifier_free_guidance: bool = True,
         negative_prompt: Optional[Union[str, List[str]]] = None,
@@ -516,6 +527,9 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         clip_skip: Optional[int] = None,
         max_sequence_length: int = 256,
+        device_ids_text_encoder_1 : Optional[List[int]] = None,
+        device_ids_text_encoder_2 : Optional[List[int]] = None,
+        device_ids_text_encoder_3 : Optional[List[int]] = None,
     ):
         """
         Encode the given prompts into text embeddings using the three text encoders (CLIP and T5).
@@ -528,7 +542,6 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             prompt (Union[str, List[str]]): The primary prompt(s) to encode.
             prompt_2 (Union[str, List[str]]): The secondary prompt(s) for the second CLIP encoder.
             prompt_3 (Union[str, List[str]]): The tertiary prompt(s) for the T5 encoder.
-            device_ids (List[int], optional): List of device IDs to use for inference.
             num_images_per_prompt (int, defaults to 1): Number of images to generate per prompt.
             do_classifier_free_guidance (bool, defaults to True): Whether to use classifier-free guidance.
             negative_prompt (Optional[Union[str, List[str]]], optional): The negative prompt(s) to encode.
@@ -540,6 +553,9 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             negative_pooled_prompt_embeds (Optional[torch.FloatTensor], optional): Pre-computed negative pooled prompt embeddings.
             clip_skip (Optional[int], optional): Number of layers to skip from the end when extracting CLIP hidden states.
             max_sequence_length (int, defaults to 256): Maximum sequence length for T5 tokenization.
+            device_ids_text_encoder1 (List[int], optional):  List of device IDs to use for CLIP instance 1 .
+            device_ids_text_encoder2 (List[int], optional):  List of device IDs to use for CLIP instance 2 .
+            device_ids_text_encoder3 (List[int], optional):  List of device IDs to use for T5 .
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
@@ -568,7 +584,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 prompt=prompt,
                 num_images_per_prompt=num_images_per_prompt,
                 clip_skip=clip_skip,
-                device_ids=device_ids,
+                device_ids=device_ids_text_encoder_1, 
             )
 
             prompt_2_embed, pooled_prompt_2_embed = self._get_clip_prompt_embeds(
@@ -578,7 +594,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 prompt=prompt_2,
                 num_images_per_prompt=num_images_per_prompt,
                 clip_skip=clip_skip,
-                device_ids=device_ids,
+                device_ids=device_ids_text_encoder_2,
             )
 
             clip_prompt_embeds = torch.cat([prompt_embed, prompt_2_embed], dim=-1)
@@ -588,6 +604,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 prompt=prompt_3,
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
+                device_ids=device_ids_text_encoder_3
             )
 
             clip_prompt_embeds = torch.nn.functional.pad(
@@ -629,7 +646,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 prompt=negative_prompt,
                 num_images_per_prompt=num_images_per_prompt,
                 clip_skip=clip_skip,
-                device_ids=device_ids,
+                device_ids=device_ids_text_encoder_1,
             )
             negative_prompt_2_embed, negative_pooled_prompt_2_embed = self._get_clip_prompt_embeds(
                 self.text_encoder_2,
@@ -638,7 +655,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 prompt=negative_prompt_2,
                 num_images_per_prompt=num_images_per_prompt,
                 clip_skip=clip_skip,
-                device_ids=device_ids,
+                device_ids=device_ids_text_encoder_2,
             )
 
             negative_clip_prompt_embeds = torch.cat([negative_prompt_embed, negative_prompt_2_embed], dim=-1)
@@ -650,6 +667,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 prompt=negative_prompt_3,
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
+                device_ids=device_ids_text_encoder_2
             )
 
             negative_clip_prompt_embeds = torch.nn.functional.pad(
@@ -661,7 +679,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
 
-    def _convert_latents_to_image(self, latents, batch_size: int = 1, output_type: Optional[str] = "pil"):
+    def _convert_latents_to_image(self, latents, batch_size: int = 1, output_type: Optional[str] = "pil", device_ids: Optional[List[int]] = None):
         """ 
         To convert SD3 transformer generated latents to image using vae decoder
         """
@@ -670,7 +688,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         ) + self.vae_decode.model.config.shift_factor
 
         # image_torch = self.vae_decode.model(latents, return_dict=False)[0]
-        vae_session = QAICInferenceSession(str(self.vae_decoder_compile_path))
+        vae_session = QAICInferenceSession(str(self.vae_decoder_compile_path), device_ids=device_ids)
         output_height = self.lat_height * self.vae_scale_factor
         output_width = self.lat_width * self.vae_scale_factor
 
@@ -715,6 +733,11 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 256,
+        device_ids_text_encoder_1 : Optional[List[int]] = None,
+        device_ids_text_encoder_2 : Optional[List[int]] = None,
+        device_ids_text_encoder_3 : Optional[List[int]] = None,
+        device_ids_transformer : Optional[List[int]] = None,
+        device_ids_vae_decoder :  Optional[List[int]] = None,
     ):
         """
         Generate images from text prompts using the QEfficient-optimized Stable Diffusion 3 pipeline.
@@ -767,6 +790,11 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             callback_on_step_end_tensor_inputs (List[str], defaults to ["latents"]): List of tensor inputs
                 to pass to the callback function.
             max_sequence_length (int, defaults to 256): Maximum sequence length for T5 text encoder tokenization.
+            device_ids_text_encoder1 (List[int], optional):  List of device IDs to use for CLIP instance 1 .
+            device_ids_text_encoder2 (List[int], optional):  List of device IDs to use for CLIP instance 2 .
+            device_ids_text_encoder3 (List[int], optional):  List of device IDs to use for T5 .
+            device_ids_transformer (List[int], optional):  List of device IDs to use for SD3 transformer.
+            device_ids_vae_decoder (List[int], optional):  List of device IDs to use for VAE decoder.
 
         Returns:
             Union[StableDiffusion3PipelineOutput, Tuple]: If `return_dict` is True, returns a
@@ -837,6 +865,9 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
             num_images_per_prompt=num_images_per_prompt,
             max_sequence_length=max_sequence_length,
+            device_ids_text_encoder_1=device_ids_text_encoder_1,
+            device_ids_text_encoder_2=device_ids_text_encoder_2,
+            device_ids_text_encoder_3=device_ids_text_encoder_3
         )
 
         # 2. Define call parameters
@@ -871,7 +902,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
         ###### AIC related changes of transformers ######
         if self.transformer.qpc_session is None:
-            self.transformer.qpc_session = QAICInferenceSession(str(self.transformer.qpc_path))
+            self.transformer.qpc_session = QAICInferenceSession(str(self.transformer_compile_path), device_ids=device_ids_transformer)
 
             output_buffer = {
                 "output": np.random.rand(
@@ -932,7 +963,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
                         callback_kwargs[k] = locals()[k]
-                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs, batch_size, output_type)
+                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs, batch_size, output_type, device_ids_vae_decoder)
 
                     # latents = callback_outputs.pop("latents", latents)
                     # prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
@@ -948,7 +979,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             image = latents
 
         else:
-            image = self._convert_latents_to_image(latents, batch_size, output_type )
+            image = self._convert_latents_to_image(latents, batch_size, output_type, device_ids_vae_decoder)
         # Offload all models
         self.maybe_free_model_hooks()
 
