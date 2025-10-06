@@ -661,6 +661,33 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
 
+    def _convert_latents_to_image(self, latents, batch_size: int = 1, output_type: Optional[str] = "pil"):
+        """ 
+        To convert SD3 transformer generated latents to image using vae decoder
+        """
+        latents = (
+            latents / self.vae_decode.model.config.scaling_factor
+        ) + self.vae_decode.model.config.shift_factor
+
+        # image_torch = self.vae_decode.model(latents, return_dict=False)[0]
+        vae_session = QAICInferenceSession(str(self.vae_decoder_compile_path))
+        output_height = self.lat_height * self.vae_scale_factor
+        output_width = self.lat_width * self.vae_scale_factor
+
+        output_buffer = {
+            "sample": np.random.rand(
+                batch_size, 3, output_height, output_width
+            ).astype(np.int32)
+        }
+
+        vae_session.set_buffers(output_buffer)
+        inputs = {"latent_sample": latents.numpy()}
+        image = vae_session.run(inputs)
+        # mad= np.mean(np.abs(image['sample']-image_torch.detach().numpy()))
+        # print("VAE mad: ",mad)
+        image = self.image_processor.postprocess(torch.tensor(image["sample"]), output_type=output_type)
+        return image
+
     def __call__(
         self,
         prompt: Union[str, List[str]] = None,
@@ -905,14 +932,14 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
                         callback_kwargs[k] = locals()[k]
-                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs, batch_size, output_type)
 
-                    latents = callback_outputs.pop("latents", latents)
-                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
-                    negative_pooled_prompt_embeds = callback_outputs.pop(
-                        "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
-                    )
+                    # latents = callback_outputs.pop("latents", latents)
+                    # prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    # negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                    # negative_pooled_prompt_embeds = callback_outputs.pop(
+                    #     "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
+                    # )
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
@@ -921,28 +948,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             image = latents
 
         else:
-            latents = (
-                latents / self.vae_decode.model.config.scaling_factor
-            ) + self.vae_decode.model.config.shift_factor
-
-            # image_torch = self.vae_decode.model(latents, return_dict=False)[0]
-            vae_session = QAICInferenceSession(str(self.vae_decoder_compile_path))
-            output_height = self.lat_height * self.vae_scale_factor
-            output_width = self.lat_width * self.vae_scale_factor
-
-            output_buffer = {
-                "sample": np.random.rand(
-                    batch_size, 3, output_height, output_width
-                ).astype(np.int32) #self.vae_decode.model.config.sample_size, self.vae_decode.model.config.sample_size
-            }
-
-            vae_session.set_buffers(output_buffer)
-            inputs = {"latent_sample": latents.numpy()}
-            image = vae_session.run(inputs)
-            # mad= np.mean(np.abs(image['sample']-image_torch.detach().numpy()))
-            # print("VAE mad: ",mad)
-            image = self.image_processor.postprocess(torch.tensor(image["sample"]), output_type=output_type)
-
+            image = self._convert_latents_to_image(latents, batch_size, output_type )
         # Offload all models
         self.maybe_free_model_hooks()
 
