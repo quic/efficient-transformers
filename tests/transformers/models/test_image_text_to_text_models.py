@@ -295,7 +295,12 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     config = AutoConfig.from_pretrained(model_config["model_name"], trust_remote_code=True)
     config._attn_implementation = "eager"
     config = set_num_layers(config, n_layer=n_layer)
-    model_hf, _ = load_image_text_to_text_model(config)
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        low_cpu_mem_usage=False,
+        trust_remote_code=True,
+        config=config,
+    )
     n_layer = get_num_layers_vlm(config)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
