@@ -14,6 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from transformers import (
+    AutoImageProcessor,
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForCTC,
@@ -1169,7 +1170,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self,
         inputs: Optional[torch.Tensor] = None,
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer] = None,
-        processor=None,
+        processor: Optional[AutoImageProcessor] = None,
         images: List[str] = None,
         prompts: List[str] = None,
         streamer: Optional[TextStreamer] = None,
@@ -1213,10 +1214,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if (processor and images) or (tokenizer and prompts):
             return QEfficient.cloud_ai_100_exec_kv(
-                tokenizer,
-                processor,
-                self.lang_model.qpc_path,
-                self.vision_model.qpc_path,
+                tokenizer=tokenizer,
+                processor=processor,
+                lang_qpc_path=self.lang_model.qpc_path,
+                vision_qpc_path=self.vision_model.qpc_path,
                 images=images,
                 prompt=prompts,
                 device_id=device_ids,
@@ -2741,8 +2742,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 raise TypeError("Please run compile API first!")
             generation_len = kwargs.pop("generation_len", None)
             return QEfficient.cloud_ai_100_exec_kv(
-                tokenizer,
-                self.qpc_path,
+                tokenizer=tokenizer,
+                lang_qpc_path=self.qpc_path,
                 prompt=prompts,
                 device_id=device_id,
                 generation_len=generation_len,
