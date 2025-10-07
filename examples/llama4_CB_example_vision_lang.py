@@ -56,10 +56,10 @@ prompts = [
 ]
 
 output = qeff_model.generate(
-    images=image_urls,
     tokenizer=tokenizer,
-    processor=processor,
-    device_ids=[0, 1, 2, 3],
     prompts=prompts,
+    processor=processor,
+    images=image_urls,
+    device_ids=[0, 1, 2, 3],
     generation_len=100,
 )
