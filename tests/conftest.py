@@ -47,6 +47,34 @@ def custom_causal_model_config_dict():
     return get_custom_model_config_dict(custom_model_configs_data)
 
 
+@pytest.fixture(scope="session")
+def worker_device_id(request):
+    """
+    Assigns a unique device ID to each pytest-xdist worker.
+    Supports devices 0-5, cycles through them if more workers exist.
+    
+    Worker 'master' or no worker gets device 0
+    Worker 'gw0' gets device 0
+    Worker 'gw1' gets device 1
+    ...
+    Worker 'gw6' gets device 0 (cycles back if needed)
+    """
+    worker_id = getattr(request.config, 'workerinput', {}).get('workerid', 'master')
+    
+    # Total available devices
+    NUM_DEVICES = 6
+    
+    if worker_id == 'master':
+        device_id = 0
+    else:
+        # Extract number from 'gw0', 'gw1', etc. and use modulo for cycling
+        worker_num = int(worker_id.replace('gw', ''))
+        device_id = worker_num % NUM_DEVICES
+    
+    logger.info(f"Worker {worker_id} assigned to device {device_id}")
+    return [device_id]
+
+
 def qeff_models_clean_up():
     if os.path.exists(QEFF_MODELS_DIR):
         shutil.rmtree(QEFF_MODELS_DIR)
