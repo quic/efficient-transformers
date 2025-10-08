@@ -290,17 +290,13 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         h = torch.arange(h, h + 1).squeeze().expand(bs)
         w = torch.arange(w, w + 1).squeeze().expand(bs)
 
-        cu_seqlens = (
-            (h * w)
-            .expand(t)
-            .cumsum(
-                dim=0,
-                # Select dtype based on the following factors:
-                #  - FA2 requires that cu_seqlens_q must have dtype int32
-                #  - torch.onnx.export requires that cu_seqlens_q must have same dtype as grid_thw
-                # See https://github.com/huggingface/transformers/pull/34852 for more information
-                dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
-            )
+        cu_seqlens = (h * w).cumsum(
+            dim=0,
+            # Select dtype based on the following factors:
+            #  - FA2 requires that cu_seqlens_q must have dtype int32
+            #  - torch.onnx.export requires that cu_seqlens_q must have same dtype as grid_thw
+            # See https://github.com/huggingface/transformers/pull/34852 for more information
+            dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
         )
 
         cu_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens.dtype), cu_seqlens])
