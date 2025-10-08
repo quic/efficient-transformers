@@ -79,6 +79,7 @@ from transformers.models.llama.modeling_llama import (
 from transformers.models.llama4.modeling_llama4 import (
     Llama4ForCausalLM,
     Llama4ForConditionalGeneration,
+    Llama4Router,
     Llama4TextAttention,
     Llama4TextDecoderLayer,
     Llama4TextExperts,
@@ -252,6 +253,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
 from QEfficient.transformers.models.llama4.modeling_llama4 import (
     QEffLlama4ForCausalLM,
     QEffLlama4ForConditionalGeneration,
+    QEffLlama4Router,
     QEffLlama4TextAttention,
     QEffLlama4TextDecoderLayer,
     QEffLlama4TextExperts,
@@ -402,6 +404,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Llama4VisionAttention: QEffLlama4VisionAttention,
         Llama4VisionModel: QEffLlama4VisionModel,
         Llama4TextExperts: QEffLlama4TextExperts,
+        Llama4Router: QEffLlama4Router,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Llava Next
