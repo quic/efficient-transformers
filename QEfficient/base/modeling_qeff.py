@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import gc
 import inspect
 import logging
 import shutil
@@ -63,6 +64,9 @@ class QEFFBaseModel(ABC):
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
 
+        # Flag for checking if weights are offloaded
+        self._is_weights_offloaded: bool = False
+
         # Apply the transformations
         any_transformed = False
         for transform in self._pytorch_transforms:
@@ -73,6 +77,44 @@ class QEFFBaseModel(ABC):
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+
+    def _offload_model_weights(self, offload_pt_weights) -> bool:
+        """
+        Clear PyTorch weights after export if offload_pt_weights is set to True
+
+        Returns:
+            bool: True if weights were successfully offloaded, False otherwise
+        """
+        # Check if offloading is enabled and weights are not already offloaded
+        if offload_pt_weights and not self._is_weights_offloaded:
+            try:
+                self.model = self.model.to_empty(device="meta")
+                self._is_weights_offloaded = True
+                logger.info("Model weights offloaded to meta device")
+
+                gc.collect()
+                logger.info("PyTorch weights cleared after export")
+                return True
+
+            except Exception as e:
+                logger.error(f"Failed to offload model weights: {e}")
+                return False
+        return False
+
+    def _model_offloaded_check(self) -> None:
+        """
+        Check if the model is in meta state or weights are offloaded.
+
+        Raises:
+            RuntimeError: If model is in meta state or if weights are offloaded
+        """
+        if self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters()):
+            error_msg = (
+                "Cannot re-export model: weights have been offloaded to save memory. "
+                "To re-export, please create a new model instance using from_pretrained() method."
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
     @property
     @abstractmethod
@@ -104,14 +146,20 @@ class QEFFBaseModel(ABC):
             :mxfp6_matmul (bool): Use MXFP6 to compress weights for MatMul nodes to run faster on device. ``Defaults to False``.
             :mxint8_kv_cache (bool): Use MXINT8 to compress KV-cache on device to access and update KV-cache faster. ``Defaults to False``.
             :compiler_options: Pass any compiler option as input.
-            Following flag can be passed in compiler_options to enable QNN Compilation path.
-                :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
-                :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
-            for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
-                - aic_num_cores=16 -> -aic-num-cores=16
-                - convert_to_fp16=True -> -convert-to-fp16
+
+                Following flag can be passed in compiler_options to enable QNN Compilation path.
+                    :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
+                    :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
+
+                for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+
+                    - aic_num_cores=16 -> -aic-num-cores=16
+                    - convert_to_fp16=True -> -convert-to-fp16
+                    - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                    - aic_hw_version=ai200 -> -aic-hw-version=ai200
 
         ``QEFFAutoModelForCausalLM`` Args:
+
             :full_batch_size (int): Full batch size to allocate cache lines.
             :batch_size (int): Batch size to compile for. ``Defaults to 1``.
             :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
@@ -130,9 +178,15 @@ class QEFFBaseModel(ABC):
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
+        offload_pt_weights: bool = True,
     ) -> str:
         """
-        Export the Pytorch model to ONNX.
+        Export the PyTorch model to ONNX and apply ONNX transforms
+
+        This method:
+        1. Exports PyTorch model to ONNX using torch.onnx.export
+        2. Clears PyTorch weights after export
+        3. Applies ONNX transforms with reduced memory footprint
 
         Args:
             :example_inputs (dict): Sample inputs to trace the model.
@@ -141,18 +195,30 @@ class QEFFBaseModel(ABC):
             :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
+            :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device
+            after successful export to reduce memory usage. Set to False if you need to
+            keep weights for further operations. Defaults to True.
+            Note:
+            Once weights are offloaded, the model cannot be re-exported. Create a new
+            instance using from_pretrained() for re-export.
+
         """
         onnx_path = export_dir / f"{self.model_name}.onnx"
+
+        # Return early if ONNX already exists
         if onnx_path.is_file():
             self.onnx_path = onnx_path
             return onnx_path
 
+        # check if the model is in meta state or weights are offloaded
+        self._model_offloaded_check()
+
+        # Setup temporary paths
         tmp_onnx_dir = export_dir / "onnx_tmp"
         tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
-
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
@@ -188,7 +254,9 @@ class QEFFBaseModel(ABC):
                 opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
             )
-            logger.info("Pytorch export successful")
+            logger.info("PyTorch export successful")
+
+            _ = self._offload_model_weights(offload_pt_weights)
 
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
@@ -200,17 +268,17 @@ class QEFFBaseModel(ABC):
 
             for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **transform_kwargs)
+
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
 
             onnx.save(model, onnx_path)
-            logger.info("Transformed onnx saved")
+            logger.info("Transformed ONNX saved")
 
         except Exception as e:
-            logger.error(f"ONNX export (or) ONNXTransforms failed: {e}")
-
+            logger.error(f"ONNX export or transforms failed: {e}")
             raise e
 
         finally:
@@ -249,8 +317,12 @@ class QEFFBaseModel(ABC):
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
             :compiler_options: Pass any compiler option as input.
                 Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
+                - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                - aic_hw_version=ai200 -> -aic-hw-version=ai200
+
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
         if onnx_path is None and self.onnx_path is None:
@@ -282,7 +354,13 @@ class QEFFBaseModel(ABC):
 
             return self.qpc_path
 
-        command = constants.COMPILER + [f"-m={onnx_path}"]
+        command = (
+            constants.COMPILER
+            + [
+                f"-aic-hw-version={compiler_options.pop('aic_hw_version', compiler_options.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}"
+            ]
+            + [f"-m={onnx_path}"]
+        )
 
         if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")

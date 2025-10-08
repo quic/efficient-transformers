@@ -152,6 +152,7 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
     hash_params["peft_config"] = None
     hash_params["applied_transform_names"] = qeff_model._transform_names()
     hash_params["qeff_auto_class"] = qeff_model.__class__.__name__
+    hash_params["qaic_config"] = None
 
     # Create parameters separately for hash creation
 
