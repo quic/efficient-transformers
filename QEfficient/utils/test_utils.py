@@ -166,7 +166,7 @@ class ModelConfig:
 
     EXTERNAL_MODELS = {
         "hpcai-tech/grok-1": {
-            "pytorch_hf_tokens": [
+            "pytorch_hf_tokens_custom_case": [
                 0,
                 0,
                 0,
@@ -191,6 +191,32 @@ class ModelConfig:
                 0,
                 0,
                 0,
+            ],
+            "pytorch_hf_tokens_normal_case": [
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
+                391,
             ]
         }
     }
