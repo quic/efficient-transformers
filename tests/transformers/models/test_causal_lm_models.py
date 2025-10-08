@@ -352,7 +352,9 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     if model_name in ModelConfig.EXTERNAL_MODELS:
         pytorch_hf_tokens = ModelConfig.EXTERNAL_MODELS[model_name]["pytorch_hf_tokens_normal_case"]
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, pytorch_hf_tokens=pytorch_hf_tokens)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, pytorch_hf_tokens=pytorch_hf_tokens
+    )
 
 
 @pytest.mark.on_qaic

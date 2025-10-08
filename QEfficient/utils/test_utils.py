@@ -217,7 +217,7 @@ class ModelConfig:
                 391,
                 391,
                 391,
-            ]
+            ],
         }
     }
 
