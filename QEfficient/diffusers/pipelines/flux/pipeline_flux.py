@@ -15,7 +15,7 @@ import torch
 from diffusers import FluxPipeline
 from diffusers.image_processor import VaeImageProcessor, PipelineImageInput
 from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps # TODO 
 from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
 
 from QEfficient.diffusers.pipelines.pipeline_utils import  QEffTextEncoder, QEffClipTextEncoder, QEffVAE, QEffFluxTransformerModel
@@ -274,7 +274,7 @@ class QEFFFluxPipeline(FluxPipeline):
         prompt: Union[str, List[str]] = None,
         num_images_per_prompt: int = 1,
         max_sequence_length: int = 512,
-        device_ids: List[int] = None,
+        device_ids: Optional[List[int]] = None,
         dtype: Optional[torch.dtype] = None,
     ):
         """
@@ -326,7 +326,6 @@ class QEFFFluxPipeline(FluxPipeline):
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
         prompt_embeds = torch.tensor(self.text_encoder_2.qpc_session.run(aic_text_input)["last_hidden_state"])
 
-        self.text_encoder_2.qpc_session.deactivate()
 
         # # # AIC Testing
         # prompt_embeds_pytorch = self.text_encoder_2.model(text_input_ids, output_hidden_states=False)
@@ -345,7 +344,7 @@ class QEFFFluxPipeline(FluxPipeline):
         self,
         prompt: Union[str, List[str]],
         num_images_per_prompt: int = 1,
-        device_ids: List[int] = None,
+        device_ids: Optional[List[int]] = None,
     ):
         """
         Get CLIP prompt embeddings for a given text encoder and tokenizer.
@@ -395,7 +394,6 @@ class QEFFFluxPipeline(FluxPipeline):
         aic_embeddings = self.text_encoder.qpc_session.run(aic_text_input)
         aic_text_encoder_emb = aic_embeddings["pooler_output"]
 
-        self.text_encoder.qpc_session.deactivate() #To deactivate CLIP instance
 
         # # # [TEMP] CHECK ACC # #
         # prompt_embeds_pytorch = self.text_encoder.model(text_input_ids, output_hidden_states=False)
@@ -418,11 +416,12 @@ class QEFFFluxPipeline(FluxPipeline):
         self,
         prompt: Union[str, List[str]],
         prompt_2: Optional[Union[str, List[str]]] = None,
-        device_ids: List[int] = None,
         num_images_per_prompt: int = 1,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         max_sequence_length: int = 512,
+        device_ids_text_encoder_1 : Optional[List[int]] = None,
+        device_ids_text_encoder_2 : Optional[List[int]] = None
     ):
         r"""
         Encode the given prompts into text embeddings using the two text encoders (CLIP and T5).
@@ -437,8 +436,6 @@ class QEFFFluxPipeline(FluxPipeline):
             prompt_2 (`str` or `List[str]`, *optional*):
                 The prompt or prompts to be sent to the `tokenizer_2` and `text_encoder_2`. If not defined, `prompt` is
                 used in all text-encoders
-            device: (`torch.device`):
-                torch device
             num_images_per_prompt (`int`):
                 number of images that should be generated per prompt
             prompt_embeds (`torch.FloatTensor`, *optional*):
@@ -447,6 +444,8 @@ class QEFFFluxPipeline(FluxPipeline):
             pooled_prompt_embeds (`torch.FloatTensor`, *optional*):
                 Pre-generated pooled text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting.
                 If not provided, pooled text embeddings will be generated from `prompt` input argument.
+            device_ids_text_encoder_1 (List[int], optional):  List of device IDs to use for CLIP instance .
+            device_ids_text_encoder_2 (List[int], optional):  List of device IDs to use for T5 .
         """
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
@@ -458,14 +457,15 @@ class QEFFFluxPipeline(FluxPipeline):
             # We only use the pooled prompt output from the CLIPTextModel
             pooled_prompt_embeds = self._get_clip_prompt_embeds(
                 prompt=prompt,
-                device_ids=device_ids,
+                device_ids=device_ids_text_encoder_1,
                 num_images_per_prompt=num_images_per_prompt,
+
             )
             prompt_embeds = self._get_t5_prompt_embeds(
                 prompt=prompt_2,
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
-                device_ids=device_ids,
+                device_ids=device_ids_text_encoder_2,
             )
 
         text_ids = torch.zeros(prompt_embeds.shape[1], 3)
@@ -497,7 +497,10 @@ class QEFFFluxPipeline(FluxPipeline):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
-        qpc_path: str = None,
+        device_ids_text_encoder_1 : Optional[List[int]] = None,
+        device_ids_text_encoder_2 : Optional[List[int]] = None,
+        device_ids_transformer : Optional[List[int]] = None,
+        device_ids_vae_decoder :  Optional[List[int]] = None,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -574,6 +577,10 @@ class QEFFFluxPipeline(FluxPipeline):
                 will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
                 `._callback_tensor_inputs` attribute of your pipeline class.
             max_sequence_length (`int` defaults to 512): Maximum sequence length to use with the `prompt`.
+            device_ids_text_encoder1 (List[int], optional):  List of device IDs to use for CLIP instance.
+            device_ids_text_encoder2 (List[int], optional):  List of device IDs to use for T5.
+            device_ids_transformer (List[int], optional):  List of device IDs to use for Flux transformer.
+            device_ids_vae_decoder (List[int], optional):  List of device IDs to use for VAE decoder.
 
         Returns:
             [`~pipelines.flux.FluxPipelineOutput`] or `tuple`: [`~pipelines.flux.FluxPipelineOutput`] if `return_dict`
@@ -644,6 +651,8 @@ class QEFFFluxPipeline(FluxPipeline):
             pooled_prompt_embeds=pooled_prompt_embeds,
             num_images_per_prompt=num_images_per_prompt,
             max_sequence_length=max_sequence_length,
+            device_ids_text_encoder_1=device_ids_text_encoder_1,
+            device_ids_text_encoder_2=device_ids_text_encoder_2
         )
         if do_true_cfg:
             (
@@ -657,6 +666,8 @@ class QEFFFluxPipeline(FluxPipeline):
                 pooled_prompt_embeds=negative_pooled_prompt_embeds,
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
+                device_ids_text_encoder_1=device_ids_text_encoder_1,
+                device_ids_text_encoder_2=device_ids_text_encoder_2
             )
 
         # 4. Prepare timesteps
@@ -680,7 +691,7 @@ class QEFFFluxPipeline(FluxPipeline):
         # 6. Denoising loop
         ###### AIC related changes of transformers ######
         if self.transformer.qpc_session is None:
-            self.transformer.qpc_session = QAICInferenceSession(str(self.trasformer_compile_path))
+            self.transformer.qpc_session = QAICInferenceSession(str(self.trasformer_compile_path), device_ids=device_ids_transformer)
 
         output_buffer = {
             "output": np.random.rand(
@@ -782,11 +793,8 @@ class QEFFFluxPipeline(FluxPipeline):
             latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
             latents = (latents / self.vae_decode.model.scaling_factor) + self.vae_decode.model.shift_factor
 
-
-            self.transformer.qpc_session.deactivate()
-
             if self.vae_decode.qpc_session is None:
-                self.vae_decode.qpc_session = QAICInferenceSession(str(self.vae_decoder_compile_path))
+                self.vae_decode.qpc_session = QAICInferenceSession(str(self.vae_decoder_compile_path), device_ids=device_ids_vae_decoder)
 
             output_buffer = {
                 "sample": np.random.rand(
@@ -797,7 +805,6 @@ class QEFFFluxPipeline(FluxPipeline):
 
             inputs = {"latent_sample": latents.numpy()}
             image = self.vae_decode.qpc_session.run(inputs)
-            self.vae_decode.qpc_session.deactivate()
 
             ###### ACCURACY TESTING #######
             # image_torch = self.vae_decode.model(latents, return_dict=False)[0]

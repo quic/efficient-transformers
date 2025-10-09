@@ -26,5 +26,5 @@ image = pipeline("A cat holding a sign that says hello world",
     guidance_scale=0.0,
     num_inference_steps=4,
     max_sequence_length=256,
-    generator=generator).images[0]
+    generator=generator, device_ids_text_encoder_1=[40], device_ids_text_encoder_2=[41], device_ids_vae_decoder=[42], device_ids_transformer=[44,45,46,47]).images[0]
 image.save("flux-schnell_aic.png")
