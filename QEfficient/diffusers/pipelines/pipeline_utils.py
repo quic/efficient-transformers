@@ -426,107 +426,6 @@ class QEffSafetyChecker(QEFFBaseModel):
         return self.model.model.vision_model.config.__dict__
 
 
-class QEffSD3Transformer2DModel(QEFFBaseModel):
-    _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-
-    """
-    QEffSD3Transformer2DModel is a wrapper class for Stable Diffusion 3 Transformer2D models that provides ONNX export and compilation capabilities.
-
-    This class extends QEFFBaseModel to handle SD3 Transformer2D models with specific transformations and optimizations
-    for efficient inference on Qualcomm AI hardware. It is designed for the newer Stable Diffusion 3 architecture
-    that uses transformer-based diffusion models instead of traditional UNet architectures.
-    """
-
-    def __init__(self, model: nn.modules):
-        super().__init__(model)
-        self.model = model
-
-    def get_onnx_config(self):
-        example_inputs = {
-            "hidden_states": torch.randn(
-                2,
-                self.model.config.in_channels,
-                self.model.config.sample_size,
-                self.model.config.sample_size,
-            ),
-            "encoder_hidden_states": torch.randn(2, 333, self.model.config.joint_attention_dim),
-            "pooled_projections": torch.randn(2, self.model.config.pooled_projection_dim),
-            "timestep": torch.randint(0, 20, (2,), dtype=torch.int64),
-        }
-
-        output_names = ["output"]
-
-        dynamic_axes = {
-            "hidden_states": {0: "batch_size", 1: "latent_channels", 2: "latent_height", 3: "latent_width"},
-            "encoder_hidden_states": {0: "batch_size", 1: "seq_len"},
-            "pooled_projections": {0: "batch_size"},
-            "timestep": {0: "steps"},
-            "output": {0: "batch_size", 1: "latent_channels", 2: "latent_height", 3: "latent_width"},
-        }
-        return example_inputs, dynamic_axes, output_names
-
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
-
-    def get_specializations(
-        self,
-        batch_size: int,
-        seq_len: int,
-    ):
-        specializations = [
-            {
-                "batch_size": 2 * batch_size,
-                "latent_channels": 16,
-                "latent_height": self.model.config.sample_size,
-                "latent_width": self.model.config.sample_size,
-                "seq_len": seq_len,
-                "steps": 1,
-            }
-        ]
-
-        return specializations
-
-    def compile(
-        self,
-        compile_dir,
-        compile_only,
-        specializations,
-        convert_to_fp16,
-        mxfp6_matmul,
-        mdp_ts_num_devices,
-        aic_num_cores,
-        custom_io,
-        **compiler_options,
-    ) -> str:
-        return self._compile(
-            compile_dir=compile_dir,
-            compile_only=compile_only,
-            specializations=specializations,
-            convert_to_fp16=convert_to_fp16,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            aic_num_cores=aic_num_cores,
-            custom_io=custom_io,
-            **compiler_options,
-        )
-
-    @property
-    def model_hash(self) -> str:
-        # Compute the hash with: model_config, continuous_batching, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(dict(self.model.config)))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
-
-    @property
-    def model_name(self) -> str:
-        mname = self.model.__class__.__name__
-        if mname.startswith("QEff") or mname.startswith("QEFF"):
-            mname = mname[4:]
-        return mname
-
 class QEffFluxTransformerModel(QEFFBaseModel):
     _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
@@ -618,7 +517,9 @@ class QEffFluxTransformerModel(QEFFBaseModel):
     def model_hash(self) -> str:
         # Compute the hash with: model_config, continuous_batching, transforms
         mhash = hashlib.sha256()
-        mhash.update(to_hashable(dict(self.model.config)))
+        dict_model_config  = dict(self.model.config)
+        dict_model_config.pop("_use_default_values", None)
+        mhash.update(to_hashable(dict_model_config))
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash

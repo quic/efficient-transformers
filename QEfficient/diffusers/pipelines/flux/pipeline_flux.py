@@ -44,6 +44,16 @@ class QEFFFluxPipeline(FluxPipeline):
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
 
+        self.register_modules(
+            vae=self.vae_decode,
+            text_encoder= self.text_encoder,
+            text_encoder_2= self.text_encoder_2,
+            tokenizer= self.tokenizer ,
+            tokenizer_2= self.text_encoder_2.tokenizer,
+            transformer=self.transformer,
+            scheduler=self.scheduler,
+        )
+
         self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
             latent_sample, return_dict
         )
@@ -202,6 +212,7 @@ class QEFFFluxPipeline(FluxPipeline):
             batch_size, self.tokenizer.model_max_length
         )
 
+        # self.text_encoder_compile_path = "<your clip qpc>"
         self.text_encoder_compile_path = self.text_encoder._compile(
             onnx_path,
             compile_dir,
