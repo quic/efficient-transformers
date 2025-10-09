@@ -42,7 +42,7 @@ pipeline {
                            mkdir -p $PWD/Non_cli_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic &&
-                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm -n auto --junitxml=tests/tests_log1.xml &&
+                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log1.xml &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -59,7 +59,7 @@ pipeline {
                            mkdir -p $PWD/Non_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic &&
-                           pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm -n 3 --junitxml=tests/tests_log2.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log2.xml &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -78,7 +78,7 @@ pipeline {
                            mkdir -p $PWD/Non_cli_qaic_multimodal &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log6.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log6.xml &&
                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -97,7 +97,7 @@ pipeline {
                            mkdir -p $PWD/cli &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/cli &&
-                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log3.xml &&
+                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log3.xml &&
                            junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -116,7 +116,7 @@ pipeline {
                     mkdir -p $PWD/Qnn_cli &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Qnn_cli &&
-                    pytest tests -m '(cli and qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log4.xml &&
+                    pytest tests -m '(cli and qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log4.xml &&
                     junitparser merge tests/tests_log4.xml tests/tests_log.xml &&
                     deactivate"
                     '''
@@ -135,7 +135,7 @@ pipeline {
                     mkdir -p $PWD/Qnn_non_cli &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Qnn_non_cli &&
-                    pytest tests -m '(not cli) and (qnn) and (not nightly) and (on_qaic) and (not multimodal) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log5.xml &&
+                    pytest tests -m '(not cli) and (qnn) and (not nightly) and (on_qaic) and (not multimodal) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log5.xml &&
                     junitparser merge tests/tests_log5.xml tests/tests_log.xml &&
                     deactivate"
                     '''
@@ -154,7 +154,7 @@ pipeline {
                     mkdir -p $PWD/Non_cli_qnn_multimodal &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qnn_multimodal &&
-                    pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (qnn)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log7.xml &&
+                    pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (qnn)' --ignore tests/vllm --junitxml=tests/tests_log7.xml &&
                     junitparser merge tests/tests_log7.xml tests/tests_log.xml &&
                     deactivate"
                     '''
