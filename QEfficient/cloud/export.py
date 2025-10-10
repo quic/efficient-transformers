@@ -84,7 +84,7 @@ def main(
 
     This function serves as the entry point for exporting a PyTorch model, loaded
     via QEFFCommonLoader, to the ONNX format. It prepares the necessary
-    paths and calls `get_onnx_model_path`.
+    paths and calls `get_onnx_path_and_setup_customIO`.
 
     Parameters
     ----------
