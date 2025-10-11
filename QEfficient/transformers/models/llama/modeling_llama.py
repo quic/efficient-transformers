@@ -143,6 +143,7 @@ class QEffLlamaAttention(LlamaAttention):
         kwargs.pop("output_attentions", None)
         kwargs.pop("return_dict", None)
         kwargs.pop("labels", None)
+        kwargs.pop("position_embeddings", None)
 
         query_states = self.q_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
         key_states = self.k_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
