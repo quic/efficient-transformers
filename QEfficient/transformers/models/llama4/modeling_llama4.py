@@ -421,12 +421,14 @@ class QEffLlama4TextMoe(Llama4TextMoe):
         masked_logits = masked_logits
 
         # Here we multiply by scores before experts, different only for Llama4
-        #x = hidden * torch.sigmoid(top_w.transpose(0, 1).float())
+        # x = hidden * torch.sigmoid(top_w.transpose(0, 1).float())
         x = hidden
 
         # ── Book-keeping: create one boolean mask per expert once  ───────────────
         # routing_weights[e]  ==  True where token routed to that expert. Shape [E, T]
-        routing_weights = torch.sigmoid(masked_logits.float()).to(hidden.dtype).reshape(-1, 1).reshape(16, -1) # 16 X hidden_states_size
+        routing_weights = (
+            torch.sigmoid(masked_logits.float()).to(hidden.dtype).reshape(-1, 1).reshape(16, -1)
+        )  # 16 X hidden_states_size
 
         # ────────────────── allocate the two big tensors ─────
         ffn_dim = self.experts.intermediate_size  # = 8/3 · H
@@ -438,19 +440,21 @@ class QEffLlama4TextMoe(Llama4TextMoe):
         for e in range(self.num_experts):
             W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]
             routing_weight = routing_weights[e, :].unsqueeze(-1)
-            sigx = (x*routing_weight)
+            sigx = x * routing_weight
             masked_up = torch.where(
-                    routing_weights[e, :].unsqueeze(-1) > 0,
+                routing_weights[e, :].unsqueeze(-1) > 0,
                 ((self.experts.act_fn(sigx @ W_g)) * (sigx @ W_u)),
                 torch.zeros_like(upgate[e]),
             )
             upgate[e] += masked_up
 
-        # At this point  upgate[t]  holds   UpGate(x_t)   for that token’s expert,
-        # and arbitrary (zeros) data for tokens not routed to that expert.
-        # ───────────────────────── Stage-2 : Down ────────────────────────────────                                                                                                                                                                                                             for e in range(self.num_experts):
+            # At this point  upgate[t]  holds   UpGate(x_t)   for that token’s expert,
+            # and arbitrary (zeros) data for tokens not routed to that expert.
+            # ───────────────────────── Stage-2 : Down ────────────────────────────────                                                                                                                                                                                                             for e in range(self.num_experts):
             routing_weight = routing_weights[e, :].unsqueeze(-1)
-            masked_down = torch.where(                                                                                                                                                                                                                                                                  routing_weight > 0, (upgate[e] @ self.experts.down_proj[e]), torch.zeros_like(expert_out[e])                                                                                                                                                                                        )
+            masked_down = torch.where(
+                routing_weight > 0, (upgate[e] @ self.experts.down_proj[e]), torch.zeros_like(expert_out[e])
+            )
             expert_out[e] += masked_down
 
         expert_out = expert_out.reshape(-1, 5120).reshape(16, -1, 5120).sum(0)
