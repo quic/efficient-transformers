@@ -103,6 +103,7 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
+    **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
@@ -139,9 +140,13 @@ class QEffLlamaAttention(LlamaAttention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        kwargs.pop("output_attentions", None)
+        kwargs.pop("return_dict", None)
+        kwargs.pop("labels", None)
+
+        query_states = self.q_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
+        key_states = self.k_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
+        value_states = self.v_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
