@@ -21,7 +21,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     QEffVAE,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import constants
+
 
 class QEFFQwenImagePipeline(QwenImagePipeline):
     _hf_auto_class = QwenImagePipeline
@@ -49,16 +49,12 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             latent_sample, return_dict
         )
 
-        self.vae_scale_factor = (
-            2 ** len(model.vae.temperal_downsample) if getattr(model, "vae", None) else 8
-        )
+        self.vae_scale_factor = 2 ** len(model.vae.temperal_downsample) if getattr(model, "vae", None) else 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
         self.default_sample_size = model.default_sample_size
 
     @classmethod
-    def from_pretrained(
-        cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs
-    ):
+    def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
         """
         Instantiate a QEFFQwenImagePipeline from pretrained Diffusers models.
 
@@ -96,7 +92,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         #     self.text_encoder.get_onnx_config()
         # )
 
-        
         # self.text_encoder.export(
         #     inputs=example_inputs_text_encoder,
         #     output_names=output_names_text_encoder,
@@ -108,7 +103,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         example_inputs_transformer, dynamic_axes_transformer, output_names_transformer = (
             self.transformer.get_onnx_config()
         )
-        
+
         self.transformer.export(
             inputs=example_inputs_transformer,
             output_names=output_names_transformer,
@@ -140,7 +135,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         #     dynamic_axes_vae,
         #     export_dir=export_dir,
         # )
-        
+
         # print("Exported VAE Decode")
 
     def compile(
@@ -219,10 +214,10 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         # latent_height = 2 * (int(height) // (self.vae_scale_factor * 2))
         # latent_width = 2 * (int(width) // (self.vae_scale_factor * 2))
         # latent_seq_len = (latent_height // 2) * (latent_width // 2)
-        latent_seq_len=6032
-        batch_size=1
-        text_seq_len=126
-        
+        latent_seq_len = 6032
+        batch_size = 1
+        text_seq_len = 126
+
         specializations = [
             {
                 "batch_size": batch_size,
@@ -230,12 +225,12 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                 "text_seq_len": text_seq_len,
             }
         ]
-        
+
         # specializations_transformer = self.transformer.get_specializations(
         #     batch_size, latent_seq_len, 512
         # )
 
-        compiler_options_transformer = {"mos": 1, "ols": 2,"mdts-mos":1}
+        compiler_options_transformer = {"mos": 1, "ols": 2, "mdts-mos": 1}
         self.transformer_compile_path = self.transformer._compile(
             onnx_path,
             compile_dir,
@@ -298,15 +293,14 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         txt_tokens = self.tokenizer(
             txt, max_length=self.tokenizer_max_length + drop_idx, padding=True, truncation=True, return_tensors="pt"
         )
-        
+
         # HACK: Currently working on Pytorch
         encoder_hidden_states = self.text_encoder.model(
             input_ids=txt_tokens.input_ids,
             attention_mask=txt_tokens.attention_mask,
             output_hidden_states=True,
         )
-        
-        
+
         # if self.text_encoder.qpc_session is None:
         #     self.text_encoder.qpc_session = QAICInferenceSession(self.text_encoder.qpc_path, device_ids=device_ids)
 
@@ -317,7 +311,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         # aic_embeddings = self.text_encoder.qpc_session.run(aic_text_input)
         # hidden_states = torch.tensor(aic_embeddings["last_hidden_state"])
 
-        
         hidden_states = encoder_hidden_states.hidden_states[-1]
         split_hidden_states = self._extract_masked_hidden(hidden_states, txt_tokens.attention_mask)
         split_hidden_states = [e[drop_idx:] for e in split_hidden_states]

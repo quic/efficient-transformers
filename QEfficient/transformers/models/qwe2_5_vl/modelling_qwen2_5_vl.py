@@ -1,7 +1,9 @@
 from typing import Optional, Union
-from transformers import Qwen2_5_VLForConditionalGeneration
+
 import torch
+from transformers import Qwen2_5_VLForConditionalGeneration
 from transformers.cache_utils import Cache
+
 
 class QEFFQwen2_5_VLForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
     def forward(
@@ -48,15 +50,5 @@ class QEFFQwen2_5_VLForConditionalGeneration(Qwen2_5_VLForConditionalGeneration)
             cache_position=cache_position,
             **kwargs,
         )
-
-        hidden_states = outputs[0]
-
-        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        logits = self.lm_head(hidden_states[:, slice_indices, :])
-
-        loss = None
-        if labels is not None:
-            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size)
 
         return outputs.hidden_states

@@ -37,22 +37,19 @@ class QEffTextEncoder(QEFFBaseModel):
 
     def get_onnx_config(self):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = 160
 
         example_inputs = {
             "input_ids": torch.zeros((bs, 160), dtype=torch.int64),
-            "attention_mask": torch.ones(
-            (bs, 160), dtype=torch.int64
-        )
+            "attention_mask": torch.ones((bs, 160), dtype=torch.int64),
         }
 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
 
         output_names = ["pooler_output", "last_hidden_state"]
-        
+
         if self.model.__class__.__name__ == "Qwen2_5_VLForConditionalGeneration":
-            output_names=["loss", "logits","pass_key_values", "hidden_states", "attention","rope_deltas"]        
-        
+            output_names = ["loss", "logits", "pass_key_values", "hidden_states", "attention", "rope_deltas"]
+
         if self.model.__class__.__name__ == "T5EncoderModel":
             output_names = ["last_hidden_state"]
         else:
@@ -142,20 +139,20 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         # guidance: None
         # img_shapes: [[(1, 58, 104)]]
         # txt_seq_lens: [126]
-        
-        #For testing purpose I have set this to constant values from the original models
+
+        # For testing purpose I have set this to constant values from the original models
         latent_seq_len = 6032
         text_seq_len = 126
         hidden_dim = 64
         encoder_hidden_dim = 3584
-        
+
         example_inputs = {
             "hidden_states": torch.randn(bs, latent_seq_len, hidden_dim, dtype=torch.float32),
             "encoder_hidden_states": torch.randn(bs, text_seq_len, encoder_hidden_dim, dtype=torch.float32),
             "encoder_hidden_states_mask": torch.ones(bs, text_seq_len, dtype=torch.int64),
             "timestep": torch.tensor([1.0], dtype=torch.float32),
             "img_shapes": torch.tensor([1, 58, 104], dtype=torch.int64),
-            "txt_seq_lens": torch.tensor([126],dtype=torch.int64),
+            "txt_seq_lens": torch.tensor([126], dtype=torch.int64),
         }
 
         output_names = ["output"]

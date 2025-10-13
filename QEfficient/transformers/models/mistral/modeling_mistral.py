@@ -298,7 +298,6 @@ class QEffMistralModel(MistralModel):
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
             return_legacy_cache = True
 
-
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
