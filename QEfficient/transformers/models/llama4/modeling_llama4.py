@@ -413,51 +413,46 @@ class QEffLlama4TextMoe(Llama4TextMoe):
         B, S, H = hidden.shape
         T = B * S
         hidden = hidden.view(T, H)
-        router_logits = torch.matmul(hidden, self.router.weight.T)
+
+        router_logits = self.router(hidden)
         # *top-k = 1*  → LLama4
         top_w, top_i = torch.topk(router_logits, self.top_k, dim=-1)  # both [T, K]
         masked_logits = torch.full_like(router_logits, float("-inf"))
         masked_logits.scatter_(1, top_i, top_w)
-        masked_logits = masked_logits
 
         # Here we multiply by scores before experts, different only for Llama4
-        # x = hidden * torch.sigmoid(top_w.transpose(0, 1).float())
-        x = hidden
+        x = hidden * torch.sigmoid(top_w.float())
 
         # ── Book-keeping: create one boolean mask per expert once  ───────────────
         # routing_weights[e]  ==  True where token routed to that expert. Shape [E, T]
-        routing_weights = (
-            torch.sigmoid(masked_logits.float()).to(hidden.dtype).reshape(-1, 1).reshape(16, -1)
-        )  # 16 X hidden_states_size
+        routing_weights = torch.sigmoid(masked_logits.float()).to(hidden.dtype)
 
         # ────────────────── allocate the two big tensors ─────
         ffn_dim = self.experts.intermediate_size  # = 8/3 · H
-        upgate = x.new_zeros((16, T, ffn_dim))
-        expert_out = x.new_zeros((16, T, H))  # accum-out buffer
+        upgate = x.new_zeros((T, ffn_dim))
+        expert_out = x.new_zeros((T, H))  # accum-out buffer
 
         # ───────────────────────── Stage-1 : Up-Gate ─────────────────────────────
         # Loop over experts
         for e in range(self.num_experts):
             W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]
-            routing_weight = routing_weights[e, :].unsqueeze(-1)
-            sigx = x * routing_weight
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
             masked_up = torch.where(
-                routing_weights[e, :].unsqueeze(-1) > 0,
-                ((self.experts.act_fn(sigx @ W_g)) * (sigx @ W_u)),
-                torch.zeros_like(upgate[e]),
+                routing_weights[:, e].unsqueeze(-1) > 0,
+                ((self.experts.act_fn(x @ W_g)) * (x @ W_u)),
+                torch.zeros_like(upgate),
             )
-            upgate[e] += masked_up
+            upgate += masked_up
 
-            # At this point  upgate[t]  holds   UpGate(x_t)   for that token’s expert,
-            # and arbitrary (zeros) data for tokens not routed to that expert.
-            # ───────────────────────── Stage-2 : Down ────────────────────────────────                                                                                                                                                                                                             for e in range(self.num_experts):
-            routing_weight = routing_weights[e, :].unsqueeze(-1)
+        # At this point  upgate[t]  holds   UpGate(x_t)   for that token’s expert,
+        # and arbitrary (zeros) data for tokens not routed to that expert.
+        # ───────────────────────── Stage-2 : Down ────────────────────────────────
+        for e in range(self.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
             masked_down = torch.where(
-                routing_weight > 0, (upgate[e] @ self.experts.down_proj[e]), torch.zeros_like(expert_out[e])
+                routing_weight > 0, (upgate @ self.experts.down_proj[e]), torch.zeros_like(expert_out)
             )
-            expert_out[e] += masked_down
-
-        expert_out = expert_out.reshape(-1, 5120).reshape(16, -1, 5120).sum(0)
+            expert_out += masked_down
 
         # ───────────────────────── Stage-3 : Shared expert ───────────────────────
         shared_out = self.shared_expert(hidden)  # [T, H]
@@ -722,6 +717,8 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
     The only differences are:
     - add new args cache idx for the kv retention
     """
+    def __qeff_init__(self):
+        logger.warning("Current version output doesn't match with HF output due to a bug in TF v_4.55. Switch to branch release/v_1.20 for TF match.")
 
     def forward(
         self,
