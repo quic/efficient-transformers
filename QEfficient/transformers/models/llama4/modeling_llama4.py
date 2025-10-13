@@ -717,8 +717,11 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
     The only differences are:
     - add new args cache idx for the kv retention
     """
+
     def __qeff_init__(self):
-        logger.warning("Current version output doesn't match with HF output due to a bug in TF v_4.55. Switch to branch release/v_1.20 for TF match.")
+        logger.warning(
+            "Current version output doesn't match with HF output due to a bug in TF v_4.55. Switch to branch release/v_1.20 for TF match."
+        )
 
     def forward(
         self,
