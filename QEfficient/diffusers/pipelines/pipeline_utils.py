@@ -37,15 +37,22 @@ class QEffTextEncoder(QEFFBaseModel):
 
     def get_onnx_config(self):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = self.tokenizer.model_max_length
+        seq_len = 160
 
         example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "input_ids": torch.zeros((bs, 160), dtype=torch.int64),
+            "attention_mask": torch.ones(
+            (bs, 160), dtype=torch.int64
+        )
         }
 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
 
         output_names = ["pooler_output", "last_hidden_state"]
+        
+        if self.model.__class__.__name__ == "Qwen2_5_VLForConditionalGeneration":
+            output_names=["loss", "logits","pass_key_values", "hidden_states", "attention","rope_deltas"]        
+        
         if self.model.__class__.__name__ == "T5EncoderModel":
             output_names = ["last_hidden_state"]
         else:
@@ -96,6 +103,132 @@ class QEffTextEncoder(QEFFBaseModel):
         # Compute the hash with: model_config, continuous_batching, transforms
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
+
+    @property
+    def model_name(self) -> str:
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname
+
+
+class QEffQwenImageTransformer2DModel(QEFFBaseModel):
+    _pytorch_transforms = [CustomOpsTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    """
+    QEffQwenImageTransformer2DModel is a wrapper class for QwenImage Transformer2D models that provides ONNX export and compilation capabilities.
+
+    This class extends QEFFBaseModel to handle QwenImage Transformer2D models with specific transformations and optimizations
+    for efficient inference on Qualcomm AI hardware. It is designed for the QwenImage architecture that uses
+    transformer-based diffusion models with unique latent packing and attention mechanisms.
+    """
+
+    def __init__(self, model: nn.modules):
+        super().__init__(model)
+        self.model = model
+
+    def get_onnx_config(self):
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        # QwenImage uses packed latents with sequence length
+        # Based on actual transformer input shapes:
+        # hidden_states: [1, 6032, 64]
+        # encoder_hidden_states: [1, 126, 3584]
+        # timestep: [1]
+        # encoder_hidden_states_mask: [1, 126]
+        # guidance: None
+        # img_shapes: [[(1, 58, 104)]]
+        # txt_seq_lens: [126]
+        
+        #For testing purpose I have set this to constant values from the original models
+        latent_seq_len = 6032
+        text_seq_len = 126
+        hidden_dim = 64
+        encoder_hidden_dim = 3584
+        
+        example_inputs = {
+            "hidden_states": torch.randn(bs, latent_seq_len, hidden_dim, dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(bs, text_seq_len, encoder_hidden_dim, dtype=torch.float32),
+            "encoder_hidden_states_mask": torch.ones(bs, text_seq_len, dtype=torch.int64),
+            "timestep": torch.tensor([1.0], dtype=torch.float32),
+            "img_shapes": torch.tensor([1, 58, 104], dtype=torch.int64),
+            "txt_seq_lens": torch.tensor([126],dtype=torch.int64),
+        }
+
+        output_names = ["output"]
+
+        dynamic_axes = {
+            "hidden_states": {0: "batch_size", 1: "latent_seq_len"},
+            "encoder_hidden_states": {0: "batch_size", 1: "text_seq_len"},
+            "encoder_hidden_states_mask": {0: "batch_size", 1: "text_seq_len"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        export_kwargs=None,
+    ):
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            export_kwargs=export_kwargs,
+        )
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        latent_seq_len: int,
+        text_seq_len: int,
+    ):
+        specializations = [
+            {
+                "batch_size": batch_size,
+                "latent_seq_len": latent_seq_len,
+                "text_seq_len": text_seq_len,
+            }
+        ]
+
+        return specializations
+
+    def compile(
+        self,
+        compile_dir,
+        compile_only,
+        specializations,
+        convert_to_fp16,
+        mxfp6_matmul,
+        mdp_ts_num_devices,
+        aic_num_cores,
+        custom_io,
+        **compiler_options,
+    ) -> str:
+        return self._compile(
+            compile_dir=compile_dir,
+            compile_only=compile_only,
+            specializations=specializations,
+            convert_to_fp16=convert_to_fp16,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=mdp_ts_num_devices,
+            aic_num_cores=aic_num_cores,
+            custom_io=custom_io,
+            **compiler_options,
+        )
+
+    @property
+    def model_hash(self) -> str:
+        # Compute the hash with: model_config, continuous_batching, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(dict(self.model.config)))
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
@@ -197,7 +330,7 @@ class QEffVAE(QEFFBaseModel):
         # VAE decode
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         example_inputs = {
-            "latent_sample": torch.randn(bs, 16, 64, 64),
+            "latent_sample": torch.randn(bs, 16, 1, 116, 208),
             "return_dict": False,
         }
 

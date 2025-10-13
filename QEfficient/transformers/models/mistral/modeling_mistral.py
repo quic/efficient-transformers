@@ -24,7 +24,6 @@ from transformers.models.mistral.modeling_mistral import (
     MistralForCausalLM,
     MistralModel,
     MistralRotaryEmbedding,
-    logger,
     repeat_kv,
     rotate_half,
 )
@@ -298,10 +297,7 @@ class QEffMistralModel(MistralModel):
         if use_cache and not isinstance(past_key_values, Cache) and not self.training:
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
             return_legacy_cache = True
-            logger.warning_once(
-                "We detected that you are passing `past_key_values` as a tuple and this is deprecated and will be removed in v4.43. "
-                "Please use an appropriate `Cache` class (https://huggingface.co/docs/transformers/v4.41.3/en/internal/generation_utils#transformers.Cache)"
-            )
+
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
