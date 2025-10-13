@@ -554,6 +554,10 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
 
+        # use local attention mask for ROPE layers
+        if self.use_chunked_attention:
+            attention_mask = chunk_causal_mask
+
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
@@ -720,7 +724,7 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
 
     def __qeff_init__(self):
         logger.warning(
-            "Current version output doesn't match with HF output due to a bug in TF v_4.55. Switch to branch release/v_1.20 for TF match."
+            "Current output differs from HF output due to a bug in TF v_4.55. Switch to branch release/v_1.20 for TF match. Refer link: https://github.com/huggingface/transformers/pull/39501"
         )
 
     def forward(
