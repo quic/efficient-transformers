@@ -32,7 +32,6 @@ test_models_causal = [
     "tiiuae/falcon-7b",
     "Qwen/Qwen2-0.5B",
     "bigcode/starcoder2-3b",
-    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Felladrin/Minueza-32M-Base",
     "wtang06/mpt-125m-c4",
     "hakurei/gpt-j-random-tinier",
@@ -283,10 +282,6 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
     new_api_onnx_model_path = qeff_model.export()
-
-    # Again loading model since the export moves model to meta device
-    model, _ = load_causal_lm_model(model_name, n_layer=1)
-    qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
     _, old_api_onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer
     )

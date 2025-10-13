@@ -249,7 +249,7 @@ class InputHandlerVLM:
 
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = getattr(txt_cfg, "head_dim", txt_cfg.hidden_size // txt_cfg.num_attention_heads)
+        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
         if hasattr(txt_cfg, "cross_attention_layers"):
             cross_attention_layers = txt_cfg.cross_attention_layers
 
@@ -287,7 +287,7 @@ class InputHandlerVLM:
             txt_cfg = self.config.llm_config
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = getattr(txt_cfg, "head_dim", txt_cfg.hidden_size // txt_cfg.num_attention_heads)
+        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
         if hasattr(txt_cfg, "cross_attention_layers"):
             cross_attention_layers = txt_cfg.cross_attention_layers
             vis_cfg = self.config.vision_config
@@ -298,7 +298,6 @@ class InputHandlerVLM:
         if "attention_mask" in inputs.keys():
             inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
-        inputs["image_idx"] = np.array([[0]])
 
         vision_inputs = {
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
@@ -350,7 +349,6 @@ class InputHandlerVLM:
         outputs["image_features_RetainedState"] = (
             ort_outputs["image_features_RetainedState"] if "image_features_RetainedState" in ort_outputs else None
         )
-        outputs["image_idx"] = ort_outputs["image_idx_output"]
         return outputs
 
     def update_vlm_ort_inputs(self, inputs, ort_outputs):
@@ -416,7 +414,7 @@ class InputHandlerInternVL(InputHandlerVLM):
 
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = getattr(txt_cfg, "head_dim", txt_cfg.hidden_size // txt_cfg.num_attention_heads)
+        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
 
         inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
@@ -437,7 +435,7 @@ class InputHandlerInternVL(InputHandlerVLM):
             txt_cfg = self.config.llm_config
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = getattr(txt_cfg, "head_dim", txt_cfg.hidden_size // txt_cfg.num_attention_heads)
+        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
 
         question = "<image>\n" + self.prompt
         pixel_values = self.processor.load_image(self.image, max_num=12)
@@ -451,7 +449,6 @@ class InputHandlerInternVL(InputHandlerVLM):
         if "attention_mask" in inputs.keys():
             inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
-        inputs["image_idx"] = np.array([[0]])
 
         vision_inputs = {
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}

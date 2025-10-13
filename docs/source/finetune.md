@@ -15,8 +15,6 @@ pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp
 ```
 If qeff-env inside docker is used then torch_qaic and accelerate packages are already installed.
 
----
-
 ## Finetuning
 
 Export the ENV variables to download and enable private datasets
@@ -29,7 +27,6 @@ Export the ENV variables to get the device and HW traces and debugging logs
 export QAIC_DEVICE_LOG_LEVEL=0 # For Device level logs
 export QAIC_DEBUG=1 # To understand the CPU fallback ops
 ```
----
 
 ## Dataset Details
 
@@ -40,7 +37,6 @@ wget -c https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/refs/heads/m
 
 To download the grammar dataset, visit this [link](https://github.com/meta-llama/llama-cookbook/blob/main/src/llama_cookbook/datasets/grammar_dataset/grammar_dataset_process.ipynb). Download the dataset and place it under the **datasets_grammar** directory. Make sure to update the training configuration accordingly.
 
----
 
 ## Usage
 
@@ -58,7 +54,6 @@ For more details on the usage of the training parameters, use the below command:
 ```python
 python -m QEfficient.cloud.finetune -h
 ```
----
 
 ### Distributed training(DDP) on QAIC
 
@@ -66,8 +61,6 @@ python -m QEfficient.cloud.finetune -h
 QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.finetune --device qaic --enable_ddp  --num_epochs 2  --model_name "meta-llama/Llama-3.2-1B"
 ```
 **nproc-per-node is number of workers(QAIC devices) running locally.
-
----
 
 ## Visualization
 
@@ -77,7 +70,6 @@ to visualise the data,
 ```python
 tensorboard --logdir runs/<file> --bind_all
 ```
----
 
 ## Some features/functionalities of fine-tuning stack:
     1) Gradient accumulation: By default, gradient accumulation happens for 4 steps. To update this value, command line argument gradient_accumulation_steps has to be passed. (Example: '--gradient_accumulation_steps 8')
@@ -161,3 +153,4 @@ tensorboard --logdir runs/<file> --bind_all
             # from transformers import DataCollatorForLanguageModeling
             # return DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
         ```
+---

@@ -14,7 +14,7 @@ from typing import List, Optional, Union
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
-from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
+from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import fix_prompts, get_compilation_dims, get_input_prompts
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
@@ -103,7 +103,7 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_path_and_setup_customIO(
+        onnx_model_path = get_onnx_model_path(
             model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size
         )
         _ = QEfficient.compile(

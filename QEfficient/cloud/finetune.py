@@ -49,29 +49,18 @@ warnings.filterwarnings("ignore")
 
 
 def setup_distributed_training(train_config: TrainConfig) -> None:
-    """
-    Initialize the distributed training environment if Distributed Data Parallel (DDP) is enabled.
+    """Initialize distributed training environment if enabled.
 
-    This function configures the PyTorch distributed backend based on the device type
-    and initializes the process group. It also validates device availability and
-    pipeline parallelism settings.
+    Args:
+        train_config (TrainConfig): Training configuration object.
 
-    Parameters
-    ----------
-    train_config : TrainConfig
-        Training configuration object containing settings for distributed training.
+    Notes:
+        - If distributed data parallel (DDP) is disabled, this function does nothing.
+        - Ensures the device is not CPU and does not specify an index for DDP compatibility.
+        - Initializes the process group using the specified distributed backend.
 
-    Raises
-    ------
-    AssertionError
-        If the number of required devices exceeds the total available devices.
-        If pipeline parallelism (`num_pp_stages`) is enabled but set to 1.
-        If DDP is enabled with a CPU device or with a specific device index (DDP requires device type only).
-
-    Notes
-    -----
-    - If `train_config.enable_ddp` is False, this function performs no action.
-    - Sets the appropriate device for each process in a distributed setup.
+    Raises:
+        AssertionError: If device is CPU or includes an index with DDP enabled.
     """
 
     torch_device = torch.device(train_config.device)
@@ -91,21 +80,19 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
     dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
     dist.init_process_group(backend=dist_backend_map[torch_device.type])
-    # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
-    getattr(torch, torch_device.type).set_device(dist.get_rank() * train_config.num_pp_stages)
+    if not train_config.enable_pp:
+        # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
+        getattr(torch, torch_device.type).set_device(dist.get_rank())
 
 
 def setup_seeds(seed: int) -> None:
-    """
-    Set random seeds across multiple libraries for reproducibility.
+    """Set random seeds across libraries for reproducibility.
 
-    This function ensures that random number generation is deterministic across PyTorch,
-    Python's built-in `random` module, and NumPy for consistent experiment results.
+    Args:
+        seed (int): Seed value to set for random number generators.
 
-    Parameters
-    ----------
-    seed : int
-        The seed value to set for all random number generators.
+    Notes:
+        - Sets seeds for PyTorch, Python's random module, and NumPy.
     """
     torch.use_deterministic_algorithms(True)
     # With this flag, PP+DDP works only for meta-llama/Llama-3.2-1B and mistralai/Mistral-7B-Instruct-v0.3
@@ -119,35 +106,23 @@ def setup_seeds(seed: int) -> None:
 def load_model_and_tokenizer(
     train_config: TrainConfig, dataset_config: Any, **kwargs
 ) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
-    """
-    Load the pre-trained Hugging Face model and its corresponding tokenizer.
+    """Load the pre-trained model and tokenizer from Hugging Face.
 
-    This function handles model download, configuration (e.g., precision, caching),
-    and tokenizer setup. It also applies PEFT if enabled in the training configuration.
+    Args:
+        train_config (TrainConfig): Training configuration object containing model and tokenizer names.
+        dataset_config (Any): A dataclass object representing dataset configuration.
+        kwargs: Additional arguments to override PEFT config.
 
-    Parameters
-    ----------
-    train_config : TrainConfig
-        Training configuration object containing model and tokenizer names, task mode, etc.
-    dataset_config : Any
-        A dataclass object representing the dataset configuration, used for task-specific
-        model setup (e.g., number of labels for sequence classification).
-    **kwargs :
-        Additional arguments to override PEFT configuration parameters.
+    Returns:
+        tuple: A tuple of two values.
+            - Model with pretrained weights loaded.
+            - Model's tokenizer (AutoTokenizer).
 
-    Returns
-    -------
-    tuple[Union[AutoModelForCausalLM, AutoModelForSequenceClassification], AutoTokenizer]
-        A tuple containing:
-        - The loaded model (either `AutoModelForCausalLM` or `AutoModelForSequenceClassification`).
-        - The model's tokenizer (`AutoTokenizer`).
-
-    Raises
-    ------
-    RuntimeError
-        If the Hugging Face model for sequence classification does not have
-        a `base_model_prefix` attribute when `task_mode` is `SEQ_CLASSIFICATION`.
-        If gradient checkpointing is enabled but the model does not support it.
+    Notes:
+        - Downloads the model if not already cached using login_and_download_hf_lm.
+        - Configures the model with FP16 precision and disables caching for training.
+        - Resizes model embeddings if tokenizer vocab size exceeds model embedding size.
+        - Sets pad_token_id to eos_token_id if not defined in the tokenizer.
     """
     logger.log_rank_zero(f"Loading HuggingFace model for {train_config.model_name}")
     pretrained_model_path = hf_download(
@@ -214,26 +189,17 @@ def load_model_and_tokenizer(
 
 
 def apply_peft(model: AutoModel, train_config: TrainConfig, **kwargs) -> Union[AutoModel, PeftModel]:
-    """
-    Apply Parameter-Efficient Fine-Tuning (PEFT) to the model if enabled in the training configuration.
+    """Apply Parameter-Efficient Fine-Tuning (PEFT) to the model if enabled.
 
-    This function configures and applies PEFT methods (e.g., LoRA) to the base model,
-    either from a pre-trained PEFT checkpoint or by generating a new PEFT configuration.
+    Args:
+        model (AutoModel): Huggingface model.
+        train_config (TrainConfig): Training configuration object.
+        kwargs: Additional arguments to override PEFT config params.
 
-    Parameters
-    ----------
-    model : AutoModel
-        The Hugging Face model to which PEFT will be applied.
-    train_config : TrainConfig
-        Training configuration object, specifying whether to use PEFT and if a checkpoint exists.
-    **kwargs :
-        Additional arguments to override PEFT configuration parameters.
-
-    Returns
-    -------
-    Union[AutoModel, PeftModel]
-        If `train_config.use_peft` is True, a `PeftModel` object is returned.
-        Otherwise, the original `AutoModel` object is returned.
+    Returns:
+        Union[AutoModel, PeftModel]: If use_peft in train_config is True
+            then PeftModel object is returned else original model object
+            (AutoModel) is returned.
     """
     if not train_config.use_peft:
         return model
@@ -256,35 +222,26 @@ def setup_dataloaders(
     dataset_config: Any,
     tokenizer: AutoTokenizer,
 ) -> tuple[torch.utils.data.DataLoader, Optional[torch.utils.data.DataLoader], int]:
-    """
-    Set up training and optional validation DataLoaders based on the provided configurations.
+    """Set up training and validation DataLoaders.
 
-    This function prepares `DataLoader` instances for both training and validation datasets,
-    applying necessary preprocessing and batching. It also determines the longest sequence
-    length in the combined dataset.
+    Args:
+        train_config (TrainConfig): Training configuration object.
+        dataset_config (Any): Configuration for the dataset (generated from train_config).
+        tokenizer (AutoTokenizer): Tokenizer for preprocessing data.
 
-    Parameters
-    ----------
-    train_config : TrainConfig
-        Training configuration object containing DataLoader settings (batch size, etc.)
-        and validation preferences.
-    dataset_config : Any
-        Configuration for the dataset, used to fetch and prepare splits.
-    tokenizer : AutoTokenizer
-        Tokenizer for preprocessing and tokenizing the dataset samples.
+    Returns:
+        tuple: A tuple of three values.
+            - First value represents train_dataloader
+            - Second value represents eval_dataloader. It is None if
+              validation is disabled.
+            - Length of longest sequence in the dataset.
 
-    Returns
-    -------
-    tuple[torch.utils.data.DataLoader, Optional[torch.utils.data.DataLoader], int]
-        A tuple containing:
-        - `train_dataloader`: The DataLoader for the training dataset.
-        - `eval_dataloader`: The DataLoader for the validation dataset, or `None` if validation is disabled.
-        - `longest_seq_length`: The length of the longest sequence found in the dataset(s).
+    Raises:
+        RuntimeError: If validation is enabled but the validation set is too small.
 
-    Raises
-    ------
-    ValueError
-        If validation is enabled but the resulting validation DataLoader is empty.
+    Notes:
+        - Applies a custom data collator if provided by get_custom_data_collator.
+        - Configures DataLoader kwargs using get_dataloader_kwargs for train and val splits.
     """
 
     train_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="train")
@@ -312,37 +269,24 @@ def setup_dataloaders(
 
 def main(**kwargs) -> None:
     """
-    Fine-tune a Hugging Face model on Qualcomm AI 100 hardware with configurable training
-    and Parameter-Efficient Fine-Tuning (PEFT) parameters.
+    Fine-tune a model on QAIC hardware with configurable training and LoRA parameters.
 
-    This is the main entry point for the fine-tuning script. It orchestrates the
-    setup of distributed training, model and tokenizer loading, DataLoader creation,
-    optimizer and scheduler initialization, and the training loop.
+    Args:
+        kwargs: Additional arguments to override TrainConfig.
 
-    Parameters
-    ----------
-    **kwargs :
-        Additional arguments used to override default parameters in `TrainConfig`
-        and PEFT configuration. These are typically parsed from command-line arguments.
+    Example:
+        .. code-block:: bash
 
-    Example
-    -------
-    To fine-tune a model using a YAML configuration file for PEFT:
+            # Using a YAML config file for PEFT
+            python -m QEfficient.cloud.finetune \\
+                --model_name "meta-llama/Llama-3.2-1B" \\
+                --lr 5e-4 \\
+                --peft_config_file "lora_config.yaml"
 
-    .. code-block:: bash
-
-        python -m QEfficient.cloud.finetune \\
-            --model_name "meta-llama/Llama-3.2-1B" \\
-            --lr 5e-4 \\
-            --peft_config_file "lora_config.yaml"
-
-    To fine-tune a model using a default LoRA configuration:
-
-    .. code-block:: bash
-
-        python -m QEfficient.cloud.finetune \\
-            --model_name "meta-llama/Llama-3.2-1B" \\
-            --lr 5e-4
+            # Using default LoRA config
+            python -m QEfficient.cloud.finetune \\
+                --model_name "meta-llama/Llama-3.2-1B" \\
+                --lr 5e-4
     """
     train_config = TrainConfig()
     update_config(train_config, **kwargs)

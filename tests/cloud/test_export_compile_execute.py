@@ -18,7 +18,7 @@ from QEfficient.cloud.export import main as export
 
 def check_export_compile_execute(mocker, model_name, full_batch_size=None, enable_qnn=False):
     check_and_assign_cache_dir_spy = mocker.spy(QEfficient.cloud.export, "check_and_assign_cache_dir")
-    get_onnx_path_and_setup_customIO_spy = mocker.spy(QEfficient.cloud.export, "get_onnx_path_and_setup_customIO")
+    get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.export, "get_onnx_model_path")
     load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.execute, "load_hf_tokenizer")
     cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.execute, "cloud_ai_100_exec_kv")
 
@@ -29,9 +29,9 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
     )
 
     check_and_assign_cache_dir_spy.assert_called_once()
-    get_onnx_path_and_setup_customIO_spy.assert_called_once()
+    get_onnx_model_path_spy.assert_called_once()
 
-    onnx_model_path = get_onnx_path_and_setup_customIO_spy.spy_return
+    onnx_model_path = get_onnx_model_path_spy.spy_return
 
     assert os.path.isfile(onnx_model_path)
 

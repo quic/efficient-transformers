@@ -174,7 +174,7 @@ class QEffLlamaAttention(LlamaAttention):
         )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        attn_output = self.o_proj(attn_output, **kwargs)
+        attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights, past_key_value
 
 

@@ -136,20 +136,18 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Model,
     Qwen2RMSNorm,
 )
-from transformers.models.qwen3_moe.modeling_qwen3_moe import (
-    Qwen3MoeAttention,
-    Qwen3MoeDecoderLayer,
-    Qwen3MoeForCausalLM,
-    Qwen3MoeModel,
-    Qwen3MoeRMSNorm,
-    Qwen3MoeRotaryEmbedding,
-    Qwen3MoeSparseMoeBlock,
-)
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
     Starcoder2ForCausalLM,
     Starcoder2Model,
+)
+from transformers.models.t5.modeling_t5 import (
+    T5Attention,
+    T5LayerCrossAttention,
+    T5LayerFF,
+    T5LayerNorm,
+    T5LayerSelfAttention,
 )
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
@@ -312,19 +310,18 @@ from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2ForCausalLM,
     QEffQwen2Model,
 )
-from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-    QEffQwen3MoeAttention,
-    QEffQwen3MoeDecoderLayer,
-    QEffQwen3MoeForCausalLM,
-    QEffQwen3MoeModel,
-    QEffQwen3MoeRotaryEmbedding,
-    QEffQwen3MoeSparseMoeBlock,
-)
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
+)
+from QEfficient.transformers.models.t5.modeling_t5 import (
+    QEffT5Attention,
+    QEffT5LayerCrossAttention,
+    QEffT5LayerFF,
+    QEffT5LayerNorm,
+    QEffT5LayerSelfAttention,
 )
 from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperAttention,
@@ -355,7 +352,6 @@ class CustomOpsTransform(ModuleMappingTransform):
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
-        Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
     }
 
@@ -406,13 +402,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GemmaDecoderLayer: QEffGemmaDecoderLayer,
         GemmaModel: QEffGemmaModel,
         GemmaForCausalLM: QEffGemmaForCausalLM,
-        # Qwen3Moe
-        Qwen3MoeForCausalLM: QEffQwen3MoeForCausalLM,
-        Qwen3MoeModel: QEffQwen3MoeModel,
-        Qwen3MoeDecoderLayer: QEffQwen3MoeDecoderLayer,
-        Qwen3MoeAttention: QEffQwen3MoeAttention,
-        Qwen3MoeRotaryEmbedding: QEffQwen3MoeRotaryEmbedding,
-        Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
         # Gemma2
         Gemma2Attention: QEffGemma2Attention,
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
@@ -640,6 +629,22 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     }
 
     _match_class_replace_method = {}
+
+
+class T5ModelTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        T5LayerFF: QEffT5LayerFF,
+        T5LayerSelfAttention: QEffT5LayerSelfAttention,
+        T5LayerCrossAttention: QEffT5LayerCrossAttention,
+        T5Attention: QEffT5Attention,
+        T5LayerNorm: QEffT5LayerNorm,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        model, transformed = super().apply(model)
+        return model, transformed
 
 
 class PoolingTransform:

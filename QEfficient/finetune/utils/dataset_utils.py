@@ -81,7 +81,7 @@ def padding_dataset(train_config, dataset, batch_size):
             # Hugging Face Dataset transformation
             dataset = dataset.map(lambda x: {"input_length": len(x["input_ids"])})
             dataset = dataset.sort("input_length")
-            dataset = dataset.remove_columns("input_length")
+
         else:
             dataset = sorted(dataset, key=lambda x: len(x["input_ids"]))
 
