@@ -264,17 +264,32 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     onnx_model_path = qeff_model.export()
 
     # TODO: add prefill_only tests
-    qpc_path = qeff_model.compile(
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        num_cores=14,
-        mxfp6=False,
-        aic_enable_depth_first=False,
-        full_batch_size=full_batch_size,
-        num_speculative_tokens=num_speculative_tokens,
-        enable_qnn=enable_qnn,
-        qnn_config=qnn_config,
-    )
+    # Use worker-specific compile directory for CB model if provided to avoid race conditions
+    if compile_base_dir:
+        qpc_path = qeff_model.compile(
+            compile_dir=str(Path(compile_base_dir) / "compile_cb"),
+            prefill_seq_len=prompt_len,
+            ctx_len=ctx_len,
+            num_cores=14,
+            mxfp6=False,
+            aic_enable_depth_first=False,
+            full_batch_size=full_batch_size,
+            num_speculative_tokens=num_speculative_tokens,
+            enable_qnn=enable_qnn,
+            qnn_config=qnn_config,
+        )
+    else:
+        qpc_path = qeff_model.compile(
+            prefill_seq_len=prompt_len,
+            ctx_len=ctx_len,
+            num_cores=14,
+            mxfp6=False,
+            aic_enable_depth_first=False,
+            full_batch_size=full_batch_size,
+            num_speculative_tokens=num_speculative_tokens,
+            enable_qnn=enable_qnn,
+            qnn_config=qnn_config,
+        )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts, device_id=device_id)
 
     if model_name in ModelConfig.SWIFTKV_MODELS:
@@ -330,7 +345,9 @@ def test_causal_lm_export_with_deprecated_api(model_name):
 @pytest.mark.on_qaic
 @pytest.mark.regular
 @pytest.mark.parametrize("model_name", test_models_causal)
-def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causal_model_config_dict, worker_device_id):
+def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+    model_name, custom_causal_model_config_dict, worker_device_id, worker_compile_dir
+):
     """
     Test function to validate the dummy PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
     ``Mandatory`` Args:
@@ -340,9 +357,13 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causa
 
     if model_name in ModelConfig.QUANTIZED_MODELS:
         n_layer = get_custom_n_layers(model_name)
-        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, device_id=worker_device_id)
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name, n_layer=n_layer, device_id=worker_device_id, compile_base_dir=str(worker_compile_dir)
+        )
     else:
-        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=config, device_id=worker_device_id)
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name, config=config, device_id=worker_device_id, compile_base_dir=str(worker_compile_dir)
+        )
 
 
 @pytest.mark.nightly
@@ -364,7 +385,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, worker_device_id):
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", test_models_qnn)
 def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
-    model_name, custom_causal_model_config_dict, worker_device_id
+    model_name, custom_causal_model_config_dict, worker_device_id, worker_compile_dir
 ):
     """
     QNN Setup
@@ -377,7 +398,12 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name, enable_qnn=True, qnn_config=qnn_config_json_path, config=config, device_id=worker_device_id
+        model_name,
+        enable_qnn=True,
+        qnn_config=qnn_config_json_path,
+        config=config,
+        device_id=worker_device_id,
+        compile_base_dir=str(worker_compile_dir),
     )
 
 
@@ -409,7 +435,9 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, worker_device_i
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", test_models_spd)
-def test_custom_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causal_model_config_dict, worker_device_id):
+def test_custom_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(
+    model_name, custom_causal_model_config_dict, worker_device_id, worker_compile_dir
+):
     """
     Test function to validate the dummy PyTorch model for speculative decoding, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
     ``Mandatory`` Args:
@@ -422,6 +450,7 @@ def test_custom_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_caus
         num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,
         config=config,
         device_id=worker_device_id,
+        compile_base_dir=str(worker_compile_dir),
     )
 
 
