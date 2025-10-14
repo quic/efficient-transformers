@@ -382,7 +382,7 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
     ):  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = config.num_key_value_heads
 
-        if hasattr(config, "head_dim"):
+        if hasattr(config, "head_dim") and config.head_dim is not None:
             d_head = config.head_dim
         else:
             d_head = config.hidden_size // config.num_attention_heads
@@ -404,10 +404,16 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         d_head = config.hidden_size // config.num_attention_heads
     else:
         raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
-    padding_shape = [batch_size, n_heads, seq_len, d_head]
+
     if hasattr(config, "architectures") and config.architectures is not None:  # Check for Starcoder1 - 3D layout
         if "GPTBigCodeForCausalLM" in config.architectures:
-            padding_shape = [batch_size, seq_len, d_head]
+            if hasattr(config, "multi_query"):
+                multi_query_value = getattr(config, "multi_query")
+                if multi_query_value:
+                    n_heads = 1  # MQA , multi query is true
+                else:
+                    n_heads = config.n_head
+    padding_shape = [batch_size, n_heads, seq_len, d_head]
     return padding_shape
 
 

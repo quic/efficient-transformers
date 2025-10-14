@@ -10,7 +10,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
-from transformers.cache_utils import Cache, HybridCache
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -28,7 +28,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
-from QEfficient.transformers.cache_utils import QEffHybridCache
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
@@ -231,7 +231,6 @@ class QEffGemma3Attention(Gemma3Attention):
         query_states = self.q_norm(query_states)
         key_states = self.k_norm(key_states)
 
-        kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             if self.layer_idx is None:
                 raise ValueError(
@@ -239,7 +238,6 @@ class QEffGemma3Attention(Gemma3Attention):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         if self.is_sliding:
             cos, sin = self.rotary_emb_local(value_states, seq_len=self.config.max_position_embeddings)
         else:
@@ -309,7 +307,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-        if self.is_sliding:
+        if self.self_attn.is_sliding:
             attention_mask = _create_causal_mask(
                 position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window
             )
@@ -364,7 +362,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[HybridCache] = None,
+        past_key_values: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -396,8 +394,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             # return_legacy_cache = True
-            past_key_values = QEffHybridCache.from_legacy_cache(self.config, past_key_values)
-
+            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
@@ -427,31 +424,18 @@ class QEffGemma3TextModel(Gemma3TextModel):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    decoder_layer.__call__,
-                    hidden_states,
-                    causal_mask,
-                    position_ids,
-                    past_key_values,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                    last_cache_position,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    past_key_value=past_key_values,
-                    batch_index=batch_index,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    cache_position=cache_position,
-                    last_cache_position=last_cache_position,
-                    **flash_attn_kwargs,
-                )
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_values,
+                batch_index=batch_index,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                last_cache_position=last_cache_position,
+                **flash_attn_kwargs,
+            )
 
             hidden_states = layer_outputs[0]
 
@@ -481,7 +465,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[HybridCache] = None,
+        past_key_values: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -606,6 +590,7 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.model = model
         self.language_model = self.model.language_model
         self.config = self.model.config
+        self.lm_head = self.model.lm_head
 
     def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
@@ -617,11 +602,15 @@ class QEffGemma3DecoderWrapper(nn.Module):
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        outputs = self.model.language_model(
+        outputs = self.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        logits = self.lm_head(hidden_states)
+        logits = logits.float()
+        return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
@@ -646,7 +635,11 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return outputs.logits, pixel_values, image_idx, outputs.past_key_values
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        logits = self.lm_head(hidden_states)
+        logits = logits.float()
+        return logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_specializations(
         self,

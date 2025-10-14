@@ -92,11 +92,11 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
                 new_height = int(round(original_height * scale_factor, 7))
                 padding = (current_height - new_height) // 2
                 image_feature = image_feature[:, padding : current_height - padding, :]
-                if self.model.image_newline is not None:
+                if self.model.model.image_newline is not None:
                     image_feature = torch.cat(
                         (
                             image_feature,
-                            self.model.image_newline[:, None, None]
+                            self.model.model.image_newline[:, None, None]
                             .expand(*image_feature.shape[:-1], 1)
                             .to(image_feature.device, image_feature.dtype),
                         ),
@@ -106,8 +106,10 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
                 image_feature = torch.cat((base_image_feature, image_feature), dim=0)
             else:
                 image_feature = image_feature[0]
-                if self.model.image_newline is not None:
-                    image_feature = torch.cat((image_feature, self.model.image_newline[None].to(image_feature)), dim=0)
+                if self.model.model.image_newline is not None:
+                    image_feature = torch.cat(
+                        (image_feature, self.model.model.image_newline[None].to(image_feature)), dim=0
+                    )
             new_image_features.append(image_feature)
         image_features = torch.cat(new_image_features, dim=0)
         return image_features.unsqueeze(0)
@@ -119,6 +121,7 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
         self.model = model
         self.config = self.model.config
         self.language_model = self.model.language_model
+        self.lm_head = self.model.lm_head
 
     def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
@@ -137,7 +140,11 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
             past_key_values=past_key_values,
         )
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        logits = self.lm_head(hidden_states)
+        logits = logits.float()
+        return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
