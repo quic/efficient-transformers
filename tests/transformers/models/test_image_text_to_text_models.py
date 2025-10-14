@@ -112,6 +112,28 @@ test_models_config = [
         "Can you describe the image in detail.",
         1,
     ),
+    (
+        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        True,
+        1,
+        128,
+        4096,
+        1540,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+        "Can you describe the image in detail.",
+        1,
+    ),
+    (
+        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        False,
+        1,
+        128,
+        4096,
+        1540,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+        "Can you describe the image in detail.",
+        1,
+    ),
     # (
     #     "meta-llama/Llama-3.2-11B-Vision-Instruct",
     #     True,
@@ -240,6 +262,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     n_layer = get_num_layers_vlm(config)
     image = Image.open(requests.get(img_url, stream=True).raw)
+    if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
+        image = image.resize((1540, 1540))
+
     conversation = [
         {
             "role": "user",
