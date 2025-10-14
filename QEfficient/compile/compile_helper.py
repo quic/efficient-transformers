@@ -13,6 +13,7 @@ import warnings
 from typing import List, Optional, Tuple
 
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.utils import constants
 from QEfficient.utils._utils import load_json, load_yaml
 from QEfficient.utils.logging_utils import logger
 
@@ -59,6 +60,61 @@ def compile_kv_model_on_cloud_ai_100(
     device_group: Optional[List[int]] = None,
     **kwargs,
 ) -> Tuple[bool, str]:
+    """
+    Compiles an ONNX Key-Value (KV) model for Cloud AI 100 hardware using `qaic-exec`.
+
+    This function sets up and executes the Qualcomm AI 100 compiler with various options
+    to generate a QPC package.
+
+    Parameters
+    ----------
+    onnx_path : str
+        Path to the ONNX model file to be compiled.
+    specializations_json : str
+        Path to the JSON file defining compilation specializations (batch size, sequence length, etc.).
+    num_cores : int
+        Number of cores to use for compilation on Cloud AI 100.
+    base_path : str
+        Base directory where QPC binaries will be stored (a `qpcs` subdirectory will be created).
+    mxfp6 : bool
+        If True, enables MXFP6 precision for MatMul weights.
+    custom_io_path : str
+        Path to the Custom IO list file (e.g., YAML format) specifying input/output data types.
+    aic_enable_depth_first : bool
+        If True, enables Depth-First Search (DFS) optimization with default memory size.
+    allow_mxint8_mdp_io : bool
+        If True, allows MXINT8 compression of MDP IO traffic.
+
+    Other Parameters
+    ----------------
+    mos : int, optional
+        Effort level to reduce on-chip memory. A value greater than 0 applies this effort. Default is -1 (no effort).
+    device_group : List[int], optional
+        List of device IDs for multi-device compilation (tensor slicing). If `len(device_group) > 1`,
+        a multi-device partition configuration is generated. Default is None.
+    **kwargs :
+        Additional compiler options passed directly to `qaic-exec`. These are formatted as
+        `-key=value` or `-key` for boolean flags.
+
+    Returns
+    -------
+    Tuple[bool, str]
+        A tuple containing:
+        - bool: True if compilation was successful, False otherwise.
+        - str: Path to the generated QPC binary directory.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the `specializations_json` or `custom_io_path` files are not found.
+    RuntimeError
+        If the `qaic-exec` compilation process fails.
+
+    Warnings
+    --------
+    DeprecationWarning
+        This method will be removed soon; use `QEFFAutoModelForCausalLM.compile` instead.
+    """
     warnings.warn(
         "\033[93mUse `QEFFAutoModelForCausalLM.compile` instead, this method will be removed soon.\033[0m",
         DeprecationWarning,
@@ -77,7 +133,7 @@ def compile_kv_model_on_cloud_ai_100(
         "/opt/qti-aic/exec/qaic-exec",
         f"-m={onnx_path}",
         "-aic-hw",
-        "-aic-hw-version=2.0",
+        f"-aic-hw-version={kwargs.pop('aic_hw_version', kwargs.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}",
         f"-network-specialization-config={specializations_json}",
         "-convert-to-fp16",
         "-retained-state",
@@ -144,33 +200,77 @@ def compile(
     **kwargs,
 ) -> str:
     """
-    Compiles the given ``ONNX`` model using Cloud AI 100 platform SDK compiler and saves the compiled ``qpc`` package at ``qpc_path``.
-    Generates tensor-slicing configuration if multiple devices are passed in ``device_group``.
+    Compiles the given ONNX model using either the Cloud AI 100 platform SDK compiler
+    or the QNN compiler, and saves the compiled QPC package.
 
-    This function will be deprecated soon and will be replaced by ``QEFFAutoModelForCausalLM.compile``.
+    This function handles the creation of specialization files, selection of custom IO
+    configurations, and execution of the appropriate compiler (QAIC or QNN).
+    It supports multi-device compilation for tensor slicing.
 
-    ``Mandatory`` Args:
-        :onnx_path (str): Generated ``ONNX`` Model Path.
-        :qpc_path (str): Path for saving compiled qpc binaries.
-        :num_cores (int): Number of cores to compile the model on.
-    ``Optional`` Args:
-        :device_group (List[int]): Used for finding the number of devices to compile for. ``Defaults to None.``
-        :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
-        :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
-        :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``
-        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Default to None``
-        :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32``
-        :ctx_len (int): Maximum context length to compile the model. ``Defaults to 128``
-        :mxfp6 (bool): Enable compilation for ``MXFP6`` precision.  ``Defaults to True.``
-        :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``
-        :custom_io_file_path (str): Path to ``customIO`` file (formatted as a string). ``Defaults to None.``
-        :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic ``Defaults to False.``
-        :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
-        :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+    Parameters
+    ----------
+    onnx_path : str
+        Path to the generated ONNX model file.
+    qpc_path : str
+        Target directory path for saving the compiled QPC binaries.
+    num_cores : int
+        Number of cores to use for compilation.
 
-    Returns:
-        :str: Path to compiled ``qpc`` package.
+    Other Parameters
+    ----------------
+    device_group : List[int], optional
+        List of device IDs. Used to determine the number of devices for multi-device compilation.
+        Default is None.
+    aic_enable_depth_first : bool, optional
+        If True, enables Depth-First Search (DFS) optimization with default memory size during QAIC compilation.
+        Default is False.
+    mos : int, optional
+        Effort level to reduce on-chip memory during QAIC compilation. A value greater than 0 applies this effort.
+        Default is -1 (no effort).
+    batch_size : int, optional
+        Batch size to compile the model for. Default is 1.
+    full_batch_size : int, optional
+        Sets the full batch size to enable continuous batching mode. If provided, `batch_size` must be 1.
+        Default is None.
+    prompt_len : int, optional
+        Prompt length for the model to compile. Default is 32.
+    ctx_len : int, optional
+        Maximum context length to compile the model for. Default is 128.
+    mxfp6 : bool, optional
+        If True, enables MXFP6 precision for MatMul weights during compilation. Default is True.
+    mxint8 : bool, optional
+        If True, compresses Present/Past KV to MXINT8 using a CustomIO configuration. Default is False.
+    custom_io_file_path : str, optional
+        Explicit path to a Custom IO file (e.g., YAML format). If None, it's inferred based on `mxint8`.
+        Default is None.
+    allow_mxint8_mdp_io : bool, optional
+        If True, allows MXINT8 compression of MDP IO traffic during QAIC compilation. Default is False.
+    enable_qnn : bool, optional
+        If True, enables compilation using the QNN compiler instead of QAIC. Default is False.
+    qnn_config : str, optional
+        Path to the QNN Config parameters file, used if `enable_qnn` is True. Default is None.
+    **kwargs :
+        Additional compiler options passed directly to the chosen compiler.
+
+    Returns
+    -------
+    str
+        Path to the compiled QPC package directory.
+
+    Raises
+    ------
+    ValueError
+        If both `batch_size` and `full_batch_size` are greater than one (mutually exclusive in some contexts).
+    FileNotFoundError
+        If required Custom IO files are not found.
+
+    Warnings
+    --------
+    DeprecationWarning
+        This method will be removed soon; use `QEFFAutoModelForCausalLM.compile` instead.
+
     """
+
     if full_batch_size and batch_size != 1:
         raise ValueError("Only either batch_size or full_batch_size should be greater than one")
 
@@ -185,11 +285,20 @@ def compile(
         full_batch_size=full_batch_size,
     )
 
-    # Select the customIO config based on the mx flag.
-    custom_io_file_name = "custom_io_int8.yaml" if mxint8 else "custom_io_fp16.yaml"
+    dtype_suffix = "int8" if mxint8 else "fp16"
+    source_path = f"./custom_io_{dtype_suffix}.yaml"
+    destination_path = os.path.join(os.path.dirname(qpc_path), f"custom_io_{dtype_suffix}.yaml")
 
+    # Move the custom YAML file to the cache/qeff_model directory
+    try:
+        shutil.move(source_path, destination_path)
+        print(f"Successfully moved '{source_path}' to '{destination_path}'.")
+    except Exception as e:
+        print(f"Error while moving file '{source_path}': {e}")
+
+    custom_io_file_name = f"custom_io_{dtype_suffix}.yaml"
     if custom_io_file_path is None:
-        custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
+        custom_io_file_path = os.path.join(os.path.dirname(qpc_path), custom_io_file_name)
 
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(

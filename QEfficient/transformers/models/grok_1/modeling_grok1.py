@@ -86,20 +86,14 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, layer_idx)
+            kv_seq_len = past_key_value.get_seq_length(layer_idx)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-            }  # Specific to RoPE models
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, layer_idx, cache_kwargs)
 
         # repeat k/v heads if n_kv_heads < n_heads

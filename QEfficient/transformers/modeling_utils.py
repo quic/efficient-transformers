@@ -50,6 +50,7 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
+    LlamaRotaryEmbedding,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -93,7 +94,7 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 # Placeholder for all non-transformer models
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
-    QeffCodeGenBlock,
+    QEffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
@@ -122,6 +123,7 @@ from .models.llama.modeling_llama import (
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+    QEffLlamaRotaryEmbedding,
 )
 from .models.mistral.modeling_mistral import (
     QEffMistralAttention,
@@ -204,6 +206,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     LlamaForCausalLM: QEffLlamaForCausalLM,
     LlamaDecoderLayer: QEffLlamaDecoderLayer,
     LlamaRMSNorm: CustomRMSNormAIC,
+    LlamaRotaryEmbedding: QEffLlamaRotaryEmbedding,
     # Gemma model layers
     GemmaModel: QEffGemmaModel,
     GemmaAttention: QEffGemmaAttention,
@@ -225,7 +228,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     CodeGenAttention: QEffCodeGenAttention,
     CodeGenModel: QEffCodeGenModel,
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
-    CodeGenBlock: QeffCodeGenBlock,
+    CodeGenBlock: QEffCodeGenBlock,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
     MistralDecoderLayer: QEffMistralDecoderLayer,

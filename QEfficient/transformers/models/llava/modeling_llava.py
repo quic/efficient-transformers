@@ -49,6 +49,7 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         self.model = model
         self.config = self.model.config
         self.language_model = self.model.language_model
+        self.lm_head = self.model.lm_head
 
     def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
@@ -60,14 +61,19 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         vision_embeds_expanded = vision_embeds[indices0, indices1]
         vision_embeds_expanded = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, vision_embeds_expanded)
-        outputs = self.model.language_model(
+        outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            return_dict=True,
         )
 
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        logits = self.lm_head(hidden_states)
+        logits = logits.float()
+        return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
@@ -104,9 +110,15 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             position_ids=position_ids,
             past_key_values=past_key_values,
         )
+
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        logits = self.lm_head(hidden_states)
+        logits = logits.float()
+
         next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
-        return outputs.logits, pixel_values, image_idx, outputs.past_key_values
+        return logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
         num_layers = self.config.text_config.num_hidden_layers
