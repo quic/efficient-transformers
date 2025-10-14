@@ -97,7 +97,10 @@ INTERN_IMG_SIZE = 448
 INTERN_CTX_LEN = 4096
 INTERN_PREFILL_SEQ_LEN = INTERN_CTX_LEN - 256  # 4096-256
 INTERN_NUM_CHANNELS = 3
+
 INTERN_IMG_CONTEXT_TOKEN = 151667
+# Specific to InternVL3_5 series, same token won't work for InternVL2_5 series
+INTERN_3_5_IMG_CONTEXT_TOKEN = 151671
 
 # Granite Vision Constants
 # Fixing the feature size with reference to ibm-granite/granite-vision-3.2-2b

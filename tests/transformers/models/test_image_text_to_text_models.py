@@ -135,6 +135,16 @@ intern_model_config = [
         "Please describe the image in detail.",
         2,
     ),
+    (
+        "OpenGVLab/InternVL3_5-1B",
+        True,
+        1,
+        384,
+        512,
+        "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
+        "Please describe the image in detail.",
+        2,
+    ),
     # (
     #     "OpenGVLab/InternVL2_5-1B",
     #     False,
@@ -306,10 +316,39 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
     processor = InternProcessor(model_hf, tokenizer)
-    img = requests.get(img_url, stream=True)
-    image = Image.open(BytesIO(img.content)).convert("RGB")
-    image = image.resize((448, 448))
 
+    prompt = [query]
+    img_url = [img_url]
+    pixel_values = []
+    num_patches_list = []
+    questions = []
+    for i in range(len(prompt)):
+        img = requests.get(img_url[i], stream=True)
+        image = Image.open(BytesIO(img.content)).convert("RGB")
+
+        image = image.resize((448, 448))
+
+        # preprocess the resized image
+        pixel_value = processor.load_image(image, max_num=12)
+        num_patches_list.append(pixel_value.shape[0])
+        pixel_values.append(pixel_value)
+
+        question = "<image>\n" + prompt[i]
+        questions.append(question)
+
+    pixel_values = torch.cat(pixel_values, dim=0)
+
+    # Chat Template information for prompt preprocessing
+    messages: List[List[str]] = []
+    roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+    prompt = processor(pixel_values, questions, messages, roles, num_patches_list=num_patches_list)
+
+    inputs = tokenizer(prompt, return_tensors="pt")
+    batch_size, prompt_len = inputs["input_ids"].shape
+    inputs["pixel_values"] = pixel_values.clone()
+
+    generation_config = dict(max_new_tokens=max_gen_len, do_sample=False)
+    generation_config["eos_token_id"] = tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
     api_runner = ApiRunnerInternVL(
         batch_size,
         processor,
@@ -321,19 +360,6 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         max_gen_len,
         n_layer,
     )
-    pixel_values = processor.load_image(image, max_num=12)
-    question = "<image>\n" + query
-    # Chat Template information for prompt preprocessing
-    messages: List[List[str]] = []
-    roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
-    prompt = processor(pixel_values, question, messages, roles)
-
-    inputs = tokenizer(prompt, return_tensors="pt")
-    batch_size, prompt_len = inputs["input_ids"].shape
-    inputs["pixel_values"] = pixel_values.clone()
-
-    generation_config = dict(max_new_tokens=max_gen_len, do_sample=False)
-    generation_config["eos_token_id"] = tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
 
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
