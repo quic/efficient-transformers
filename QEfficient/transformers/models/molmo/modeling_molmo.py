@@ -112,6 +112,35 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, config, unsqueeze_di
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
+def scaled_dot_product_attention(
+    query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False
+) -> torch.Tensor:
+    L, S = query.size(-2), key.size(-2)
+    scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
+    attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
+    if is_causal:
+        assert attn_mask is None
+        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+        attn_bias.to(query.dtype)
+
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
+        else:
+            attn_bias = attn_mask + attn_bias
+
+    if enable_gqa:
+        key = key.repeat_interleave(query.size(-3) // key.size(-3), -3)
+        value = value.repeat_interleave(query.size(-3) // value.size(-3), -3)
+
+    attn_weight = query @ key.transpose(-2, -1) * scale_factor
+    attn_weight += attn_bias
+    attn_weight = torch.softmax(attn_weight, dim=-1)
+    attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
+    return attn_weight @ value
+
+
 class QEffMolmoRotaryEmbedding(nn.Module):
     """
     Copied from Olmo2RotaryEmbedding: https://github.com/huggingface/transformers/blob/main/src/transformers/models/olmo2/modeling_olmo2.py
@@ -149,6 +178,59 @@ class QEffMolmoRotaryEmbedding(nn.Module):
         )
 
 
+class QEffMultiHeadDotProductAttention(nn.Module):
+    def forward(self, inputs_q: torch.Tensor, inputs_kv: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if inputs_kv is not None:
+            inputs_k = inputs_kv
+            inputs_v = inputs_kv
+        else:
+            inputs_k = inputs_q
+            inputs_v = inputs_q
+
+        xq, xk, xv = self.wq(inputs_q), self.wk(inputs_k), self.wv(inputs_v)
+
+        xq = self._split_heads(xq, self.num_heads)
+        xk = self._split_heads(xk, self.num_key_value_heads)
+        xv = self._split_heads(xv, self.num_key_value_heads)
+
+        if self.num_heads != self.num_key_value_heads:
+            xk = xk.repeat_interleave(self.num_key_value_groups, dim=2, output_size=self.num_heads)
+            xv = xv.repeat_interleave(self.num_key_value_groups, dim=2, output_size=self.num_heads)
+
+        og_dtype = xq.dtype
+
+        if self.config.float32_attention:
+            xq = xq.to(torch.float)
+            xk = xk.to(torch.float)
+
+        if self.config.attention_type == "direct":
+            attn_weights = torch.einsum("...qhd,...khd->...hqk", xq / math.sqrt(xq.size(-1)), xk)
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(xq.dtype)
+            if self.attention_dropout is not None:
+                attn_weights = self.attention_dropout(attn_weights)
+            attn_output = torch.einsum("...hqk,...khd->...qhd", attn_weights.to(xv.dtype), xv)
+
+        elif self.config.attention_type == "sdpa":
+            if self.config.float32_attention and not torch.is_autocast_enabled():
+                xv = xv.to(torch.float32)
+
+            attn_output = scaled_dot_product_attention(
+                xq.transpose(1, 2).contiguous(),
+                xk.transpose(1, 2).contiguous(),
+                xv.transpose(1, 2).contiguous(),
+                is_causal=False,
+                dropout_p=self.config.vision_backbone.attention_dropout,
+            ).transpose(1, 2)
+        else:
+            raise NotImplementedError(self.config.attention_type)
+        attn_output = attn_output.to(og_dtype)
+        attn_output = self._merge_heads(attn_output)
+        attn_output = self.wo(attn_output)
+        attn_output = self.residual_dropout(attn_output)
+
+        return attn_output
+
+
 class QEffMolmoBlock(nn.Module):
     def __qeff_init__(self):
         self.rotary_emb = QEffMolmoRotaryEmbedding(config=self.config)
@@ -182,17 +264,16 @@ class QEffMolmoBlock(nn.Module):
         v = v.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads).transpose(1, 2)
 
         if self.config.use_position_ids and self.config.rope:
-            # Apply rotary embeddings
             kv_seq_len = k.shape[-2]
+            kv_seq_len = layer_past.get_seq_length(self.layer_id)
             # Apply rotary embeddings
-            kv_seq_len = layer_past.get_usable_length(kv_seq_len, self.layer_id)
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
 
         if not self.config.use_position_ids and self.config.rope:
             kv_seq_len = k.shape[-2]
+            kv_seq_len = layer_past.get_seq_length(kv_seq_len, self.layer_id)
             # Apply rotary embeddings
-            kv_seq_len = layer_past.get_usable_length(kv_seq_len, self.layer_id)
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
 
@@ -568,7 +649,9 @@ class QEffMolmoModel(nn.Module):
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        img_size: int,
+        num_images: int = None,
+        img_size: int = None,
+        valid_size: int = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -577,9 +660,12 @@ class QEffMolmoModel(nn.Module):
 
         img_size = 588
         img_tile = 576
-        num_images = 5
         num_patch = 144
-        valid_size = 544
+
+        if None in (num_images, valid_size):
+            num_images = 5
+            valid_size = 544
+
         vision = [
             {
                 "batch_size": batch_size,
@@ -597,25 +683,22 @@ class QEffMolmoModel(nn.Module):
             "batch_size": batch_size,
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
+            "valid_size": valid_size,
         }
 
-        lang_decode = {
-            "batch_size": batch_size,
-            "seq_len": "1",
-            "ctx_len": ctx_len,
-        }
+        lang_decode = {"batch_size": batch_size, "seq_len": "1", "ctx_len": ctx_len, "valid_size": valid_size}
 
-        if not kv_offload:
-            lang_prefill["img_size"] = img_size
-            lang_prefill["img_tile"] = img_tile
-            lang_prefill["num_images"] = num_images
-            lang_prefill["num_patch"] = num_patch
-            lang_prefill["valid_size"] = valid_size
-            lang_decode["img_size"] = img_size
-            lang_decode["img_tile"] = img_tile
-            lang_decode["num_images"] = num_images
-            lang_decode["num_patch"] = num_patch
-            lang_decode["valid_size"] = valid_size
+        if kv_offload:
+            values = {
+                "img_size": img_size,
+                "img_tile": img_tile,
+                "num_images": num_images,
+                "num_patch": num_patch,
+            }
+
+            for key, value in values.items():
+                lang_prefill[key] = value
+                lang_decode[key] = value
 
         lang = []
         lang.append(lang_prefill)
@@ -635,6 +718,7 @@ class QEffMolmoModel(nn.Module):
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
+        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "valid_size"}
 
         vision_dynamic_axes["pixel_values"] = {0: "batch_size", 1: "num_images", 2: "img_tile", 3: "img_size"}
         vision_dynamic_axes["image_input_idx"] = {0: "batch_size", 1: "num_images", 2: "num_patch"}

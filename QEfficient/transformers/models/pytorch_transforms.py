@@ -306,6 +306,7 @@ from QEfficient.transformers.models.molmo.modeling_molmo import (
     QEffMolmoBlock,
     QEffMolmoModel,
     QEffMolmoSequentialBlock,
+    QEffMultiHeadDotProductAttention,
 )
 from QEfficient.transformers.models.mpt.modeling_mpt import (
     QEffMptAttention,
@@ -677,6 +678,9 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "MolmoBlock": {
             "attention": QEffMolmoBlock.attention,
             "__qeff_init__": QEffMolmoBlock.__qeff_init__,
+        },
+        "MultiHeadDotProductAttention": {
+            "forward": QEffMultiHeadDotProductAttention.forward,
         },
         # Mapping for grok1 model
         "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
