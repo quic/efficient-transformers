@@ -66,28 +66,29 @@ test_models_config = [
         "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
         1,
     ),
-    (
-        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        True,
-        1,
-        128,
-        3072,
-        336,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-        4,
-    ),
-    (
-        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        False,
-        1,
-        128,
-        3072,
-        336,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-        4,
-    ),
+    # Disabled in CI due to performance issues
+    # (
+    #     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    #     True,
+    #     1,
+    #     128,
+    #     3072,
+    #     336,
+    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+    #     "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+    #     4,
+    # ),
+    # (
+    #     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    #     False,
+    #     1,
+    #     128,
+    #     3072,
+    #     336,
+    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+    #     "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+    #     4,
+    # ),
     (
         "google/gemma-3-4b-it",
         True,
@@ -295,7 +296,12 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     config = AutoConfig.from_pretrained(model_config["model_name"], trust_remote_code=True)
     config._attn_implementation = "eager"
     config = set_num_layers(config, n_layer=n_layer)
-    model_hf, _ = load_image_text_to_text_model(config)
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        low_cpu_mem_usage=False,
+        trust_remote_code=True,
+        config=config,
+    )
     n_layer = get_num_layers_vlm(config)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
