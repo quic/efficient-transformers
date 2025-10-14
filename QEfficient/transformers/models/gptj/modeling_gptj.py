@@ -134,14 +134,7 @@ class QEffGPTJAttention(GPTJAttention):
         query = query.permute(0, 2, 1, 3)
 
         if layer_past is not None:
-            cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
-                "position_ids": position_ids,
-                "batch_index": batch_index,
-                "partial_rotation_size": self.rotary_dim,
-                "cache_position": cache_position,
-            }
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             key, value = layer_past.update(key, value, self.layer_idx, cache_kwargs)
 
         # compute self-attention: V x Softmax(QK^T)
@@ -150,11 +143,7 @@ class QEffGPTJAttention(GPTJAttention):
         attn_output = self.out_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
 
-        outputs = (attn_output, layer_past)
-        if output_attentions:
-            outputs += (attn_weights,)
-
-        return outputs  # a, present, (attentions)
+        return attn_output, attn_weights
 
 
 class QEffGPTJBlock(GPTJBlock):
@@ -172,7 +161,7 @@ class QEffGPTJBlock(GPTJBlock):
     ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]]]:
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
-        attn_outputs = self.attn(
+        attn_outputs, attn_weights = self.attn(
             hidden_states=hidden_states,
             layer_past=layer_past,
             attention_mask=attention_mask,
@@ -183,18 +172,11 @@ class QEffGPTJBlock(GPTJBlock):
             output_attentions=output_attentions,
             cache_position=cache_position,
         )
-        attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
-        outputs = attn_outputs[1:]
 
         feed_forward_hidden_states = self.mlp(hidden_states)
-        hidden_states = attn_output + feed_forward_hidden_states + residual
+        hidden_states = attn_outputs + feed_forward_hidden_states + residual
 
-        if use_cache:
-            outputs = (hidden_states,) + outputs
-        else:
-            outputs = (hidden_states,) + outputs[1:]
-
-        return outputs  # hidden_states, present, (attentions)
+        return hidden_states, attn_weights
 
 
 class QEffGPTJModel(GPTJModel):
@@ -311,6 +293,7 @@ class QEffGPTJModel(GPTJModel):
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache() if use_cache else None
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
