@@ -139,6 +139,13 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Model,
     Qwen2RMSNorm,
 )
+from transformers.models.qwen3.modeling_qwen3 import (
+    Qwen3Attention,
+    Qwen3DecoderLayer,
+    Qwen3ForCausalLM,
+    Qwen3Model,
+    Qwen3RMSNorm,
+)
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
     Qwen3MoeDecoderLayer,
@@ -147,13 +154,6 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeRMSNorm,
     Qwen3MoeRotaryEmbedding,
     Qwen3MoeSparseMoeBlock,
-)
-from transformers.models.qwen3.modeling_qwen3 import (
-    Qwen3Attention,
-    Qwen3DecoderLayer,
-    Qwen3ForCausalLM,
-    Qwen3Model,
-    Qwen3RMSNorm,
 )
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
@@ -325,6 +325,12 @@ from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2ForCausalLM,
     QEffQwen2Model,
 )
+from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
+    QEffQwen3Attention,
+    QEffQwen3DecoderLayer,
+    QEffQwen3ForCausalLM,
+    QEffQwen3Model,
+)
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeAttention,
     QEffQwen3MoeDecoderLayer,
@@ -332,12 +338,6 @@ from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeModel,
     QEffQwen3MoeRotaryEmbedding,
     QEffQwen3MoeSparseMoeBlock,
-)
-from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
-    QEffQwen3Attention,
-    QEffQwen3DecoderLayer,
-    QEffQwen3ForCausalLM,
-    QEffQwen3Model,
 )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
