@@ -10,8 +10,13 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutput
-from transformers.models.mistral3.modeling_mistral3 import Mistral3ForConditionalGeneration
+from transformers.models.mistral3.modeling_mistral3 import (
+    Mistral3ForConditionalGeneration,
+    Mistral3Model,
+    Mistral3ModelOutputWithPast,
+)
 from transformers.models.pixtral.modeling_pixtral import PixtralVisionModel, position_ids_in_meshgrid
 
 from QEfficient.utils import constants
@@ -93,6 +98,51 @@ class QEffPixtralVisionModel(PixtralVisionModel):
         return out
 
 
+class QEffMistral3Model(Mistral3Model):
+    def forward(
+        self,
+        input_ids: torch.LongTensor = None,
+        pixel_values: torch.FloatTensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        vision_feature_layer: Optional[Union[int, list[int]]] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        image_sizes: torch.Tensor = None,
+        **kwargs,
+    ) -> Union[tuple, Mistral3ModelOutputWithPast]:
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.language_model(
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=True,
+            cache_position=cache_position,
+            **kwargs,
+        )
+
+        return Mistral3ModelOutputWithPast(
+            last_hidden_state=outputs.last_hidden_state,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+
 class QEFFMistral3EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -106,7 +156,7 @@ class QEFFMistral3EncoderWrapper(nn.Module):
             vision_feature_layer=self.model.config.vision_feature_layer,
             image_sizes=image_sizes,
         )
-        return image_features
+        return image_features[0]
 
 
 class QEFFMistral3DecoderWrapper(nn.Module):
@@ -125,14 +175,20 @@ class QEFFMistral3DecoderWrapper(nn.Module):
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
         image_features_expanded = vision_embeds.unsqueeze(0)[indices0, indices1]
         inputs_embeds_1 = torch.where(mask.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        outputs = self.model.language_model(
+        outputs = self.model.model(
             inputs_embeds=inputs_embeds_1,
             position_ids=position_ids,
             past_key_values=past_key_values,
         )
+
+        # Cast to int32 to avoid ONNXRT issue
+        logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        logits = self.model.lm_head(hidden_states).float()
+
         next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
-        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
+        return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
@@ -150,7 +206,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             vision_feature_layer=self.config.vision_feature_layer,
             image_sizes=image_sizes,
         )
-        image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
+        image_features = image_features[0].to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
@@ -158,15 +214,21 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         image_features_expanded = image_features.unsqueeze(0)[indices0, indices1]
         image_embeds = torch.where(mask.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
+
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
         )
+        # Cast to int32 to avoid ONNXRT issue
+        logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        logits = self.lm_head(hidden_states).float()
+
         next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
 
-        return outputs.logits, pixel_values, image_idx, outputs.past_key_values
+        return logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
         inputs_shapes = {}

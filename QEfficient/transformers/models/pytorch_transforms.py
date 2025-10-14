@@ -829,6 +829,7 @@ from transformers.models.mistral.modeling_mistral import (
 )
 from transformers.models.mistral3.modeling_mistral3 import (
     Mistral3ForConditionalGeneration,
+    Mistral3Model,
     Mistral3RMSNorm,
 )
 from transformers.models.mixtral.modeling_mixtral import (
@@ -1013,6 +1014,7 @@ from QEfficient.transformers.models.mistral.modeling_mistral import (
 )
 from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
     QEffMistral3ForConditionalGeneration,
+    QEffMistral3Model,
     QEffPixtralVisionModel,
 )
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
@@ -1212,6 +1214,7 @@ class KVCacheTransform(ModuleMappingTransform):
         MistralForCausalLM: QEffMistralForCausalLM,
         # Mistral3
         Mistral3ForConditionalGeneration: QEffMistral3ForConditionalGeneration,
+        Mistral3Model: QEffMistral3Model,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
