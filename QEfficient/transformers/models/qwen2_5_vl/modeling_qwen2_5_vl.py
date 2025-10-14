@@ -14,7 +14,9 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLAttention,
     Qwen2_5_VLConfig,
     Qwen2_5_VLDecoderLayer,
+    Qwen2_5_VLModelOutputWithPast,
     Qwen2_5_VLRotaryEmbedding,
+    Qwen2_5_VLTextModel,
     Qwen2_5_VLVisionAttention,
     apply_rotary_pos_emb_vision,
     repeat_kv,
@@ -393,6 +395,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -406,7 +409,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         value_states = value_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
 
         kv_seq_len = key_states.shape[-2]
-        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
@@ -490,7 +493,7 @@ class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
-            # position_embeddings=position_embeddings,
+            **kwargs,
         )
         hidden_states = residual + hidden_states
 
@@ -511,7 +514,7 @@ class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
         return outputs
 
 
-class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
+class QEffQwen2_5_VLTextModel(Qwen2_5_VLTextModel):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -525,6 +528,7 @@ class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -571,6 +575,7 @@ class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                **kwargs,
             )
 
             hidden_states = layer_outputs[0]
@@ -587,11 +592,64 @@ class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
-        # Cast to INT32 to avoid issue while running in ONNXRT
-        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = hidden_states[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+        return BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=past_key_values,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attns,
+        )
 
         return (hidden_states, past_key_values)
+
+
+class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ) -> Union[Tuple, BaseModelOutputWithPast]:
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if inputs_embeds is None:
+            inputs_embeds = self.get_input_embeddings()(input_ids)
+
+        outputs = self.language_model(
+            input_ids=None,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            batch_index=batch_index,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=True,
+            cache_position=cache_position,
+            **kwargs,
+        )
+
+        output = Qwen2_5_VLModelOutputWithPast(
+            last_hidden_state=outputs.last_hidden_state,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            rope_deltas=self.rope_deltas,
+        )
+        return output if return_dict else output.to_tuple()
 
 
 class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
@@ -613,7 +671,7 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.language_model = self.model.model
+        self.language_model = self.model.model.language_model
 
     def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
@@ -628,10 +686,13 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         outputs = self.model.model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        logits = self.model.lm_head(outputs[0])
+
+        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+        logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
 
-        return logits, vision_embeds, image_idx, outputs[1]
+        return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):

@@ -15,11 +15,11 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
+## For AWQ model update pytorch version to 2.8.*
 model_id = "Qwen/Qwen2.5-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
-# For Testing Purpose Only
-config.num_hidden_layers = 1
+## Use complete model without changing num_hidden_layers as it will not work for TF version 4.55.0 for Qwen2.5VL model
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -28,7 +28,7 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
-skip_vision = True
+skip_vision = False
 
 if skip_vision:
     ## Only Text ##
@@ -152,7 +152,7 @@ else:
 
     inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
 
-    pos_ids, rope_deltas = qeff_model.model.get_rope_index(
+    pos_ids, rope_deltas = qeff_model.model.model.get_rope_index(
         inputs["input_ids"],
         inputs["image_grid_thw"],
         video_grid_thw=None,
