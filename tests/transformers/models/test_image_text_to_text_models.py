@@ -159,16 +159,17 @@ intern_model_config = [
 ]
 
 molmo_model_config = [
-    (
-        "allenai/Molmo-7B-D-0924",
-        True,
-        1,
-        128,
-        4096,
-        "https://picsum.photos/id/237/536/354",
-        "Can you describe the image in detail.",
-        2,
-    ),
+    # Disabled in CI due to HF issues
+    # (
+    #     "allenai/Molmo-7B-D-0924",
+    #     True,
+    #     1,
+    #     128,
+    #     4096,
+    #     "https://picsum.photos/id/237/536/354",
+    #     "Can you describe the image in detail.",
+    #     2,
+    # ),
 ]
 
 
