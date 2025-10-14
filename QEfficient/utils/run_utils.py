@@ -457,3 +457,36 @@ class ApiRunnerInternVL(ApiRunnerVlm):
         print("Original HF Model Outputs (Torch CPU):")
         print("Completion:", repr(py_output))
         return generated_ids
+
+
+class ApiRunnerMolmo(ApiRunnerVlm):
+    """
+    ApiRunner for Molmo models:
+    ---------
+
+    1. HuggingFace ``PyTorch`` model
+    2. Transformed KV Pytorch Model
+    3. ``ONNX`` model on ONNXRT
+    4. ``ONNX`` model on Cloud AI 100
+    """
+
+    def __init__(self, batch_size, processor, config, image, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
+        self.processor = processor
+        self.ctx_len = ctx_len
+        self.prompt_len = prompt_len
+        self.batch_size = batch_size
+        self.config = config
+        self.gen_len = max_gen_len
+
+    @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch(self, model, inputs, generation_config):
+        outputs = model.generate_from_batch(
+            inputs, generation_config, tokenizer=self.processor.tokenizer, do_sample=False
+        )
+
+        generated_ids = outputs[0, inputs["input_ids"].size(1) :]
+
+        py_output = self.processor.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        print("Original HF Model Outputs (Torch CPU):")
+        print("Completion:", repr(py_output))
+        return generated_ids

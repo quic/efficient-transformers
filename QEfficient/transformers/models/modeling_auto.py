@@ -695,7 +695,9 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         dict
             The configuration dictionary.
         """
-        return self.model.model.vision_model.config.__dict__
+        if hasattr(self.model.model, "vision_model"):
+            return self.model.model.vision_model.config.__dict__
+        return self.model.model.config.__dict__
 
 
 class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
@@ -835,7 +837,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         dict
             The configuration dictionary.
         """
-        return self.model.language_model.config.__dict__
+        if hasattr(self.model, "language_model"):
+            return self.model.language_model.config.__dict__
+        return self.model.config.__dict__
 
 
 class _QEffAutoModelForImageTextToTextDualQPC:
@@ -1086,7 +1090,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         custom_io_vision = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
+        if molmo:
+            custom_io_vision["image_masks"] = "float16"
         custom_io_vision["pixel_values"] = "float16"
+
         for output_name in output_names["vision"]:
             if output_name.startswith("past_"):
                 custom_io_vision[output_name] = kv_cache_dtype
@@ -1288,11 +1296,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             inputs[k] = np.array(v)
 
         vision_inputs = {
-            k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
+            k: v
+            for k, v in inputs.items()
+            if k
+            in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
-        if vision_inputs:
-            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
+        vision_inputs_fp16 = {"pixel_values", "image_masks"}
+        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+
         vision_start = perf_counter()
 
         vision_outputs = {}
@@ -1429,7 +1441,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.model.config.llm_config._attn_implementation = "eager"
             self.model.config.vision_config.use_flash_attn = "false"
         else:
-            self.model.config.text_config.use_cache = True
+            if hasattr(self.model.config, "text_config"):
+                self.model.config.text_config.use_cache = True
+            else:
+                self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     @classmethod
@@ -1980,7 +1995,10 @@ class QEFFAutoModelForImageTextToText:
         return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
 
-MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
+MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {
+    "InternVLChatModel": QEFFAutoModelForImageTextToText,
+    "MolmoForCausalLM": QEFFAutoModelForImageTextToText,
+}
 
 
 class QEFFAutoModelForCausalLM(QEFFBaseModel):
