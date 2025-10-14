@@ -301,6 +301,13 @@ from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaTextSelfAttention,
     QEffMllamaVisionModel,
 )
+from QEfficient.transformers.models.molmo.modeling_molmo import (
+    QEffMolmo,
+    QEffMolmoBlock,
+    QEffMolmoModel,
+    QEffMolmoSequentialBlock,
+    QEffMultiHeadDotProductAttention,
+)
 from QEfficient.transformers.models.mpt.modeling_mpt import (
     QEffMptAttention,
     QEffMptBlock,
@@ -649,6 +656,32 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+        # Mapping for Molmo
+        "MolmoForCausalLM": {
+            "forward": QEffMolmoModel.forward,
+            "get_qeff_vision_encoder": QEffMolmoModel.get_qeff_vision_encoder,
+            "get_qeff_language_decoder": QEffMolmoModel.get_qeff_language_decoder,
+            "get_specializations": QEffMolmoModel.get_specializations,
+            "get_onnx_dynamic_axes": QEffMolmoModel.get_onnx_dynamic_axes,
+            "get_output_names": QEffMolmoModel.get_output_names,
+            "get_dummy_inputs": QEffMolmoModel.get_dummy_inputs,
+            "get_inputs_info": QEffMolmoModel.get_inputs_info,
+        },
+        "RMSLayerNorm": {"forward": CustomRMSNormAIC.forward},
+        # "MolmoForCausalLM": {"forward": QEffMolmoForCausalLM.forward},
+        "Molmo": {"forward": QEffMolmo.forward},
+        "MolmoSequentialBlock": {
+            "forward": QEffMolmoSequentialBlock.forward,
+            "attention": QEffMolmoBlock.attention,
+            "__qeff_init__": QEffMolmoBlock.__qeff_init__,
+        },
+        "MolmoBlock": {
+            "attention": QEffMolmoBlock.attention,
+            "__qeff_init__": QEffMolmoBlock.__qeff_init__,
+        },
+        "MultiHeadDotProductAttention": {
+            "forward": QEffMultiHeadDotProductAttention.forward,
+        },
         # Mapping for grok1 model
         "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
         "Grok1Model": {
