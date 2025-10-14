@@ -52,27 +52,53 @@ def worker_device_id(request):
     """
     Assigns a unique device ID to each pytest-xdist worker.
     Supports devices 0-5, cycles through them if more workers exist.
-    
+
     Worker 'master' or no worker gets device 0
     Worker 'gw0' gets device 0
     Worker 'gw1' gets device 1
     ...
     Worker 'gw6' gets device 0 (cycles back if needed)
     """
-    worker_id = getattr(request.config, 'workerinput', {}).get('workerid', 'master')
-    
+    worker_id = getattr(request.config, "workerinput", {}).get("workerid", "master")
+
     # Total available devices
     NUM_DEVICES = 6
-    
-    if worker_id == 'master':
+
+    if worker_id == "master":
         device_id = 0
     else:
         # Extract number from 'gw0', 'gw1', etc. and use modulo for cycling
-        worker_num = int(worker_id.replace('gw', ''))
+        worker_num = int(worker_id.replace("gw", ""))
         device_id = worker_num % NUM_DEVICES
-    
+
     logger.info(f"Worker {worker_id} assigned to device {device_id}")
     return [device_id]
+
+
+@pytest.fixture(scope="session")
+def worker_compile_dir(request, tmp_path_factory):
+    """
+    Provides a worker-specific directory for compilation outputs.
+    This prevents race conditions when multiple pytest-xdist workers
+    compile the same model simultaneously.
+
+    Returns:
+        Path: Worker-specific compilation directory
+    """
+    worker_id = getattr(request.config, "workerinput", {}).get("workerid", "master")
+
+    # Create a base directory for this worker
+    if worker_id == "master":
+        # Single worker or non-xdist execution
+        compile_base = tmp_path_factory.getbasetemp() / "compile_outputs"
+    else:
+        # Multi-worker execution - each gets its own directory
+        compile_base = tmp_path_factory.getbasetemp().parent / f"worker_{worker_id}_compile"
+
+    compile_base.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Worker {worker_id} using compile directory: {compile_base}")
+
+    return compile_base
 
 
 def qeff_models_clean_up():
