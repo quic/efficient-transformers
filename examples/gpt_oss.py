@@ -30,7 +30,6 @@ print(f"qpc path is {qpc_path}")
 streamer = TextStreamer(tokenizer)
 exec_info = qeff_model.generate(
     tokenizer,
-    streamer=streamer,
     prompts="Who is your creator? and What all you are allowed to do?",
     device_ids=[0, 1, 2, 3],
 )
