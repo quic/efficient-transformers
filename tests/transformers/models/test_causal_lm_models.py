@@ -51,6 +51,7 @@ test_models_causal = [
     "ibm-granite/granite-guardian-3.1-2b",
     "hpcai-tech/grok-1",
     "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+    "allenai/OLMo-2-0425-1B",
 ]
 
 test_models_qnn = [
@@ -79,7 +80,7 @@ def get_custom_n_layers(model_name):
         return 2
     elif model_name in ModelConfig.SWIFTKV_MODELS:
         return None
-    return 1
+    return 16
 
 
 def load_causal_lm_model(model_name, n_layer=1, config=None):
@@ -184,7 +185,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
         )
-
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
     gen_len = ort_tokens.shape[-1]
