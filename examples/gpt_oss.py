@@ -31,5 +31,5 @@ streamer = TextStreamer(tokenizer)
 exec_info = qeff_model.generate(
     tokenizer,
     prompts="Who is your creator? and What all you are allowed to do?",
-    device_ids=[0, 1, 2, 3],
+    device_id=[0, 1, 2, 3],
 )
