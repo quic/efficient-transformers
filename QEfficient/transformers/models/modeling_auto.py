@@ -1312,9 +1312,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_end = perf_counter()
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-        lang_inputs["position_ids"] = np.where(
-            lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
-        )  # Need to use -1 as position_ids for invalid tokens
+
+        if "position_ids" in inputs:
+            lang_inputs["position_ids"] = inputs["position_ids"]
+            lang_inputs.pop("attention_mask")
+        else:
+            lang_inputs["position_ids"] = np.where(
+                lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
+            )  # Need to use -1 as position_ids for invalid tokens
 
         not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         if not_mllama:
@@ -1335,7 +1340,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         for i in range(num_chunks):
             chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
-                :, i * prefill_seq_len : (i + 1) * prefill_seq_len
+                ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
@@ -1352,7 +1357,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
-        lang_inputs["position_ids"] = input_len.numpy()
+        lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
         if "cross_attention_mask" in lang_inputs:
             bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
             lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
