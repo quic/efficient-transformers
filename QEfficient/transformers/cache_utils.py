@@ -44,7 +44,7 @@ class QEffDynamicLayer(DynamicLayer):
         ctx_indices = torch.arange(ctx_len)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
-
+        breakpoint()
         if torch.onnx.is_in_onnx_export():
             invalid_idx_value = torch.iinfo(torch.int32).max
         else:
@@ -113,6 +113,7 @@ class QEffDynamicLayer(DynamicLayer):
         Return:
             A tuple containing the updated key and value states.
         """
+        # breakpoint()
         # Update the cache
         if self.keys is None:
             self.keys = key_states
@@ -237,15 +238,41 @@ class QEffDynamicCache(DynamicCache):
 
     """
 
-    def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
+    def __init__(
+        self,
+        ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None,
+        config=None,
+        offloading: bool = False,
+        offload_only_non_sliding: bool = False,
+        *args,
+        **kwargs,
+    ):
         # Remove layer_classes if present to avoid duplicate argument
-        kwargs.pop("layer_classes", None)
+        kwargs.pop("layers", None)
         from transformers.cache_utils import Cache  # Import here to avoid circular import
 
-        Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
+        layers = []
+        if len(layers) == 0:
+            Cache.__init__(
+                self,
+                layer_class_to_replicate=QEffDynamicLayer,
+                offloading=offloading,
+                offload_only_non_sliding=offload_only_non_sliding,
+            )
+        else:
+            Cache.__init__(
+                self,
+                layers=layers,
+                offloading=offloading,
+                offload_only_non_sliding=offload_only_non_sliding,
+            )
+
         if ddp_cache_data is not None:
-            for key_states, value_states in ddp_cache_data:
-                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+            for layer_idx, (key_states, value_states) in enumerate(ddp_cache_data):
+                # If the config was not passed above, initialize a DynamicLayer for each entry of the ddp_data
+                layers.append(QEffDynamicLayer())
+                # Update the layer with the data
+                _, _ = layers[layer_idx].update(key_states, value_states)
 
     def read_only(self, layer_idx, cache_kwargs):
         """
@@ -260,6 +287,7 @@ class QEffDynamicCache(DynamicCache):
         Return:
             A tuple containing the updated key and value states.
         """
+        # breakpoint()
         return self.layers[layer_idx].read_only(cache_kwargs)
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
