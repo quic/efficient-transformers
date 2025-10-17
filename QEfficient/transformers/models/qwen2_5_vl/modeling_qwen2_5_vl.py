@@ -775,6 +775,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         img_size: None,
         height: int = None,
         width: int = None,
+        num_frames: int = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -784,6 +785,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             logger.warning(
                 "Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config"
             )
+        if not num_frames:
+            num_frames = 1
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         channel = 3
@@ -845,6 +848,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         grid_width = patch_size * patch_size * temporal_patch_size * channel
         vision_size = grid_height // 4
         grid_height = grid_height * batch_size
+        vision_size = vision_size * num_frames
 
         vision = [
             {
