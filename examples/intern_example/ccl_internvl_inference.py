@@ -251,7 +251,7 @@ if __name__ == "__main__":
     # The Dual QPC approach splits the model to perform Image Encoding and Output generation in 2 different QPCs.
     # The outputs of the Vision Encoder are then passed to the Language model via host in this case.
 
-    kv_offload = False
+    kv_offload = True
 
     # InternVL is an Early-Fusion model that uses placeholder tokens within the input_ids to interleave text_embeddings with
     # Image embeddings and generate final input_embeds for outout generation. Hence we need very large prefill_seq_len (3840 in this case) to
