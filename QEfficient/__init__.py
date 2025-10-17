@@ -8,15 +8,16 @@
 import os
 import warnings
 
+import QEfficient.utils.model_registery  # noqa: F401
 from QEfficient.utils import custom_format_warning
+from QEfficient.utils.logging_utils import logger
 
 # For faster downloads via hf_transfer
 # This code is put above import statements as this needs to be executed before
 # hf_transfer is imported (will happen on line 15 via leading imports)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 # Placeholder for all non-transformer models registered in QEfficient
-import QEfficient.utils.model_registery  # noqa: F401
-from QEfficient.utils.logging_utils import logger
+
 
 # custom warning for the better logging experience
 warnings.formatwarning = custom_format_warning
@@ -43,6 +44,7 @@ if check_qaic_sdk():
     from QEfficient.base import (
         QEFFAutoModel,
         QEFFAutoModelForCausalLM,
+        QEFFAutoModelForCTC,
         QEFFAutoModelForImageTextToText,
         QEFFAutoModelForSpeechSeq2Seq,
         QEFFCommonLoader,
@@ -69,6 +71,7 @@ if check_qaic_sdk():
         "cloud_ai_100_exec_kv",
         "QEFFAutoModel",
         "QEFFAutoModelForCausalLM",
+        "QEFFAutoModelForCTC",
         "QEffAutoPeftModelForCausalLM",
         "QEFFAutoModelForImageTextToText",
         "QEFFAutoModelForSpeechSeq2Seq",

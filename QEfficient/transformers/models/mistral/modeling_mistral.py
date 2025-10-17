@@ -107,7 +107,6 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
-    **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
@@ -145,6 +144,7 @@ class QEffMistralAttention(MistralAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] = None,  # kept here for BC
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -158,15 +158,12 @@ class QEffMistralAttention(MistralAttention):
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
-
-        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -178,12 +175,12 @@ class QEffMistralAttention(MistralAttention):
             value_states,
             attention_mask,
             scaling=self.scaling,
-            **kwargs,
         )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
-        return attn_output, attn_weights, past_key_value
+
+        return attn_output, attn_weights
 
 
 class QEffMistralDecoderLayer(MistralDecoderLayer):
@@ -224,7 +221,7 @@ class QEffMistralDecoderLayer(MistralDecoderLayer):
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states, self_attn_weights, present_key_value = self.self_attn(
+        hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -243,15 +240,7 @@ class QEffMistralDecoderLayer(MistralDecoderLayer):
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
-        outputs = (hidden_states,)
-
-        if output_attentions:
-            outputs += (self_attn_weights,)
-
-        if use_cache:
-            outputs += (present_key_value,)
-
-        return outputs
+        return hidden_states
 
 
 class QEffMistralModel(MistralModel):
@@ -322,7 +311,7 @@ class QEffMistralModel(MistralModel):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            layer_outputs = decoder_layer(
+            hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
@@ -333,11 +322,6 @@ class QEffMistralModel(MistralModel):
                 cache_position=cache_position,
                 **kwargs,
             )
-
-            hidden_states = layer_outputs[0]
-
-            if output_attentions:
-                all_self_attns += (layer_outputs[1],)
 
         hidden_states = self.norm(hidden_states)
 
@@ -405,10 +389,8 @@ class QEffMistralForCausalLM(MistralForCausalLM):
 
         # Cast to int32 to avoid ONNXRT issue
         logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
-
-        logits = self.lm_head(hidden_states)
-        logits = logits.float()
+        hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        logits = self.lm_head(hidden_states).float()
 
         return CausalLMOutputWithPast(
             loss=None,

@@ -31,7 +31,9 @@ test_models_causal = [
     "microsoft/Phi-3-mini-4k-instruct",
     "tiiuae/falcon-7b",
     "Qwen/Qwen2-0.5B",
+    "Qwen/Qwen3-0.6B",
     "bigcode/starcoder2-3b",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Felladrin/Minueza-32M-Base",
     "wtang06/mpt-125m-c4",
     "hakurei/gpt-j-random-tinier",
@@ -49,6 +51,7 @@ test_models_causal = [
     "ibm-granite/granite-guardian-3.1-2b",
     "hpcai-tech/grok-1",
     "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+    "allenai/OLMo-2-0425-1B",
 ]
 
 test_models_qnn = [
@@ -77,7 +80,7 @@ def get_custom_n_layers(model_name):
         return 2
     elif model_name in ModelConfig.SWIFTKV_MODELS:
         return None
-    return 1
+    return 16
 
 
 def load_causal_lm_model(model_name, n_layer=1, config=None):
@@ -142,6 +145,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
+    pytorch_hf_tokens: Optional[list] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -168,8 +172,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         Constants.PROMPT_LEN,
         Constants.CTX_LEN,
     )
-
-    if model_name not in ModelConfig.SWIFTKV_MODELS:
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     is_tlm = False if num_speculative_tokens is None else True
@@ -182,7 +185,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
         )
-
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
     gen_len = ort_tokens.shape[-1]
@@ -231,9 +233,12 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         full_batch_size,
     )
 
-    if model_name not in ModelConfig.SWIFTKV_MODELS:
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
         pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
+
+    if model_name in ModelConfig.EXTERNAL_MODELS:
+        pytorch_hf_tokens = [pytorch_hf_tokens for _ in range(full_batch_size)]
 
     qeff_model = QEFFAutoModelForCausalLM(
         model_hf, continuous_batching=True, is_tlm=is_tlm, pretrained_model_name_or_path=model_name
@@ -282,6 +287,10 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
     new_api_onnx_model_path = qeff_model.export()
+
+    # Again loading model since the export moves model to meta device
+    model, _ = load_causal_lm_model(model_name, n_layer=1)
+    qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
     _, old_api_onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer
     )
@@ -314,11 +323,17 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causa
     """
     config = custom_causal_model_config_dict.get(model_name)
 
+    # Using fixed reference tokens for external models for specific test cases.
+    # These tokens are hardcoded, therefore will not match if the model config changes.
+    pytorch_hf_tokens = None
+    if model_name in ModelConfig.EXTERNAL_MODELS:
+        pytorch_hf_tokens = ModelConfig.EXTERNAL_MODELS[model_name]["pytorch_hf_tokens_custom_case"]
+
     if model_name in ModelConfig.QUANTIZED_MODELS:
         n_layer = get_custom_n_layers(model_name)
-        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer)
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, pytorch_hf_tokens=pytorch_hf_tokens)
     else:
-        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=config)
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=config, pytorch_hf_tokens=pytorch_hf_tokens)
 
 
 @pytest.mark.nightly
@@ -332,7 +347,15 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     n_layer = get_custom_n_layers(model_name)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
+    # Using fixed reference tokens for external models for specific test cases.
+    # These tokens are hardcoded, therefore will not match if the model config changes.
+    pytorch_hf_tokens = None
+    if model_name in ModelConfig.EXTERNAL_MODELS:
+        pytorch_hf_tokens = ModelConfig.EXTERNAL_MODELS[model_name]["pytorch_hf_tokens_normal_case"]
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, pytorch_hf_tokens=pytorch_hf_tokens
+    )
 
 
 @pytest.mark.on_qaic

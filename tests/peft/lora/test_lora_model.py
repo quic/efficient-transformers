@@ -21,14 +21,24 @@ from QEfficient.utils import load_hf_tokenizer
 configs = [
     pytest.param(
         AutoConfig.for_model(
-            "llama", num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, hidden_size=128
+            "llama",
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            hidden_size=128,
+            architectures=["LlamaForCausalLM"],
         ),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
         id="llama-2l-4h-2kvh-128d-qv",
     ),
     pytest.param(
         AutoConfig.for_model(
-            "mistral", num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, hidden_size=128
+            "mistral",
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            hidden_size=128,
+            architectures=["MistralForCausalLM"],
         ),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=6),
         id="mistral-2l-4h-128d-qv",
@@ -112,7 +122,9 @@ def test_auto_lora_model_for_causal_lm_init_from_unsupported_model(base_model_na
         QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
 
 
-# test model hash
+# This test isn't required anymore as different adapter names should generate different hashes. We'll
+# phase out this test in some time.
+@pytest.mark.skip(reason="Different adapter names will create different hashes so we'll skip this test.")
 def test_auto_lora_model_for_causal_lm_hash():
     base_config_0, adapter_config_0 = configs[0].values
     base_config_1, adapter_config_1 = configs[1].values
@@ -213,7 +225,7 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
     qeff_model.export(export_dir=tmp_path)
     end = perf_counter()
     export_time_0 = end - start
-    model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.model_hash)
+    model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.export_hash)
     assert model_path.is_dir()
     assert Path(qeff_model.onnx_path).is_file()
 

@@ -5,12 +5,13 @@ System Requirements:
 3. [SDK Pre-requisites](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/) 
 4. [Multi-device support enabled for model sharding](https://github.com/quic/cloud-ai-sdk/tree/1.12/utils/multi-device)
 
+---
+
 # Installation 
 
-### <small> 1. Download Apps SDK</small>
+## 1. Download Apps SDK
    * [Cloud AI 100 Apps SDK install](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
 
-### <small> 2. Install Efficient-Transformers</small>
 Uninstall existing Apps SDK
 ```
 sudo ./uninstall.sh
@@ -33,6 +34,30 @@ Apply chmod commands
 sudo chmod a+x /opt/qti-aic/dev/hexagon_tools/bin/*
 sudo chmod a+x /opt/qti-aic/exec/*
 ```
+
+---
+
+## 2. Install Efficient-Transformers
+
+### Using GitHub Repository
+
+```{warning}
+Efficient Transformers have been validated to work with the same compatible SDK. Upgrading this may result in certain models becoming incompatible.
+```
+
+```bash
+# Create Python virtual env and activate it. (Required Python 3.10)
+
+python3.10 -m venv qeff_env
+source qeff_env/bin/activate
+pip install -U pip
+
+# Clone and Install the QEfficient Repo.
+pip install git+https://github.com/quic/efficient-transformers
+
+``` 
+
+---
 
 # Sanity Check
 

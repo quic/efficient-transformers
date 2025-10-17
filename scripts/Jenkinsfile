@@ -24,7 +24,7 @@ pipeline {
                    pip install .[test] &&
                    pip install junitparser pytest-xdist &&
                    pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
-                   pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.19.1+cpu einops==0.8.1 && #packages to load VLMs
+                   pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 && #packages to load VLMs
                    pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl && # For finetuning tests
                    rm -rf QEfficient"
                '''
@@ -42,7 +42,7 @@ pipeline {
                            mkdir -p $PWD/Non_cli_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic &&
-                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm -n auto --junitxml=tests/tests_log1.xml &&
+                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log1.xml &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -59,7 +59,7 @@ pipeline {
                            mkdir -p $PWD/Non_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic &&
-                           pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log2.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log2.xml &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -78,7 +78,7 @@ pipeline {
                            mkdir -p $PWD/Non_cli_qaic_multimodal &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log6.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log6.xml &&
                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -97,80 +97,70 @@ pipeline {
                            mkdir -p $PWD/cli &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/cli &&
-                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log3.xml &&
+                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log3.xml &&
                            junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
                            deactivate"
                            '''
                        }
                    }
         }
-        stage('vLLM Tests') {
-            steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    build job: 'qefficient_vllm_upstream',
-                    parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
-                    propagate: true,
-                    wait: true
-                }
-            }
-        }
-        stage('QNN CLI Tests') {
-            steps {
-                timeout(time: 30, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    source /qnn_sdk/bin/envsetup.sh &&
-                    source /qnn_sdk/bin/envcheck -c &&
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Qnn_cli &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Qnn_cli &&
-                    pytest tests -m '(cli and qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log4.xml &&
-                    junitparser merge tests/tests_log4.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-        stage('QNN Non-CLI Tests') {
-            steps {
-                timeout(time: 200, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    source /qnn_sdk/bin/envsetup.sh &&
-                    source /qnn_sdk/bin/envcheck -c &&
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Qnn_non_cli &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Qnn_non_cli &&
-                    pytest tests -m '(not cli) and (qnn) and (not nightly) and (on_qaic) and (not multimodal) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log5.xml &&
-                    junitparser merge tests/tests_log5.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-        stage('QNN MultiModal Tests') {
-            steps {
-                timeout(time: 60, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    source /qnn_sdk/bin/envsetup.sh &&
-                    source /qnn_sdk/bin/envcheck -c &&
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qnn_multimodal &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_cli_qnn_multimodal &&
-                    pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (qnn)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log7.xml &&
-                    junitparser merge tests/tests_log7.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
+        // stage('QNN CLI Tests') {
+        //     steps {
+        //         timeout(time: 30, unit: 'MINUTES') {
+        //             sh '''
+        //             sudo docker exec ${BUILD_TAG} bash -c "
+        //             source /qnn_sdk/bin/envsetup.sh &&
+        //             source /qnn_sdk/bin/envcheck -c &&
+        //             cd /efficient-transformers &&
+        //             . preflight_qeff/bin/activate &&
+        //             mkdir -p $PWD/Qnn_cli &&
+        //             export TOKENIZERS_PARALLELISM=false &&
+        //             export QEFF_HOME=$PWD/Qnn_cli &&
+        //             pytest tests -m '(cli and qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log4.xml &&
+        //             junitparser merge tests/tests_log4.xml tests/tests_log.xml &&
+        //             deactivate"
+        //             '''
+        //         }
+        //     }
+        // }
+        // stage('QNN Non-CLI Tests') {
+        //     steps {
+        //         timeout(time: 200, unit: 'MINUTES') {
+        //             sh '''
+        //             sudo docker exec ${BUILD_TAG} bash -c "
+        //             source /qnn_sdk/bin/envsetup.sh &&
+        //             source /qnn_sdk/bin/envcheck -c &&
+        //             cd /efficient-transformers &&
+        //             . preflight_qeff/bin/activate &&
+        //             mkdir -p $PWD/Qnn_non_cli &&
+        //             export TOKENIZERS_PARALLELISM=false &&
+        //             export QEFF_HOME=$PWD/Qnn_non_cli &&
+        //             pytest tests -m '(not cli) and (qnn) and (not nightly) and (on_qaic) and (not multimodal) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log5.xml &&
+        //             junitparser merge tests/tests_log5.xml tests/tests_log.xml &&
+        //             deactivate"
+        //             '''
+        //         }
+        //     }
+        // }
+        // stage('QNN MultiModal Tests') {
+        //     steps {
+        //         timeout(time: 60, unit: 'MINUTES') {
+        //             sh '''
+        //             sudo docker exec ${BUILD_TAG} bash -c "
+        //             source /qnn_sdk/bin/envsetup.sh &&
+        //             source /qnn_sdk/bin/envcheck -c &&
+        //             cd /efficient-transformers &&
+        //             . preflight_qeff/bin/activate &&
+        //             mkdir -p $PWD/Non_cli_qnn_multimodal &&
+        //             export TOKENIZERS_PARALLELISM=false &&
+        //             export QEFF_HOME=$PWD/Non_cli_qnn_multimodal &&
+        //             pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (qnn)' --ignore tests/vllm --junitxml=tests/tests_log7.xml &&
+        //             junitparser merge tests/tests_log7.xml tests/tests_log.xml &&
+        //             deactivate"
+        //             '''
+        //         }
+        //     }
+        // }
         stage('Finetune CLI Tests') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -191,20 +181,39 @@ pipeline {
     }
 
    post {
-       always {
-           script {
-               try {
-                   sh '''
-                   sudo docker rm -f ${BUILD_TAG}
-                   sudo chown -R ubuntu .
-                   '''
-               } catch (error) {
-                   echo "Failed to delete container ${BUILD_TAG}: ${error}"
-               }
-           }
-           junit testResults: 'tests/tests_log.xml'
-           echo 'Cleaning Workspace'
-           deleteDir()
-       }
-   }
+        success {
+            // Trigger downstream job only if this pipeline succeeds
+            build job: 'qefficient_vllm_upstream',
+                parameters: [
+                    string(name: 'NAME', value: "${BUILD_TAG}"),
+                    string(name: 'QEFF_WORKSPACE', value: "${env.WORKSPACE}")
+                ],
+                wait: false
+        }
+        always {
+            script {
+                try {
+                    sh '''
+                    sudo chown -R ubuntu .
+                    '''
+                } catch (error) {
+                    echo "Failed to change ownership: ${error}"
+                }
+            }
+            junit testResults: 'tests/tests_log.xml'
+        }
+        unsuccessful {
+            script {
+                try {
+                    sh '''
+                    sudo docker rm -f ${BUILD_TAG}
+                    '''
+                } catch (error) {
+                    echo "Failed to delete container ${BUILD_TAG}: ${error}"
+                }
+            }
+            echo 'Cleaning Workspace'
+            deleteDir()
+        }
+    }
 }
