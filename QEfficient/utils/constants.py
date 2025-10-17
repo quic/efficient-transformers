@@ -84,7 +84,7 @@ ONNX_EXPORT_EXAMPLE_TEMPERATURES = 0.80
 ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
 ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
-ONNX_EXPORT_OPSET = 13
+ONNX_EXPORT_OPSET = 17
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw"]
 DEFAULT_AIC_HW_VERSION = "ai100"
@@ -124,6 +124,35 @@ GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
 
 # Wav2Vec2 Constant
 WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16,000 samples/sec × 30 sec)
+
+
+# wo_sfs: weight output scaling factors (used to normalize T5 encoder output weights before export)
+WO_SFS = [
+    61,
+    203,
+    398,
+    615,
+    845,
+    1190,
+    1402,
+    2242,
+    1875,
+    2393,
+    3845,
+    3213,
+    3922,
+    4429,
+    5020,
+    5623,
+    6439,
+    6206,
+    5165,
+    4593,
+    2802,
+    2618,
+    1891,
+    1419,
+]
 
 
 class Constants:
