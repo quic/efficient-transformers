@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,7 +36,9 @@ class QEffInternDecoderWrapper(nn.Module):
         self.config = self.model.language_model.config
         self.language_model = self.model.language_model
 
-    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
+    def forward(
+        self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+    ):
         input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
@@ -55,7 +59,11 @@ class QEffInternDecoderWrapper(nn.Module):
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
         inputs_embeds = inputs_embeds.reshape(B, N, C)
         outputs = self.model.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            use_cache=True,
         )
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
@@ -74,6 +82,8 @@ class QEffInternVLModel(nn.Module):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
+        comp_ctx_lengths_prefill: List[int] = None,
+        comp_ctx_lengths_decode: List[int] = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -104,24 +114,54 @@ class QEffInternVLModel(nn.Module):
                 "batched_num_patches": batch_size * num_patches,
             }
         ]
-        lang = [
-            {
-                "batch_size": batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "num_patches": num_patches,
-                "img_size": img_size,
-                "vision_size": vision_size,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
-                "ctx_len": ctx_len,
-                "num_patches": num_patches,
-                "img_size": img_size,
-                "vision_size": vision_size,
-            },
-        ]
+        if comp_ctx_lengths_prefill and comp_ctx_lengths_decode:
+            lang = []
+
+            for i in range(0, len(comp_ctx_lengths_prefill)):
+                lang.append(
+                    {
+                        "batch_size": batch_size,
+                        "seq_len": prefill_seq_len,
+                        "ctx_len": ctx_len,
+                        "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
+                        "num_patches": num_patches,
+                        "img_size": img_size,
+                        "vision_size": vision_size,
+                    }
+                )
+
+            for i in range(0, len(comp_ctx_lengths_decode)):
+                lang.append(
+                    {
+                        "batch_size": batch_size,
+                        "seq_len": "1",
+                        "ctx_len": ctx_len,
+                        "comp_ctx_lengths": comp_ctx_lengths_decode[i],
+                        "num_patches": num_patches,
+                        "img_size": img_size,
+                        "vision_size": vision_size,
+                    }
+                )
+
+        else:
+            lang = [
+                {
+                    "batch_size": batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "num_patches": num_patches,
+                    "img_size": img_size,
+                    "vision_size": vision_size,
+                },
+                {
+                    "batch_size": batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "num_patches": num_patches,
+                    "img_size": img_size,
+                    "vision_size": vision_size,
+                },
+            ]
 
         specializations = {}
 
@@ -132,7 +172,7 @@ class QEffInternVLModel(nn.Module):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
@@ -145,6 +185,9 @@ class QEffInternVLModel(nn.Module):
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+
+        if comp_ctx_lengths is not None:
+            lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         dynamic_axes = {}
         if kv_offload:
@@ -173,7 +216,7 @@ class QEffInternVLModel(nn.Module):
             return lang_output_names
         return output_names
 
-    def get_dummy_inputs(self, kv_offload: bool = False):
+    def get_dummy_inputs(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", constants.INTERN_IMG_SIZE)
         else:
@@ -234,6 +277,9 @@ class QEffInternVLModel(nn.Module):
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
 
+        if comp_ctx_lengths is not None:
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+
         inputs = {}
         if kv_offload:
             inputs["vision"] = vision_inputs
@@ -244,7 +290,9 @@ class QEffInternVLModel(nn.Module):
 
         return inputs
 
-    def forward(self, input_ids, pixel_values, position_ids, image_idx, past_key_values):
+    def forward(
+        self, input_ids, pixel_values, position_ids, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+    ):
         input_embeds = self.language_model.get_input_embeddings()(input_ids)
         vision_embeds = self.extract_feature(pixel_values)
         B, N, C = input_embeds.shape
@@ -266,7 +314,11 @@ class QEffInternVLModel(nn.Module):
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
         inputs_embeds = inputs_embeds.reshape(B, N, C)
         outputs = self.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            use_cache=True,
         )
         next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)

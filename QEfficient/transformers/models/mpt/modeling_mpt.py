@@ -39,6 +39,7 @@ class QEffMptAttention(MptAttention):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
     ):
@@ -51,7 +52,9 @@ class QEffMptAttention(MptAttention):
         value_states = value_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
 
         if past_key_value is not None:
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index, "CCL": attention_mask.shape[-1]}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.softmax_scale
@@ -101,6 +104,7 @@ class QEffMptBlock(MptBlock):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         use_cache: bool = False,
         output_attentions: bool = False,
     ):
@@ -118,6 +122,7 @@ class QEffMptBlock(MptBlock):
             batch_index=batch_index,
             attention_mask=attention_mask,
             past_key_value=layer_past,
+            comp_ctx_lengths=comp_ctx_lengths,
             use_cache=use_cache,
         )
 
@@ -144,6 +149,7 @@ class QEFfMptModel(MptModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -205,6 +211,7 @@ class QEFfMptModel(MptModel):
             outputs = block(
                 hidden_states,
                 layer_past=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 batch_index=batch_index,
@@ -250,6 +257,7 @@ class QEffMptForCausalLM(MptForCausalLM):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -271,6 +279,7 @@ class QEffMptForCausalLM(MptForCausalLM):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,

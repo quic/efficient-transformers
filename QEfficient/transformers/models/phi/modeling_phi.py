@@ -67,6 +67,7 @@ class QEffPhiAttention(PhiAttention):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
@@ -104,8 +105,16 @@ class QEffPhiAttention(PhiAttention):
         key_states = torch.cat((key_rot, key_pass), dim=-1)
 
         if past_key_value is not None:
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             # Update the cache_kwargs with position_ids for Cloud AI 100
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "CCL": attention_mask.shape[-1],
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -140,6 +149,7 @@ class QEffPhiDecoderLayer(PhiDecoderLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
         **kwargs,
@@ -181,6 +191,7 @@ class QEffPhiDecoderLayer(PhiDecoderLayer):
             position_ids=position_ids,
             batch_index=batch_index,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
@@ -213,6 +224,7 @@ class QEffPhiModel(PhiModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -274,6 +286,7 @@ class QEffPhiModel(PhiModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
@@ -316,6 +329,7 @@ class QEffPhiForCausalLM(PhiForCausalLM):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -370,6 +384,7 @@ class QEffPhiForCausalLM(PhiForCausalLM):
             position_ids=position_ids,
             batch_index=batch_index,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
