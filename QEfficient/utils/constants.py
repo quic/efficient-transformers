@@ -79,6 +79,7 @@ def get_models_dir():
 QEFF_MODELS_DIR = get_models_dir()
 
 ONNX_EXPORT_EXAMPLE_REPETITION_PENALTIES = 0.5
+ONNX_EXPORT_EXAMPLE_FREQUENCY_PENALTIES = 0.5
 ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES = 0.5
 ONNX_EXPORT_EXAMPLE_TEMPERATURES = 0.80
 ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
@@ -139,6 +140,7 @@ class Constants:
     MAX_TOP_K_IDS = ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
     SAMPLER_OPS = {
         "repetition_penalties",
+        "frequency_penalties",
         "presence_penalties",
         "temperatures",
         "top_ks",

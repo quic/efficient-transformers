@@ -30,8 +30,8 @@ def main(args, **kwargs):
             max_top_k_ids = int(args.override_qaic_config.get("max_top_k_ids", 512))
             sampling_params = {
                 "repetition_penalties": np.array(args.repetition_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                "frequency_penalties": np.array(args.frequency_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
                 "presence_penalties": np.array(args.presence_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
-                # "frequency_penalties": np.array(args.frequency_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
                 "temperatures": np.array(args.temperature, dtype=np.float32).repeat(bs).reshape(-1, 1),
                 "top_ks": np.array(args.top_k, dtype=np.int32).repeat(bs).reshape(-1, 1),
                 "top_ps": np.array(args.top_p, dtype=np.float32).repeat(bs).reshape(-1, 1),
@@ -108,6 +108,7 @@ if __name__ == "__main__":
             --mxfp6-matmul \
             --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512" \
             --repetition-penalty 1.9 \
+            --frequency-penalty 0.8 \
             --presence-penalty 0.8 \
             --temperature 0.67 \
             --top-k 54720 \
@@ -128,6 +129,7 @@ if __name__ == "__main__":
             --mxfp6-matmul \
             --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512" \
             --repetition-penalty 1.9 \
+            --frequency-penalty 0.8 \
             --presence-penalty 0.8 \
             --temperature 0.67 \
             --top-k 54720 \
@@ -207,6 +209,14 @@ if __name__ == "__main__":
         help="Sampling parameter that penalizes new tokens based on whether they appear in the "
         "prompt and the generated text so far. Values > 1 encourage the model to use new tokens, "
         "while values < 1 encourage the model to repeat tokens.",
+    )
+    sampling_group.add_argument(
+        "--frequency-penalty",
+        type=float,
+        default=None,
+        help="Sampling parameter that penalizes new tokens based on their frequency in the "
+        "generated text so far. Values > 0 encourage the model to use new tokens, while values < "
+        "0 encourage the model to repeat tokens.",
     )
     sampling_group.add_argument(
         "--presence-penalty",
