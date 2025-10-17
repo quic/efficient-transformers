@@ -38,12 +38,13 @@ def run_model(
     config = AutoConfig.from_pretrained(model_name)
     config.vision_config._attn_implementation = "eager"
 
-    model = QEFFAutoModelForImageTextToText.from_pretrained(model_name, 
-        kv_offload=kv_offload, 
+    model = QEFFAutoModelForImageTextToText.from_pretrained(
+        model_name,
+        kv_offload=kv_offload,
         config=config,
         ctx_len=ctx_len,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
-        comp_ctx_lengths_decode=comp_ctx_lengths_decode
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     ## STEP - 2 Export & Compile the Model

@@ -19,7 +19,7 @@ model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 ctx_len = 8192
 
 comp_ctx_lengths_prefill = [4096]
-comp_ctx_lengths_decode = [6144,8192]
+comp_ctx_lengths_decode = [6144, 8192]
 
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,

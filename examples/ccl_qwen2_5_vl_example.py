@@ -24,16 +24,16 @@ config = AutoConfig.from_pretrained(model_id)
 ctx_len = 32768
 
 comp_ctx_lengths_prefill = [4000]
-comp_ctx_lengths_decode = [4096, 8192,16384, ctx_len]
+comp_ctx_lengths_decode = [4096, 8192, 16384, ctx_len]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, 
+    model_id,
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     ctx_len=ctx_len,
-    attn_implementation="eager", 
-    kv_offload=True, 
-    config=config
+    attn_implementation="eager",
+    kv_offload=True,
+    config=config,
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)

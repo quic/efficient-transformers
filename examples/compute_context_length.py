@@ -17,7 +17,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 ctx_len = 1024
 comp_ctx_lengths_prefill = [256]
-comp_ctx_lengths_decode = [512,ctx_len]
+comp_ctx_lengths_decode = [512, ctx_len]
 
 # model_name = "google/gemma-7b"
 # model_name = "google/gemma-2-2b"
@@ -57,5 +57,5 @@ model.generate(
         "My name is ",
     ],
     tokenizer=tokenizer,
-    generation_len=128
+    generation_len=128,
 )
