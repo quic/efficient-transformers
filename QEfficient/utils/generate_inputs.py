@@ -91,9 +91,13 @@ class InputHandler:
             inputs["batch_index"] = torch.arange(1).view(-1, 1)
 
         past_key_values = []
+        sliding_padding_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
         for i in range(self.n_layer):
-            past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
-            past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
+            pad_shape = (
+                sliding_padding_shape if self.config.layer_types[i] == "sliding_attention" else self.padding_shape
+            )
+            past_key = torch.zeros((pad_shape), dtype=torch.float32)
+            past_value = torch.zeros((pad_shape), dtype=torch.float32)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
