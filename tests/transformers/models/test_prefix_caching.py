@@ -29,7 +29,7 @@ def test_simple_prefix_caching(model_name):
         ctx_len=256,
         full_batch_size=2,
         kv_cache_batch_size=4,
-        num_cores=14,
+        num_cores=2,
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
@@ -48,7 +48,7 @@ def test_simple_prefix_caching_qnn(model_name):
         ctx_len=256,
         full_batch_size=2,
         kv_cache_batch_size=4,
-        num_cores=14,
+        num_cores=2,
         enable_qnn=True,
         qnn_config=qnn_config_json_path,
     )

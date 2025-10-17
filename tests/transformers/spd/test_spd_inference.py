@@ -141,7 +141,7 @@ def test_spec_decode_inference(
     draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
 
     target_model_qpc_path: str = target_model.compile(
-        num_cores=6,
+        num_cores=2,
         num_devices=1,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,

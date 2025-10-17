@@ -333,7 +333,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
     qeff_model.compile(
         ctx_len=ctx_len,
-        num_cores=16,
+        num_cores=2,
         batch_size=batch_size,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,

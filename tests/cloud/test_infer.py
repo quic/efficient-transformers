@@ -21,7 +21,7 @@ def check_infer(
 
     infer(
         model_name=model_name,
-        num_cores=16,
+        num_cores=2,
         prompt=prompt,
         local_model_dir=None,
         prompts_txt_file_path="examples/prompts.txt",

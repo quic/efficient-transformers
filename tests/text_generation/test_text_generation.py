@@ -80,7 +80,7 @@ def test_generate_text_stream(
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        num_cores=14,
+        num_cores=2,
         mxfp6=False,
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,
