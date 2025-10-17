@@ -11,6 +11,7 @@ from diffusers.models.attention import JointTransformerBlock
 from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 from diffusers.models.normalization import RMSNorm, AdaLayerNormZero, AdaLayerNormZeroSingle, AdaLayerNormContinuous
 from diffusers.models.transformers.transformer_flux import FluxSingleTransformerBlock, FluxTransformerBlock, FluxTransformer2DModel 
+from diffusers.models.transformers.transformer_wan import WanTransformer3DModel
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
@@ -20,6 +21,7 @@ from QEfficient.diffusers.models.attention_processor import (
     QEffJointAttnProcessor2_0,
 )
 from QEfficient.diffusers.models.transformers.transformer_flux import  QEffFluxSingleTransformerBlock, QEffFluxTransformerBlock, QEffFluxTransformer2DModel
+from QEfficient.diffusers.models.transformers.transformer_wan import QEFFWanTransformer3DModel
 from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZero, QEffAdaLayerNormZeroSingle, QEffAdaLayerNormContinuous
 
 class CustomOpsTransform(ModuleMappingTransform):
@@ -42,6 +44,7 @@ class AttentionTransform(ModuleMappingTransform):
         FluxSingleTransformerBlock: QEffFluxSingleTransformerBlock,
         FluxTransformerBlock: QEffFluxTransformerBlock,
         FluxTransformer2DModel: QEffFluxTransformer2DModel,
+        WanTransformer3DModel : QEFFWanTransformer3DModel,
     }
 
     @classmethod

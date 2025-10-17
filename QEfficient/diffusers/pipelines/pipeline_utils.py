@@ -530,3 +530,106 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
+
+
+class QEffWanTransformerModel(QEFFBaseModel):
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform ]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    """
+    QEffWanTransformerModel is a wrapper class for WanTransformer 3DModel models that provides ONNX export and compilation capabilities.
+
+    This class extends QEFFBaseModel to handle Wan Transformer3DModel models with specific transformations and optimizations
+    for efficient inference on Qualcomm AI hardware. 
+    """
+    def __init__(self, model: nn.modules):
+        super().__init__(model)
+        self.model = model
+    
+    def get_onnx_config(self, batch_size=1, seq_length = 512,cl=6240,   latent_height = 30 , latent_width=52): #cl = 3840, # TODO update generic for Wan 2.2 5 B, 14 B 
+        example_inputs = {
+            "hidden_states": torch.randn(batch_size, self.model.config.out_channels, 16 , latent_height, latent_width ,dtype=torch.float32), #TODO check self.model.config.num_frames  #1, 48, 16, 30, 52),
+            "encoder_hidden_states": torch.randn(batch_size, seq_length , self.model.text_dim, dtype=torch.float32), # BS, seq len , text dim
+            "rotary_emb": torch.randn(2, cl, 1, 128 , dtype=torch.float32), #TODO update wtih CL 
+            "temb": torch.randn(1, cl, 3072, dtype=torch.float32), 
+            "timestep_proj": torch.randn(1, cl, 6, 3072, dtype=torch.float32),
+        }
+
+        output_names = ["output"]
+
+        dynamic_axes={
+            "hidden_states": {
+                0: "batch_size",
+                1: "num_channels",
+                2: "num_frames",
+                3: "latent_height",
+                4: "latent_width",
+            },
+            "timestep": {0: "steps"},
+            "encoder_hidden_states": {0: "batch_size", 1: "sequence_length"},
+            # "rotary_emb": {1: "cl"}
+        },
+
+        return example_inputs, dynamic_axes, output_names
+    
+       
+    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
+        return self._export(inputs, output_names, dynamic_axes, export_dir)
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        seq_len: int,
+    ):
+        specializations = [
+            {
+                "batch_size": batch_size,
+                "num_channels": "48", # TODO update with self.model
+                "num_frames": "16",
+                "latent_height": "30",
+                "latent_width": "52",
+                "sequence_length": seq_len,
+                "steps": 1,
+            }
+        ]
+
+        return specializations
+
+    def compile(
+        self,
+        compile_dir,
+        compile_only,
+        specializations,
+        convert_to_fp16,
+        mxfp6_matmul,
+        mdp_ts_num_devices,
+        aic_num_cores,
+        custom_io,
+        **compiler_options,
+    ) -> str:
+        return self._compile(
+            compile_dir=compile_dir,
+            compile_only=compile_only,
+            specializations=specializations,
+            convert_to_fp16=convert_to_fp16,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=mdp_ts_num_devices,
+            aic_num_cores=aic_num_cores,
+            custom_io=custom_io,
+            **compiler_options,
+        )
+
+    @property
+    def model_hash(self) -> str:
+        # Compute the hash with: model_config, continuous_batching, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(dict(self.model.config)))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
+
+    @property
+    def model_name(self) -> str:
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname

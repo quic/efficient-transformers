@@ -51,6 +51,7 @@ if check_qaic_sdk():
 
     # Imports for the diffusers
     from  QEfficient.diffusers.pipelines.flux.pipeline_flux import QEFFFluxPipeline
+    from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEFFWanPipeline
     from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
     from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
     from QEfficient.peft import QEffAutoPeftModelForCausalLM
@@ -71,6 +72,7 @@ if check_qaic_sdk():
         "QEFFAutoModelForSpeechSeq2Seq",
         "QEFFCommonLoader",
         "QEFFFluxPipeline",
+        "QEFFWanPipeline"
     ]
 
 else:
