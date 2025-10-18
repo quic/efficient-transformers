@@ -35,7 +35,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 # from transformers import Qw
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
-from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+from QEfficient.utils._utils import IOInfo, get_padding_shape_vlm
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
@@ -746,10 +746,10 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
-        kv_cache_shape = get_padding_shape_from_config(
+        kv_cache_shape = get_padding_shape_vlm(
             config=self.model.config,
+            ctx_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
             batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.num_hidden_layers)]
