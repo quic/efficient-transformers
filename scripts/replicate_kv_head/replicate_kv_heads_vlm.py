@@ -40,13 +40,6 @@ def replicate_kv_heads_vlm(
     """
     Replicate the KV heads for Vision Language Models (language component only).
 
-    The script performs the following steps:
-    1. Loads the VLM model using both transformers and QEFFAutoModelForImageTextToText.
-    2. Extracts the language model component from both.
-    3. Replicates the KV heads in the QEfficient language model.
-    4. Validates the changes by comparing outputs with the original transformers model.
-    5. Exports the modified model to ONNX format.
-
     ``Mandatory`` Args:
         :model_name (str): Model card name to use (e.g., "Qwen/Qwen2.5-VL-7B-Instruct").
         :prompt (str): Prompt to use for validation.
@@ -115,28 +108,18 @@ def replicate_kv_heads_vlm(
     with torch.inference_mode():
         mod_tokens = orig_lang_model(**inputs).last_hidden_state
 
-    # Print the original and modified token outputs
-    print("\n" + "=" * 80)
-    print("VALIDATION RESULTS:")
-    print("=" * 80)
-    # print(f"Original (transformers): {processor.batch_decode(orig_tokens, skip_special_tokens=True)}")
-    # print(f"Modified (QEfficient):   {processor.batch_decode(mod_tokens, skip_special_tokens=True)}")
-    print("=" * 80)
-
     if not torch.all(orig_tokens == mod_tokens):
         raise RuntimeError(
             "Something went wrong while duplicating KV heads weights, output tokens don't match after modification"
         )
 
-    print("\n✓ Validation successful! Output tokens match.")
+    print("\n Validation successful! Output tokens match.")
 
     # Export the modified model
     export_dir = f"{model_base_name}-{new_kv_heads}kvheads"
     print(f"\nExporting modified model to {export_dir}...")
 
     # Export using the qeff_model's export method
-    # qeff_model.export(export_dir=export_dir)
-    # qeff_model = QEffCausalLMForTextImageToTextModel(orig_model)
     qeff_model = _QEffAutoModelForImageTextToTextDualQPC(orig_model)
     inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)
     dynamic_axes = qeff_model.model.get_onnx_dynamic_axes(kv_offload=True)
@@ -144,9 +127,6 @@ def replicate_kv_heads_vlm(
     qeff_model.lang_model.export(
         inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir=export_dir, offload_pt_weights=True
     )
-
-    # print(f"\n✓ Export completed successfully!")
-    # print(f"ONNX paths: {qeff_model.onnx_path}")
 
 
 if __name__ == "__main__":
