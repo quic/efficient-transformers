@@ -2235,8 +2235,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
         self.comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
         ctx_len = kwargs.pop("ctx_len", None)
-
-        if self.comp_ctx_lengths_prefill:
+        prefill_seq_len = kwargs.pop("prefill_seq_len", 128)
+        
+        if self.comp_ctx_lengths_prefill and prefill_seq_len > 1:
             self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
                 self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len
             )
@@ -2338,7 +2339,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
         ctx_len = kwargs.pop("ctx_len", None)
-        if comp_ctx_lengths_prefill:
+        prefill_seq_len = kwargs.pop("prefill_seq_len", 128)
+        
+        if comp_ctx_lengths_prefill and prefill_seq_len > 1:
             comp_ctx_lengths_prefill, comp_ctx_lengths_decode = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len
             )
@@ -2356,6 +2359,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
                 comp_ctx_lengths_decode=comp_ctx_lengths_decode,
                 ctx_len=ctx_len,
+                prefill_seq_len=prefill_seq_len,
                 kv_offload=kv_offload,
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
                 **kwargs,
@@ -2368,6 +2372,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
             ctx_len=ctx_len,
+            prefill_seq_len=prefill_seq_len,
             **kwargs,
         )
 
@@ -2643,7 +2648,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             A dictionary defining the decode specialization, or None if it would be a duplicate
             of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
         """
-        if prefill_seq_len == 1 and not self.continuous_batching and comp_ctx_lengths is None:
+        if prefill_seq_len == 1 and not self.continuous_batching:# and comp_ctx_lengths is None
             return None  # Avoid duplication with prefill
         spec = {
             "batch_size": full_batch_size if self.continuous_batching else batch_size,
