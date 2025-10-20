@@ -2648,8 +2648,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             A dictionary defining the decode specialization, or None if it would be a duplicate
             of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
         """
-        if prefill_seq_len == 1 and not self.continuous_batching:# and comp_ctx_lengths is None
-            return None  # Avoid duplication with prefill
+        if prefill_seq_len == 1:
+            if not self.continuous_batching or batch_size==1:
+                return None  # Avoid duplication with prefill
+            
         spec = {
             "batch_size": full_batch_size if self.continuous_batching else batch_size,
             "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
