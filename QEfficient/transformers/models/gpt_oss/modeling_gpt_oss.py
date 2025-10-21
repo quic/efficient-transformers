@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+import os
 from typing import Callable, Optional, Union
 
 import torch
@@ -370,6 +371,77 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
+def eager_attention_forward_q_blocked(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    dropout: float = 0.0,
+    **kwargs,
+):
+    """
+    Q-blocked attention for CausalLM Models
+
+    Args:
+        query: (BS, NH, Q_LEN, DH)
+        key: (BS, NH_KV, KV_LEN, DH)
+        value: (BS, NH_KV, KV_LEN, DH)
+    """
+    BS, NH, Q_LEN, DH = query.shape
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    target_blocks_q = int(os.environ.get("NUM_QBLOCKS", Q_LEN))
+    q_block_positions = [(i * Q_LEN) // target_blocks_q for i in range(target_blocks_q)]
+
+    q_output_blocks = []
+    q_attn_weights_blocks = []
+    for q_block_idx in range(target_blocks_q):
+        qi = q_block_positions[q_block_idx]
+
+        if q_block_idx == target_blocks_q - 1:
+            real_q_len = Q_LEN - qi
+        else:
+            real_q_len = q_block_positions[q_block_idx + 1] - qi
+
+        q_block = query[:, :, qi : qi + real_q_len, :]  # (BS, NH, real_q_len, DH)
+
+        attn_mask_block = None
+        if attention_mask is not None:
+            attn_mask_block = attention_mask[:, :, qi : qi + real_q_len, :]
+
+        attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
+
+        # Apply causal mask
+        if attn_mask_block is not None:
+            attn_weights = torch.where(
+                attn_mask_block,
+                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=attn_weights.device),
+                attn_weights,
+            )
+
+        sinks = module.sinks.reshape(1, -1, 1, 1).expand(BS, -1, real_q_len, -1)
+        combined_logits = torch.cat([attn_weights, sinks], dim=-1)
+        num_sink_positions = 1
+
+        combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
+        probs = F.softmax(combined_logits, dim=-1, dtype=combined_logits.dtype)
+        scores = probs[..., :-num_sink_positions]
+        scores = F.dropout(scores, p=dropout, training=module.training)
+        output_block = torch.matmul(scores, value_states)
+
+        q_output_blocks.append(output_block)
+        q_attn_weights_blocks.append(scores)
+
+    attn_output = torch.cat(q_output_blocks, dim=2)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    attn_weights = torch.cat(q_attn_weights_blocks, dim=2)
+
+    return attn_output, attn_weights
+
+
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -452,7 +524,7 @@ class QEffGptOssAttention(GptOssAttention):
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = eager_attention_forward
+        attention_interface: Callable = eager_attention_forward_q_blocked
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
