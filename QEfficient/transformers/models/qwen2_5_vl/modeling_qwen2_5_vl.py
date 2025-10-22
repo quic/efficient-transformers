@@ -696,7 +696,13 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         self.language_model = self.model.model.language_model
 
     def forward(
-        self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
@@ -730,7 +736,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
     def get_qeff_language_decoder(self):
         return QEffQwen_2_5_vl_DecoderWrapper(self)
 
-    def get_dummy_inputs(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, **kwargs):
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 
@@ -799,8 +805,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         img_size: None,
         height: int = None,
         width: int = None,
-        comp_ctx_lengths_prefill: List[int] = None,
-        comp_ctx_lengths_decode: List[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -932,7 +938,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         # Define dynamic axes
         num_layers = self.config.num_hidden_layers
 

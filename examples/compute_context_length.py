@@ -31,9 +31,16 @@ model_name = "meta-llama/Llama-3.2-1B"
 # model_name = "Qwen/Qwen3-1.7B"
 # model_name = "allenai/OLMo-2-0425-1B"
 # model_name = "ibm-granite/granite-3.3-2b-base"
+# model_name = "meta-llama/Llama-3.3-70B-Instruct"
+# model_name = "Salesforce/codegen-350M-mono"
+# model_name = "tiiuae/falcon-7b-instruct"
+# model_name = "openai-community/gpt2"
+# model_name = "EleutherAI/gpt-j-6b"
+# model_name = "EleutherAI/gpt-j-6b"
+
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
-    continuous_batching=False,
+    continuous_batching=True,
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     ctx_len=ctx_len,
@@ -45,7 +52,7 @@ model.compile(
     ctx_len=ctx_len,
     num_cores=16,
     num_devices=1,
-    batch_size=1,
+    full_batch_size=1,
     mxint8_kv_cache=True,
     mxfp6_matmul=True,
 )

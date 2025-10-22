@@ -603,7 +603,13 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.lm_head = self.model.lm_head
 
     def forward(
-        self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
@@ -637,7 +643,13 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         return QEffGemma3DecoderWrapper(self)
 
     def forward(
-        self, input_ids, position_ids, pixel_values, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+        self,
+        input_ids,
+        position_ids,
+        pixel_values,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         image_features = self.get_image_features(pixel_values=pixel_values)
         inputs_embeds = self.get_input_embeddings()(input_ids)
@@ -669,8 +681,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
-        comp_ctx_lengths_prefill: List[int] = None,
-        comp_ctx_lengths_decode: List[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -749,7 +761,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
@@ -825,7 +837,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             past_key_values.append(pkv)
         return past_key_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 896)
         else:
