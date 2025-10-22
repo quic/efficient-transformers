@@ -8,15 +8,28 @@
 from typing import List, Optional
 
 
+# def process_ccl_specializations(
+#     ccl_prefill: Optional[List[int]] = None, ccl_decode: Optional[List[int]] = None, ctx_len: Optional[int] = None
+# ):
 def process_ccl_specializations(
-    ccl_prefill: Optional[List[int]] = None, ccl_decode: Optional[List[int]] = None, ctx_len: Optional[int] = None
+    kwargs
 ):
+    ccl_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
+    ccl_decode = kwargs.pop("comp_ctx_lengths_decode", None)
+    ctx_len = kwargs.pop("ctx_len", None)
+    prefill_seq_len = kwargs.pop("prefill_seq_len", 128)
+
     if ctx_len is None:
         raise TypeError("`ctx_len` is required when loading the model.")
-    if ccl_prefill is None:
-        ccl_prefill = [ctx_len]
-    if ccl_decode is None:
-        ccl_decode = [ctx_len]
+
+    if ccl_prefill is None or ccl_decode is None:
+        return None, None, ctx_len, prefill_seq_len
+    
+    if prefill_seq_len == 1:
+        #both prefill and decode ccl can share the same specializations since prefill_seq_len=1. So, a sorted union of both lists can be used for both of them.
+        ccl_union_all = sorted(set(ccl_prefill + ccl_decode))
+        ccl_union_all = [min(x, ctx_len) for x in ccl_union_all]
+        return ccl_union_all, ccl_union_all, ctx_len, prefill_seq_len
 
     # Step 1: Cap values to ctx_len
     ccl_prefill = [min(x, ctx_len) for x in ccl_prefill]
@@ -40,4 +53,4 @@ def process_ccl_specializations(
     updated_prefill.sort()
     ccl_decode.sort()
 
-    return updated_prefill, ccl_decode
+    return updated_prefill, ccl_decode, ctx_len, prefill_seq_len
