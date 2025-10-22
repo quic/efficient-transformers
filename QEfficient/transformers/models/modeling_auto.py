@@ -879,13 +879,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.model = model
         self.config = model.config
 
-        self.comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
-        self.comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
-        ctx_len = kwargs.pop("ctx_len", None)
-        if self.comp_ctx_lengths_prefill:
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
-                self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len
-            )
+        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, _, _ = process_ccl_specializations(kwargs)
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
@@ -933,14 +927,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
-        comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
-        ctx_len = kwargs.pop("ctx_len", None)
-
-        if comp_ctx_lengths_prefill:
-            comp_ctx_lengths_prefill, comp_ctx_lengths_decode = process_ccl_specializations(
-                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len
-            )
+        comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len = process_ccl_specializations(kwargs)
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(
@@ -1498,14 +1485,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         super().__init__(model, **kwargs)
 
-        self.comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
-        self.comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
-        ctx_len = kwargs.pop("ctx_len", None)
-
-        if self.comp_ctx_lengths_prefill:
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
-                self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len
-            )
+        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, _, _ = process_ccl_specializations(kwargs)
 
         # to handle internvl models
         if hasattr(self.model.config, "llm_config") and hasattr(self.model.config, "vision_config"):
@@ -1554,14 +1534,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
-        comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
-        ctx_len = kwargs.pop("ctx_len", None)
-
-        if comp_ctx_lengths_prefill:
-            comp_ctx_lengths_prefill, comp_ctx_lengths_decode = process_ccl_specializations(
-                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len
-            )
+        comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len = process_ccl_specializations(kwargs)
 
         from transformers import AutoConfig
 
@@ -2115,14 +2088,7 @@ class QEFFAutoModelForImageTextToText:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
-        comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
-        ctx_len = kwargs.pop("ctx_len", None)
-
-        if comp_ctx_lengths_prefill:
-            comp_ctx_lengths_prefill, comp_ctx_lengths_decode = process_ccl_specializations(
-                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len
-            )
+        comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len = process_ccl_specializations(kwargs)
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(
@@ -2232,15 +2198,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
 
-        self.comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
-        self.comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
-        ctx_len = kwargs.pop("ctx_len", None)
-        prefill_seq_len = kwargs.pop("prefill_seq_len", 128)
-
-        if self.comp_ctx_lengths_prefill and prefill_seq_len > 1:
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
-                self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len
-            )
+        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, _, _ = process_ccl_specializations(kwargs)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -2336,15 +2294,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         kv_offload = kwargs.pop("kv_offload", None)
 
-        comp_ctx_lengths_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
-        comp_ctx_lengths_decode = kwargs.pop("comp_ctx_lengths_decode", None)
-        ctx_len = kwargs.pop("ctx_len", None)
-        prefill_seq_len = kwargs.pop("prefill_seq_len", 128)
-
-        if comp_ctx_lengths_prefill and prefill_seq_len > 1:
-            comp_ctx_lengths_prefill, comp_ctx_lengths_decode = process_ccl_specializations(
-                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len
-            )
+        comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len = process_ccl_specializations(kwargs)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
