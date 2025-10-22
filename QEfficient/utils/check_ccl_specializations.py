@@ -5,10 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-
-# def process_ccl_specializations(
-#     ccl_prefill: Optional[List[int]] = None, ccl_decode: Optional[List[int]] = None, ctx_len: Optional[int] = None
-# ):
 def process_ccl_specializations(kwargs):
     ccl_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
     ccl_decode = kwargs.pop("comp_ctx_lengths_decode", None)
