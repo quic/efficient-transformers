@@ -169,7 +169,13 @@ class QEFFMistral3DecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
 
     def forward(
-        self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
@@ -204,7 +210,13 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         return QEFFMistral3DecoderWrapper(self)
 
     def forward(
-        self, input_ids, position_ids, pixel_values, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+        self,
+        input_ids,
+        position_ids,
+        pixel_values,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         inputs_embeds = self.get_input_embeddings()(input_ids)
         image_sizes = torch.tensor([[pixel_values.shape[2], pixel_values.shape[3]]]).repeat(pixel_values.shape[0], 1)
@@ -238,7 +250,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
 
         return logits, pixel_values, image_idx, outputs.past_key_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, **kwargs):
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         height = self.config.vision_config.image_size
@@ -309,8 +321,8 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
-        comp_ctx_lengths_prefill: List[int] = None,
-        comp_ctx_lengths_decode: List[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -392,7 +404,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
 

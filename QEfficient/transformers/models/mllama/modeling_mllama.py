@@ -899,7 +899,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         logits = self.lm_head(hidden_states).float()
         return logits, image_idx, outputs.past_key_values, pixel_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         SEQ_LEN = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         CTX_LEN = constants.ONNX_EXPORT_CTX_LEN
@@ -983,8 +983,8 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
-        comp_ctx_lengths_prefill: List[int] = None,
-        comp_ctx_lengths_decode: List[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -1055,7 +1055,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         txt_cfg = self.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         cross_attention_layers = txt_cfg.cross_attention_layers

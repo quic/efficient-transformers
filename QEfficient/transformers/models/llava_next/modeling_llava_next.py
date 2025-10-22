@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -126,7 +126,13 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
         self.lm_head = self.model.lm_head
 
     def forward(
-        self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         image_features = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
@@ -159,7 +165,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEffLlavaNextDecoderWrapper(self)
 
-    def get_dummy_inputs(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, **kwargs):
         num_layers = self.config.text_config.num_hidden_layers
         num_key_value_heads = self.config.text_config.num_key_value_heads
         head_dim = self.config.text_config.hidden_size // self.config.text_config.num_attention_heads
@@ -241,8 +247,8 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
-        comp_ctx_lengths_prefill: List[int] = None,
-        comp_ctx_lengths_decode: List[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -365,7 +371,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
         vision_dynamic_axes = {

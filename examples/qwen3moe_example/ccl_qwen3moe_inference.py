@@ -16,25 +16,25 @@ model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 # We will use prompt_len=1 for compilation for both cb and non-cb inference
 """
 
-ctx_len = 32768
+ctx_len = 1024
 prefill_seq_len = 1
 # In moe models when compiling with prefill_seq_len=1 and non-continuous-batching mode, prefill and decode will share the same specializations.
-comp_ctx_lengths_prefill = [4096, 8192, 16384, ctx_len]
-comp_ctx_lengths_decode = [4096, 8192, 16384, ctx_len]
+comp_ctx_lengths_prefill = [256, 512, ctx_len]
+comp_ctx_lengths_decode = [256, 512, ctx_len]
 
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     ctx_len=ctx_len,
-    continuous_batching=True,
+    continuous_batching=False,
     prefill_seq_len=prefill_seq_len,
 )
-# prefill_seq_len=prefill_seq_len,
+
 model.compile(
     prefill_seq_len=prefill_seq_len,
     ctx_len=ctx_len,
-    full_batch_size=1,
+    batch_size=1,
     num_cores=16,
     num_devices=4,
     mxfp6_matmul=True,

@@ -21,10 +21,9 @@ config = AutoConfig.from_pretrained(model_id)
 
 ## Use complete model without changing num_hidden_layers as it will not work for TF version 4.55.0 for Qwen2.5VL model
 
-ctx_len = 32768
-
-comp_ctx_lengths_prefill = [4000]
-comp_ctx_lengths_decode = [4096, 8192, 16384, ctx_len]
+ctx_len = 8192
+comp_ctx_lengths_prefill = [4096]
+comp_ctx_lengths_decode = [6144, ctx_len]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id,

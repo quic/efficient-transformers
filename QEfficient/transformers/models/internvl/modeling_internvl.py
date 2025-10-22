@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
@@ -37,7 +37,13 @@ class QEffInternDecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
 
     def forward(
-        self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         B, N, C = input_embeds.shape
@@ -82,8 +88,8 @@ class QEffInternVLModel(nn.Module):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
-        comp_ctx_lengths_prefill: List[int] = None,
-        comp_ctx_lengths_decode: List[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
@@ -172,7 +178,7 @@ class QEffInternVLModel(nn.Module):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
@@ -216,7 +222,7 @@ class QEffInternVLModel(nn.Module):
             return lang_output_names
         return output_names
 
-    def get_dummy_inputs(self, comp_ctx_lengths: List[int] = None, kv_offload: bool = False):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", constants.INTERN_IMG_SIZE)
         else:
@@ -291,7 +297,13 @@ class QEffInternVLModel(nn.Module):
         return inputs
 
     def forward(
-        self, input_ids, pixel_values, position_ids, image_idx, past_key_values, comp_ctx_lengths: List[int] = None
+        self,
+        input_ids,
+        pixel_values,
+        position_ids,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         input_embeds = self.language_model.get_input_embeddings()(input_ids)
         vision_embeds = self.extract_feature(pixel_values)

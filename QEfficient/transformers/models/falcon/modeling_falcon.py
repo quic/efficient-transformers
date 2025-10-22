@@ -117,6 +117,7 @@ class QEffFalconAttention(FalconAttention):
         attention_mask: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Cache] = None,
         head_mask: Optional[torch.Tensor] = None,
@@ -140,7 +141,9 @@ class QEffFalconAttention(FalconAttention):
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
 
         if layer_past is not None:
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids, "CCL": attention_mask.shape[-1]}
             key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
 
         if attention_mask is not None:
@@ -172,6 +175,7 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
         attention_mask: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Union[Cache, Tuple[torch.Tensor, torch.Tensor]]] = None,
         head_mask: Optional[torch.Tensor] = None,
@@ -195,6 +199,7 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             alibi=alibi,
             head_mask=head_mask,
@@ -245,6 +250,7 @@ class QEffFalconModel(FalconModel):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, Tuple[Tuple[torch.Tensor, torch.Tensor], ...]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
@@ -307,6 +313,7 @@ class QEffFalconModel(FalconModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 head_mask=head_mask[i],
                 use_cache=use_cache,
@@ -352,6 +359,7 @@ class QEffFalconForCausalLM(FalconForCausalLM):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
@@ -368,6 +376,7 @@ class QEffFalconForCausalLM(FalconForCausalLM):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
