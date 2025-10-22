@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import json
 import os
 from io import BytesIO
 from typing import List, Optional
@@ -32,178 +33,21 @@ from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRun
 from QEfficient.utils.test_utils import InternProcessor
 
 NEW_GENERATION_TOKENS = 10
-test_models_config = [
-    # CONFIG PARAMS NEEDED FOR A MODEL TO BE TESTED
-    # (
-    # model_name,
-    # kv_offload,
-    # batch_size,
-    # prompt_len,
-    # ctx_len,
-    # img_size,
-    # img_url",
-    # text_prompt,
-    # number of layers of the model,
-    # ),
-    (
-        "llava-hf/llava-1.5-7b-hf",
-        True,
-        1,
-        784,
-        1024,
-        336,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-        1,
-    ),
-    (
-        "llava-hf/llava-1.5-7b-hf",
-        False,
-        1,
-        784,
-        1024,
-        336,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-        1,
-    ),
-    # Disabled in CI due to performance issues
-    # (
-    #     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-    #     True,
-    #     1,
-    #     128,
-    #     3072,
-    #     336,
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-    #     "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-    #     4,
-    # ),
-    # (
-    #     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-    #     False,
-    #     1,
-    #     128,
-    #     3072,
-    #     336,
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-    #     "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-    #     4,
-    # ),
-    (
-        "google/gemma-3-4b-it",
-        True,
-        1,
-        128,
-        3072,
-        896,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-        "Can you describe the image in detail.",
-        1,
-    ),
-    (
-        "google/gemma-3-4b-it",
-        False,
-        1,
-        128,
-        3072,
-        896,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-        "Can you describe the image in detail.",
-        1,
-    ),
-    (
-        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
-        True,
-        1,
-        128,
-        4096,
-        1540,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-        "Can you describe the image in detail.",
-        1,
-    ),
-    (
-        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
-        False,
-        1,
-        128,
-        4096,
-        1540,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-        "Can you describe the image in detail.",
-        1,
-    ),
-    (
-        "Qwen/Qwen2.5-VL-3B-Instruct",
-        True,
-        1,
-        128,
-        4096,
-        1540,
-        "https://picsum.photos/id/237/536/354",
-        "Can you describe the image in detail.",
-        1,
-    ),
-    # (
-    #     "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    #     True,
-    #     1,
-    #     32,
-    #     512,
-    #     560,
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
-    #     "Explain this image",
-    #     7,
-    # ),
-]
 
-intern_model_config = [
-    (
-        "OpenGVLab/InternVL2_5-1B",
-        True,
-        1,
-        384,
-        512,
-        "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
-        "Please describe the image in detail.",
-        2,
-    ),
-    (
-        "OpenGVLab/InternVL3_5-1B",
-        True,
-        1,
-        384,
-        512,
-        "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
-        "Please describe the image in detail.",
-        2,
-    ),
-    # (
-    #     "OpenGVLab/InternVL2_5-1B",
-    #     False,
-    #     1,
-    #     384,
-    #     512,
-    #     "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
-    #     "Please describe the image in detail.",
-    #     2,
-    # ), # commented becuase QNN Convertor is not supported for this model yet.
-]
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "test_model_configs.json")
 
-molmo_model_config = [
-    # Disabled in CI due to HF issues
-    # (
-    #     "allenai/Molmo-7B-D-0924",
-    #     True,
-    #     1,
-    #     128,
-    #     4096,
-    #     "https://picsum.photos/id/237/536/354",
-    #     "Can you describe the image in detail.",
-    #     2,
-    # ),
-]
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    multimodal_models = config_data["multimodal_models"]
+    intern_models = config_data["intern_models"]
+
+test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
+test_intern_models = [model_config["model_name"] for model_config in intern_models]
+
+test_mm_models_config = {model["model_name"]: model for model in multimodal_models}
+test_intern_config = {model["model_name"]: model for model in intern_models}
+
+model_config_dict = {**test_mm_models_config, **test_intern_config}
 
 
 def load_image_text_to_text_model(model_config):
@@ -223,6 +67,28 @@ def load_image_text_to_text_model(model_config):
             low_cpu_mem_usage=False,
             trust_remote_code=True,
             config=model_config,
+        )
+    params = sum(p.numel() for p in model_hf.parameters())
+    model_hf.eval()
+    return model_hf, params
+
+
+def load_image_text_to_text_model_from_config(model_name, config):
+    torch.manual_seed(42)
+    model_path = hf_download(
+        repo_id=model_name,
+        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
+    )
+    try:
+        model_hf = AutoModelForImageTextToText.from_config(
+            config,
+        )
+    except ValueError:
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            config=config,
         )
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
@@ -263,14 +129,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
+    config: Optional[AutoConfig] = None,
 ):
-    model_config = {"model_name": model_name}
-    model_config["img_size"] = img_size
-    config = AutoConfig.from_pretrained(model_config["model_name"], trust_remote_code=True, padding=True)
-    config = set_num_layers(config, n_layer=n_layer)
-    model_hf, _ = load_image_text_to_text_model(config)
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
+    if config is None:
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, padding=True)
+        config = set_num_layers(config, n_layer=n_layer)
+        model_hf, _ = load_image_text_to_text_model(config)
+    else:
+        model_hf, _ = load_image_text_to_text_model_from_config(model_name, config)
 
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
     n_layer = get_num_layers_vlm(config)
     image = Image.open(requests.get(img_url, stream=True).raw)
     if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
@@ -304,25 +172,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     streamer = TextStreamer(processor.tokenizer)
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-        model_config["model_name"],
-        kv_offload=kv_offload,
-        config=config,
-    )
-
-    # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
-    # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
-    #     "Tokens don't match for pytorch HF output and pytorch KV output"
-    # )
+    qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=kv_offload)
 
     qeff_model.export()
-    # onnx_model_path = qeff_model.export()
-    # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
-    # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
+
     qeff_model.compile(
-        img_size=model_config["img_size"],
+        img_size=img_size,
         num_devices=num_devices,
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
@@ -506,8 +361,7 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # onnx_model_path = qeff_model.export()
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
+
     qeff_model.compile(
         num_patches=1,
         num_devices=num_devices,
@@ -526,27 +380,26 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
-)
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    if model_name == "meta-llama/Llama-4-Scout-17B-16E-Instruct":
+        pytest.skip("Performance issue: Skipping the test for Llama-4-Scout-17B-16E-Instruct model.")
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
+        prompt_len=model_config_dict[model_name]["prompt_len"],
+        ctx_len=model_config_dict[model_name]["ctx_len"],
         max_gen_len=NEW_GENERATION_TOKENS,
-        img_size=img_size,
-        img_url=img_url,
-        query=query,
-        n_layer=n_layer,
-        batch_size=batch_size,
+        img_size=model_config_dict[model_name]["img_size"],
+        img_url=model_config_dict[model_name]["img_url"],
+        query=model_config_dict[model_name]["text_prompt"],
+        n_layer=model_config_dict[model_name]["num_layers"],
+        batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
     )
 
@@ -554,12 +407,9 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
-)
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
     ``Mandatory`` Args:
@@ -573,14 +423,14 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
 
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
+        prompt_len=model_config_dict[model_name]["prompt_len"],
+        ctx_len=model_config_dict[model_name]["ctx_len"],
         max_gen_len=NEW_GENERATION_TOKENS,
-        img_size=img_size,
-        img_url=img_url,
-        query=query,
-        n_layer=n_layer,
-        batch_size=batch_size,
+        img_size=model_config_dict[model_name]["img_size"],
+        img_url=model_config_dict[model_name]["img_url"],
+        query=model_config_dict[model_name]["text_prompt"],
+        n_layer=model_config_dict[model_name]["num_layers"],
+        batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
         enable_qnn=True,
         qnn_config=qnn_config_json_path,
@@ -589,42 +439,20 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", molmo_model_config
-)
-def test_image_text_to_text_molmo_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
-):
-    check_molmo_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
-        max_gen_len=NEW_GENERATION_TOKENS,
-        img_url=img_url,
-        query=query,
-        n_layer=n_layer,
-        batch_size=batch_size,
-        kv_offload=kv_offload,
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
-)
-def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name", test_intern_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
+    if not kv_offload:
+        pytest.skip("Single Qpc is not supported for InternVL without kv_offload.")
     check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
+        prompt_len=model_config_dict[model_name]["prompt_len"],
+        ctx_len=model_config_dict[model_name]["ctx_len"],
         max_gen_len=NEW_GENERATION_TOKENS,
-        img_url=img_url,
-        query=query,
-        n_layer=n_layer,
-        batch_size=batch_size,
+        img_url=model_config_dict[model_name]["img_url"],
+        query=model_config_dict[model_name]["text_prompt"],
+        n_layer=model_config_dict[model_name]["num_layers"],
+        batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
     )
 
@@ -632,24 +460,23 @@ def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
-)
-def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name", test_intern_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload):
+    if not kv_offload:
+        pytest.skip("Single Qpc is not supported for InternVL without kv_offload.")
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
     check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
+        prompt_len=model_config_dict[model_name]["prompt_len"],
+        ctx_len=model_config_dict[model_name]["ctx_len"],
         max_gen_len=NEW_GENERATION_TOKENS,
-        img_url=img_url,
-        query=query,
-        n_layer=n_layer,
-        batch_size=batch_size,
+        img_url=model_config_dict[model_name]["img_url"],
+        query=model_config_dict[model_name]["text_prompt"],
+        n_layer=model_config_dict[model_name]["num_layers"],
+        batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
         enable_qnn=True,
         qnn_config=qnn_config_json_path,
