@@ -12,11 +12,11 @@ def process_ccl_specializations(kwargs):
     ctx_len = kwargs.pop("ctx_len", None)
     prefill_seq_len = kwargs.pop("prefill_seq_len", 128)
 
-    if ctx_len is None:
-        raise TypeError("`ctx_len` is required when loading the model.")
-
     if ccl_prefill is None or ccl_decode is None:
         return None, None, ctx_len, prefill_seq_len
+
+    if ctx_len is None:
+        raise TypeError("`ctx_len` is required when loading the model with CCL.")
 
     if prefill_seq_len == 1:
         # both prefill and decode ccl can share the same specializations since prefill_seq_len=1. So, a sorted union of both lists can be used for both of them.
