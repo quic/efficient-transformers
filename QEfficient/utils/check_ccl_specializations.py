@@ -5,15 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional
-
 
 # def process_ccl_specializations(
 #     ccl_prefill: Optional[List[int]] = None, ccl_decode: Optional[List[int]] = None, ctx_len: Optional[int] = None
 # ):
-def process_ccl_specializations(
-    kwargs
-):
+def process_ccl_specializations(kwargs):
     ccl_prefill = kwargs.pop("comp_ctx_lengths_prefill", None)
     ccl_decode = kwargs.pop("comp_ctx_lengths_decode", None)
     ctx_len = kwargs.pop("ctx_len", None)
@@ -24,9 +20,9 @@ def process_ccl_specializations(
 
     if ccl_prefill is None or ccl_decode is None:
         return None, None, ctx_len, prefill_seq_len
-    
+
     if prefill_seq_len == 1:
-        #both prefill and decode ccl can share the same specializations since prefill_seq_len=1. So, a sorted union of both lists can be used for both of them.
+        # both prefill and decode ccl can share the same specializations since prefill_seq_len=1. So, a sorted union of both lists can be used for both of them.
         ccl_union_all = sorted(set(ccl_prefill + ccl_decode))
         ccl_union_all = [min(x, ctx_len) for x in ccl_union_all]
         return ccl_union_all, ccl_union_all, ctx_len, prefill_seq_len
