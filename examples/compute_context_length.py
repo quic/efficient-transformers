@@ -41,9 +41,6 @@ model_name = "meta-llama/Llama-3.2-1B"
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
     continuous_batching=True,
-    comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
-    comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-    ctx_len=ctx_len,
 )
 
 # model compilation for either continuous or static batching. For continuous batching full_batch_size is needed.
