@@ -18,7 +18,6 @@ from QEfficient.utils.logging_utils import logger
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 # Placeholder for all non-transformer models registered in QEfficient
 
-
 # custom warning for the better logging experience
 warnings.formatwarning = custom_format_warning
 

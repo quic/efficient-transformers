@@ -7,13 +7,19 @@
 
 import torch
 from torch import nn
+from transformers.models.gpt_oss.modeling_gpt_oss import GptOssExperts
 
 from QEfficient.base.pytorch_transforms import ModuleMutatorTransform
 from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
-from QEfficient.transformers.quantizers.quantizer_utils import dequantize_gptq, unpack_weights
+from QEfficient.transformers.quantizers.quantizer_mxfp4 import QEffMxfp4GptOssExperts
+from QEfficient.transformers.quantizers.quantizer_utils import (
+    convert_moe_packed_tensors,
+    dequantize_gptq,
+    unpack_weights,
+)
 
 
 class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
@@ -115,3 +121,28 @@ class FP8DeQuantLinearToLinearTransform(ModuleMutatorTransform):
         if original_module.bias is not None:
             dequant_linear_layer.bias = torch.nn.Parameter(original_module.bias.float())
         return dequant_linear_layer
+
+
+class Mxfp4GptOssExpertDequantizeTransform(ModuleMutatorTransform):
+    """
+    Used to dequantize the weights of an Mxfp4GptOssExpert module and replace with transformers GptOssExperts with dequantized weights
+    """
+
+    _match_class = QEffMxfp4GptOssExperts
+
+    @classmethod
+    def mutate(cls, original_module, parent_module):
+        dequant_module = GptOssExperts(original_module.config)
+        dequant_module.gate_up_proj = torch.nn.Parameter(
+            convert_moe_packed_tensors(
+                original_module.gate_up_proj_blocks, original_module.gate_up_proj_scales, dtype=torch.float32
+            )
+        )
+        dequant_module.down_proj = torch.nn.Parameter(
+            convert_moe_packed_tensors(
+                original_module.down_proj_blocks, original_module.down_proj_scales, dtype=torch.float32
+            )
+        )
+        dequant_module.gate_up_proj_bias = original_module.gate_up_proj_bias
+        dequant_module.down_proj_bias = original_module.down_proj_bias
+        return dequant_module
