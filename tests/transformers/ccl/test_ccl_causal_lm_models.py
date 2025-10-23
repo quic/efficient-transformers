@@ -9,7 +9,6 @@ import copy
 import os
 from typing import Optional
 
-import numpy as np
 import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -34,10 +33,10 @@ test_models_ccl = [
 def get_custom_n_layers(model_name):
     """
     Function to set number of layers for various types of models.
-    
+
     Args:
         model_name: str - Model name
-    
+
     Returns:
         n_layer: int or None - Number of layers to use
     """
@@ -49,12 +48,12 @@ def get_custom_n_layers(model_name):
 def load_causal_lm_model(model_name, n_layer=1, config=None):
     """
     Function to load model from HuggingFace and transform to KV model.
-    
+
     Args:
         model_name: str - HuggingFace model name
         n_layer: int - Number of layers
         config: AutoConfig - Custom config (optional)
-    
+
     Returns:
         model_hf: Loaded model
         params: Number of parameters
@@ -88,7 +87,7 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
             attn_implementation="eager",
             trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
         )
-    
+
     # Convert to FP32 if model is in BF16 or FP16
     torch_dtype = getattr(model_hf.config, "torch_dtype", None)
     if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
@@ -110,10 +109,10 @@ def check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_hf_tokens: Optional[list] = None,
 ):
     """
-    Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, 
-    and the Cloud AI 100 model with CCL (Compute Context Length) feature, both with 
+    Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model,
+    and the Cloud AI 100 model with CCL (Compute Context Length) feature, both with
     and without continuous batching.
-    
+
     Args:
         model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         prompt_len (int): Prompt length for the model to compile.
@@ -125,13 +124,13 @@ def check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytorch_hf_tokens (list): Pre-computed PyTorch tokens for external models.
     """
     replace_transformers_quantizers()
-    
+
     # Set default CCL values if not provided
     if comp_ctx_lengths_prefill is None:
         comp_ctx_lengths_prefill = [64]
     if comp_ctx_lengths_decode is None:
         comp_ctx_lengths_decode = [96, ctx_len]
-    
+
     if config is None:
         model_hf, _ = load_causal_lm_model(model_name, n_layer=n_layer)
     else:
@@ -140,7 +139,7 @@ def check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     batch_size = len(Constants.INPUT_STR)
-    
+
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
@@ -149,7 +148,7 @@ def check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         Constants.PROMPT_LEN,
         Constants.CTX_LEN,
     )
-    
+
     # Run PyTorch HF model if not external model
     if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
@@ -162,24 +161,24 @@ def check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         ctx_len=ctx_len,
     )
-    
+
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
     if model_name not in ModelConfig.SWIFTKV_MODELS:
         assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output with CCL"
         )
-    
+
     # Export to ONNX
-    onnx_model_path = qeff_model.export()
-    
+    _ = qeff_model.export()
+
     # Note: Skipping ORT validation for CCL models as ApiRunner doesn't support comp_ctx_lengths input
     # The CCL feature is validated through PyTorch and Cloud AI 100 execution
     gen_len = pytorch_kv_tokens.shape[-1]
 
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
-    
+
     # Compile for Cloud AI 100 with CCL
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
@@ -188,10 +187,10 @@ def check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         mxfp6=False,
         aic_enable_depth_first=False,
     )
-    
+
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0][:, :gen_len]
-    
+
     # Validate Cloud AI 100 output matches PyTorch KV output
     assert (pytorch_kv_tokens == cloud_ai_100_tokens).all(), (
         "Tokens don't match for PyTorch KV output and Cloud AI 100 output with CCL."
@@ -208,9 +207,9 @@ def check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.parametrize("model_name", test_models_ccl)
 def test_custom_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causal_model_config_dict):
     """
-    Test function to validate the dummy PyTorch model with CCL, the PyTorch model after KV changes, 
+    Test function to validate the dummy PyTorch model with CCL, the PyTorch model after KV changes,
     the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    
+
     Args:
         model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         custom_causal_model_config_dict: Fixture providing custom model configs
@@ -223,9 +222,7 @@ def test_custom_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_c
         pytorch_hf_tokens = ModelConfig.EXTERNAL_MODELS[model_name]["pytorch_hf_tokens_custom_case"]
 
     if model_name in ModelConfig.QUANTIZED_MODELS:
-        check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name, n_layer=2, pytorch_hf_tokens=pytorch_hf_tokens
-        )
+        check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=2, pytorch_hf_tokens=pytorch_hf_tokens)
     else:
         check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name, config=config, pytorch_hf_tokens=pytorch_hf_tokens
@@ -238,9 +235,9 @@ def test_custom_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_c
 @pytest.mark.parametrize("model_name", test_models_ccl)
 def test_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
-    Test function to validate the PyTorch model with CCL, the PyTorch model after KV changes, 
+    Test function to validate the PyTorch model with CCL, the PyTorch model after KV changes,
     the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    
+
     Args:
         model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
@@ -258,8 +255,8 @@ def test_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 @pytest.mark.ccl
 def test_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     """
-    Test function to validate the PyTorch model with CCL, the PyTorch model after KV changes, 
-    the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and 
+    Test function to validate the PyTorch model with CCL, the PyTorch model after KV changes,
+    the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and
     without continuous batching.
     """
     model_name = "gpt2"
@@ -285,7 +282,7 @@ def test_ccl_causal_lm_with_different_ctx_lengths():
     """
     model_name = "gpt2"
     n_layer = 1
-    
+
     # Test case 1: Small context lengths
     check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
@@ -294,7 +291,7 @@ def test_ccl_causal_lm_with_different_ctx_lengths():
         comp_ctx_lengths_prefill=[32],
         comp_ctx_lengths_decode=[48, 64],
     )
-    
+
     # Test case 2: Larger context lengths
     check_ccl_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
@@ -314,7 +311,7 @@ def test_ccl_causal_lm_with_multiple_prefill_decode_lengths():
     model_name = "gpt2"
     n_layer = 1
     ctx_len = 256
-    
+
     # Multiple CCL values for prefill and decode
     comp_ctx_lengths_prefill = [64, 128]
     comp_ctx_lengths_decode = [160, 192, 224, 256]
