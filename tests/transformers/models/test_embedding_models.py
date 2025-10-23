@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import os
 from typing import Optional
 
@@ -19,10 +20,11 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import Constants, QnnConstants
 
-embed_test_models = [
-    {"model_name": "jinaai/jina-embeddings-v2-base-code", "pooling": "mean"},
-    {"model_name": "sentence-transformers/nli-bert-base-cls-pooling", "pooling": "cls"},
-]
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "test_model_configs.json")
+
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    embed_test_models = config_data["embedding_models"]
 
 
 def check_embed_pytorch_vs_ort_vs_ai100(
