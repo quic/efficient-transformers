@@ -24,6 +24,8 @@ class SamplerOutput(ModelOutput):
 
     probs: torch.FloatTensor = None
     next_tokens: torch.IntTensor = None
+    vision_embeds: Optional[torch.FloatTensor] = None # For VLMs
+    image_idx: Optional[torch.IntTensor] = None # for VLMs
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     past_repetition_penalty_buffer: Optional[torch.Tensor] = None
     past_presence_penalty_buffer: Optional[torch.Tensor] = None
@@ -122,6 +124,8 @@ def sampler_forward(
     top_ps: Optional[torch.Tensor] = None,
     min_ps: Optional[torch.Tensor] = None,
     random_numbers: Optional[torch.Tensor] = None,
+    vision_embeds: Optional[torch.Tensor] = None,
+    image_idx: Optional[torch.Tensor] = None,
 ) -> Union[Tuple, SamplerOutput]:
     r"""
     Perform the sampling of next tokens on the QAIC device (instead of the host)
@@ -170,20 +174,36 @@ def sampler_forward(
             Sampling parameter that represents the random seeds to use for random sampling.
             Must be in [-1, 1].
     """
-
-    outputs = self.old_forward(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        position_ids=position_ids,
-        past_key_values=past_key_values,
-        batch_index=batch_index,
-        inputs_embeds=inputs_embeds,
-        use_cache=use_cache,
-        output_attentions=output_attentions,
-        output_hidden_states=output_hidden_states,
-        return_dict=return_dict,
-        cache_position=cache_position,
-    )
+    if vision_embeds is not None:
+        logits, vision_embeds, image_idx, past_key_values = self.old_forward(
+            input_ids=input_ids, 
+            vision_embeds=vision_embeds, 
+            position_ids=position_ids, 
+            image_idx=image_idx, 
+            past_key_values=past_key_values
+        )
+        outputs = dict(
+            logits=logits,
+            vision_embeds=vision_embeds,
+            image_idx=image_idx,
+            past_key_values=past_key_values
+        )
+        if position_ids.dim() == 3: # For models using m-rope
+            position_ids = position_ids[0]
+    else:
+        outputs = self.old_forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            batch_index=batch_index,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            cache_position=cache_position,
+        )
 
     logits = outputs.get("logits", None)
     assert logits is not None, f"{self.model.__class__.__name__} does not return logits."
@@ -230,7 +250,9 @@ def sampler_forward(
         return SamplerOutput(
             probs=None,
             next_tokens=greedy_samples.reshape(-1, spec_length, 1),  # Return sampled next tokens instead of logits
-            past_key_values=outputs.past_key_values,
+            vision_embeds=outputs.get("vision_embeds", None),
+            image_idx=outputs.get("image_idx", None),
+            past_key_values=outputs.get("past_key_values", None),
             past_repetition_penalty_buffer=past_repetition_penalty_buffer,
             past_presence_penalty_buffer=past_presence_penalty_buffer,
         )
@@ -314,7 +336,9 @@ def sampler_forward(
     return SamplerOutput(
         probs=probs,
         next_tokens=next_tokens,  # Return sampled next tokens instead of logits
-        past_key_values=outputs.past_key_values,
+        vision_embeds=outputs.get("vision_embeds", None),
+        image_idx=outputs.get("image_idx", None),
+        past_key_values=outputs.get("past_key_values", None),
         past_repetition_penalty_buffer=past_repetition_penalty_buffer,
         past_presence_penalty_buffer=past_presence_penalty_buffer,
     )

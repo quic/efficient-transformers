@@ -721,7 +721,12 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model, **kwargs):
+    def __init__(
+        self,
+        model,
+        qaic_config: Optional[dict] = None,
+        **kwargs
+    ):
         """
         Initializes the language decoder component for multimodal models.
 
@@ -729,12 +734,24 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         ----------
         model : nn.Module
             The full HuggingFace multimodal model from which the language decoder is extracted.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations. 
+            Only the following keys are supported by the text model of the dual QPC multimodal model:
+            - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
+            - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+            Additional keys will be ignored.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.model.qaic_config = qaic_config
+        # ---Sampling---
+        # Note: SamplerTransform should be applied after all other transforms
+        # are done. The role of the sampler is to just add nodes at the output of the
+        # previous transform function.
+        self.model, _ = SamplerTransform.apply(self.model, qaic_config, **kwargs)
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
         """
@@ -758,9 +775,94 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the generated ONNX graph file for the language decoder.
         """
+        if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
+            inputs, output_names, dynamic_axes = self.get_sampling_inputs_and_outputs(inputs, output_names, dynamic_axes)
         return self._export(
             inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
         )
+
+    def get_sampling_inputs_and_outputs(
+        self,
+        example_inputs: Dict[str, torch.Tensor],
+        output_names: List[str],
+        dynamic_axes: Dict[str, Dict[int, str]],
+    ):
+        """
+        Updates the example inputs, output names, and dynamic axes to include
+        parameters relevant for on-device sampling during ONNX export.
+
+        Parameters
+        ----------
+        example_inputs : Dict[str, torch.Tensor]
+            Current dictionary of example inputs.
+        output_names : List[str]
+            Current list of output names.
+        dynamic_axes : Dict[str, Dict[int, str]]
+            Current dictionary of dynamic axes configurations.
+
+        Returns
+        -------
+        Tuple[Dict[str, torch.Tensor], List[str], Dict[str, Dict[int, str]]]
+            Updated example inputs, output names, and dynamic axes including
+            sampling-related parameters.
+        """
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        
+        assert "logits" in output_names, "logits must be part of the output names to suport on-device sampling"
+
+        logits_index = output_names.index("logits")
+        output_names[logits_index] = "next_tokens"
+
+        example_inputs["last_accepted_output_tokens"] = torch.zeros(
+            (bs, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN), dtype=torch.int64
+        )
+        dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
+
+        example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
+            (bs, self.model.language_model.config.vocab_size), dtype=torch.bool
+        )
+        dynamic_axes["past_repetition_penalty_buffer"] = {
+            0: "batch_size",
+        }
+        output_names.append("past_repetition_penalty_buffer_RetainedState")
+
+        example_inputs["repetition_penalties"] = (
+            torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_REPETITION_PENALTIES
+        )
+        dynamic_axes["repetition_penalties"] = {0: "batch_size"}
+
+        example_inputs["past_presence_penalty_buffer"] = torch.zeros(
+            (bs, self.model.language_model.config.vocab_size), dtype=torch.bool
+        )
+        dynamic_axes["past_presence_penalty_buffer"] = {
+            0: "batch_size",
+        }
+        output_names.append("past_presence_penalty_buffer_RetainedState")
+
+        example_inputs["presence_penalties"] = (
+            torch.zeros((bs, 1), dtype=torch.float) + constants.ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES
+        )
+        dynamic_axes["presence_penalties"] = {0: "batch_size"}
+
+        example_inputs["temperatures"] = (
+            torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TEMPERATURES
+        )
+        dynamic_axes["temperatures"] = {0: "batch_size"}
+
+        max_top_k_ids = self.model.qaic_config.get("max_top_k_ids", constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS)
+        example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
+        dynamic_axes["top_ks"] = {0: "batch_size"}
+
+        example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
+        dynamic_axes["top_ps"] = {0: "batch_size"}
+
+        example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
+        dynamic_axes["min_ps"] = {0: "batch_size"}
+
+        example_inputs["random_numbers"] = torch.rand((bs, 1), dtype=torch.float)
+        dynamic_axes["random_numbers"] = {0: "batch_size"}
+
+        return example_inputs, output_names, dynamic_axes
 
     def compile(
         self,
@@ -1499,6 +1601,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         """
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+        if kwargs.pop("qaic_config", None):
+            raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
         super().__init__(model, **kwargs)
 
         # to handle internvl models
@@ -2023,6 +2127,7 @@ class QEFFAutoModelForImageTextToText:
         pretrained_model_name_or_path: str,
         kv_offload: Optional[bool] = None,
         continuous_batching: bool = False,
+        qaic_config: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -2036,6 +2141,12 @@ class QEFFAutoModelForImageTextToText:
             If True, uses the dual QPC approach (vision encoder KV offloaded).
             If False, uses the single QPC approach (entire model in one QPC).
             If None, the default behavior of the internal classes is used (typically dual QPC).
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations. 
+            Only the following keys are supported by the text model of the dual QPC multimodal model:
+            - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
+            - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+            Additional keys will be ignored.
         **kwargs :
             Additional arguments passed to HuggingFace's ``from_pretrained``.
 
@@ -2063,11 +2174,14 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        if qaic_config is not None:
+            qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(
             model,
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
+            qaic_config=qaic_config, 
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
@@ -2273,7 +2387,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
-                model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs
+                model,
+                kv_offload=kv_offload,
+                pretrained_model_name_or_path=pretrained_model_name_or_path,
+                qaic_config=qaic_config,
+                **kwargs
             )
         return cls(
             model,
