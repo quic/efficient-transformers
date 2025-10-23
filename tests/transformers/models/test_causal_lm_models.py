@@ -173,7 +173,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         Constants.CTX_LEN,
     )
 
-    if model_name not in ModelConfig.SWIFTKV_MODELS:
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     is_tlm = False if num_speculative_tokens is None else True
@@ -182,7 +182,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
-    if model_name not in ModelConfig.SWIFTKV_MODELS:
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
         assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
         )
@@ -231,7 +231,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         Constants.CTX_LEN,
         full_batch_size,
     )
-    if model_name not in ModelConfig.SWIFTKV_MODELS:
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
         pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
@@ -260,7 +260,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
-    if model_name in ModelConfig.SWIFTKV_MODELS:
+    if model_name in ModelConfig.SWIFTKV_MODELS or model_name in ModelConfig.EXTERNAL_MODELS:
         assert all(
             [
                 all(ort_token[:24] == cloud_token[:24])
