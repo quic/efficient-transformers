@@ -244,6 +244,7 @@ class QEFFBaseModel(ABC):
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
+            print("Export_kwargs:", export_kwargs)
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -251,7 +252,8 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                opset_version=16,
+                verbose=True,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
@@ -261,6 +263,7 @@ class QEFFBaseModel(ABC):
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
+                "temp_onnx_path": tmp_onnx_path,
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
@@ -287,7 +290,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path = onnx_path
         return onnx_path
 
-    @dump_qconfig
+    # @dump_qconfig
     def _compile(
         self,
         onnx_path: Optional[str] = None,
@@ -429,6 +432,7 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
+        print(command)
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
