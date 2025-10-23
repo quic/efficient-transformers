@@ -11,12 +11,12 @@ from collections import deque
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple, Union
-import requests
-from PIL import Image
 
 import numpy as np
+import requests
 import torch
 import transformers
+from PIL import Image
 from transformers import AutoImageProcessor, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -883,12 +883,24 @@ class QEffTextGenerationBase:
                 inputs[k] = np.array(v)
 
             vision_inputs = {
-                k: v for k, v in inputs.items() if k in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
+                k: v
+                for k, v in inputs.items()
+                if k
+                in {
+                    "pixel_values",
+                    "image_masks",
+                    "image_input_idx",
+                    "valid_idx",
+                    "aspect_ratio_ids",
+                    "aspect_ratio_mask",
+                }
             }
             # if vision_inputs:
             #     vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
             vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+            vision_inputs.update(
+                {k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs}
+            )
 
             # if not(self._lang_session.is_active):
             #     self._lang_session.activate()
@@ -908,9 +920,9 @@ class QEffTextGenerationBase:
             lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
         )  # Need to use -1 as position_ids for invalid tokens
 
-    #    not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
-    #     if not_mllama:
-    #         lang_inputs["image_idx"] = np.array([[0]])
+        #    not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
+        #     if not_mllama:
+        #         lang_inputs["image_idx"] = np.array([[0]])
         if image:
             lang_inputs["image_idx"] = np.array([[0]])
 
@@ -1282,7 +1294,9 @@ class TextGeneration:
         self._setup_model_execution_inputs(prompt, images, generation_len, prompt_to_lora_id_mapping)
         self._qaic_model.batch_index = np.arange(self._full_batch_size).reshape(-1, 1)
         start = perf_counter()
-        self._qaic_model.run_prefill_for_all_inputs(self._image_queue, self._prompt_queue, self._processor, generation_len)
+        self._qaic_model.run_prefill_for_all_inputs(
+            self._image_queue, self._prompt_queue, self._processor, generation_len
+        )
 
         loop_start = perf_counter()  # Start decode loop timer
         decode_pause_time = self._qaic_model.run_continuous_batching_decode(self._prompt_queue, generation_len)
