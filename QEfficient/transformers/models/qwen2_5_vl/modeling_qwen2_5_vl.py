@@ -927,6 +927,32 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             return lang_output_names
         return output_names
 
+    def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
+        input_ids_length = inputs["input_ids"].shape[1]
+
+        inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+
+        pos_ids, rope_deltas = self.model.get_rope_index(
+            inputs["input_ids"],
+            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            video_grid_thw=None,
+            second_per_grid_ts=None,
+            attention_mask=inputs["attention_mask"],
+        )
+
+        inputs["position_ids"] = torch.cat((inputs["position_ids"], pos_ids), dim=0)
+
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+
+        inputs["position_ids"] = F.pad(
+            inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
+        )
+
+        inputs.pop("image_grid_thw", None)
+
+        return inputs
+
     def get_inputs_info(self):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
