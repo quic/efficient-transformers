@@ -140,6 +140,7 @@ class QEffPhi3Attention(Phi3Attention):
         batch_index: Optional[torch.LongTensor] = None,
         position_ids=Optional[torch.Tensor],
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -162,9 +163,12 @@ class QEffPhi3Attention(Phi3Attention):
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
+                "CCL": attention_mask.shape[-1],
             }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
@@ -198,6 +202,7 @@ class QEffPhi3DecoderLayer(Phi3DecoderLayer):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -235,6 +240,7 @@ class QEffPhi3DecoderLayer(Phi3DecoderLayer):
             position_ids=position_ids,
             batch_index=batch_index,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
@@ -265,6 +271,7 @@ class QEffPhi3Model(Phi3Model):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -314,6 +321,7 @@ class QEffPhi3Model(Phi3Model):
                 position_ids=position_ids,
                 batch_index=batch_index,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 **kwargs,
@@ -350,6 +358,7 @@ class QEffPhi3ForCausalLM(Phi3ForCausalLM):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -366,6 +375,7 @@ class QEffPhi3ForCausalLM(Phi3ForCausalLM):
             batch_index=batch_index,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_hidden_states=output_hidden_states,
