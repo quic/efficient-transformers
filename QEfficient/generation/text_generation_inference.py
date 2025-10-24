@@ -1309,7 +1309,9 @@ class TextGeneration:
         )
 
         loop_start = perf_counter()  # Start decode loop timer
-        decode_pause_time = self._qaic_model.run_continuous_batching_decode(self._prompt_queue, self._image_queue, self._processor, generation_len)
+        decode_pause_time = self._qaic_model.run_continuous_batching_decode(
+            self._prompt_queue, self._image_queue, self._processor, generation_len
+        )
         end = perf_counter()
 
         generated_texts = self._tokenizer.batch_decode(self._qaic_model.generated_ids, skip_special_tokens=True)
