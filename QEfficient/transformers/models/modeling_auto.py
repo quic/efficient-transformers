@@ -2607,7 +2607,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
         """
         if prefill_seq_len == 1:
-            if not self.continuous_batching:# or batch_size == 1
+            if not self.continuous_batching:  # or batch_size == 1
                 return None  # Avoid duplication with prefill
 
         spec = {
