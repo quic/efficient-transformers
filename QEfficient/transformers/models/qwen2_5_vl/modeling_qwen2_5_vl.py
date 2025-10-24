@@ -680,7 +680,15 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         self.model = model
         self.language_model = self.model.model.language_model
 
-    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, batch_index: Optional[torch.LongTensor] = None,):
+    def forward(
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        batch_index: Optional[torch.LongTensor] = None,
+    ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_id
@@ -691,7 +699,11 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
         outputs = self.model.model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, batch_index=batch_index, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            batch_index=batch_index,
+            use_cache=True,
         )
 
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -873,7 +885,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             "vision_size": vision_size,
         }
 
-        if continuous_batching: lang_prefill["full_batch_size"] = kv_cache_batch_size
+        if continuous_batching:
+            lang_prefill["full_batch_size"] = kv_cache_batch_size
         else:
             lang_prefill["batch_size"] = kv_cache_batch_size
         if full_batch_size:
