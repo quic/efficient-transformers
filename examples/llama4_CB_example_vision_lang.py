@@ -63,3 +63,5 @@ output = qeff_model.generate(
     device_ids=[0, 1, 2, 3],
     generation_len=100,
 )
+
+print(output)
