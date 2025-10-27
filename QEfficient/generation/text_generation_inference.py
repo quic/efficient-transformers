@@ -13,11 +13,8 @@ from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
-import requests
-import torch
 import transformers
-from PIL import Image
-from transformers import AutoImageProcessor, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
@@ -316,10 +313,7 @@ def calculate_latency(total_decoded_tokens, loop_start, start, end, decode_pause
 
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    lang_qpc_path: str,
-    processor: Optional[AutoImageProcessor] = None,
-    vision_qpc_path: Optional[str] = None,
-    images: Optional[str] = None,
+    qpc_path: str,
     prompt: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
     device_id: Optional[List[int]] = None,
@@ -378,7 +372,7 @@ def cloud_ai_100_exec_kv(
         exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
 
     """
-    batch_size, ctx_len, full_batch_size = get_compilation_dims(lang_qpc_path)
+    batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
     if prompt_to_lora_id_mapping is not None:
@@ -387,9 +381,7 @@ def cloud_ai_100_exec_kv(
         )
     generate_text = TextGeneration(
         tokenizer=tokenizer,
-        processor=processor,
-        lang_qpc_path=lang_qpc_path,
-        vision_qpc_path=vision_qpc_path,
+        qpc_path=qpc_path,
         device_id=device_id,
         ctx_len=ctx_len,
         enable_debug_logs=enable_debug_logs,
@@ -404,12 +396,7 @@ def cloud_ai_100_exec_kv(
     for _ in range(0, int(iteration)):
         if full_batch_size is None:
             exec_info = [
-                generate_text.generate(
-                    prompt=prompt[i : i + batch_size],
-                    generation_len=generation_len,
-                    stream=stream,
-                    prompt_to_lora_id_mapping=prompt_to_lora_id_mapping,
-                )
+                generate_text.generate(prompt[i : i + batch_size], generation_len, stream, prompt_to_lora_id_mapping)
                 for i in range(0, len(prompt), batch_size)
             ]
             prefill_time = np.average([info.perf_metrics.prefill_time for info in exec_info])
@@ -427,10 +414,7 @@ def cloud_ai_100_exec_kv(
             )
         else:
             exec_info = generate_text.generate(
-                prompt=prompt,
-                images=images,
-                generation_len=generation_len,
-                prompt_to_lora_id_mapping=prompt_to_lora_id_mapping,
+                prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
             )
 
         print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
@@ -443,9 +427,7 @@ class QEffTextGenerationBase:
     def __init__(
         self,
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-        lang_qpc_path: str,
-        processor: Optional[AutoImageProcessor] = None,
-        vision_qpc_path: Optional[str] = None,
+        qpc_path: str,
         full_batch_size: Optional[int] = None,
         ctx_len: Optional[int] = None,
         device_id: Optional[List[int]] = None,
@@ -455,25 +437,21 @@ class QEffTextGenerationBase:
         include_sampler: bool = False,
         return_pdfs: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
+        activate: bool = True,
     ) -> None:
         self._ctx_len = ctx_len
         self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
         self.return_pdfs = return_pdfs
         self.sampling_params = sampling_params
+        self._qpc_path = qpc_path  # Store qpc_path for later use
 
         # Load QPC
-        self._lang_session = None
-        self._vision_session = None
-        if not lang_qpc_path:
-            raise TypeError("Please run compile API for language model first!")
-        self._lang_session = QAICInferenceSession(lang_qpc_path, device_id, activate=False)
-        if vision_qpc_path:
-            self._vision_session = QAICInferenceSession(vision_qpc_path, device_id, activate=False)
+        self._session = QAICInferenceSession(qpc_path, device_id, activate=activate, enable_debug_logs=enable_debug_logs)
 
         # Validate sampler inputs for On-Device Sampling
         self.include_sampler = validate_sampler_inputs(
-            session_inputs=set(self._lang_session.input_names), include_sampler=include_sampler
+            session_inputs=set(self._session.input_names), include_sampler=include_sampler
         )
 
         # Fetch the variables from the QPC
@@ -498,23 +476,10 @@ class QEffTextGenerationBase:
         self.generation_len = None
 
         self.tokenizer = tokenizer
-        self.processor = processor
         self._set_tokenizer_params()  # set tokenizer params
         # Skip inputs/outputs
-        if self._vision_session:
-            self._vision_session.skip_buffers(
-                [
-                    x
-                    for x in self._vision_session.input_names + self._vision_session.output_names
-                    if x.startswith("past_") or x.endswith("_RetainedState")
-                ]
-            )
-        self._lang_session.skip_buffers(
-            [
-                x
-                for x in self._lang_session.input_names + self._lang_session.output_names
-                if x.startswith("past_") or x.endswith("_RetainedState")
-            ]
+        self._session.skip_buffers(
+            [x for x in self._session.input_names + self._session.output_names if x.startswith("past_")]
         )
 
     def _set_tokenizer_params(self):
@@ -539,16 +504,13 @@ class QEffTextGenerationBase:
 
         """
         full_batch_size = None
-        if "batch_index" in self._lang_session.binding_index_map:
-            if self._lang_session.allowed_shapes:
+        if "batch_index" in self._session.binding_index_map:
+            if self._session.allowed_shapes:
                 full_batch_size, _ = [
-                    x[self._lang_session.binding_index_map["batch_index"]][1][0]
-                    for x in self._lang_session.allowed_shapes
+                    x[self._session.binding_index_map["batch_index"]][1][0] for x in self._session.allowed_shapes
                 ]
             else:
-                full_batch_size, _ = self._lang_session.bindings[
-                    self._lang_session.binding_index_map["batch_index"]
-                ].dims
+                full_batch_size, _ = self._session.bindings[self._session.binding_index_map["batch_index"]].dims
         return full_batch_size
 
     def _fetch_batch_size_prefill_seq_len(
@@ -561,17 +523,15 @@ class QEffTextGenerationBase:
             batch_size: The batch size fetched from the session's bindings or allowed shapes.
             prefill_seq_len: The prefill sequence length fetched from the session's bindings or allowed shapes.
         """
-        if self._lang_session.allowed_shapes:
+        if self._session.allowed_shapes:
             batch_size = max(
-                [x[self._lang_session.binding_index_map["input_ids"]][1][0] for x in self._lang_session.allowed_shapes]
+                [x[self._session.binding_index_map["input_ids"]][1][0] for x in self._session.allowed_shapes]
             )
             prefill_seq_len = max(
-                [x[self._lang_session.binding_index_map["input_ids"]][1][1] for x in self._lang_session.allowed_shapes]
+                [x[self._session.binding_index_map["input_ids"]][1][1] for x in self._session.allowed_shapes]
             )
         else:
-            batch_size, prefill_seq_len = self._lang_session.bindings[
-                self._lang_session.binding_index_map["input_ids"]
-            ].dims
+            batch_size, prefill_seq_len = self._session.bindings[self._session.binding_index_map["input_ids"]].dims
         return batch_size, prefill_seq_len
 
     def _fetch_decode_seq_len(
@@ -584,9 +544,9 @@ class QEffTextGenerationBase:
             decode_seq_len: The decode sequence length fetched from the session's bindings or allowed shapes.
         """
         decode_seq_len = None
-        if self._lang_session.allowed_shapes:
+        if self._session.allowed_shapes:
             decode_seq_len = min(
-                [x[self._lang_session.binding_index_map["input_ids"]][1][1] for x in self._lang_session.allowed_shapes]
+                [x[self._session.binding_index_map["input_ids"]][1][1] for x in self._session.allowed_shapes]
             )
         return decode_seq_len
 
@@ -605,10 +565,10 @@ class QEffTextGenerationBase:
             if self.include_sampler
             else "logits"
         )
-        if self._lang_session.allowed_shapes:
-            return [x[self._lang_session.binding_index_map[key]] for x in self._lang_session.allowed_shapes][0][1][2]
+        if self._session.allowed_shapes:
+            return [x[self._session.binding_index_map[key]] for x in self._session.allowed_shapes][0][1][2]
 
-        return self._lang_session.bindings[self._lang_session.binding_index_map[key]].dims[2]
+        return self._session.bindings[self._session.binding_index_map[key]].dims[2]
 
     def _fetch_generation_len(self, generation_len, max_gen_len):
         """
@@ -744,7 +704,7 @@ class QEffTextGenerationBase:
         self.generation_len[decode_batch_id or slice(None)] = generation_len
         return next_token_id
 
-    def run_prefill_for_all_inputs(self, image_queue, prompt_queue, processor, generation_len):
+    def run_prefill_for_all_inputs(self, prompt_queue, generation_len):
         """
         Runs prefill for all inputs in the prompt queue and updates the decode input.
 
@@ -755,21 +715,14 @@ class QEffTextGenerationBase:
             generation_len (int): The generation length.
 
         """
-        next_prompt = None
-        next_image = None
         for decode_batch_id in range(self.full_batch_size):
-            if prompt_queue:
-                next_prompt = prompt_queue.popleft()
-            if image_queue:
-                next_image = image_queue.popleft()
+            next_prompt = prompt_queue.popleft()
 
             # run prefill for num_chunks
+            # NOTE: We pass decode_batch_id=None during prefill to ensure batch_index is not added
+            # The decode_batch_id is only used for updating decode inputs, not for prefill execution
             outputs, position_ids, generation_len = self.run_prefill(
-                next_prompt,
-                next_image,
-                processor,
-                generation_len,
-                decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
+                next_prompt, generation_len, decode_batch_id=None
             )
 
             _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
@@ -784,39 +737,14 @@ class QEffTextGenerationBase:
         if self.include_sampler:
             if self.return_pdfs:
                 probs_out_placeholder = np.zeros((batch_size, sequence_length, self._vocab_size), dtype=np.float32)
-                self._lang_session.set_buffers({"probs": probs_out_placeholder})
+                self._session.set_buffers({"probs": probs_out_placeholder})
             next_tokens_out_placeholder = np.zeros((batch_size, sequence_length, 1), dtype=np.int64)
-            self._lang_session.set_buffers({"next_tokens": next_tokens_out_placeholder})
+            self._session.set_buffers({"next_tokens": next_tokens_out_placeholder})
         else:
             logits_out_placeholder = np.zeros((batch_size, sequence_length, self._vocab_size), dtype=np.float32)
-            self._lang_session.set_buffers({"logits": logits_out_placeholder})
+            self._session.set_buffers({"logits": logits_out_placeholder})
 
-    def prepare_vision_language_inputs(self, processor, query, image_url):
-        image = Image.open(requests.get(image_url, stream=True).raw)
-        conversation = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": query},
-                    {"type": "image"},
-                ],
-            },
-        ]
-        prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
-        inputs = processor(images=image, text=prompt, return_tensors="pt")
-        if "pixel_values" in inputs:
-            inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-        return inputs
-
-    def run_prefill(
-        self,
-        prompt: str,
-        image: Optional[str] = None,
-        processor: Optional[AutoImageProcessor] = None,
-        generation_len: Optional[int] = None,
-        prefill_logit_bs=1,
-        decode_batch_id=None,
-    ):
+    def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
         """
         Runs prefill for a given prompt and generation length.
 
@@ -833,17 +761,9 @@ class QEffTextGenerationBase:
             position_ids (array): The position IDs.
             generation_len (int): The generation length.
         """
-
         # Run prefill
-        if image:
-            inputs = self.prepare_vision_language_inputs(processor, prompt, image)
-        else:
-            inputs = self.tokenizer(prompt, return_tensors="np", padding=True)
-
-        if "position_ids" in inputs:
-            position_ids = inputs["position_ids"]
-        else:
-            position_ids = inputs["attention_mask"].sum(1, keepdims=True)
+        inputs = self.tokenizer(prompt, return_tensors="np", padding=True)
+        position_ids = inputs["attention_mask"].sum(1, keepdims=True)
         padded_len = inputs["input_ids"].shape[1]
         num_chunks = -(padded_len // -self._prefill_seq_len)  # ceil divide without float
         padded_len = num_chunks * self._prefill_seq_len  # Convert to a multiple of prompt_len
@@ -856,130 +776,60 @@ class QEffTextGenerationBase:
         # Set the prefill output buffers
         self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
 
-        vision_inputs = {}
-        vision_outputs = {}
-        if image:
-            pad_token_id = 1
-            input_ids_length = inputs["input_ids"].shape[1]
-            num_chunks = -(input_ids_length // -self._prefill_seq_len)  # ceil divide without float
-            padded_len = num_chunks * self._prefill_seq_len  # Convert to a multiple of prompt_len
+        inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        inputs.pop("token_type_ids", None)
 
-            inputs["input_ids"] = torch.nn.functional.pad(
-                inputs["input_ids"],
-                (0, padded_len - input_ids_length),
-                "constant",
-                pad_token_id,
-            )
-            inputs["attention_mask"] = torch.nn.functional.pad(
-                inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
-            )
-            if "cross_attention_mask" in inputs:
-                inputs["cross_attention_mask"] = torch.nn.functional.pad(
-                    inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
-                )
-
-            for k, v in inputs.items():
-                inputs[k] = np.array(v)
-
-            vision_inputs = {
-                k: v
-                for k, v in inputs.items()
-                if k
-                in {
-                    "pixel_values",
-                    "image_masks",
-                    "image_input_idx",
-                    "valid_idx",
-                    "aspect_ratio_ids",
-                    "aspect_ratio_mask",
-                }
-            }
-            # if vision_inputs:
-            #     vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            vision_inputs.update(
-                {k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs}
-            )
-
-            # if not(self._lang_session.is_active):
-            #     self._lang_session.activate()
-            # Run vision prefill
-            if vision_inputs:
-                # self._lang_session.pause()
-                self._vision_session.activate()
-                vision_outputs = self._vision_session.run(vision_inputs)
-                self._vision_session.deactivate()
-                # self._lang_session.resume()
-        else:
-            inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-            inputs.pop("token_type_ids", None)
-
-        lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-        if "position_ids" in inputs:
-            lang_inputs["position_ids"] = inputs["position_ids"]
-            lang_inputs.pop("attention_mask")
-        else:
-            lang_inputs["position_ids"] = np.where(
-                lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
-            )  # Need to use -1 as position_ids for invalid tokens
-
-        #    not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
-        #     if not_mllama:
-        #         lang_inputs["image_idx"] = np.array([[0]])
-        if image:
-            lang_inputs["image_idx"] = np.array([[0]])
-
-        self._lang_session.activate()
-        self._lang_session.set_buffers(vision_outputs)
-
-        if decode_batch_id is not None:
-            lang_inputs["batch_index"] = decode_batch_id
+        # Note: batch_index is only used during decode, not prefill
+        # During prefill in CB mode, we use the prefill specialization (batch_size=1, seq_len=128)
+        # which doesn't have batch_index parameter
+        # However, image_idx may be needed for VLM models during prefill
         if self.is_tlm:
-            lang_inputs["num_logits_to_keep"] = np.zeros((1, 1))
+            inputs["num_logits_to_keep"] = np.zeros((1, 1))
         if self.include_sampler:
-            lang_inputs["last_accepted_output_tokens"] = lang_inputs["input_ids"]
+            inputs["last_accepted_output_tokens"] = inputs["input_ids"]
             for op in Constants.SAMPLER_OPS:
                 if decode_batch_id is not None:
-                    lang_inputs[op] = self.sampling_params[op][decode_batch_id.flatten()]
+                    inputs[op] = self.sampling_params[op][decode_batch_id.flatten()]
                 else:
-                    lang_inputs[op] = self.sampling_params[op]
+                    inputs[op] = self.sampling_params[op]
 
         if self._prompt_to_lora_id_mapping_prefill:
             if self.full_batch_size:
-                lang_inputs["lora_ids"] = np.array(
+                inputs["lora_ids"] = np.array(
                     self._prompt_to_lora_id_mapping_prefill.popleft(), dtype=np.int64
                 ).reshape(1, 1)
             else:
                 batch_lora_ids = [self._prompt_to_lora_id_mapping_prefill.popleft() for i in range(self.batch_size)]
-                lang_inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
+                inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
 
-        # Run language prefill
-        chunk_inputs = lang_inputs.copy()
+        # Check if image_idx is expected by the session (for VLM models)
+        if "image_idx" in self._session.input_names or "image_idx" in getattr(self._session, 'binding_index_map', {}):
+            try:
+                binding_idx = self._session.binding_index_map.get("image_idx")
+                dims = self._session.bindings[binding_idx].dims if binding_idx is not None else (1, 1)
+                inputs["image_idx"] = np.zeros(tuple(dims), dtype=np.int64)
+            except Exception:
+                inputs["image_idx"] = np.array([[0]], dtype=np.int64)
+
         for i in range(num_chunks):
-            chunk_inputs["input_ids"] = lang_inputs["input_ids"][
+            chunk_inputs = inputs.copy()
+            chunk_inputs["input_ids"] = inputs["input_ids"][
                 :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
-            chunk_inputs["position_ids"] = lang_inputs["position_ids"][
-                ..., i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
+            chunk_inputs["position_ids"] = inputs["position_ids"][
+                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
-            outputs = self._lang_session.run(chunk_inputs)
-            if image:
-                chunk_inputs["image_idx"] = outputs["image_idx_output"]
+            outputs = self._session.run(chunk_inputs)
+            
+            # Update image_idx for next chunk if VLM model provides it
+            if "image_idx_output" in outputs:
+                inputs["image_idx"] = outputs["image_idx_output"]
+                
             if self._write_io_dir is not None:
                 write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
-        # Skip inputs/outputs again
-        self._lang_session.skip_buffers(
-            [
-                x
-                for x in self._lang_session.input_names + self._lang_session.output_names
-                if x.startswith("past_") or x.endswith("_RetainedState")
-            ]
-        )
-        # self._lang_session.deactivate()
-
         return (
             outputs,
             position_ids,
@@ -997,6 +847,15 @@ class QEffTextGenerationBase:
             generation_len (int): The generation length.
 
         """
+
+        # Skip vision buffers during decode for vision-language models in CB mode
+        # Vision buffers don't have batch dimension and should only be used during prefill
+        if hasattr(self, '_vision_outputs'):
+            vision_buffer_names = [name for name in self._session.input_names + self._session.output_names 
+                                   if 'vision' in name.lower() or 'pixel_values' in name.lower()]
+            if vision_buffer_names:
+                logger.debug(f"Skipping vision buffers during decode: {vision_buffer_names}")
+                self._session.skip_buffers(vision_buffer_names)
 
         # Set output placeholders for decode
         self._set_output_buffers(
@@ -1019,9 +878,8 @@ class QEffTextGenerationBase:
         next_prompt = None
         next_image = None
 
-        # self._lang_session.activate() # Due to activating new session (new exec_obj) run values are changing
         while prompt_queue or current_decode_ongoing.any():
-            outputs = self._lang_session.run(decode_inputs)
+            outputs = self._session.run(decode_inputs)
 
             # Prepare inputs for next iteration
             next_token_id = self._fetch_next_token_id(outputs)
@@ -1038,10 +896,8 @@ class QEffTextGenerationBase:
                         start = perf_counter()
                         # run prefill for next prompt input.
                         outputs, position_ids, generation_len = self.run_prefill(
-                            prompt=next_prompt,
-                            image=next_image,
-                            processor=processor,
-                            generation_len=generation_len,
+                            prompt_queue.popleft(),
+                            generation_len,
                             decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
                         )
 
@@ -1076,8 +932,6 @@ class QEffTextGenerationBase:
 
                     generated_id_current_index[decode_batch_id] += 1
 
-        self._lang_session.deactivate()
-
         return decode_pause_time
 
     def run_decode(
@@ -1099,14 +953,13 @@ class QEffTextGenerationBase:
             logits_out_placeholder = np.zeros(
                 (self.batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32
             )
-            self._lang_session.set_buffers({"logits": logits_out_placeholder})
+            self._session.set_buffers({"logits": logits_out_placeholder})
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
         num_token = 0
-        self._lang_session.activate()
         for num_token in range(1, generation_len):
             if streamer:
                 streamer.put(decode_inputs["input_ids"][0])
-            outputs = self._lang_session.run(decode_inputs)
+            outputs = self._session.run(decode_inputs)
 
             if self._write_io_dir is not None:
                 write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
@@ -1122,7 +975,6 @@ class QEffTextGenerationBase:
 
             if finished_sequences.all() and not automation:
                 break
-        self._lang_session.deactivate()
         return num_token
 
     def generate_decode_stream(self, decode_inputs, generation_len, automation):
@@ -1139,10 +991,9 @@ class QEffTextGenerationBase:
             token_id (int): The token generated in the decoding process.
         """
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
-        self._lang_session.activate()
         for num_token in range(1, generation_len):
             yield decode_inputs["input_ids"]
-            outputs = self._lang_session.run(decode_inputs)
+            outputs = self._session.run(decode_inputs)
 
             if self._write_io_dir is not None:
                 write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
@@ -1156,7 +1007,6 @@ class QEffTextGenerationBase:
 
             if finished_sequences.all() and not automation:
                 break
-        self._lang_session.deactivate()
         yield decode_inputs["input_ids"]  # yield the last token
 
 
@@ -1164,9 +1014,7 @@ class TextGeneration:
     def __init__(
         self,
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-        lang_qpc_path: str,
-        processor: Optional[AutoImageProcessor] = None,
-        vision_qpc_path: Optional[str] = None,
+        qpc_path: str,
         full_batch_size: Optional[int] = None,
         ctx_len: Optional[int] = None,
         device_id: Optional[List[int]] = None,
@@ -1179,9 +1027,7 @@ class TextGeneration:
     ) -> None:
         self._qaic_model = QEffTextGenerationBase(
             tokenizer=tokenizer,
-            lang_qpc_path=lang_qpc_path,
-            processor=processor,
-            vision_qpc_path=vision_qpc_path,
+            qpc_path=qpc_path,
             full_batch_size=full_batch_size,
             ctx_len=ctx_len,
             device_id=device_id,
@@ -1194,11 +1040,9 @@ class TextGeneration:
         )
         self._full_batch_size = self._qaic_model.full_batch_size
         self._tokenizer = self._qaic_model.tokenizer
-        self._processor = self._qaic_model.processor
         self._ctx_len = ctx_len
         self._perf_metrics = None
         self._prompt_queue = None
-        self._image_queue = None
         self._text_streamer = None
 
     @property
@@ -1208,7 +1052,6 @@ class TextGeneration:
     def _setup_model_execution_inputs(
         self,
         prompt: List[str],
-        images: Optional[List[str]] = None,
         generation_len: Optional[int] = None,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
     ):
@@ -1226,8 +1069,6 @@ class TextGeneration:
 
         # Create a prompt queue.
         self._prompt_queue = deque(prompt)
-        if images:
-            self._image_queue = deque(images)
         # Initialize np arrays for storing the prefill output for all the decode batch size.
         num_prompts = len(self._prompt_queue)
 
@@ -1257,14 +1098,12 @@ class TextGeneration:
         :tuple: A tuple containing performance metrics and generated texts.
 
         """
-        self._setup_model_execution_inputs(
-            prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
-        )
+        self._setup_model_execution_inputs(prompt, generation_len, prompt_to_lora_id_mapping)
         if stream and self._text_streamer is None:
             self._text_streamer = transformers.TextStreamer(self._tokenizer)
         start = perf_counter()
         outputs, position_ids, generation_len = self._qaic_model.run_prefill(
-            prompt=prompt, generation_len=generation_len, prefill_logit_bs=self._qaic_model.batch_size
+            prompt, generation_len, prefill_logit_bs=self._qaic_model.batch_size
         )
         self._qaic_model.update_decode_input(outputs, position_ids, generation_len)
 
@@ -1285,7 +1124,6 @@ class TextGeneration:
     def _continuous_batching_execution(
         self,
         prompt: List[str],
-        images: Optional[List[str]] = None,
         generation_len: Optional[int] = None,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
     ):
@@ -1301,12 +1139,13 @@ class TextGeneration:
         Returns:
         :tuple: A tuple containing performance metrics and generated texts.
         """
-        self._setup_model_execution_inputs(prompt, images, generation_len, prompt_to_lora_id_mapping)
-        self._qaic_model.batch_index = np.arange(self._full_batch_size).reshape(-1, 1)
+        self._setup_model_execution_inputs(prompt, generation_len, prompt_to_lora_id_mapping)
         start = perf_counter()
-        self._qaic_model.run_prefill_for_all_inputs(
-            self._image_queue, self._prompt_queue, self._processor, generation_len
-        )
+        # Run prefill for all inputs first (batch_index should NOT be set during prefill)
+        self._qaic_model.run_prefill_for_all_inputs(self._prompt_queue, generation_len)
+        
+        # Now set batch_index for decode phase
+        self._qaic_model.batch_index = np.arange(self._full_batch_size).reshape(-1, 1)
 
         loop_start = perf_counter()  # Start decode loop timer
         decode_pause_time = self._qaic_model.run_continuous_batching_decode(
@@ -1352,7 +1191,7 @@ class TextGeneration:
         self._setup_model_execution_inputs(prompt, generation_len, prompt_to_lora_id_mapping)
         start = perf_counter()
         outputs, position_ids, generation_len = self._qaic_model.run_prefill(
-            prompt=prompt, generation_len=generation_len, prefill_logit_bs=self._qaic_model.batch_size
+            prompt, generation_len, prefill_logit_bs=self._qaic_model.batch_size
         )
         self._qaic_model.update_decode_input(outputs, position_ids, generation_len)
 
@@ -1377,7 +1216,6 @@ class TextGeneration:
     def generate(
         self,
         prompt: List[str],
-        images: Optional[List[str]] = None,
         generation_len: Optional[int] = None,
         stream: bool = True,
         automation: Optional[bool] = False,
@@ -1398,7 +1236,7 @@ class TextGeneration:
         if self._full_batch_size is not None:
             logger.warning("Streamer is currently unavailable for continuous batch execution.")
             perf_metrics, generated_texts = self._continuous_batching_execution(
-                prompt, images, generation_len, prompt_to_lora_id_mapping
+                prompt, generation_len, prompt_to_lora_id_mapping
             )
         else:
             if stream:

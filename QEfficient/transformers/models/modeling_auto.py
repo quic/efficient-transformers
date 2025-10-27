@@ -36,6 +36,7 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     get_compilation_dims,
 )
+from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
@@ -1188,6 +1189,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
             Inputs to run the execution, typically includes `pixel_values`, `input_ids`,
             `attention_mask`, etc.
+        tokenizer : PreTrainedTokenizer or PreTrainedTokenizerFast, optional
+            Tokenizer for the model. Used when images and prompts are provided.
+        processor : AutoImageProcessor, optional
+            Processor for the model. Used when images and prompts are provided.
+        images : List[str], optional
+            List of image paths or PIL images to process.
+        prompts : List[str], optional
+            List of text prompts corresponding to the images.
         streamer : TextStreamer, optional
             A streamer object to display generated tokens in real-time. Default is None.
         device_ids : List[int], optional
@@ -1212,17 +1221,27 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
+        # Use VisionLanguageGeneration for image-prompt pairs
         if (processor and images) or (tokenizer and prompts):
-            return QEfficient.cloud_ai_100_exec_kv(
-                tokenizer=tokenizer,
-                processor=processor,
+            # Create VisionLanguageGeneration instance
+            vlm_gen = VisionLanguageGeneration(
                 lang_qpc_path=self.lang_model.qpc_path,
                 vision_qpc_path=self.vision_model.qpc_path,
-                images=images,
-                prompt=prompts,
-                device_id=device_ids,
-                generation_len=generation_len,
+                tokenizer=tokenizer,
+                processor=processor,
+                device_id=device_ids, # if device_ids is not None else [0],
+                ctx_len=3072 # TODO need to get it from the QPC
             )
+            
+            # Call generate method
+            return vlm_gen.generate(
+                images=images,
+                prompts=prompts,
+                generation_len=generation_len,
+                stream=streamer is not None,
+            )
+        
+        # Fallback to kv_offload_generate for direct inputs (backward compatibility)
         return self.kv_offload_generate(
             inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
         )
