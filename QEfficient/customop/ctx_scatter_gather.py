@@ -99,6 +99,25 @@ def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxsc
     return ops.GatherND(data, ctx_indices, batch_dims=1)
 
 
+class CtxGatherSlidingWindowFunc3D(torch.autograd.Function):
+    @staticmethod
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+        return data[:, :, ctx_indices[0, 0].squeeze(-1), :]
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxGatherSlidingWindow3D, data, ctx_indices).setTypeAs(data)
+
+
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxGatherSlidingWindow3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
+    return ops.GatherND(data, ctx_indices, batch_dims=2)
+
+
 class CtxGatherFunc3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
@@ -116,7 +135,11 @@ class CtxGatherFunc3D(torch.autograd.Function):
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGather(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
-    ctx_indices = ops.Expand(ctx_indices, ops.Slice(ops.Shape(data), starts=[0], ends=[3], axes=[0]))
+    seq_len = ops.Gather(ops.Shape(ctx_indices), [1])
+    bs = ops.Gather(ops.Shape(data), [0])
+    nh = ops.Gather(ops.Shape(data), [1])
+    exp_shape = ops.Concat(bs, nh, seq_len, axis=0)
+    ctx_indices = ops.Expand(ctx_indices, exp_shape)
     ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
     return ops.GatherND(data, ctx_indices, batch_dims=2)
 

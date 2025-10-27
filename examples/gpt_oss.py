@@ -17,15 +17,19 @@ from QEfficient.utils.constants import Constants
 from QEfficient.utils.run_utils import ApiRunner
 
 torch.manual_seed(42)
-model_id = "CONVERTED_WEIGHTS"  # See Comments above to convert saftensors to BF16
-config = AutoConfig.from_pretrained(model_id)
+model_id = "/home/ochougul/open_source/efficient-transformers/gpt-oss-20b-weights-converted"  # See Comments above to convert saftensors to BF16
+model_name = "openai/gpt-oss-20b"
+config = AutoConfig.from_pretrained(model_name)
+config.num_hidden_layers=2
+if hasattr(config, "quantization_config"):
+    delattr(config, "quantization_config")
 
 model = GptOssForCausalLM.from_pretrained(
     model_id, torch_dtype=torch.float32, attn_implementation="eager", config=config
 )
 model.eval()
 
-tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_id)
+tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
 config = model.config
 batch_size = len(Constants.INPUT_STR)
 
@@ -34,8 +38,8 @@ api_runner = ApiRunner(batch_size, tokenizer, config, Constants.INPUT_STR, Const
 qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
 onnx_model_path = qeff_model.export()
 qpc_path = qeff_model.compile(
-    prefill_seq_len=32,
-    ctx_len=256,
+    prefill_seq_len=8192,
+    ctx_len=16384,
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
@@ -43,6 +47,8 @@ qpc_path = qeff_model.compile(
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
+    prefill_only=True,
+    mdts_mos=1
 )
 print(f"qpc path is {qpc_path}")
 streamer = TextStreamer(tokenizer)

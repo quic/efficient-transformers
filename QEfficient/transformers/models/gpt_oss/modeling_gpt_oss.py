@@ -29,6 +29,7 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
+from QEfficient.customop.ctx_scatter_gather import CtxGatherFunc3D, CtxGatherSlidingWindowFunc3D
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -329,7 +330,7 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, kv_position_ids , unsqueeze_dim=1):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
@@ -362,11 +363,14 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
 
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    q_cos = cos[position_ids].unsqueeze(unsqueeze_dim)
+    q_sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    
+    kv_cos = cos[kv_position_ids].unsqueeze(unsqueeze_dim)
+    kv_sin = sin[kv_position_ids].unsqueeze(unsqueeze_dim)
 
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
+    q_embed = (q * q_cos) + (rotate_half(q) * q_sin)
+    k_embed = (k * kv_cos) + (rotate_half(k) * kv_sin)
 
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
@@ -404,43 +408,105 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
+# def eager_attention_forward_blocked(
+#     module: nn.Module,
+#     query: torch.Tensor,
+#     key: torch.Tensor,
+#     value: torch.Tensor,
+#     attention_mask: Optional[torch.Tensor],
+#     scaling: float,
+#     dropout: float = 0.0,
+#     num_blocks_indicator=None,
+#     **kwargs,
+# ):
+#     key_states = repeat_kv(key, module.num_key_value_groups)
+#     value_states = repeat_kv(value, module.num_key_value_groups)
+
+#     attn_outputs = []
+#     q_len = query.shape[2]
+#     num_blocks_indicator = int(os.environ['NUM_BLOCKS'])
+#     runtime_block_size = q_len // num_blocks_indicator
+#     block_positions = [j for j in range(0, q_len, runtime_block_size)]
+#     for block_pos in block_positions:
+#         q_block = query[:, :, block_pos:block_pos + runtime_block_size, :]
+#         attn_mask_block = attention_mask[:, :, block_pos:block_pos+runtime_block_size, :]
+#         curr_attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
+#         if attention_mask is not None:  # no matter the length, we just slice it
+#             curr_attn_weights = torch.where(attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), curr_attn_weights)
+
+#         sinks = module.sinks.reshape(1, -1, 1, 1).expand(curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1)
+#         combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
+#         # upcast attention to fp32
+#         curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
+#         curr_attn_weights = curr_attn_weights[..., :-1]
+#         curr_attn_output = torch.matmul(curr_attn_weights, value_states)
+#         attn_outputs.append(curr_attn_output)
+
+#     attn_output = torch.cat(attn_outputs, dim=2)
+#     attn_output = attn_output.transpose(1, 2).contiguous()
+#     return attn_output, attn_output
+
+
 def eager_attention_forward_blocked(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    dropout: float = 0.0,
-    num_blocks_indicator=None,
-    **kwargs,
+   module: nn.Module,
+   query: torch.Tensor,
+   key: torch.Tensor,
+   value: torch.Tensor,
+   attention_mask: Optional[torch.Tensor],
+   scaling: float,
+   dropout: float = 0.0,
+   num_blocks_indicator=None,
+   **kwargs,
 ):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
+   softmax_count = 0
+   key_states = repeat_kv(key, module.num_key_value_groups)
+   value_states = repeat_kv(value, module.num_key_value_groups)
 
-    attn_outputs = []
-    q_len = query.shape[2]
-    num_blocks_indicator = int(os.environ['NUM_BLOCKS'])
-    runtime_block_size = q_len // num_blocks_indicator
-    block_positions = [j for j in range(0, q_len, runtime_block_size)]
-    for block_pos in block_positions:
-        q_block = query[:, :, block_pos:block_pos + runtime_block_size, :]
-        attn_mask_block = attention_mask[:, :, block_pos:block_pos+runtime_block_size, :]
-        curr_attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
-        if attention_mask is not None:  # no matter the length, we just slice it
-            curr_attn_weights = torch.where(attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), curr_attn_weights)
+   BS, NH, CL, DH = query.shape
+   _, _, kv_CL, _ = key_states.shape
+   target_blocks = int(os.environ.get("NUM_BLOCKS"))
+#    target_block_range = torch.arange(target_blocks)
+#    import ipdb; ipdb.set_trace()
+#    block_positions = [(i * CL) // target_blocks for i in range(target_blocks)]
+   block_positions = []
+   for j in range(target_blocks):
+       block_positions.append(j*(CL//target_blocks))
+       
+   print(f"CL={CL}, target_blocks={target_blocks}")
 
-        sinks = module.sinks.reshape(1, -1, 1, 1).expand(curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1)
-        combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
-        # upcast attention to fp32
-        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
-        curr_attn_weights = curr_attn_weights[..., :-1]
-        curr_attn_output = torch.matmul(curr_attn_weights, value_states)
-        attn_outputs.append(curr_attn_output)
+   block_count = 0
+#    import ipdb; ipdb.set_trace()
+   for block_idx in range(target_blocks):
+       block_count += 1
+       qi = block_positions[block_idx]
 
-    attn_output = torch.cat(attn_outputs, dim=2)
-    attn_output = attn_output.transpose(1, 2).contiguous()
-    return attn_output, attn_output
+       # Calculate block size (last block should be handled with remainder)
+       if block_idx == target_blocks - 1:
+          real_q_len = CL - qi
+       else:
+          real_q_len = block_positions[block_idx + 1] - qi
+
+       q_block = query[:, :,  qi:qi + real_q_len, :]
+       scores = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
+       attn_mask_block = attention_mask[:, :, qi: qi+real_q_len, :]
+       curr_attn_weights = torch.where(attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), scores)
+       # scores = mask_text_scores(scores, image_len, valid_txt_len)
+       sinks = module.sinks.reshape(1, -1, 1, 1).expand(curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1)
+       combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
+      # upcast attention to fp32
+       curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
+       curr_attn_weights = curr_attn_weights[..., :-1]
+       out_block = torch.matmul(curr_attn_weights, value_states)
+
+       if qi == 0:
+           output = out_block.clone()
+       else:
+           output = torch.cat([output, out_block.clone()], dim=1)
+
+   print(f"Completed {block_count} blocks, {softmax_count} softmax operations")
+   output = output.view(BS, NH, CL, DH).transpose(1, 2).contiguous()
+   return output, output
+
 
 
 class QEffGptOssAttention(GptOssAttention):
@@ -463,16 +529,30 @@ class QEffGptOssAttention(GptOssAttention):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
-
         query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        if self.sliding_window is not None:
+            sliding_window_len = past_key_value.sliding_window_len
+            short_read_idx = torch.arange(sliding_window_len)
+            read_idx = short_read_idx + torch.where(position_ids.max()> sliding_window_len-1, position_ids.max() - sliding_window_len, 0)
+            # read_idx = read_idx[None, ...].unsqueeze(-1)
+            kv_position_ids = read_idx.reshape(1, -1)
+            kv_hidden_states = hidden_states[:, read_idx, :]
+            hidden_shape = (input_shape[0], sliding_window_len, -1, self.head_dim)
+            key_states = self.k_proj(kv_hidden_states).view(hidden_shape).transpose(1, 2)
+            value_states = self.v_proj(kv_hidden_states).view(hidden_shape).transpose(1, 2)
+            # kv_hidden_shape = 
+            # hidden_states = CtxGatherSlidingWindowFunc3D.apply(hidden_states, read_idx)
+        else:
+            kv_position_ids = position_ids
+            hidden_shape = (*input_shape, -1, self.head_dim)
+            key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         # kv_seq_len = key_states.shape[-2]
 
         # kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids, kv_position_ids)
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -492,7 +572,7 @@ class QEffGptOssAttention(GptOssAttention):
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = eager_attention_forward_blocked
+        attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -505,6 +585,19 @@ class QEffGptOssAttention(GptOssAttention):
             s_aux=self.sinks,  # diff with Llama
             **kwargs,
         )
+        # attn_output_og, attn_weights_og = eager_attention_forward(
+        #     self,
+        #     query_states,
+        #     key_states,
+        #     value_states,
+        #     attention_mask,
+        #     dropout=0.0 if not self.training else self.attention_dropout,
+        #     scaling=self.scaling,
+        #     sliding_window=self.sliding_window,
+        #     s_aux=self.sinks,  # diff with Llama
+        #     **kwargs,
+        # )
+        # import ipdb; ipdb.set_trace()
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
@@ -610,6 +703,7 @@ class QEffGptOssModel(GptOssModel):
             target_length=past_key_values.sliding_window_len,
             sliding_window=past_key_values.sliding_window_len,
         )
+        import ipdb; ipdb.set_trace()
 
         hidden_states = inputs_embeds
         # position_embeddings = self.rotary_emb(hidden_states, position_ids)

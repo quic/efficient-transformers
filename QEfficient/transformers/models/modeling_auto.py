@@ -1545,7 +1545,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :str: Path of the generated ``ONNX`` graph.
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = int(os.environ['NUM_BLOCKS'])
+        seq_len: int = int(os.environ['NUM_BLOCKS']) * 2
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
@@ -1567,7 +1567,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:  # pkv is 4d
             pkv_dynamic_axes = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
-                2: "ctx_len",
+                2: "    ",
             }
         output_names = []
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
@@ -1604,7 +1604,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    if i%2 == 0:
+                        example_inputs["past_key_values"][i].append(torch.zeros((kv_cache_shape[0], kv_cache_shape[1], 128, kv_cache_shape[3]), dtype=torch.float32))
+                    else:
+                        example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 

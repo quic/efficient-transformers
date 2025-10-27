@@ -172,6 +172,7 @@ class QEFFBaseModel(ABC):
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
+            import ipdb; ipdb.set_trace()
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -352,20 +353,22 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
-        try:
-            subprocess.run(command, capture_output=True, check=True)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                "\n".join(
-                    [
-                        "Compilation failed!",
-                        f"Compiler command: {e.cmd}",
-                        f"Compiler exitcode: {e.returncode}",
-                        "Compiler stderr:",
-                        e.stderr.decode(),
-                    ]
-                )
-            )
+        # try:
+        print("RUNNING COMPILATION")
+        print(" ".join(command))
+        subprocess.run(command)
+        # except subprocess.CalledProcessError as e:
+        #     raise RuntimeError(
+        #         "\n".join(
+        #             [
+        #                 "Compilation failed!",
+        #                 f"Compiler command: {e.cmd}",
+        #                 f"Compiler exitcode: {e.returncode}",
+        #                 "Compiler stderr:",
+        #                 e.stderr.decode(),
+        #             ]
+        #         )
+        #     )
 
         self.qpc_path = qpc_path
 
