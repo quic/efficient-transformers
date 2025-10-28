@@ -44,17 +44,23 @@ class grammar(Dataset):
         target_ = example_batch["target"]
 
         prompt = f"Correct this to standard English: {input_}\n---\nCorrected: "
+
+        if self.context_length is not None:
+            padding_type = "max_length"
+        else:
+            padding_type = True
+
         prompt_ids = self.tokenizer.encode(
             self.tokenizer.bos_token + prompt,
             add_special_tokens=False,
             max_length=self.context_length,
-            pad_to_max_length=True,
+            padding=padding_type,
         )
         label_ids = self.tokenizer.encode(
             target_ + self.tokenizer.eos_token,
             add_special_tokens=False,
             max_length=self.context_length,
-            pad_to_max_length=True,
+            padding=padding_type,
         )
 
         sample = {
