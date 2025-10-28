@@ -5,10 +5,15 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from onnx import ModelProto, external_data_helper, numpy_helper
+import onnx
+import torch
+
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
+from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 
 
 class OnnxTransform:
@@ -99,3 +104,142 @@ class SplitTensorsTransform(OnnxTransform):
                     current_file_size = tsize
                 external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
         return model, transformed
+
+
+class CustomOpTransform(OnnxTransform):
+    """
+    Transform to register custom operations and add their function protos to the ONNX model.
+    """
+
+    # Registry of custom operations
+    _custom_ops: Dict[str, Tuple[Any, Any]] = {}  # op_name -> (func_class, onnxscript_func)
+
+    @classmethod
+    def register_custom_op(cls, op_name: str, func_class: Any, onnxscript_func: Any):
+        """Register a custom operation."""
+        cls._custom_ops[op_name] = (func_class, onnxscript_func)
+
+    @classmethod
+    def apply(cls, model: ModelProto, *, opset_version: int = 17, **kwargs) -> Tuple[ModelProto, bool]:
+        """
+        Apply custom op registration and add function protos to the model.
+
+        :param model: The ONNX model to transform
+        :param opset_version: ONNX opset version for symbolic registration
+        :returns: Transformed model and success flag
+        """
+        transformed = False
+
+        # Register all custom op symbolic functions with torch.onnx
+        for op_name, (func_class, _) in cls._custom_ops.items():
+            if hasattr(func_class, "symbolic"):
+                torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, opset_version)
+
+        # Add function protos for custom ops that are used in the model
+        used_protos = cls._get_function_protos_for_model(model)
+
+        for proto in used_protos:
+            # Check if proto already exists to avoid duplicates
+            proto_name = proto.name
+            if not any(func.name == proto_name for func in model.functions):
+                model.functions.append(proto)
+                transformed = True
+
+        return model, transformed
+
+    @classmethod
+    def _get_function_protos_for_model(cls, model: ModelProto) -> List[Any]:
+        """Get function protos for custom ops that are actually used in the model."""
+        used_protos = []
+
+        # Get all node op_types in the model
+        used_op_types = set()
+        for node in model.graph.node:
+            used_op_types.add(node.op_type)
+
+        # Also check function calls
+        for func in model.functions:
+            for node in func.node:
+                used_op_types.add(node.op_type)
+
+        # Check which custom ops are actually used
+        for op_name, (func_class, onnxscript_func) in cls._custom_ops.items():
+            # Check if the custom op is referenced in the model
+            if cls._is_custom_op_used(model, op_name, used_op_types):
+                proto = onnxscript_func.to_function_proto()
+                used_protos.append(proto)
+
+        return used_protos
+
+    @classmethod
+    def _is_custom_op_used(cls, model: ModelProto, op_name: str, used_op_types: set) -> bool:
+        """Check if a custom op is used in the model."""
+        # Check if the op_name appears in node op_types
+        if op_name in used_op_types:
+            return True
+
+        # Check for domain-specific ops (e.g., "com.qti.aisw.onnx::CustomRMSNorm")
+        custom_op_pattern = f"com.qti.aisw.onnx::{op_name.replace('Func', '')}"
+        if custom_op_pattern in used_op_types:
+            return True
+
+        # Heuristic checks based on op type
+        if "RMSNorm" in op_name:
+            # Check if any RMSNorm-related ops are present
+            return any("RMSNorm" in op_type for op_type in used_op_types)
+
+        if "Ctx" in op_name:
+            # Check if Gather/Scatter operations are present (indicating KV cache usage)
+            return any(op_type in ["Gather", "GatherND", "Scatter", "ScatterND"] for op_type in used_op_types)
+
+        return False
+    
+def rename_function_outputs(onnx_path, expected_output_names):
+    model = onnx.load(onnx_path, load_external_data=False)
+    graph = model.graph
+    for i, output in enumerate(graph.output):
+        output.name = expected_output_names[i]
+
+    decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
+    layer_index = 0
+    output_rename_map = {}
+
+    for node in graph.node:
+        if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
+            if "layers.0" in node.name:
+                if len(node.output) >= 4:
+                    print(f"Renaming outputs of node (layers.0): {node.name}")
+                    new_output_0 = f"past_key.{layer_index}_RetainedState"
+                    new_output_1 = f"past_value.{layer_index}_RetainedState"
+                    output_rename_map[node.output[2]] = new_output_0
+                    output_rename_map[node.output[3]] = new_output_1
+                    node.output[2] = new_output_0
+                    node.output[3] = new_output_1
+                    layer_index += 1
+                else:
+                    print(f"Warning: Node {node.name} has fewer than 4 outputs.")
+            elif len(node.output) >= 2:
+                print(f"Renaming outputs of node: {node.name}")
+                new_output_0 = f"past_key.{layer_index}_RetainedState"
+                new_output_1 = f"past_value.{layer_index}_RetainedState"
+                output_rename_map[node.output[0]] = new_output_0
+                output_rename_map[node.output[1]] = new_output_1
+                node.output[0] = new_output_0
+                node.output[1] = new_output_1
+                layer_index += 1
+            else:
+                print(f"Warning: Node {node.name} has fewer than 2 outputs.")
+
+    for node in graph.node:
+        for i, input_name in enumerate(node.input):
+            if input_name in output_rename_map:
+                print(f"Replacing input {input_name} in node {node.name} with {output_rename_map[input_name]}")
+                node.input[i] = output_rename_map[input_name]
+
+    onnx.save(model, onnx_path)
+
+
+
+CustomOpTransform.register_custom_op("CustomRMSNormFunc", CustomRMSNormFunc, CustomRMSNorm)
+CustomOpTransform.register_custom_op("CtxScatterFunc", CtxScatterFunc, CtxScatter)
+CustomOpTransform.register_custom_op("CtxGatherFunc", CtxGatherFunc, CtxGather)

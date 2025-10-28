@@ -93,7 +93,7 @@ class QEffGptOssMLP(GptOssMLP):
             masked_down = torch.where(routing_weight > 0, down_out * routing_weight, torch.zeros_like(expert_out))
             expert_out += masked_down
 
-        # original shape [B, S, H]
+        # original shape [B, S, H] 
         return expert_out.view(B, S, H), router_logits
 
     # ------------------- Gather based, weights as activation approach ---------------
@@ -572,7 +572,7 @@ class QEffGptOssAttention(GptOssAttention):
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = eager_attention_forward
+        attention_interface: Callable = eager_attention_forward_blocked
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -639,8 +639,10 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states, _ = self.mlp(hidden_states)  # diff with llama: router scores
-        # alth, _ = self.mlp.alt_forward(hidden_states)
+        # hidden_states, _ = self.mlp(hidden_states)  # diff with llama: router scores
+        hidden_states, _ = self.mlp.alt_forward(hidden_states)
+        # oh, _ = self.mlp.optimized_moe_forward(hidden_states)
+        # import ipdb; ipdb.set_trace()
         hidden_states = residual + hidden_states
         outputs = (hidden_states,)
 
@@ -703,7 +705,7 @@ class QEffGptOssModel(GptOssModel):
             target_length=past_key_values.sliding_window_len,
             sliding_window=past_key_values.sliding_window_len,
         )
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
 
         hidden_states = inputs_embeds
         # position_embeddings = self.rotary_emb(hidden_states, position_ids)

@@ -37,6 +37,8 @@ api_runner = ApiRunner(batch_size, tokenizer, config, Constants.INPUT_STR, Const
 
 qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
 onnx_model_path = qeff_model.export()
+print(f"path to onnx file = {onnx_model_path}")
+# exit()
 qpc_path = qeff_model.compile(
     prefill_seq_len=8192,
     ctx_len=16384,
@@ -48,7 +50,7 @@ qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
     prefill_only=True,
-    mdts_mos=1
+    # mdts_mos=1
 )
 print(f"qpc path is {qpc_path}")
 streamer = TextStreamer(tokenizer)
@@ -57,4 +59,5 @@ exec_info = qeff_model.generate(
     streamer=streamer,
     prompts="Who is your creator? and What all you are allowed to do?",
     device_ids=[0, 1, 2, 3],
+    generation_len=2
 )

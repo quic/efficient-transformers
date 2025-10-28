@@ -619,26 +619,26 @@ class QEffHybridCacheForGPTOSS:
             position_ids = cache_kwargs.get("position_ids")
             is_sliding_layer = cache_kwargs.get("is_sliding")
             sliding_window = cache_kwargs.get("sliding_window")
-            import ipdb; ipdb.set_trace()
+            # import ipdb; ipdb.set_trace()
             BS, NH, ctx_len, D = self.key_cache[layer_idx].shape
             if is_sliding_layer:
-                kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1) + int(((position_ids.max() + 1) / ctx_len -1) * ctx_len)
-                short_read_idx = torch.arange(ctx_len)
-                read_idx = short_read_idx + torch.where(position_ids.max()> ctx_len-1, position_ids.max() - ctx_len, 0)
-                read_idx = read_idx[None, None, ...].unsqueeze(-1).expand(-1, NH, -1, -1)
+                # kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1) + int(((position_ids.max() + 1) / ctx_len -1) * ctx_len)
+                # short_read_idx = torch.arange(ctx_len)
+                # read_idx = short_read_idx + torch.where(position_ids.max()> ctx_len-1, position_ids.max() - ctx_len, 0)
+                # read_idx = read_idx[None, None, ...].unsqueeze(-1).expand(-1, NH, -1, -1)
                 
-                sliced_key_states = CtxGatherSlidingWindowFunc3D.apply(key_states, read_idx).reshape(BS, NH, ctx_len, D)
-                sliced_value_states = CtxGatherSlidingWindowFunc3D.apply(value_states, read_idx).reshape(BS, NH, ctx_len, D)
+                # sliced_key_states = CtxGatherSlidingWindowFunc3D.apply(key_states, read_idx).reshape(BS, NH, ctx_len, D)
+                # sliced_value_states = CtxGatherSlidingWindowFunc3D.apply(value_states, read_idx).reshape(BS, NH, ctx_len, D)
                 # import ipdb; ipdb.set_trace()
                 # sliced_key_states = key_states[:, :, read_idx, :].reshape(BS, NH, ctx_len, D)
                 # sliced_value_states = value_states[:, :, read_idx, :].reshape(BS, NH, ctx_len, D)
                 
                 # torch.where(position_ids.shape[-1]>1, prefill_indices, position_ids)
                 # kv_position_ids = torch.where(position_ids == -1, position_ids, position_ids % sliding_window)
-                # kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1)
-                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, sliced_key_states)
+                kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1)
+                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
                 self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                    self.value_cache[layer_idx], kv_position_ids, sliced_value_states
+                    self.value_cache[layer_idx], kv_position_ids, value_states
                 )
             else:
                 kv_position_ids = position_ids

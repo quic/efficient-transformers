@@ -18,12 +18,14 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import OnnxTransform, rename_function_outputs
 from QEfficient.base.pytorch_transforms import PytorchTransform
+from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffGptOssDecoderLayer
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants, create_json, dump_qconfig, generate_mdp_partition_config, load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
+
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +174,7 @@ class QEFFBaseModel(ABC):
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
-            import ipdb; ipdb.set_trace()
+            # import ipdb; ipdb.set_trace()
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -180,11 +182,12 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                opset_version=17,
+                # export_modules_as_functions={QEffGptOssDecoderLayer},
                 **export_kwargs,
             )
             logger.info("Pytorch export successful")
-
+            # rename_function_outputs(tmp_onnx_path, output_names)
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
