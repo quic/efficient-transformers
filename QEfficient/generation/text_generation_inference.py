@@ -508,9 +508,10 @@ class QEffTextGenerationBase:
         full_batch_size = None
         if "batch_index" in self._session.binding_index_map:
             if self._session.allowed_shapes:
-                full_batch_size, _ = [
-                    x[self._session.binding_index_map["batch_index"]][1][0] for x in self._session.allowed_shapes
-                ]
+                # Take the maximum batch_index dimension across specializations (prefill vs decode)
+                full_batch_size = max(
+                    [x[self._session.binding_index_map["batch_index"]][1][0] for x in self._session.allowed_shapes]
+                )
             else:
                 full_batch_size, _ = self._session.bindings[self._session.binding_index_map["batch_index"]].dims
         return full_batch_size
@@ -802,15 +803,6 @@ class QEffTextGenerationBase:
                 batch_lora_ids = [self._prompt_to_lora_id_mapping_prefill.popleft() for i in range(self.batch_size)]
                 inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
 
-        # Check if image_idx is expected by the session (for VLM models)
-        if "image_idx" in self._session.input_names or "image_idx" in getattr(self._session, "binding_index_map", {}):
-            try:
-                binding_idx = self._session.binding_index_map.get("image_idx")
-                dims = self._session.bindings[binding_idx].dims if binding_idx is not None else (1, 1)
-                inputs["image_idx"] = np.zeros(tuple(dims), dtype=np.int64)
-            except Exception:
-                inputs["image_idx"] = np.array([[0]], dtype=np.int64)
-
         for i in range(num_chunks):
             chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][
@@ -822,10 +814,6 @@ class QEffTextGenerationBase:
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
             outputs = self._session.run(chunk_inputs)
-
-            # Update image_idx for next chunk if VLM model provides it
-            if "image_idx_output" in outputs:
-                inputs["image_idx"] = outputs["image_idx_output"]
 
             if self._write_io_dir is not None:
                 write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
@@ -850,7 +838,7 @@ class QEffTextGenerationBase:
         # Set output placeholders for decode
         self._set_output_buffers(
             batch_size=self.full_batch_size,
-            sequence_length=self._decode_seq_len,
+            sequence_length=1,
         )
 
         # Generate flag for tracking progress for each batch ID
@@ -894,7 +882,7 @@ class QEffTextGenerationBase:
 
                         self._set_output_buffers(
                             batch_size=self.full_batch_size,
-                            sequence_length=self._decode_seq_len,
+                            sequence_length=1,
                         )
                         decode_pause_time += perf_counter() - start
 

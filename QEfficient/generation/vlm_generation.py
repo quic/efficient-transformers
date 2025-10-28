@@ -230,9 +230,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         if isinstance(prompt, tuple) and len(prompt) == 2:
             image_path, text_prompt = prompt
 
-            # Process vision inputs if this is the first time or if vision hasn't been processed yet
-            if not hasattr(self, "_vision_processed") or not self._vision_processed:
-                logger.debug("Processing vision inputs for the first time")
+            # Process vision inputs. In CB, process for every prefill since each slot can have different image.
+            if self.full_batch_size is not None or not hasattr(self, "_vision_processed") or not self._vision_processed:
+                logger.debug("Processing vision inputs for this request")
                 vision_inputs = self._vision_handler.prepare_vision_inputs(image_path, text_prompt)
                 self._vision_handler.setup_vision_buffers()
                 vision_outputs = self._vision_handler.run_vision_inference(vision_inputs)
@@ -285,6 +285,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                     "position_ids": position_ids_slice,
                     "image_idx": chunk_image_idx if chunk_image_idx is not None else np.array([[0]], dtype=np.int64),
                 }
+                if decode_batch_id is not None:
+                    chunk_inputs["batch_index"] = decode_batch_id
                 if "cross_attention_mask" in lang_inputs:
                     chunk_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"]
 
@@ -505,12 +507,21 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
         # Add image_idx for vision-language models in CB mode during decode only
         if self.batch_index is not None and hasattr(self, "_vision_outputs"):
-            # image_idx should point to vision embedding (0 for all batch positions)
-            # since vision embeddings are shared across all batch indices
-            decode_inputs["image_idx"] = np.zeros_like(self.batch_index)
+            # image_idx should be a single slot selector; decoder expects shape (1,1)
+            # Query binding dims if available to be robust
+            try:
+                if "image_idx" in getattr(self._session, "binding_index_map", {}):
+                    idx = self._session.binding_index_map["image_idx"]
+                    dims = tuple(self._session.bindings[idx].dims)
+                    decode_inputs["image_idx"] = np.zeros(dims, dtype=np.int64)
+                else:
+                    decode_inputs["image_idx"] = np.array([[0]], dtype=np.int64)
+            except Exception:
+                decode_inputs["image_idx"] = np.array([[0]], dtype=np.int64)
 
         # Include cross_attention_mask during decode if present/required
         if hasattr(self, "_decode_cross_attention_mask") and self._decode_cross_attention_mask is not None:
+            # Decoder specialization expects a single mask (batch dim = 1)
             decode_inputs["cross_attention_mask"] = self._decode_cross_attention_mask
 
         return decode_inputs
