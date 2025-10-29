@@ -30,6 +30,7 @@ from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
     FP16ClipTransform,
     OnnxSlimTransform,
+    RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
@@ -2042,7 +2043,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, CustomOpTransform, OnnxSlimTransform, SplitTensorsTransform]
+    _onnx_transforms = [
+        FP16ClipTransform,
+        CustomOpTransform,
+        RenameFunctionOutputsTransform,
+        OnnxSlimTransform,
+        SplitTensorsTransform,
+    ]
 
     def __init__(
         self,
@@ -2290,14 +2297,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
-                    output_names.append(f"past_{kv}.{i}_RetainedState")
+                    output_names.append(f"past_{kv}.{i}_InternalRetainedState")
 
         else:
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
-                    output_names.append(f"past_{kv}.{i}_RetainedState")
+                    output_names.append(f"past_{kv}.{i}_InternalRetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
