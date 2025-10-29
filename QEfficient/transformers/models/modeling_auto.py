@@ -1094,6 +1094,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
 
         output_names = self.model.get_output_names(kv_offload=True)
+        # For supporting VLLM and Disaggregated with CCL
+        if "comp_ctx_lengths_prefill" in compiler_options:
+            self.comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill")
+            self.comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode")
 
         specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
@@ -1652,6 +1656,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             )
 
         output_names = self.model.get_output_names()
+        # For supporting VLLM and Disaggregated with CCL
+        if "comp_ctx_lengths_prefill" in compiler_options:
+            self.comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill")
+            self.comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode")
 
         # Get specializations from modelling file
         # TODO: expose this via the auto class as well
