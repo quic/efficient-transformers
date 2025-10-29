@@ -2764,7 +2764,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             generation_len = kwargs.pop("generation_len", None)
             return QEfficient.cloud_ai_100_exec_kv(
                 tokenizer=tokenizer,
-                lang_qpc_path=self.qpc_path,
+                qpc_path=self.qpc_path,
                 prompt=prompts,
                 device_id=device_id,
                 generation_len=generation_len,
