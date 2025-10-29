@@ -27,6 +27,7 @@ warnings.formatwarning = custom_format_warning
 # TODO: Find a better way to do this, this is temp. fix.
 apply_torch_patches()
 
+
 def check_qaic_sdk():
     """Check if QAIC SDK is installed"""
     try:

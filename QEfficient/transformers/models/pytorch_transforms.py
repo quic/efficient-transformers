@@ -789,6 +789,7 @@ class PoolingTransform:
         warnings.warn("Pooling is applied to the model.")
         return model, transformed
 
+
 def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
     """
     Dynamically determine which DecoderLayer classes should be exported as functions

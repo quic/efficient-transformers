@@ -26,7 +26,12 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.base.onnx_transforms import (
+    CustomOpTransform,
+    FP16ClipTransform,
+    OnnxSlimTransform,
+    SplitTensorsTransform,
+)
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
@@ -347,7 +352,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             dynamic_axes,
             export_dir=export_dir,
         )
- 
+
     def compile(
         self,
         onnx_path: Optional[str] = None,
@@ -2037,7 +2042,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [FP16ClipTransform, CustomOpTransform, OnnxSlimTransform, SplitTensorsTransform]
 
     def __init__(
         self,
