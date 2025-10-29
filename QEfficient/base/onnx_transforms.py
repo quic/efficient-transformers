@@ -99,3 +99,29 @@ class SplitTensorsTransform(OnnxTransform):
                     current_file_size = tsize
                 external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
         return model, transformed
+
+def rename_function_outputs(model):
+    graph = model.graph
+    op_type_to_func_map = {func.name:func for func in model.functions}
+    decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
+    transformed = False
+    model_graph_outputs = [val.name for val in model.graph.output]
+    node_count = 0
+    for node in graph.node:
+        if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
+            func = op_type_to_func_map[node.op_type]
+            for i, out_name in enumerate(func.output):
+                if "_InternalRetainedState" in out_name:
+                    transformed = True
+                    tmp = node.output[i]
+                    if "key" in func.output[i]:
+                        new_name = f"past_key.{node_count}_RetainedState"
+                    elif "value" in func.output[i]:
+                        new_name= f"past_value.{node_count}_RetainedState"
+                    else:
+                        raise NotImplementedError()
+                    print(f"renaming {node.output[i]} to {new_name}")
+                    node.output[i] = new_name
+                    model.graph.output[model_graph_outputs.index(tmp)].name = new_name
+            node_count+=1                    
+    return model, transformed

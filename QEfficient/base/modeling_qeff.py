@@ -18,10 +18,13 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import CustomOpTransform, OnnxTransform, rename_function_outputs
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
+from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils import (
     constants,
     create_json,
@@ -243,7 +246,12 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
+            CustomOpTransform.register_custom_op("CustomRMSNormFunc", CustomRMSNormFunc, CustomRMSNorm)
+            CustomOpTransform.register_custom_op("CtxScatterFunc", CtxScatterFunc, CtxScatter)
+            CustomOpTransform.register_custom_op("CtxGatherFunc", CtxGatherFunc, CtxGather)
+            decoder_layer_classes = get_decoder_layer_classes_for_export(self.model)
             export_kwargs = {} if export_kwargs is None else export_kwargs
+            
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -251,14 +259,18 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                opset_version=17,
+                export_modules_as_functions=decoder_layer_classes,
+                do_constant_folding=True,
+                verbose=True,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
 
             _ = self._offload_model_weights(offload_pt_weights)
-
             model = onnx.load(tmp_onnx_path, load_external_data=False)
+            model,transformed = rename_function_outputs(model)
+            
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
