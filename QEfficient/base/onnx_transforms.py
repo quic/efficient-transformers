@@ -222,3 +222,42 @@ class CustomOpTransform(OnnxTransform):
             return any(op_type in ["Gather", "GatherND", "Scatter", "ScatterND"] for op_type in used_op_types)
 
         return False
+
+
+class RenameFunctionOutputsTransform(OnnxTransform):
+    """
+    Renames function outputs in decoder layers by removing 'Internal' from '_InternalRetainedState' patterns.
+    """
+
+    @classmethod
+    def apply(cls, model: ModelProto, **kwargs) -> Tuple[ModelProto, bool]:
+        """
+        Rename function outputs in decoder layer nodes.
+
+        :param model: The ONNX model to transform
+        :returns: Transformed model and boolean indicating whether transform was applied
+        """
+        graph = model.graph
+        op_type_to_func_map = {func.name: func for func in model.functions}
+        decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
+        transformed = False
+        model_graph_outputs = [val.name for val in model.graph.output]
+
+        for node in graph.node:
+            if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
+                func = op_type_to_func_map.get(node.op_type)
+                if func is None:
+                    continue
+
+                for i, out_name in enumerate(func.output):
+                    if "_InternalRetainedState" in out_name:
+                        transformed = True
+                        tmp = node.output[i]
+                        new_name = func.output[i].replace("Internal", "")
+                        node.output[i] = new_name
+
+                        # Update graph output name if it exists
+                        if tmp in model_graph_outputs:
+                            model.graph.output[model_graph_outputs.index(tmp)].name = new_name
+
+        return model, transformed
