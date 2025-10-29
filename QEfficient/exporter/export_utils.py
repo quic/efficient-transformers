@@ -18,6 +18,7 @@ import torch
 from onnx import external_data_helper
 
 from QEfficient.base.onnx_transforms import FP16ClipTransform
+from QEfficient.utils import constants
 
 
 def export_onnx(
@@ -97,7 +98,7 @@ def export_onnx(
             input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
-            opset_version=17,
+            opset_version=constants.ONNX_EXPORT_OPSET,
             custom_opsets={"com.qti.aisw.onnx": 1},
         )
     except Exception as e:
