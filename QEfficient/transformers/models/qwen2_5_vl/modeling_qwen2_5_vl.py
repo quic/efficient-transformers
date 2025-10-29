@@ -752,8 +752,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
-        lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.num_hidden_layers)]
-        for i in range(self.model.config.num_hidden_layers):
+        lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
+        for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
 
@@ -779,10 +779,10 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         **compiler_options,
     ):
         if height is None or width is None:
-            height = 1365
-            width = 2048
+            height = 354
+            width = 536
             logger.warning(
-                "Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config"
+                "Setting height and width to be 354 and 536 respectively, as it was neither passed nor found in vision_config"
             )
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
@@ -882,7 +882,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
     def get_onnx_dynamic_axes(self, kv_offload: bool = False):
         # Define dynamic axes
-        num_layers = self.config.num_hidden_layers
+        num_layers = self.config.text_config.num_hidden_layers
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
@@ -900,6 +900,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
 
         dynamic_axes = {}
+
         if kv_offload:
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
@@ -911,7 +912,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.model.config.num_hidden_layers):
+        for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 
