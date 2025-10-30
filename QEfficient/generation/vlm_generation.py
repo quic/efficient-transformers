@@ -75,6 +75,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
     def __init__(
         self,
+        qeff_model,
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
         processor: AutoImageProcessor,
         lang_qpc_path: str,
@@ -131,6 +132,10 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
 
         # Vision-specific initialization
+        self.is_qwen2_5_vl = (
+            hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl"
+        )
+        self.qeff_model = qeff_model
         self.processor = processor
         self._vision_qpc_path = vision_qpc_path
         self.device_id = device_id  # Store device_id for vision components
@@ -157,6 +162,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         # Vision handler with language session coordination
         vision_config = self._get_vision_config()
         self._vision_handler = VisionHandler(
+            qeff_model=self.qeff_model,
             vision_session=self._vision_session,
             processor=self.processor,
             config=vision_config,
@@ -204,6 +210,51 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         ]
         self._vision_session.skip_buffers(buffers_to_skip)
 
+    def run_prefill_for_all_inputs(self, prompt_queue, generation_len):
+        """
+        Runs prefill for all inputs in the prompt queue and updates the decode input.
+
+        Method iterates over the full batch size and for each decode batch ID, it pops the next prompt from the queue.  It then runs prefill for the next prompt and updates the decode input with the outputs.
+
+        Args:
+            prompt_queue (deque): The queue of prompts.
+            generation_len (int): The generation length.
+
+        """
+        for decode_batch_id in range(self.full_batch_size):
+            next_prompt = prompt_queue.popleft()
+
+            # run prefill for num_chunks
+            outputs, position_ids, generation_len = self.run_prefill(
+                next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1)
+            )
+
+            if self.is_qwen2_5_vl:
+                _ = self.update_decode_inputs_qwen2_5_vl(outputs, position_ids, generation_len, decode_batch_id)
+            else:
+                _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
+
+    def update_decode_inputs_qwen2_5_vl(self, outputs, position_ids, generation_len, decode_batch_id=None):
+        """
+        Updates the decode input with the generated values.
+        Args:
+            outputs (dict): The outputs of the model.
+            position_ids (array): The position IDs.
+            generation_len (int): The generation length.
+            decode_batch_id (int, optional): The decode batch ID. If None, all values are updated. Defaults to None.
+
+        Returns:
+            next_token_id (array): The next token ID.
+        """
+        next_token_id = self._fetch_next_token_id(outputs)
+
+        # Store the generated values.
+        self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
+        self.decode_pos_ids[:, decode_batch_id] = position_ids.squeeze(1)
+        self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
+        self.generation_len[decode_batch_id or slice(None)] = generation_len
+        return next_token_id
+
     def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
         """
         Override base class prefill to handle vision processing
@@ -230,19 +281,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         if isinstance(prompt, tuple) and len(prompt) == 2:
             image_path, text_prompt = prompt
 
-            # Process vision inputs. In CB, process for every prefill since each slot can have different image.
-            # Prepare the text prompt with vision context
-            processed_prompt = self._prepare_vision_language_prompt(text_prompt, image_path)
-
-            # Compute padded_len aligned to prefill_seq_len using tokenizer on processed prompt
-            tmp_tokens = self.tokenizer(processed_prompt, return_tensors="np", padding=True)
-            input_len = tmp_tokens["input_ids"].shape[1]
-            num_chunks = -(input_len // -self._prefill_seq_len)
-            padded_len = num_chunks * self._prefill_seq_len
-
             # Build language inputs with processor-aware vision/text integration
-            lang_inputs, vision_outputs = self._vision_handler.get_language_inputs_from_vision_processing(
-                image_url=image_path, query=text_prompt, padded_len=padded_len
+            lang_inputs, vision_outputs, num_chunks = self._vision_handler.get_language_inputs_from_vision_processing(
+                image_url=image_path, query=text_prompt, prefill_seq_len=self._prefill_seq_len
             )
 
             # Set vision buffers in language session
@@ -266,7 +307,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                     :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
                 ]
                 position_ids_slice = lang_inputs["position_ids"][
-                    :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
+                    ..., i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
                 ]
                 # Build minimal input set to avoid unintended buffers (e.g., batch_index) during prefill
                 chunk_inputs = {
@@ -454,6 +495,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
 
         self.initialize_decode_inputs(num_prompts, execution_batch_size, max_gen_length)
+        if self.is_qwen2_5_vl:
+            self.decode_pos_ids = np.zeros((4, execution_batch_size, 1), np.int64)
 
         # Create prompt queue
         prompt_queue = deque(vision_prompts)

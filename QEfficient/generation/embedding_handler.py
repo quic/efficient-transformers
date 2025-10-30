@@ -34,6 +34,7 @@ class VisionHandler:
 
     def __init__(
         self,
+        qeff_model: Optional[QAICInferenceSession],
         vision_session: Optional[QAICInferenceSession],
         processor: Optional[AutoImageProcessor],
         config: Optional[Dict[str, Any]] = None,
@@ -48,6 +49,7 @@ class VisionHandler:
             config: Configuration dictionary with vision model parameters
             lang_session: Optional language session for coordination (to avoid resource conflicts)
         """
+        self._qeff_model = qeff_model
         self._vision_session = vision_session
         self._processor = processor
         self._config = config or {}
@@ -293,7 +295,7 @@ class VisionHandler:
         return vision_inputs, vision_outputs
 
     def get_language_inputs_from_vision_processing(
-        self, image_url: str, query: str, padded_len: int
+        self, image_url: str, query: str, prefill_seq_len: int
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """
         Process vision inputs and prepare language model inputs
@@ -330,12 +332,22 @@ class VisionHandler:
             prompt = self._processor.apply_chat_template(conversation, add_generation_prompt=True)
             inputs = self._processor(images=image, text=prompt, return_tensors="pt")
 
+            if (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "qwen2_5_vl"
+            ):
+                inputs = self._qeff_model.model.prepare_inputs_for_generation(
+                    inputs=inputs, prefill_seq_len=prefill_seq_len, batch_size=inputs["input_ids"].shape[0]
+                )
+
             if "pixel_values" in inputs:
                 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 
             # Handle padding for language model
             pad_token_id = 1
             input_ids_length = inputs["input_ids"].shape[1]
+            num_chunks = -(input_ids_length // -prefill_seq_len)
+            padded_len = num_chunks * prefill_seq_len
 
             inputs["input_ids"] = torch.nn.functional.pad(
                 inputs["input_ids"],
@@ -385,10 +397,15 @@ class VisionHandler:
 
             # Prepare language inputs
             lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-            lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
+
+            if "position_ids" in inputs:
+                lang_inputs["position_ids"] = inputs["position_ids"]
+                lang_inputs.pop("attention_mask")
+            else:
+                lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
             lang_inputs["image_idx"] = np.array([[0]])
 
-            return lang_inputs, vision_outputs
+            return lang_inputs, vision_outputs, num_chunks
 
         except Exception as e:
             raise RuntimeError(f"Failed to process vision-language inputs: {str(e)}")
