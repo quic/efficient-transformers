@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
+import os
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
@@ -360,6 +361,79 @@ class QEffQwen2_5_VLRotaryEmbedding(Qwen2_5_VLRotaryEmbedding):
         )
 
 
+def eager_attention_forward_q_blocked(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    **kwargs,
+):
+    """
+    Q-blocked attention for Qwen2.5-VL.
+    Blocks only the query SL dimension.
+
+    Args:
+        query: (BS, NH, Q_LEN, DH)
+        key: (BS, NH_KV, KV_LEN, DH)
+        value: (BS, NH_KV, KV_LEN, DH)
+        attention_mask: (BS, NH, Q_LEN, KV_LEN) or broadcastable
+    """
+    BS, NH, Q_LEN, DH = query.shape
+    _, _, KV_LEN, _ = key.shape
+
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    target_blocks_q = int(os.environ.get("num_q_blocks", Q_LEN))
+    q_block_positions = [(i * Q_LEN) // target_blocks_q for i in range(target_blocks_q)]
+    scaling = 1.0 / math.sqrt(module.head_dim)
+
+    q_output_blocks = []
+    q_attn_weights_blocks = []
+
+    # Process each Q block
+    for q_block_idx in range(target_blocks_q):
+        qi = q_block_positions[q_block_idx]
+
+        # Calculate Q block size
+        if q_block_idx == target_blocks_q - 1:
+            real_q_len = Q_LEN - qi
+        else:
+            real_q_len = q_block_positions[q_block_idx + 1] - qi
+
+        # Extract Q block
+        q_block = query[:, :, qi : qi + real_q_len, :]
+        attn_mask_block = None
+        if attention_mask is not None:
+            attn_mask_block = attention_mask[:, :, qi : qi + real_q_len, :]
+
+        # Compute attention scores for this Q block
+        attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
+        if attn_mask_block is not None:
+            attn_weights = torch.where(
+                attn_mask_block,
+                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=attn_weights.device),
+                attn_weights,
+            )
+
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+
+        # Compute output for this Q block
+        output_block = torch.matmul(attn_weights, value_states)
+
+        q_output_blocks.append(output_block)
+        q_attn_weights_blocks.append(attn_weights)
+
+    attn_output = torch.cat(q_output_blocks, dim=2)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    # Concatenate attention weights
+    attn_weights = torch.cat(q_attn_weights_blocks, dim=2)
+
+    return attn_output, attn_weights
+
+
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -368,20 +442,32 @@ def eager_attention_forward(
     attention_mask: Optional[torch.Tensor],
     **kwargs,
 ):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
+    """
+    Wrapper that routes to blocked or default attention based on environment variable.
+    """
+    blocking_mode = os.environ.get("ATTENTION_BLOCKING_MODE", "default").lower()
 
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
-    if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+    if blocking_mode == "q":
+        return eager_attention_forward_q_blocked(module, query, key, value, attention_mask, **kwargs)
+    elif blocking_mode == "default":
+        # Original implementation
+        key_states = repeat_kv(key, module.num_key_value_groups)
+        value_states = repeat_kv(value, module.num_key_value_groups)
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_output = torch.matmul(attn_weights, value_states)
-    attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
 
-    return attn_output, attn_weights
+        if attention_mask is not None:
+            attn_weights = torch.where(
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            )
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+
+        return attn_output, attn_weights
+    else:
+        raise ValueError(f"Invalid ATTENTION_BLOCKING_MODE: {blocking_mode}. Must be 'q' or 'default'")
 
 
 class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
