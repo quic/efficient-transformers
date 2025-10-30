@@ -24,8 +24,8 @@ class SamplerOutput(ModelOutput):
 
     probs: torch.FloatTensor = None
     next_tokens: torch.IntTensor = None
-    vision_embeds: Optional[torch.FloatTensor] = None # For VLMs
-    image_idx: Optional[torch.IntTensor] = None # for VLMs
+    vision_embeds: Optional[torch.FloatTensor] = None  # For VLMs
+    image_idx: Optional[torch.IntTensor] = None  # for VLMs
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     past_repetition_penalty_buffer: Optional[torch.Tensor] = None
     past_presence_penalty_buffer: Optional[torch.Tensor] = None
@@ -176,19 +176,14 @@ def sampler_forward(
     """
     if vision_embeds is not None:
         logits, vision_embeds, image_idx, past_key_values = self.old_forward(
-            input_ids=input_ids, 
-            vision_embeds=vision_embeds, 
-            position_ids=position_ids, 
-            image_idx=image_idx, 
-            past_key_values=past_key_values
-        )
-        outputs = dict(
-            logits=logits,
+            input_ids=input_ids,
             vision_embeds=vision_embeds,
+            position_ids=position_ids,
             image_idx=image_idx,
-            past_key_values=past_key_values
+            past_key_values=past_key_values,
         )
-        if position_ids.dim() == 3: # For models using m-rope
+        outputs = dict(logits=logits, vision_embeds=vision_embeds, image_idx=image_idx, past_key_values=past_key_values)
+        if position_ids.dim() == 3:  # For models using m-rope
             position_ids = position_ids[0]
     else:
         outputs = self.old_forward(
@@ -322,9 +317,8 @@ def sampler_forward(
         )  # (batch_size, spec_length, vocab_size)
 
     # Random Sampling
-    topk_probs_asc = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, max_top_k_ids)
     gumbel_noise = -torch.log(-torch.log(random_numbers.repeat(spec_length, 1)))  # Gumbel-Max Trick
-    y = topk_probs_asc + gumbel_noise
+    y = topk_values_asc + gumbel_noise  # (batch_size * spec_length, max_top_k_ids)
     random_samples_indices = torch.argmax(y, dim=1, keepdim=True)
     random_samples = torch.gather(topk_indices_asc, 1, random_samples_indices)  # (batch_size * spec_length, 1)
 

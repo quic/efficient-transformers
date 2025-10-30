@@ -721,12 +721,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(
-        self,
-        model,
-        qaic_config: Optional[dict] = None,
-        **kwargs
-    ):
+    def __init__(self, model, qaic_config: Optional[dict] = None, **kwargs):
         """
         Initializes the language decoder component for multimodal models.
 
@@ -735,7 +730,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         model : nn.Module
             The full HuggingFace multimodal model from which the language decoder is extracted.
         qaic_config : dict, optional
-            A dictionary for QAIC-specific configurations. 
+            A dictionary for QAIC-specific configurations.
             Only the following keys are supported by the text model of the dual QPC multimodal model:
             - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
@@ -776,7 +771,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Path to the generated ONNX graph file for the language decoder.
         """
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
-            inputs, output_names, dynamic_axes = self.get_sampling_inputs_and_outputs(inputs, output_names, dynamic_axes)
+            inputs, output_names, dynamic_axes = self.get_sampling_inputs_and_outputs(
+                inputs, output_names, dynamic_axes
+            )
         return self._export(
             inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
         )
@@ -807,7 +804,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             sampling-related parameters.
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        
+
         assert "logits" in output_names, "logits must be part of the output names to suport on-device sampling"
 
         logits_index = output_names.index("logits")
@@ -859,7 +856,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
         dynamic_axes["min_ps"] = {0: "batch_size"}
 
-        example_inputs["random_numbers"] = torch.rand((bs, 1), dtype=torch.float)
+        example_inputs["random_numbers"] = torch.rand((bs, max_top_k_ids), dtype=torch.float)
         dynamic_axes["random_numbers"] = {0: "batch_size"}
 
         return example_inputs, output_names, dynamic_axes
@@ -2142,7 +2139,7 @@ class QEFFAutoModelForImageTextToText:
             If False, uses the single QPC approach (entire model in one QPC).
             If None, the default behavior of the internal classes is used (typically dual QPC).
         qaic_config : dict, optional
-            A dictionary for QAIC-specific configurations. 
+            A dictionary for QAIC-specific configurations.
             Only the following keys are supported by the text model of the dual QPC multimodal model:
             - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
@@ -2181,7 +2178,7 @@ class QEFFAutoModelForImageTextToText:
             model,
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
-            qaic_config=qaic_config, 
+            qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
@@ -2391,7 +2388,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_offload=kv_offload,
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
                 qaic_config=qaic_config,
-                **kwargs
+                **kwargs,
             )
         return cls(
             model,
@@ -2594,7 +2591,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
         dynamic_axes["min_ps"] = {0: "batch_size"}
 
-        example_inputs["random_numbers"] = torch.rand((bs, 1), dtype=torch.float)
+        example_inputs["random_numbers"] = torch.rand((bs, max_top_k_ids), dtype=torch.float)
         dynamic_axes["random_numbers"] = {0: "batch_size"}
 
         return example_inputs, output_names, dynamic_axes
