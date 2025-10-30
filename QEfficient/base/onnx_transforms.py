@@ -194,49 +194,31 @@ class CustomOpTransform(OnnxTransform):
 
         return False
     
-def rename_function_outputs(onnx_path, expected_output_names):
-    model = onnx.load(onnx_path, load_external_data=False)
+def rename_function_outputs(model):
     graph = model.graph
-    for i, output in enumerate(graph.output):
-        output.name = expected_output_names[i]
-
+    op_type_to_func_map = {func.name:func for func in model.functions}
     decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
-    layer_index = 0
-    output_rename_map = {}
-
+    transformed = False
+    model_graph_outputs = [val.name for val in model.graph.output]
+    node_count = 0
     for node in graph.node:
         if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
-            if "layers.0" in node.name:
-                if len(node.output) >= 4:
-                    print(f"Renaming outputs of node (layers.0): {node.name}")
-                    new_output_0 = f"past_key.{layer_index}_RetainedState"
-                    new_output_1 = f"past_value.{layer_index}_RetainedState"
-                    output_rename_map[node.output[2]] = new_output_0
-                    output_rename_map[node.output[3]] = new_output_1
-                    node.output[2] = new_output_0
-                    node.output[3] = new_output_1
-                    layer_index += 1
-                else:
-                    print(f"Warning: Node {node.name} has fewer than 4 outputs.")
-            elif len(node.output) >= 2:
-                print(f"Renaming outputs of node: {node.name}")
-                new_output_0 = f"past_key.{layer_index}_RetainedState"
-                new_output_1 = f"past_value.{layer_index}_RetainedState"
-                output_rename_map[node.output[0]] = new_output_0
-                output_rename_map[node.output[1]] = new_output_1
-                node.output[0] = new_output_0
-                node.output[1] = new_output_1
-                layer_index += 1
-            else:
-                print(f"Warning: Node {node.name} has fewer than 2 outputs.")
-
-    for node in graph.node:
-        for i, input_name in enumerate(node.input):
-            if input_name in output_rename_map:
-                print(f"Replacing input {input_name} in node {node.name} with {output_rename_map[input_name]}")
-                node.input[i] = output_rename_map[input_name]
-
-    onnx.save(model, onnx_path)
+            func = op_type_to_func_map[node.op_type]
+            for i, out_name in enumerate(func.output):
+                if "_InternalRetainedState" in out_name:
+                    transformed = True
+                    tmp = node.output[i]
+                    if "key" in func.output[i]:
+                        new_name = f"past_key.{node_count}_RetainedState"
+                    elif "value" in func.output[i]:
+                        new_name= f"past_value.{node_count}_RetainedState"
+                    else:
+                        raise NotImplementedError()
+                    print(f"renaming {node.output[i]} to {new_name}")
+                    node.output[i] = new_name
+                    model.graph.output[model_graph_outputs.index(tmp)].name = new_name
+            node_count+=1
+    return model, transformed
 
 
 

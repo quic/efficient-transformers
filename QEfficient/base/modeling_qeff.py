@@ -182,12 +182,12 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=17,
+                opset_version=13,
                 # export_modules_as_functions={QEffGptOssDecoderLayer},
                 **export_kwargs,
             )
             logger.info("Pytorch export successful")
-            # rename_function_outputs(tmp_onnx_path, output_names)
+            
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
@@ -202,6 +202,7 @@ class QEFFBaseModel(ABC):
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
+            # model, tf = rename_function_outputs(model)
 
             onnx.save(model, onnx_path)
             logger.info("Transformed onnx saved")
