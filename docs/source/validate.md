@@ -4,11 +4,12 @@
 ## Text-only Language Models
 
 ### Text Generation Task
-**QEff Auto Class:** `QEFFAutoModelForCausalLM`
+**QEff Auto Class:** [`QEFFAutoModelForCausalLM`](#QEFFAutoModelForCausalLM)
 
 | Architecture            | Model Family       | Representative Models                                                                 | CB Support |
 |-------------------------|--------------------|--------------------------------------------------------------------------------------|------------|
 | **FalconForCausalLM**   | Falcon             | [tiiuae/falcon-40b](https://huggingface.co/tiiuae/falcon-40b)                                                                | ✔️          |
+| **Qwen3MoeForCausalLM**   | Qwen3Moe             | [Qwen/Qwen3-30B-A3B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507)                                                                | ✔️          |
 | **GemmaForCausalLM**    | CodeGemma          | [google/codegemma-2b](https://huggingface.co/google/codegemma-2b)<br>[google/codegemma-7b](https://huggingface.co/google/codegemma-7b)                                           | ✔️          |
 |                         | Gemma              | [google/gemma-2b](https://huggingface.co/google/gemma-2b)<br>[google/gemma-7b](https://huggingface.co/google/gemma-7b)<br>[google/gemma-2-2b](https://huggingface.co/google/gemma-2-2b)<br>[google/gemma-2-9b](https://huggingface.co/google/gemma-2-9b)<br>[google/gemma-2-27b](https://huggingface.co/google/gemma-2-27b)        | ✔️          |
 | **GPTBigCodeForCausalLM** | Starcoder1.5      | [bigcode/starcoder](https://huggingface.co/bigcode/starcoder)                                                                   | ✔️          |
@@ -35,10 +36,13 @@
 |                         | Qwen2, Qwen2.5     | [Qwen/Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)                                                            | ✔️          |
 | **LlamaSwiftKVForCausalLM**  | swiftkv            | [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)                                                  | ✔️          |
 | **Grok1ModelForCausalLM**  |  grok-1          | [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)                                                  | ✔️          |
+
+---
+
 ## Embedding Models
 
 ### Text Embedding Task
-**QEff Auto Class:** `QEFFAutoModel`
+**QEff Auto Class:** [`QEFFAutoModel`](#QEFFAutoModel)
 
 | Architecture | Model Family | Representative Models          |
 |--------------|--------------|---------------------------------|
@@ -52,10 +56,12 @@
 | **XLMRobertaForSequenceClassification** | XLM-RoBERTa | [bge-reranker-v2-m3bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) |
 | **XLMRobertaModel**    | XLM-RoBERTa  |[ibm-granite/granite-embedding-107m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual)<br> [ibm-granite/granite-embedding-278m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual)  |
 
+---
+
 ## Multimodal Language Models
 
 ### Vision-Language Models (Text + Image Generation)
-**QEff Auto Class:** `QEFFAutoModelForImageTextToText`
+**QEff Auto Class:** [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
 
 | Architecture                | Model Family | Representative Models                                                                 | CB Support | Single Qpc Support | Dual Qpc Support |
 |-----------------------------|--------------|----------------------------------------------------------------------------------------|------------|--------------------|------------------|
@@ -79,20 +85,25 @@ In the Dual QPC(Qualcomm Program Container) setup, the model is split across two
 **Single QPC:**
 In the single QPC(Qualcomm Program Container) setup, the entire model—including both image encoding and text generation—runs within a single QPC. There is no model splitting, and all components operate within the same execution environment.
 
+**For more details click [here](#QEFFAutoModelForImageTextToText)**
 
-
-**Note:**
+```{NOTE}
 The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
 If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
+```
 
 ---
+
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
-**QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`
+
+**QEff Auto Class:** [`QEFFAutoModelForSpeechSeq2Seq`](#QEFFAutoModelForSpeechSeq2Seq)
 
 | Architecture | Model Family | Representative Models                                                                 |
 |--------------|--------------|----------------------------------------------------------------------------------------|
 | **Whisper**  | Whisper      | [openai/whisper-tiny](https://huggingface.co/openai/whisper-tiny)<br>[openai/whisper-base](https://huggingface.co/openai/whisper-base)<br>[openai/whisper-small](https://huggingface.co/openai/whisper-small)<br>[openai/whisper-medium](https://huggingface.co/openai/whisper-medium)<br>[openai/whisper-large](https://huggingface.co/openai/whisper-large)<br>[openai/whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) |
+
+---
 
 (models_coming_soon)=
 # Models Coming Soon

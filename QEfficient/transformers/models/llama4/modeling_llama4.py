@@ -20,6 +20,7 @@ from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.llama4.modeling_llama4 import (
     Llama4ForCausalLM,
     Llama4ForConditionalGeneration,
+    Llama4Router,
     Llama4TextAttention,
     Llama4TextConfig,
     Llama4TextDecoderLayer,
@@ -402,6 +403,11 @@ class QEffLlama4TextExperts(Llama4TextExperts):
         self.up_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
 
 
+class QEffLlama4Router(Llama4Router):
+    def forward(self, hidden_states):
+        return torch.matmul(hidden_states, self.weight.T)
+
+
 class QEffLlama4TextMoe(Llama4TextMoe):
     def forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
@@ -475,10 +481,6 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         key_states = self.k_proj(hidden_states).view(*input_shape, -1, self.head_dim)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
-
-        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        ##
         if self.use_rope:  # the 16E model skips rope for long context on certain layers
             query_states, key_states = qeff_apply_rotary_emb(
                 query_states, key_states, position_embeddings.to(query_states.device)
@@ -539,7 +541,6 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        chunk_causal_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -551,10 +552,6 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
-
-        # use local attention mask for ROPE layers
-        if self.use_chunked_attention:
-            attention_mask = chunk_causal_mask
 
         hidden_states = self.input_layernorm(hidden_states)
 
@@ -654,13 +651,17 @@ class QEffLlama4TextModel(Llama4TextModel):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = _create_causal_mask(
-            position_ids=position_ids, target_length=past_key_values.key_cache[3].shape[-2]
+            position_ids=position_ids, target_length=past_key_values.layers[3].keys.shape[-2]
         )
         chunk_position_ids = torch.where(
             position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
         )
-        target_length = min(past_key_values.key_cache[0].shape[-2], torch.tensor(self.config.attention_chunk_size))
+        target_length = min(past_key_values.layers[0].keys.shape[-2], torch.tensor(self.config.attention_chunk_size))
         chunk_causal_mask = _create_causal_mask(position_ids=chunk_position_ids, target_length=target_length)
+        causal_mask_mapping = {
+            "full_attention": causal_mask,
+            "chunked_attention": chunk_causal_mask,
+        }
 
         # embed positions
         hidden_states = inputs_embeds
@@ -678,8 +679,7 @@ class QEffLlama4TextModel(Llama4TextModel):
 
             layer_outputs = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask,
-                chunk_causal_mask=chunk_causal_mask,
+                attention_mask=causal_mask_mapping[decoder_layer.attention_type],
                 position_ids=position_ids,
                 past_key_value=past_key_values,
                 batch_index=batch_index,
@@ -719,6 +719,11 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
     The only differences are:
     - add new args cache idx for the kv retention
     """
+
+    def __qeff_init__(self):
+        logger.warning(
+            "Current output differs from HF output due to a bug in TF v_4.55. Switch to branch release/v_1.20 for TF match. Refer link: https://github.com/huggingface/transformers/pull/39501"
+        )
 
     def forward(
         self,
