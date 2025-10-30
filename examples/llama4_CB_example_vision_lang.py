@@ -21,7 +21,6 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 continious_batching = True
 if continious_batching:
-
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_id,
         attn_implementation="eager",
