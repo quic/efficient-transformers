@@ -779,10 +779,10 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         **compiler_options,
     ):
         if height is None or width is None:
-            height = 354
-            width = 536
+            height = constants.QWEN2_5_VL_HEIGHT
+            width = constants.QWEN2_5_VL_WIDTH
             logger.warning(
-                "Setting height and width to be 354 and 536 respectively, as it was neither passed nor found in vision_config"
+                f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
