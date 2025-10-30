@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import BaseModelOutputWithPast, MoeCausalLMOutputWithPast, MoeModelOutputWithPast
@@ -127,15 +128,17 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.head_dim)
-        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        kv_seq_len = key_states.shape[-2]
+        bsz, q_len, _ = hidden_states.size()
 
-        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
+        value_states = self.v_proj(hidden_states)
 
+        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         if past_key_value is not None:
@@ -149,23 +152,46 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
             }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        key_states = repeat_kv(key_states, self.num_key_value_groups)
-        value_states = repeat_kv(value_states, self.num_key_value_groups)
+        attention_interface = eager_attention_forward
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
-        if attention_mask is not None:
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            scaling=self.scaling,
+        )
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        dropout = 0.0 if not self.training else self.attention_dropout
-        attn_weights = F.dropout(attn_weights, p=dropout, training=self.training)
-        attn_output = torch.matmul(attn_weights, value_states)
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        attn_output = attn_output.view(bsz, q_len, -1)
         attn_output = self.o_proj(attn_output)
-        return attn_output, attn_weights, past_key_value
+
+        return attn_output, attn_weights
+
+
+def eager_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    **kwargs,
+):
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    if attention_mask is not None:
+        attn_weights = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+        )
+
+    # upcast attention to fp32
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_output = torch.matmul(attn_weights, value_states)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    return attn_output, attn_weights
 
 
 class QEffGraniteMoeModel(GraniteMoeModel):
@@ -212,9 +238,14 @@ class QEffGraniteMoeModel(GraniteMoeModel):
 
         inputs_embeds = inputs_embeds * self.embedding_multiplier  # main diff with Llama
 
-        return_legacy_cache = False
+        # TODO (joao): remove this exception in v4.56 -- it exists for users that try to pass a legacy cache
+        # if not isinstance(past_key_values, (type(None), Cache)):
+        #    raise ValueError("The `past_key_values` should be either a `Cache` object or `None`.")
+
+        # if use_cache and past_key_values is None:
+        #    past_key_values = QEffDynamicCache()
+
         if use_cache and not isinstance(past_key_values, Cache):
-            return_legacy_cache = True
             if past_key_values is None:
                 past_key_values = QEffDynamicCache()
             else:
@@ -230,39 +261,26 @@ class QEffGraniteMoeModel(GraniteMoeModel):
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
-
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = self._update_causal_mask(
             attention_mask, inputs_embeds, cache_position, position_ids, past_key_values, output_attentions
         )
-
         hidden_states = inputs_embeds
 
         # create position embeddings to be shared across the decoder layers
         position_embeddings = None
+
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        next_decoder_cache = None
+
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    decoder_layer.__call__,
-                    hidden_states,
-                    causal_mask,
-                    position_ids,
-                    past_key_values,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                    position_embeddings,
-                )
-            elif batch_index is not None:
+            if batch_index is not None:
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=causal_mask,
@@ -287,9 +305,6 @@ class QEffGraniteMoeModel(GraniteMoeModel):
 
             hidden_states = layer_outputs[0]
 
-            if use_cache:
-                next_decoder_cache = layer_outputs[2 if output_attentions else 1]
-
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
@@ -298,15 +313,15 @@ class QEffGraniteMoeModel(GraniteMoeModel):
         # add hidden states from the last decoder layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
-        next_cache = next_decoder_cache if use_cache else None
-        if return_legacy_cache:
-            next_cache = next_cache.to_legacy_cache()
+
         if not return_dict:
-            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
+            return tuple(
+                v for v in [hidden_states, past_key_values, all_hidden_states, all_self_attns] if v is not None
+            )
 
         output = MoeModelOutputWithPast(
             last_hidden_state=hidden_states,
-            past_key_values=next_cache,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
@@ -486,6 +501,7 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
         output_router_logits: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[Tuple, MoeCausalLMOutputWithPast]:
         r"""
@@ -537,6 +553,7 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            **kwargs,
         )
 
         hidden_states = outputs[0]
@@ -544,7 +561,8 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
 
-        logits = self.lm_head(hidden_states)
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
         logits = logits / self.config.logits_scaling
 
         loss = None

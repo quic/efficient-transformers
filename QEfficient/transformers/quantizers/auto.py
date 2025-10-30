@@ -5,6 +5,8 @@
 #
 # ----------------------------------------------------------------------------
 
+from functools import wraps
+
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 from transformers.quantizers.quantizer_awq import AwqQuantizer
 from transformers.quantizers.quantizer_compressed_tensors import CompressedTensorsHfQuantizer
@@ -47,6 +49,7 @@ DUPLICATE_AUTO_QUANTIZATION_CONFIG_MAPPING = {
 
 
 def with_replaced_quantizers(func):
+    @wraps(func)
     def wrapper(*args, **kwargs):
         transformers_replaced_quantization_config_mapping = dict()
         transformers_replaced_quantizer_mapping = dict()
