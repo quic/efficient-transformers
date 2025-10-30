@@ -19,7 +19,7 @@ config.vision_config.num_hidden_layers = 2
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-continious_batching = True
+continious_batching = False
 if continious_batching:
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_id,

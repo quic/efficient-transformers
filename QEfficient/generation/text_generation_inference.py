@@ -508,10 +508,9 @@ class QEffTextGenerationBase:
         full_batch_size = None
         if "batch_index" in self._session.binding_index_map:
             if self._session.allowed_shapes:
-                # Take the maximum batch_index dimension across specializations (prefill vs decode)
-                full_batch_size = max(
-                    [x[self._session.binding_index_map["batch_index"]][1][0] for x in self._session.allowed_shapes]
-                )
+                full_batch_size, _ = [
+                    x[self._session.binding_index_map["batch_index"]][1][0] for x in self._session.allowed_shapes
+                ]
             else:
                 full_batch_size, _ = self._session.bindings[self._session.binding_index_map["batch_index"]].dims
         return full_batch_size
@@ -838,7 +837,7 @@ class QEffTextGenerationBase:
         # Set output placeholders for decode
         self._set_output_buffers(
             batch_size=self.full_batch_size,
-            sequence_length=1,
+            sequence_length=self._decode_seq_len,
         )
 
         # Generate flag for tracking progress for each batch ID
@@ -882,7 +881,7 @@ class QEffTextGenerationBase:
 
                         self._set_output_buffers(
                             batch_size=self.full_batch_size,
-                            sequence_length=1,
+                            sequence_length=self._decode_seq_len,
                         )
                         decode_pause_time += perf_counter() - start
 
@@ -1113,6 +1112,7 @@ class TextGeneration:
         :tuple: A tuple containing performance metrics and generated texts.
         """
         self._setup_model_execution_inputs(prompt, generation_len, prompt_to_lora_id_mapping)
+        self._qaic_model.batch_index = np.arange(self._full_batch_size).reshape(-1, 1)
         start = perf_counter()
         self._qaic_model.run_prefill_for_all_inputs(self._prompt_queue, generation_len)
 
