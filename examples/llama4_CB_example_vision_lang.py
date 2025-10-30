@@ -16,30 +16,55 @@ config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
-qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id,
-    attn_implementation="eager",
-    kv_offload=True,
-    config=config,
-    continuous_batching=True,
-)
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-qeff_model.compile(
-    prefill_seq_len=128,
-    ctx_len=3072,
-    img_size=336,
-    num_cores=16,
-    num_devices=4,
-    max_num_tiles=17,
-    batch_size=1,
-    full_batch_size=4,
-    mxfp6_matmul=True,
-    mxint8_kv_cache=True,
-    aic_enable_depth_first=True,
-    mos=1,
-)
+continious_batching = True
+if continious_batching:
+
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        model_id,
+        attn_implementation="eager",
+        kv_offload=True,
+        config=config,
+        continuous_batching=True,
+    )
+
+    qeff_model.compile(
+        prefill_seq_len=128,
+        ctx_len=3072,
+        img_size=336,
+        num_cores=16,
+        num_devices=4,
+        max_num_tiles=17,
+        batch_size=1,
+        full_batch_size=4,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        aic_enable_depth_first=True,
+        mos=1,
+    )
+else:
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        model_id,
+        attn_implementation="eager",
+        kv_offload=True,
+        config=config,
+    )
+
+    qeff_model.compile(
+        prefill_seq_len=128,
+        ctx_len=3072,
+        img_size=336,
+        num_cores=16,
+        num_devices=4,
+        max_num_tiles=17,
+        batch_size=1,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        aic_enable_depth_first=True,
+        mos=1,
+    )
 
 image_urls = [
     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
@@ -55,7 +80,7 @@ prompts = [
     "What colors are predominant in the image?",
 ]
 
-output = qeff_model.generate(
+exec_info = qeff_model.generate(
     tokenizer=tokenizer,
     prompts=prompts,
     processor=processor,
@@ -64,4 +89,6 @@ output = qeff_model.generate(
     generation_len=100,
 )
 
-print(output)
+# print("Generated texts:", exec_info.generated_texts)
+print("Generated IDs:", exec_info.generated_ids)
+print(exec_info)

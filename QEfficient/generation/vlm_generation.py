@@ -34,7 +34,7 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     write_io_files,
 )
-from QEfficient.generation.vision_handler import VisionHandler
+from QEfficient.generation.embedding_handler import VisionHandler
 from QEfficient.utils.logging_utils import logger
 
 
@@ -230,21 +230,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         if isinstance(prompt, tuple) and len(prompt) == 2:
             image_path, text_prompt = prompt
 
-            # Process vision inputs. In CB, process for every prefill since each slot can have different image.
-            if self.full_batch_size is not None or not hasattr(self, "_vision_processed") or not self._vision_processed:
-                logger.debug("Processing vision inputs for this request")
-                vision_inputs = self._vision_handler.prepare_vision_inputs(image_path, text_prompt)
-                self._vision_handler.setup_vision_buffers()
-                vision_outputs = self._vision_handler.run_vision_inference(vision_inputs)
-
-                # Set vision buffers in language session (shared across all batch indices)
-                self._session.set_buffers(vision_outputs)
-                logger.debug(f"Vision buffers set: {list(vision_outputs.keys())}")
-
-                # Mark vision as processed
-                self._vision_processed = True
-                self._vision_outputs = vision_outputs
-
+             # Process vision inputs. In CB, process for every prefill since each slot can have different image.
             # Prepare the text prompt with vision context
             processed_prompt = self._prepare_vision_language_prompt(text_prompt, image_path)
 
@@ -261,6 +247,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
             # Set vision buffers in language session
             self._session.set_buffers(vision_outputs)
+            logger.debug(f"Vision buffers set: {list(vision_outputs.keys())}")
+            self._vision_processed = True
+            self._vision_outputs = vision_outputs
 
             # Calculate generation_len consistent with ctx_len
             max_gen_len = self._ctx_len - np.where(lang_inputs["position_ids"] != -1, 1, 0).sum(1, keepdims=True).max()
