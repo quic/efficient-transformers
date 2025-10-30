@@ -1226,6 +1226,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             # Create VisionLanguageGeneration instance
             batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
             vlm_gen = VisionLanguageGeneration(
+                qeff_model=self,
                 lang_qpc_path=self.lang_model.qpc_path,
                 vision_qpc_path=self.vision_model.qpc_path,
                 tokenizer=tokenizer,
