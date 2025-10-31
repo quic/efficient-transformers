@@ -135,7 +135,7 @@ test_models_config = [
         1,
     ),
     (
-        "Qwen/Qwen2.5-VL-32B-Instruct",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
         True,
         1,
         128,
