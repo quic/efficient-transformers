@@ -858,7 +858,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def __init__(
         self,
         model: nn.Module,
-        continuous_batching,
+        continuous_batching: bool = False,
         **kwargs,
     ):
         """
@@ -982,8 +982,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         List[str]
             A list containing the paths to the generated ONNX graph files for both components.
         """
-        inputs = self.model.get_dummy_inputs(kv_offload=True, continuous_batching=self.continuous_batching)
-        dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True, continuous_batching=self.continuous_batching)
+        # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
+        try:
+            inputs = self.model.get_dummy_inputs(kv_offload=True, continuous_batching=self.continuous_batching)
+            dynamic_axes = self.model.get_onnx_dynamic_axes(
+                kv_offload=True, continuous_batching=self.continuous_batching
+            )
+        except TypeError:
+            inputs = self.model.get_dummy_inputs(kv_offload=True)
+            dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True)
         output_names = self.model.get_output_names(kv_offload=True)
 
         self.vision_model.export(
@@ -1123,6 +1130,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.lang_model.onnx_path is None and lang_onnx_path is None
         ):
             self.export()
+
+        # TODO this hould be removed once the continous batching is supported for all the models.
+        compiler_options.pop("continuous_batching", None)
+        compiler_options.pop("kv_cache_batch_size", None)
+        compiler_options.pop("full_batch_size", None)
 
         if not skip_vision:
             self.vision_model._compile(
