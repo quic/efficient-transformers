@@ -752,8 +752,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
-        lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.num_hidden_layers)]
-        for i in range(self.model.config.num_hidden_layers):
+        lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
+        for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
 
@@ -779,10 +779,10 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         **compiler_options,
     ):
         if height is None or width is None:
-            height = 1365
-            width = 2048
+            height = constants.QWEN2_5_VL_HEIGHT
+            width = constants.QWEN2_5_VL_WIDTH
             logger.warning(
-                "Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config"
+                f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
@@ -882,7 +882,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
     def get_onnx_dynamic_axes(self, kv_offload: bool = False):
         # Define dynamic axes
-        num_layers = self.config.num_hidden_layers
+        num_layers = self.config.text_config.num_hidden_layers
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
@@ -900,6 +900,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
 
         dynamic_axes = {}
+
         if kv_offload:
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
@@ -911,7 +912,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.model.config.num_hidden_layers):
+        for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -926,6 +927,32 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
+
+    def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
+        input_ids_length = inputs["input_ids"].shape[1]
+
+        inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+
+        pos_ids, rope_deltas = self.model.get_rope_index(
+            inputs["input_ids"],
+            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            video_grid_thw=None,
+            second_per_grid_ts=None,
+            attention_mask=inputs["attention_mask"],
+        )
+
+        inputs["position_ids"] = torch.cat((inputs["position_ids"], pos_ids), dim=0)
+
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+
+        inputs["position_ids"] = F.pad(
+            inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
+        )
+
+        inputs.pop("image_grid_thw", None)
+
+        return inputs
 
     def get_inputs_info(self):
         return [
