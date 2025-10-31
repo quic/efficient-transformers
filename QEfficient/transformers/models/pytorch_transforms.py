@@ -272,6 +272,7 @@ from QEfficient.transformers.models.grok_1.modeling_grok1 import (
     QEffGrok1MultiHeadAttention,
 )
 from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternDecoderWrapper,
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
 )
@@ -375,6 +376,7 @@ from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     QEffQwen2_5_VLModel,
     QEffQwen2_5_VLTextModel,
     QEffQwen2_5_VLVisionAttention,
+    QEffQwen_2_5_vl_DecoderWrapper,
     QEffQwen_2_5_vl_ForConditionalGeneration,
 )
 from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
@@ -678,6 +680,8 @@ class SamplerTransform:
     _module_mapping = {
         # Llama
         QEffLlamaForCausalLM,
+        QEffInternDecoderWrapper,
+        QEffQwen_2_5_vl_DecoderWrapper,
     }
 
     @classmethod
