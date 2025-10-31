@@ -125,6 +125,10 @@ GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
 # Wav2Vec2 Constant
 WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16,000 samples/sec × 30 sec)
 
+# Qwen2_5_vl Constants
+QWEN2_5_VL_HEIGHT = 354
+QWEN2_5_VL_WIDTH = 536
+
 
 class Constants:
     # Export Constants.

@@ -134,6 +134,17 @@ test_models_config = [
         "Can you describe the image in detail.",
         1,
     ),
+    (
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        True,
+        1,
+        128,
+        4096,
+        1540,
+        "https://picsum.photos/id/237/536/354",
+        "Can you describe the image in detail.",
+        1,
+    ),
     # (
     #     "meta-llama/Llama-3.2-11B-Vision-Instruct",
     #     True,
@@ -320,6 +331,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
     inputs = processor(images=image, text=prompt, return_tensors="pt")
+    if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
+        inputs = qeff_model.model.prepare_inputs_for_generation(
+            inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
+        )
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     print("QPC Outputs (QAIC):")
