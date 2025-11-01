@@ -98,6 +98,7 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
         self,
         hidden_states: torch.Tensor,
         layer_past: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -151,8 +152,10 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
                 )
 
         if layer_past is not None:
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             # save all key/value_states to cache to be re-used for fast auto-regressive generation
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index, "CCL": attention_mask.shape[-1]}
             key, value = curr_past_key_value.update(key, value, self.layer_idx, cache_kwargs)
             # set flag that curr layer for cross-attn is already updated so we can re-use in subsequent calls
             if self.is_cross_attention:
@@ -180,6 +183,7 @@ class QEffGPTBigCodeBlock(GPTBigCodeBlock):
         self,
         hidden_states: Optional[Tuple[torch.Tensor]],
         layer_past: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -194,6 +198,7 @@ class QEffGPTBigCodeBlock(GPTBigCodeBlock):
         attn_outputs = self.attn(
             hidden_states,
             layer_past=layer_past,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,
@@ -242,6 +247,7 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         self,
         input_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional[list[torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
@@ -333,6 +339,7 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
             outputs = block(
                 hidden_states,
                 layer_past=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 position_ids=position_ids,
                 batch_index=batch_index,
                 attention_mask=attention_mask,
@@ -374,6 +381,7 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
         self,
         input_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional[tuple[tuple[torch.Tensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
@@ -399,6 +407,7 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,

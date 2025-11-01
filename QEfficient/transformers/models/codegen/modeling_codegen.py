@@ -72,6 +72,7 @@ class QEffCodeGenAttention(CodeGenAttention):
         self,
         hidden_states: Optional[torch.FloatTensor],
         layer_past: Optional[Tuple[torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
@@ -123,7 +124,9 @@ class QEffCodeGenAttention(CodeGenAttention):
         query = query.permute(0, 2, 1, 3)
 
         if layer_past is not None:
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index, "CCL": attention_mask.shape[-1]}
             key, value = layer_past.update(key.to(hidden_states.dtype), value, self.layer_idx, cache_kwargs)
 
         # compute self-attention: V x Softmax(QK^T)
@@ -147,6 +150,7 @@ class QEffCodeGenModel(CodeGenModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, tuple[tuple[torch.Tensor]]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -245,6 +249,7 @@ class QEffCodeGenModel(CodeGenModel):
             outputs = block(
                 hidden_states,
                 layer_past=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
@@ -294,6 +299,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -312,6 +318,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             batch_index=batch_index,
@@ -348,6 +355,7 @@ class QEffCodeGenBlock(CodeGenBlock):
         self,
         hidden_states: Optional[torch.FloatTensor],
         layer_past: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -361,6 +369,7 @@ class QEffCodeGenBlock(CodeGenBlock):
         attn_outputs, attn_weights = self.attn(
             hidden_states=hidden_states,
             layer_past=layer_past,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,
