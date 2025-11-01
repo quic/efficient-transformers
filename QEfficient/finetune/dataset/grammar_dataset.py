@@ -48,13 +48,13 @@ class grammar(Dataset):
             self.tokenizer.bos_token + prompt,
             add_special_tokens=False,
             max_length=self.context_length,
-            pad_to_max_length=True,
+            padding=True,
         )
         label_ids = self.tokenizer.encode(
             target_ + self.tokenizer.eos_token,
             add_special_tokens=False,
             max_length=self.context_length,
-            pad_to_max_length=True,
+            padding=True,
         )
 
         sample = {

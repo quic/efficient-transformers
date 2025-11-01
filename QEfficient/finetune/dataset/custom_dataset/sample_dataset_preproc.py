@@ -65,13 +65,13 @@ def get_preprocessed_disc(dataset_config, tokenizer, split, context_length=None)
             tokenizer.bos_token + sample["input"],
             add_special_tokens=False,
             max_length=context_length,
-            pad_to_max_length=True,
+            padding=True,
         )
         label = tokenizer.encode(
             sample["label"] + tokenizer.pad_token + tokenizer.eos_token,
             add_special_tokens=False,
             max_length=context_length,
-            pad_to_max_length=True,
+            padding=True,
         )
 
         sample = {
