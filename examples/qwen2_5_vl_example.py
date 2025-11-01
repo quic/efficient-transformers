@@ -5,6 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+# If we want to enable QBlocking Run below command:, default is without blocking
+# ATTENTION_BLOCKING_MODE=q num_q_blocks=2 python -W ignore qwen2_5_vl_example.py
+
 import requests
 import transformers
 from PIL import Image
