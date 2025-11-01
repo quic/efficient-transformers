@@ -26,7 +26,6 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLTextModel,
     Qwen2_5_VLVisionAttention,
     apply_rotary_pos_emb_vision,
-    repeat_kv,
     rotate_half,
 )
 
@@ -360,6 +359,44 @@ class QEffQwen2_5_VLRotaryEmbedding(Qwen2_5_VLRotaryEmbedding):
         )
 
 
+def repeat_kv_text(
+    hidden_states: torch.Tensor, n_rep: int = 2, num_key_value_heads=16, num_attention_heads=40, orig_kv_heads=8
+) -> torch.Tensor:
+    """
+    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    rows_to_fill = num_attention_heads % (num_key_value_heads * n_rep)  # -> 8
+    if rows_to_fill == 0:
+        return hidden_states
+    if rows_to_fill != 0:
+        old_repeats = num_key_value_heads // orig_kv_heads  # -> 2
+        required_repeats = rows_to_fill // orig_kv_heads  # -> 1
+        remaining_expansion_data = hidden_states[
+            :, [i for i in range(0, num_key_value_heads, old_repeats)], :, :
+        ]  # 1, 8
+        remaining_expansion_data = torch.repeat_interleave(
+            remaining_expansion_data, repeats=required_repeats, dim=1
+        )  # 1x8
+        chunk_fill_size = n_rep * old_repeats  # -> 4
+
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    hidden_states = hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
+    if rows_to_fill != 0:
+        tensors_to_cat = []
+        for k in range(orig_kv_heads):
+            tensors_to_cat.extend(
+                [
+                    hidden_states[:, k * chunk_fill_size : (k + 1) * chunk_fill_size, :, :],
+                    remaining_expansion_data[:, k * required_repeats : (k + 1) * required_repeats, :, :],
+                ]
+            )
+        hidden_states = torch.cat(tensors_to_cat, dim=1)
+    return hidden_states
+
+
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -368,8 +405,22 @@ def eager_attention_forward(
     attention_mask: Optional[torch.Tensor],
     **kwargs,
 ):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
+    # key_states = repeat_kv(key, module.num_key_value_groups)
+    # value_states = repeat_kv(value, module.num_key_value_groups)
+    key_states = repeat_kv_text(
+        key,
+        module.num_key_value_groups,
+        num_key_value_heads=module.num_key_value_heads,
+        num_attention_heads=module.num_heads,
+        orig_kv_heads=module.orig_kv_heads,
+    )
+    value_states = repeat_kv_text(
+        value,
+        module.num_key_value_groups,
+        num_key_value_heads=module.num_key_value_heads,
+        num_attention_heads=module.num_heads,
+        orig_kv_heads=module.orig_kv_heads,
+    )
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
     if attention_mask is not None:
