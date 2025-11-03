@@ -613,6 +613,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             generation_len (int): The generation length.
         """
         for decode_batch_id in range(self.full_batch_size):
+            # Pop the promt as we are processing
+            _ = prompt_queue.popleft()
+
             # Get cached vision outputs for this batch slot (Optimization 4: use LRU cache)
             cached = self._vision_outputs_cache.get(decode_batch_id)
             if cached:
