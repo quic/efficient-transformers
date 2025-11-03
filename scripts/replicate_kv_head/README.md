@@ -25,6 +25,11 @@ You can run the script with different parameters using the command line. Below i
     python script.py --model_name "meta-llama/Meta-Llama-3-8B-Instruct" --prompt "Hello, world!" --repeat 3
     ```
 
+3. **Run the script** for Vision Language Models (VLM) (Still WIP):
+    ```sh
+    python -W ignore replicate_kv_heads_vlm.py --model_name "Qwen/Qwen2.5-VL-32B-Instruct" --prompt "Hello, world" --repeat 5
+    ```
+
 Replace `<hf_token>` with your actual token.
 
 ### Arguments
