@@ -31,6 +31,7 @@ from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
     FP16ClipTransform,
     OnnxSlimTransform,
+    RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
@@ -2116,7 +2117,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, CustomOpTransform, OnnxSlimTransform, SplitTensorsTransform]
+    _onnx_transforms = [
+        FP16ClipTransform,
+        CustomOpTransform,
+        RenameFunctionOutputsTransform,
+        OnnxSlimTransform,
+        SplitTensorsTransform,
+    ]
 
     def __init__(
         self,
