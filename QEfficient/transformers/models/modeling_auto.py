@@ -59,6 +59,101 @@ from QEfficient.utils import (
 from QEfficient.utils.logging_utils import logger
 
 
+def convert_dynamic_axes_to_dynamic_shapes(dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
+    """
+    Convert ONNX dynamic_axes format to torch.export dynamic_shapes format
+
+    Args:
+        dynamic_axes: ONNX format like {"input_ids": {0: "batch_size", 1: "seq_len"}}
+
+    Returns:
+        dynamic_shapes: torch.export format with Dim objects matching model forward args
+    """
+    from torch.export import Dim
+
+    # Create dimension registry to reuse Dim objects with same names
+    dim_registry = {}
+    dynamic_shapes = {}
+
+    # Handle regular model inputs (not past_key_values)
+    # These match the QEffLlamaForCausalLM forward signature:
+    # input_ids, attention_mask, position_ids, past_key_values, batch_index, etc.
+    for input_name, axes_map in dynamic_axes.items():
+        if not input_name.startswith("past_"):
+            input_dynamic_shapes = {}
+            for axis_idx, dim_name in axes_map.items():
+                # Create or reuse Dim object for this dimension name
+                if dim_name not in dim_registry:
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)  # Support realistic batch sizes
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Conservative seq range
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Generic conservative range
+
+                input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+
+            dynamic_shapes[input_name] = input_dynamic_shapes
+
+    # Handle past_key_values specially - collect all past_key.X and past_value.X
+    past_keys = {}
+    past_values = {}
+
+    for input_name, axes_map in dynamic_axes.items():
+        if input_name.startswith("past_key."):
+            layer_idx = int(input_name.split(".")[1])
+            layer_dynamic_shapes = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    # Create Dim with conservative constraints to avoid conflicts
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)  # Support realistic batch sizes
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Conservative seq range
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Generic conservative range
+                layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            past_keys[layer_idx] = layer_dynamic_shapes
+
+        elif input_name.startswith("past_value."):
+            layer_idx = int(input_name.split(".")[1])
+            layer_dynamic_shapes = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    # Create Dim with conservative constraints to avoid conflicts
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)  # Support realistic batch sizes
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Conservative seq range
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Generic conservative range
+                layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            past_values[layer_idx] = layer_dynamic_shapes
+
+    # Reconstruct past_key_values as nested structure if we have past keys/values
+    if past_keys or past_values:
+        max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+        past_kv_shapes = []
+
+        for layer_idx in range(max_layer + 1):
+            layer_shapes = []
+            if layer_idx in past_keys:
+                layer_shapes.append(past_keys[layer_idx])
+            else:
+                layer_shapes.append({})
+
+            if layer_idx in past_values:
+                layer_shapes.append(past_values[layer_idx])
+            else:
+                layer_shapes.append({})
+
+            past_kv_shapes.append(layer_shapes)
+
+        dynamic_shapes["past_key_values"] = past_kv_shapes
+
+    return dynamic_shapes
+
+
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Base class for QEfficient wrappers around HuggingFace transformer models.
@@ -2310,11 +2405,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 dynamic_axes=dynamic_axes,
             )
 
+        dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
+
         return self._export(
             example_inputs,
             output_names,
             dynamic_axes,
             export_dir=export_dir,
+            dynamic_shapes=dynamic_shapes,
         )
 
     def get_sampling_inputs_and_outputs(

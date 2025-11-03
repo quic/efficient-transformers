@@ -179,6 +179,7 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
+        dynamic_shapes: Optional[Dict[str, Dict[int, any]]] = None,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
@@ -250,8 +251,10 @@ class QEFFBaseModel(ABC):
                 str(tmp_onnx_path),
                 input_names=input_names,
                 output_names=output_names,
-                dynamic_axes=dynamic_axes,
+                dynamic_shapes=dynamic_shapes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
+                dynamo=True,
+                report=True,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")

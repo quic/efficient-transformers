@@ -41,11 +41,15 @@ class CtxScatterFunc(torch.autograd.Function):
 
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
-        batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
-        head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
-        ctx_idx = position_ids.unsqueeze(1)
-        data[batch_idx, head_idx, ctx_idx] = updates
-        return data
+        # batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
+        # head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
+        # ctx_idx = position_ids.unsqueeze(1)
+        # data[batch_idx, head_idx, ctx_idx] = updates
+        # return data
+        B, H, T, D = data.shape
+        idx = position_ids.unsqueeze(1).unsqueeze(-1).expand(B, H, T, D).to(dtype=torch.long)
+        out = data.scatter_reduce(dim=2, index=idx, src=updates, reduce="sum", include_self=False)
+        return out
 
     @staticmethod
     def setup_context(ctx, inputs, outputs):
