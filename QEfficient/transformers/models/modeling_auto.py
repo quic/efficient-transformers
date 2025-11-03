@@ -3179,7 +3179,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
     _hf_auto_class = AutoModelForCTC
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model, **kwargs)
