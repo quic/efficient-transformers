@@ -256,12 +256,11 @@ class RenameFunctionOutputsTransform(OnnxTransform):
                         if "key" in out_name:
                             new_name = f"past_key.{layer_index}_RetainedState"
                         elif "value" in out_name:
-                            new_name = f"past_value.{layer_index}_RetainedState" 
+                            new_name = f"past_value.{layer_index}_RetainedState"
                         # new_name = func.output[i].replace("Internal", "")
                         node.output[i] = new_name
                         # Update graph output name if it exists
                         if tmp in model_graph_outputs:
                             model.graph.output[model_graph_outputs.index(tmp)].name = new_name
-                layer_index = layer_index+1
+                layer_index = layer_index + 1
         return model, transformed
-    
