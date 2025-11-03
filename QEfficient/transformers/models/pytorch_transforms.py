@@ -434,6 +434,7 @@ class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
         Gemma2RMSNorm: GemmaCustomRMSNormAIC,
+        GptOssRMSNorm: CustomRMSNormAIC,
         LlamaRMSNorm: CustomRMSNormAIC,
         Llama4TextRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
