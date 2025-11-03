@@ -676,8 +676,16 @@ class SamplerTransform:
 
     # supported architectures
     _module_mapping = {
-        # Llama
+        QEffFalconForCausalLM,
+        QEffGemmaForCausalLM,
+        QEffGPT2LMHeadModel,
+        QEffGPTJForCausalLM,
+        QEffGraniteForCausalLM,
+        QEffGraniteMoeForCausalLM,
         QEffLlamaForCausalLM,
+        QEffMptForCausalLM,
+        QEffPhi3ForCausalLM,
+        QEffQwen2ForCausalLM,
     }
 
     @classmethod
