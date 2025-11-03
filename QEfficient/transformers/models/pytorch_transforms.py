@@ -161,6 +161,18 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Model,
     Qwen2RMSNorm,
 )
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2_5_VisionTransformerPretrainedModel,
+    Qwen2_5_VLAttention,
+    Qwen2_5_VLDecoderLayer,
+    Qwen2_5_VLForConditionalGeneration,
+    Qwen2_5_VLModel,
+    Qwen2_5_VLTextModel,
+    Qwen2_5_VLVisionAttention,
+)
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2RMSNorm as Qwen2_5RMSNorm,
+)
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
     Qwen3DecoderLayer,
@@ -373,6 +385,15 @@ from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2ForCausalLM,
     QEffQwen2Model,
 )
+from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    QEffQwen2_5_VisionTransformerPretrainedModel,
+    QEffQwen2_5_VLAttention,
+    QEffQwen2_5_VLDecoderLayer,
+    QEffQwen2_5_VLModel,
+    QEffQwen2_5_VLTextModel,
+    QEffQwen2_5_VLVisionAttention,
+    QEffQwen_2_5_vl_ForConditionalGeneration,
+)
 from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3Attention,
     QEffQwen3DecoderLayer,
@@ -421,6 +442,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
         Qwen3RMSNorm: CustomRMSNormAIC,
+        Qwen2_5RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         PixtralRMSNorm: CustomRMSNormAIC,
@@ -569,6 +591,14 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3DecoderLayer: QEffQwen3DecoderLayer,
         Qwen3Model: QEffQwen3Model,
         Qwen3ForCausalLM: QEffQwen3ForCausalLM,
+        # Qwen2.5 VL
+        Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
+        Qwen2_5_VLModel: QEffQwen2_5_VLModel,
+        Qwen2_5_VLAttention: QEffQwen2_5_VLAttention,
+        Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
+        Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
+        Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
+        Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
@@ -671,8 +701,16 @@ class SamplerTransform:
 
     # supported architectures
     _module_mapping = {
-        # Llama
+        QEffFalconForCausalLM,
+        QEffGemmaForCausalLM,
+        QEffGPT2LMHeadModel,
+        QEffGPTJForCausalLM,
+        QEffGraniteForCausalLM,
+        QEffGraniteMoeForCausalLM,
         QEffLlamaForCausalLM,
+        QEffMptForCausalLM,
+        QEffPhi3ForCausalLM,
+        QEffQwen2ForCausalLM,
     }
 
     @classmethod
