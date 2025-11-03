@@ -224,28 +224,44 @@ class CustomOpTransform(OnnxTransform):
         return False
 
 
-def rename_function_outputs(model):
-    graph = model.graph
-    op_type_to_func_map = {func.name: func for func in model.functions}
-    decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
-    transformed = False
-    model_graph_outputs = [val.name for val in model.graph.output]
-    node_count = 0
-    for node in graph.node:
-        if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
-            func = op_type_to_func_map[node.op_type]
-            for i, out_name in enumerate(func.output):
-                if "_InternalRetainedState" in out_name:
-                    transformed = True
-                    tmp = node.output[i]
-                    if "key" in func.output[i]:
-                        new_name = f"past_key.{node_count}_RetainedState"
-                    elif "value" in func.output[i]:
-                        new_name = f"past_value.{node_count}_RetainedState"
-                    else:
-                        raise NotImplementedError()
-                    print(f"renaming {node.output[i]} to {new_name}")
-                    node.output[i] = new_name
-                    model.graph.output[model_graph_outputs.index(tmp)].name = new_name
-            node_count += 1
-    return model, transformed
+class RenameFunctionOutputsTransform(OnnxTransform):
+    """
+    Renames function outputs in decoder layers by removing 'Internal' from '_InternalRetainedState' patterns.
+    """
+
+    @classmethod
+    def apply(cls, model: ModelProto, **kwargs) -> Tuple[ModelProto, bool]:
+        """
+        Rename function outputs in decoder layer nodes.
+
+        :param model: The ONNX model to transform
+        :returns: Transformed model and boolean indicating whether transform was applied
+        """
+        graph = model.graph
+        op_type_to_func_map = {func.name: func for func in model.functions}
+        decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
+        transformed = False
+        model_graph_outputs = [val.name for val in model.graph.output]
+        layer_index = 0
+        for node in graph.node:
+            if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
+                func = op_type_to_func_map.get(node.op_type)
+                if func is None:
+                    continue
+
+                for i, out_name in enumerate(func.output):
+                    if "_InternalRetainedState" in out_name:
+                        transformed = True
+                        tmp = node.output[i]
+                        if "key" in out_name:
+                            new_name = f"past_key.{layer_index}_RetainedState"
+                        elif "value" in out_name:
+                            new_name = f"past_value.{layer_index}_RetainedState" 
+                        # new_name = func.output[i].replace("Internal", "")
+                        node.output[i] = new_name
+                        # Update graph output name if it exists
+                        if tmp in model_graph_outputs:
+                            model.graph.output[model_graph_outputs.index(tmp)].name = new_name
+                layer_index = layer_index+1
+        return model, transformed
+    
