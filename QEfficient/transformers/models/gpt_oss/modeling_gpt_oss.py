@@ -428,9 +428,6 @@ class QEffGptOssAttention(GptOssAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        # kv_seq_len = key_states.shape[-2]
-
-        # kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
@@ -508,6 +505,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states, _ = self.mlp(hidden_states)  # diff with llama: router scores
         # alth, _ = self.mlp.alt_forward(hidden_states)
+        hidden_states = hidden_states.reshape(residual.shape)
         hidden_states = residual + hidden_states
         outputs = (hidden_states,)
 
