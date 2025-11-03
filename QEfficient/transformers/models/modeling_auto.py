@@ -1549,7 +1549,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :str: Path of the generated ``ONNX`` graph.
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = int(os.environ['NUM_BLOCKS']) * 2
+        seq_len: int = int(os.environ['NUM_BLOCKS'])
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len

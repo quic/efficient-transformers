@@ -501,10 +501,11 @@ class QEffGptOssAttention(GptOssAttention):
                 "sliding_window": past_key_value.sliding_window_len,
             }
             if self.sliding_window is not None:
-                sliding_window_len = 128
+                sliding_window_len = past_key_value.sliding_window_len
                 short_read_idx = torch.arange(sliding_window_len)
                 read_idx = short_read_idx + torch.where(position_ids.max()> sliding_window_len-1, position_ids.max() - sliding_window_len + 1, 0)
-                # read_idx = read_idx[None, ...].unsqueeze(-1)
+                # This is a trick to export with NUM_BLOCKS<seq_len<sliding_window_len, disabling it by default.
+                read_idx = torch.where(read_idx>position_ids.max(), 0, read_idx)
                 kv_position_ids = read_idx.reshape(1, -1)
                 k_cache = key_states[:, :, read_idx, :]
                 v_cache = value_states[:, :, read_idx, :]
@@ -844,7 +845,6 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
