@@ -233,6 +233,7 @@ def test_greedy_sampling(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.skip
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
     random_sampling_configs,

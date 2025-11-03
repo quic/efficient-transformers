@@ -248,6 +248,8 @@ def main(
 
     image_path = kwargs.pop("image_path", None)
     image_url = kwargs.pop("image_url", None)
+    iteration = kwargs.pop("iteration", 1)
+    automation = kwargs.pop("automation", False)
 
     config = qeff_model.model.config
     architecture = config.architectures[0] if config.architectures else None
@@ -310,6 +312,8 @@ def main(
             device_id=device_group,
             prompts_txt_file_path=prompts_txt_file_path,
             generation_len=generation_len,
+            iteration=iteration,
+            automation=automation,
         )
 
 

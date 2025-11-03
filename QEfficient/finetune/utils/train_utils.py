@@ -286,18 +286,15 @@ def train(
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
 
-        if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-            train_epoch_loss = (
-                0.0
-                if total_loss == 0.0
-                else total_loss / (step - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
-            )
-        else:
-            train_epoch_loss = (
-                0.0
-                if total_loss == 0.0
-                else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
-            )
+        # corrects the step count if fine-tuning is resumed through saved checkpoint
+        step_correction = (
+            -intermediate_step
+            if (train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch)
+            else 1
+        )
+
+        denominator = step + step_correction - (num_dummy_samples / train_config.train_batch_size)
+        train_epoch_loss = total_loss / denominator if total_loss != 0.0 else torch.tensor(0.0).to(device)
 
         if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
             train_epoch_metric = acc_helper.compute()
@@ -463,7 +460,9 @@ def evaluation(model, train_config, eval_dataloader, device):
 
     # Compute average loss and metric
     eval_epoch_loss = (
-        0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
+        torch.tensor(0.0).to(device)
+        if eval_loss == 0.0
+        else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
     )
     if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
         eval_epoch_metric = acc_helper.compute()

@@ -322,6 +322,7 @@ def cloud_ai_100_exec_kv(
     stream: bool = True,
     write_io_dir: Optional[str] = None,
     automation=False,
+    iteration: int = 1,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
     is_tlm: bool = False,
     include_sampler: bool = False,
@@ -346,6 +347,7 @@ def cloud_ai_100_exec_kv(
         :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.
         :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
         :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
+        :iteration (int): Number of iterations to run the inference. ``Defaults to 1``.
         :prompt_to_lora_id_mapping (List[int]): Mapping to associate prompts with their respective LoRA adapter.
         :include_sampler (bool, default=False): Enable/Disable sampling of next tokens.
         :return_pdfs (bool, default=False): Return probability distributions along with sampled
@@ -390,30 +392,34 @@ def cloud_ai_100_exec_kv(
         return_pdfs=return_pdfs,
         sampling_params=sampling_params,
     )
-    if full_batch_size is None:
-        exec_info = [
-            generate_text.generate(prompt[i : i + batch_size], generation_len, stream, prompt_to_lora_id_mapping)
-            for i in range(0, len(prompt), batch_size)
-        ]
-        prefill_time = np.average([info.perf_metrics.prefill_time for info in exec_info])
-        decode_perf = np.average([info.perf_metrics.decode_perf for info in exec_info])
-        total_perf = np.average([info.perf_metrics.total_perf for info in exec_info])
-        total_time = np.average([info.perf_metrics.total_time for info in exec_info])
-        generated_texts = [info.generated_texts for info in exec_info]
-        generated_ids = [info.generated_ids for info in exec_info]
 
-        exec_info = CloudAI100ExecInfo(
-            batch_size=batch_size,
-            generated_texts=generated_texts,
-            generated_ids=generated_ids,
-            perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
-        )
-    else:
-        exec_info = generate_text.generate(
-            prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
-        )
+    for _ in range(0, int(iteration)):
+        if full_batch_size is None:
+            exec_info = [
+                generate_text.generate(prompt[i : i + batch_size], generation_len, stream, prompt_to_lora_id_mapping)
+                for i in range(0, len(prompt), batch_size)
+            ]
+            prefill_time = np.average([info.perf_metrics.prefill_time for info in exec_info])
+            decode_perf = np.average([info.perf_metrics.decode_perf for info in exec_info])
+            total_perf = np.average([info.perf_metrics.total_perf for info in exec_info])
+            total_time = np.average([info.perf_metrics.total_time for info in exec_info])
+            generated_texts = [info.generated_texts for info in exec_info]
+            generated_ids = [info.generated_ids for info in exec_info]
 
-    print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
+            exec_info = CloudAI100ExecInfo(
+                batch_size=batch_size,
+                generated_texts=generated_texts,
+                generated_ids=generated_ids,
+                perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
+            )
+        else:
+            exec_info = generate_text.generate(
+                prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
+            )
+
+        print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
+
+    # TODO: Need to handle the case where exec_info if given for n iterations
     return exec_info
 
 
@@ -894,7 +900,9 @@ class QEffTextGenerationBase:
 
         return decode_pause_time
 
-    def run_decode(self, decode_inputs, generation_len, streamer: Optional[transformers.TextStreamer] = None):
+    def run_decode(
+        self, decode_inputs, generation_len, automation, streamer: Optional[transformers.TextStreamer] = None
+    ):
         """
         Default method for running decode. Executes the decoding process for a given set of inputs and a specified generation length.
 
@@ -931,11 +939,11 @@ class QEffTextGenerationBase:
             if self.include_sampler:
                 decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
 
-            if finished_sequences.all():
+            if finished_sequences.all() and not automation:
                 break
         return num_token
 
-    def generate_decode_stream(self, decode_inputs, generation_len):
+    def generate_decode_stream(self, decode_inputs, generation_len, automation):
         """
         Generator method for yielding decode tokens. Executes the decoding process for a given set of inputs and a specified generation length.
 
@@ -963,7 +971,7 @@ class QEffTextGenerationBase:
             self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
             finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
 
-            if finished_sequences.all():
+            if finished_sequences.all() and not automation:
                 break
         yield decode_inputs["input_ids"]  # yield the last token
 
@@ -1040,6 +1048,7 @@ class TextGeneration:
         prompt: List[str],
         generation_len: Optional[int] = None,
         stream: Optional[bool] = True,
+        automation: Optional[bool] = False,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
     ):
         """
@@ -1067,7 +1076,7 @@ class TextGeneration:
         decode_inputs = self._qaic_model.prepare_decode_inputs()
 
         loop_start = perf_counter()  # Start decode loop timer
-        num_token = self._qaic_model.run_decode(decode_inputs, generation_len, self._text_streamer)
+        num_token = self._qaic_model.run_decode(decode_inputs, generation_len, automation, self._text_streamer)
         end = perf_counter()
         generated_texts = self._tokenizer.batch_decode(self._qaic_model.generated_ids, skip_special_tokens=True)
 
@@ -1121,6 +1130,7 @@ class TextGeneration:
         self,
         prompt: List[str],
         generation_len: Optional[int] = None,
+        automation: Optional[bool] = False,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
     ):
         """
@@ -1150,7 +1160,7 @@ class TextGeneration:
 
         loop_start = perf_counter()  # Start decode loop timer
         num_token = 0
-        for token_id in self._qaic_model.generate_decode_stream(decode_inputs, generation_len):
+        for token_id in self._qaic_model.generate_decode_stream(decode_inputs, generation_len, automation):
             decoded_tokens = []
             for idx in range(self._qaic_model.batch_size):
                 decoded_tokens.append(self._tokenizer.decode(token_id[idx], skip_special_tokens=True))
@@ -1169,6 +1179,7 @@ class TextGeneration:
         prompt: List[str],
         generation_len: Optional[int] = None,
         stream: bool = True,
+        automation: Optional[bool] = False,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
     ):
         """
@@ -1192,7 +1203,7 @@ class TextGeneration:
             if stream:
                 print("\nPrompt : " + prompt[0] + "\nCompletion :", flush=True, end="")
             perf_metrics, generated_texts = self._regular_model_execution(
-                prompt, generation_len, stream, prompt_to_lora_id_mapping
+                prompt, generation_len, stream, automation, prompt_to_lora_id_mapping
             )
 
         if stream:
