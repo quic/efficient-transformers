@@ -12,12 +12,101 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from diffusers.models.transformers.transformer_flux import FluxAttention,FluxSingleTransformerBlock, FluxTransformerBlock, FluxTransformer2DModel, FluxPosEmbed, FluxAttnProcessor
+from diffusers.models.transformers.transformer_flux import FluxAttention,FluxSingleTransformerBlock, FluxTransformerBlock, FluxTransformer2DModel, FluxPosEmbed, FluxAttnProcessor, _get_qkv_projections
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from diffusers.models.embeddings import CombinedTimestepGuidanceTextProjEmbeddings, CombinedTimestepTextProjEmbeddings
-from diffusers.models.attention import FeedForward
+from diffusers.models.attention_dispatch import dispatch_attention_fn
 
 from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZero, QEffAdaLayerNormZeroSingle, QEffAdaLayerNormContinuous
+
+def qeff_apply_rotary_emb(
+    x: torch.Tensor,
+    freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Apply rotary embeddings to input tensors using the given frequency tensor. This function applies rotary embeddings
+    to the given query or key 'x' tensors using the provided frequency tensor 'freqs_cis'. The input tensors are
+    reshaped as complex numbers, and the frequency tensor is reshaped for broadcasting compatibility. The resulting
+    tensors contain rotary embeddings and are returned as real tensors.
+
+    Args:
+        x (`torch.Tensor`):
+            Query or key tensor to apply rotary embeddings. [B, H, S, D] xk (torch.Tensor): Key tensor to apply
+        freqs_cis (`Tuple[torch.Tensor]`): Precomputed frequency tensor for complex exponentials. ([S, D], [S, D],)
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
+    """
+    cos, sin = freqs_cis  # [S, D]
+    cos = cos[None, :, None, :]
+    sin = sin[None, :, None, :]
+    cos, sin = cos.to(x.device), sin.to(x.device)
+    B, S, H , D  = x.shape
+    x_real, x_imag = x.reshape(B, -1, H, D//2, 2).unbind(-1)
+    x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
+    out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+    return out
+
+class QEffFluxAttnProcessor(FluxAttnProcessor):
+    _attention_backend = None
+    _parallel_config = None
+
+    def __call__(
+        self,
+        attn: "QEffFluxAttention",
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        query, key, value, encoder_query, encoder_key, encoder_value = _get_qkv_projections(
+            attn, hidden_states, encoder_hidden_states
+        )
+
+        query = query.unflatten(-1, (attn.heads, -1))
+        key = key.unflatten(-1, (attn.heads, -1))
+        value = value.unflatten(-1, (attn.heads, -1))
+
+        query = attn.norm_q(query)
+        key = attn.norm_k(key)
+
+        if attn.added_kv_proj_dim is not None:
+            encoder_query = encoder_query.unflatten(-1, (attn.heads, -1))
+            encoder_key = encoder_key.unflatten(-1, (attn.heads, -1))
+            encoder_value = encoder_value.unflatten(-1, (attn.heads, -1))
+
+            encoder_query = attn.norm_added_q(encoder_query)
+            encoder_key = attn.norm_added_k(encoder_key)
+
+            query = torch.cat([encoder_query, query], dim=1)
+            key = torch.cat([encoder_key, key], dim=1)
+            value = torch.cat([encoder_value, value], dim=1)
+
+        if image_rotary_emb is not None:
+            query = qeff_apply_rotary_emb(query, image_rotary_emb)
+            key = qeff_apply_rotary_emb(key, image_rotary_emb)
+
+        hidden_states = dispatch_attention_fn(
+            query, key, value, attn_mask=attention_mask, backend=self._attention_backend
+        )
+        hidden_states = hidden_states.flatten(2, 3)
+        hidden_states = hidden_states.to(query.dtype)
+
+        if encoder_hidden_states is not None:
+            encoder_hidden_states, hidden_states = hidden_states.split_with_sizes(
+                [encoder_hidden_states.shape[1], hidden_states.shape[1] - encoder_hidden_states.shape[1]], dim=1
+            )
+            hidden_states = attn.to_out[0](hidden_states)
+            hidden_states = attn.to_out[1](hidden_states)
+            encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
+
+            return hidden_states, encoder_hidden_states
+        else:
+            return hidden_states
+
+class QEffFluxAttention(FluxAttention):
+    def __qeff_init__(self):
+        processor = QEffFluxAttnProcessor()
+        self.processor = processor
+
 
 class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
     def __init__(self, dim: int, num_attention_heads: int, attention_head_dim: int, mlp_ratio: float = 4.0):
@@ -27,13 +116,13 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
         self.proj_mlp = nn.Linear(dim, self.mlp_hidden_dim)
         self.act_mlp = nn.GELU(approximate="tanh")
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
-        self.attn = FluxAttention(
+        self.attn = QEffFluxAttention(
             query_dim=dim,
             dim_head=attention_head_dim,
             heads=num_attention_heads,
             out_dim=dim,
             bias=True,
-            processor=FluxAttnProcessor(),
+            processor=QEffFluxAttnProcessor(),
             eps=1e-6,
             pre_only=True,
         )
@@ -77,7 +166,7 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
 
         self.norm1 = QEffAdaLayerNormZero(dim)
         self.norm1_context = QEffAdaLayerNormZero(dim)
-        self.attn = FluxAttention(
+        self.attn = QEffFluxAttention(
             query_dim=dim,
             added_kv_proj_dim=dim,
             dim_head=attention_head_dim,
@@ -85,15 +174,10 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
             out_dim=dim,
             context_pre_only=False,
             bias=True,
-            processor=FluxAttnProcessor(),
+            processor=QEffFluxAttnProcessor(),
             eps=eps,
         )
 
-        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
-        self.ff = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
-
-        self.norm2_context = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
-        self.ff_context = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
     def forward(
         self,
@@ -174,9 +258,6 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
         axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
     ):
 
-        resolved_out_channels = out_channels or in_channels
-        inner_dim = num_attention_heads * attention_head_dim
-
         super().__init__(
             patch_size=patch_size,
             in_channels=in_channels,
@@ -190,21 +271,6 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
             guidance_embeds=guidance_embeds,
             axes_dims_rope=axes_dims_rope,
         )
-
-        self.out_channels = resolved_out_channels
-        self.inner_dim = inner_dim
-
-        self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
-
-        text_time_guidance_cls = (
-            CombinedTimestepGuidanceTextProjEmbeddings if guidance_embeds else CombinedTimestepTextProjEmbeddings
-        )
-        self.time_text_embed = text_time_guidance_cls(
-            embedding_dim=self.inner_dim, pooled_projection_dim=pooled_projection_dim
-        )
-
-        self.context_embedder = nn.Linear(joint_attention_dim, self.inner_dim)
-        self.x_embedder = nn.Linear(in_channels, self.inner_dim)
 
         self.transformer_blocks = nn.ModuleList(
             [
@@ -229,9 +295,7 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
         )
 
         self.norm_out = QEffAdaLayerNormContinuous(self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6)
-        self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
-        self.gradient_checkpointing = False
 
     def forward(
         self,

@@ -12,6 +12,7 @@ from venv import logger
 
 import numpy as np
 import torch
+import onnxruntime as ort
 from diffusers import FluxPipeline
 from diffusers.image_processor import VaeImageProcessor, PipelineImageInput
 from diffusers.utils.torch_utils import randn_tensor
@@ -43,7 +44,8 @@ class QEFFFluxPipeline(FluxPipeline):
         self.text_encoder_2.tokenizer = model.tokenizer_2
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
-
+        self.height = kwargs.get("height", 1024)
+        self.width = kwargs.get("width", 1024)
         self.register_modules(
             vae=self.vae_decode,
             text_encoder= self.text_encoder,
@@ -69,6 +71,9 @@ class QEFFFluxPipeline(FluxPipeline):
             model.tokenizer.model_max_length if hasattr(model, "tokenizer") and model.tokenizer is not None else 77
         )
         self.default_sample_size = 128
+        self.latent_height = self.height // self.vae_scale_factor
+        self.latent_width = self.width // self.vae_scale_factor
+        self.cl = (self.latent_height * self.latent_width) // 4
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
@@ -79,7 +84,7 @@ class QEFFFluxPipeline(FluxPipeline):
             pretrained_model_name_or_path (`str` or `os.PathLike`, *optional*):
                 The path to the pretrained model or its name.
             **kwargs (additional keyword arguments):
-                Additional arguments that can be passed to the underlying `StableDiffusion3Pipeline.from_pretrained`
+                Additional arguments that can be passed to the underlying `FluxPipeline.from_pretrained`
                 method.
         """
         model = cls._hf_auto_class.from_pretrained(
@@ -88,7 +93,7 @@ class QEFFFluxPipeline(FluxPipeline):
             **kwargs,
         )
         model.to("cpu")
-        return cls(model, pretrained_model_name_or_path)
+        return cls(model, pretrained_model_name_or_path, **kwargs)
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
@@ -125,7 +130,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # transformers
         example_inputs_transformer, dynamic_axes_transformer, output_names_transformer = (
-            self.transformer.get_onnx_config()
+            self.transformer.get_onnx_config(batch_size=1, seq_length=256, cl=self.cl)
         )
         self.transformer.export(
             inputs=example_inputs_transformer,
@@ -135,7 +140,7 @@ class QEFFFluxPipeline(FluxPipeline):
         )
 
         # vae
-        example_inputs_vae, dynamic_axes_vae, output_names_vae = self.vae_decode.get_onnx_config()
+        example_inputs_vae, dynamic_axes_vae, output_names_vae = self.vae_decode.get_onnx_config(self.latent_height, self.latent_width)
         self.vae_decoder_onnx_path = self.vae_decode.export(
             example_inputs_vae,
             output_names_vae,
@@ -212,7 +217,6 @@ class QEFFFluxPipeline(FluxPipeline):
             batch_size, self.tokenizer.model_max_length
         )
 
-        # self.text_encoder_compile_path = "<your clip qpc>"
         self.text_encoder_compile_path = self.text_encoder._compile(
             onnx_path,
             compile_dir,
@@ -243,7 +247,8 @@ class QEFFFluxPipeline(FluxPipeline):
         )
 
         # transformer
-        specializations_transformer = self.transformer.get_specializations(batch_size, seq_len)
+        start_time =time.time()
+        specializations_transformer = self.transformer.get_specializations(batch_size, seq_len, self.cl)
         compiler_options = {"mos": 1, "mdts-mos":1}
         self.trasformer_compile_path = self.transformer._compile(
             onnx_path,
@@ -251,14 +256,17 @@ class QEFFFluxPipeline(FluxPipeline):
             compile_only=True,
             specializations=specializations_transformer,
             convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
+            mxfp6_matmul=True,# mxfp6_matmul
             mdp_ts_num_devices=num_devices_transformer,
             aic_num_cores=num_cores,
             **compiler_options,
         )
+        end_time =time.time()
+        print(f"Compilation Time for DIT : {end_time - start_time:.2f} seconds")
 
         # vae
-        specializations_vae = self.vae_decode.get_specializations(batch_size)
+        start_time =time.time()
+        specializations_vae = self.vae_decode.get_specializations(batch_size, self.latent_height, self.latent_width)
         self.vae_decoder_compile_path = self.vae_decode._compile(
             onnx_path,
             compile_dir,
@@ -267,6 +275,8 @@ class QEFFFluxPipeline(FluxPipeline):
             convert_to_fp16=True,
             mdp_ts_num_devices=num_devices_vae_decoder,
         )
+        end_time =time.time()
+        print(f"Compilation Time for VAE : {end_time - start_time:.2f} seconds")
 
 
     def _get_t5_prompt_embeds(
@@ -395,10 +405,10 @@ class QEFFFluxPipeline(FluxPipeline):
         aic_text_encoder_emb = aic_embeddings["pooler_output"]
 
 
-        # # # [TEMP] CHECK ACC # #
+        # # # # [TEMP] CHECK ACC # #
         # prompt_embeds_pytorch = self.text_encoder.model(text_input_ids, output_hidden_states=False)
         # pt_pooled_embed = prompt_embeds_pytorch["pooler_output"].detach().numpy()
-        # mad = np.mean(np.abs(pt_pooled_embed - aic_text_encoder_emb))
+        # mad = np.max(np.abs(pt_pooled_embed - aic_text_encoder_emb))
         # print(f">>>>>>>>>>>> CLIP text encoder pooled embed MAD: ", mad) ## 0.0043082903 ##TODO : Clean up
         ### END CHECK ACC ###
 
@@ -604,17 +614,16 @@ class QEFFFluxPipeline(FluxPipeline):
             image.save("flux-schnell_aic.png")
             ```
         """
-
-        height = height or self.default_sample_size * self.vae_scale_factor
-        width = width or self.default_sample_size * self.vae_scale_factor
+        height = self.height
+        width = self.width
         device = 'cpu'
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
             prompt,
             prompt_2,
-            height,
-            width,
+            self.height,
+            self.width,
             negative_prompt=negative_prompt,
             negative_prompt_2=negative_prompt_2,
             prompt_embeds=prompt_embeds,
@@ -680,8 +689,8 @@ class QEFFFluxPipeline(FluxPipeline):
         latents, latent_image_ids = self.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
-            height,
-            width,
+            self.height,
+            self.width,
             prompt_embeds.dtype,
             device,
             generator,
@@ -695,7 +704,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         output_buffer = {
             "output": np.random.rand(
-                batch_size, self.transformer.model.config.joint_attention_dim , self.transformer.model.config.in_channels
+                batch_size, self.cl, self.transformer.model.config.in_channels
             ).astype(np.int32),
         }
 
@@ -711,7 +720,7 @@ class QEFFFluxPipeline(FluxPipeline):
                 temb = self.transformer.model.time_text_embed(timestep, pooled_prompt_embeds)
 
                 adaln_emb = []
-                for i in range(19):
+                for i in range(len(self.transformer.model.transformer_blocks)):
                     f1 = self.transformer.model.transformer_blocks[i].norm1.linear(self.transformer.model.transformer_blocks[i].norm1.silu(temb)).chunk(6, dim=1)
                     f2 = self.transformer.model.transformer_blocks[i].norm1_context.linear(self.transformer.model.transformer_blocks[i].norm1_context.silu(temb)).chunk(6, dim=1)
                     adaln_emb.append(torch.cat(list(f1) + list(f2)))
@@ -720,7 +729,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
                 adaln_emb = []
 
-                for i in range(38):
+                for i in range(len(self.transformer.model.single_transformer_blocks)):
                     f1 = self.transformer.model.single_transformer_blocks[i].norm.linear(self.transformer.model.single_transformer_blocks[i].norm.silu(temb)).chunk(3, dim=1)
                     adaln_emb.append(torch.cat(list(f1)))
 
@@ -759,11 +768,21 @@ class QEFFFluxPipeline(FluxPipeline):
                 end_time = time.time()
                 print(f"Time : {end_time - start_time:.2f} seconds")
 
+                # ########################## Onnx
+                # input_names  = [i.name for i in session.get_inputs()]
+                # output_names = [o.name for o in session.get_outputs()]
+                # start_time = time.time()
+                # ort_pred = session.run(None, {k: v for k, v in inputs_aic.items() if k in input_names})
+                # end_time = time.time()
+                # print(f"Onnx positive transformer denoising Time: {end_time - start_time:.2f} seconds")
+
                 noise_pred = torch.from_numpy(outputs["output"])
 
-                # # # ###### ACCURACY TESTING #######
-                # mad=np.mean(np.abs(noise_pred_torch.detach().numpy()-outputs['output']))
-                # print(f">>>>>>>>> at t = {t} FLUX transfromer model MAD:{mad}")
+                # # # # ###### ACCURACY TESTING #######
+                # mad=np.max(np.abs(noise_pred_torch.detach().numpy()-outputs['output']))
+                # print(f">>>>>>>>> at t = {t} FLUX transfromer model MAD pytorch vs QAIC :{mad}")
+                # mad_O=np.max(np.abs(ort_pred[0]- outputs['output'])) 
+                # print(f">>>>>>>>>            FLUX transfromer model MAD Onnxrt vs QAIC : {mad_O}")
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
@@ -790,7 +809,7 @@ class QEFFFluxPipeline(FluxPipeline):
         if output_type == "latent":
             image = latents
         else:
-            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            latents = self._unpack_latents(latents, self.height, self.width, self.vae_scale_factor)
             latents = (latents / self.vae_decode.model.scaling_factor) + self.vae_decode.model.shift_factor
 
             if self.vae_decode.qpc_session is None:
@@ -798,7 +817,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
             output_buffer = {
                 "sample": np.random.rand(
-                    batch_size, 3, self.vae_decode.model.config.sample_size, self.vae_decode.model.config.sample_size
+                    batch_size, 3, self.height, self.width #self.vae_decode.model.config.sample_size, self.vae_decode.model.config.sample_size
                 ).astype(np.int32)
             }
             self.vae_decode.qpc_session.set_buffers(output_buffer)
@@ -806,9 +825,9 @@ class QEFFFluxPipeline(FluxPipeline):
             inputs = {"latent_sample": latents.numpy()}
             image = self.vae_decode.qpc_session.run(inputs)
 
-            ###### ACCURACY TESTING #######
+            # ##### ACCURACY TESTING #######
             # image_torch = self.vae_decode.model(latents, return_dict=False)[0]
-            # mad= np.mean(np.abs(image['sample']-image_torch.detach().numpy()))
+            # mad= np.max(np.abs(image['sample']-image_torch.detach().numpy()))
             # print(">>>>>>>>>>>> VAE mad: ",mad)
 
             image_tensor = torch.from_numpy(image['sample'])

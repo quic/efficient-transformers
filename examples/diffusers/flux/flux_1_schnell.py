@@ -7,7 +7,7 @@
 import torch
 from QEfficient import QEFFFluxPipeline
 
-pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", height=1024, width=1024)
 
 ######## for single layer
 # original_blocks = pipeline.transformer.model.transformer_blocks
@@ -26,5 +26,5 @@ image = pipeline("A cat holding a sign that says hello world",
     guidance_scale=0.0,
     num_inference_steps=4,
     max_sequence_length=256,
-    generator=generator, device_ids_text_encoder_1=[40], device_ids_text_encoder_2=[41], device_ids_vae_decoder=[42], device_ids_transformer=[44,45,46,47]).images[0]
-image.save("flux-schnell_aic.png")
+    generator=generator, device_ids_text_encoder_1=[0], device_ids_text_encoder_2=[1], device_ids_vae_decoder=[2], device_ids_transformer=[4,5,6,7]).images[0]
+image.save("flux-schnell_aic_1024.png") 
