@@ -1022,7 +1022,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
-        num_speculative_tokens: Optional[int] = None,
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         **compiler_options,
@@ -2051,14 +2050,14 @@ class QEFFAutoModelForImageTextToText:
             If `continuous_batching` is provided as True.
         """
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
+        if continuous_batching and not kv_offload:
+            NotImplementedError("Continuous batching is not supported for kv_offload = False")
+
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
-
-        if continuous_batching and not kv_offload:
-            NotImplementedError("Continuous batching is not supported for kv_offload = False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
