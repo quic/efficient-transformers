@@ -880,6 +880,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         img_size: None,
         height: int = None,
         width: int = None,
+        num_frames: int = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,

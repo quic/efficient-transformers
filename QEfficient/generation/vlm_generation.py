@@ -361,10 +361,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 logger.debug(f"Using cached vision outputs for {cache_key}")
             else:
                 # Build language inputs with processor-aware vision/text integration
-                lang_inputs, vision_outputs, num_chunks = (
-                    self._vision_handler.get_language_inputs_from_vision_processing(
-                        image_url=image_path, query=text_prompt, prefill_seq_len=self._prefill_seq_len
-                    )
+                lang_inputs, vision_outputs, num_chunks = self._vision_handler.get_processed_inputs(
+                    image_url=image_path, query=text_prompt, prefill_seq_len=self._prefill_seq_len
                 )
                 # Cache for future use
                 self._vision_cache[cache_key] = (lang_inputs, vision_outputs, num_chunks)
@@ -550,7 +548,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             img, prompt = vision_prompts[batch_id]
 
             # Process vision for this slot
-            lang_inputs, vision_outputs, num_chunks = self._vision_handler.get_language_inputs_from_vision_processing(
+            lang_inputs, vision_outputs, num_chunks = self._vision_handler.get_processed_inputs(
                 image_url=img, query=prompt, prefill_seq_len=self._prefill_seq_len
             )
 
