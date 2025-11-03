@@ -174,6 +174,7 @@ class InputHandler:
                 inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
                 inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
         else:
+            sliding_padding_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
             for i in range(self.n_layer):
                 if (
                     all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
