@@ -37,11 +37,59 @@ class QEFFFluxPipeline(FluxPipeline):
     It provides methods for text-to-image generation leveraging these optimized components.
     """
 
-    def __init__(self, model, *args, **kwargs):
-        self.text_encoder = QEffClipTextEncoder(model.text_encoder)
-        self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
-        self.transformer = QEffFluxTransformerModel(model.transformer)
-        self.vae_decode = QEffVAE(model, "decoder")
+    def __init__(
+        self,
+        model=None,
+        use_onnx_function=False,
+        text_encoder=None,
+        text_encoder_2=None,
+        transformer=None,
+        vae=None,
+        tokenizer=None,
+        tokenizer_2=None,
+        scheduler=None,
+        height: Optional[int] = 512,
+        width: Optional[int] = 512,
+        *args,
+        **kwargs,
+    ):
+        # Validate input: either model or individual components
+        has_model = model is not None
+        has_components = all(
+            [
+                text_encoder is not None,
+                text_encoder_2 is not None,
+                transformer is not None,
+                vae is not None,
+                tokenizer is not None,
+                tokenizer_2 is not None,
+                scheduler is not None,
+            ]
+        )
+
+        if not has_model and not has_components:
+            raise ValueError(
+                "Either provide 'model' parameter OR all individual components "
+                "(text_encoder, text_encoder_2, transformer, vae, "
+                "tokenizer, tokenizer_2, scheduler)"
+            )
+
+        if has_model and has_components:
+            raise ValueError("Cannot provide both 'model' and individual components. Choose one approach.")
+
+            # Use ONNX subfunction to optimize the onnx graph
+        self.use_onnx_function = use_onnx_function
+
+        self.text_encoder = (
+            QEffClipTextEncoder(text_encoder) if has_components else QEffClipTextEncoder(model.text_encoder)
+        )
+        self.text_encoder_2 = (
+            QEffTextEncoder(text_encoder_2) if has_components else QEffTextEncoder(model.text_encoder_2)
+        )
+        self.transformer = QEffFluxTransformerModel(
+            transformer if has_components else model.transformer, self.use_onnx_function
+        )
+        self.vae_decode = QEffVAE(vae if has_components else model, "decoder")
 
         self.has_module = [
             ("text_encoder", self.text_encoder),
@@ -50,14 +98,15 @@ class QEFFFluxPipeline(FluxPipeline):
             ("vae_decoder", self.vae_decode),
         ]
 
-        self.tokenizer = model.tokenizer
-        self.text_encoder.tokenizer = model.tokenizer
-        self.text_encoder_2.tokenizer = model.tokenizer_2
+        self.tokenizer = tokenizer if has_components else model.tokenizer
+        self.text_encoder.tokenizer = tokenizer if has_components else model.tokenizer
+        self.text_encoder_2.tokenizer = tokenizer_2 if has_components else model.tokenizer_2
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
 
-        self.height = kwargs.get("height", 256)
-        self.width = kwargs.get("width", 256)
+        self.height = height
+        self.width = width
+
         self.register_modules(
             vae=self.vae_decode,
             text_encoder=self.text_encoder,
@@ -88,7 +137,14 @@ class QEFFFluxPipeline(FluxPipeline):
         self.cl = (self.latent_height * self.latent_width) // 4
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
+        use_onnx_function=False,
+        height: Optional[int] = 512,
+        width: Optional[int] = 512,
+        **kwargs,
+    ):
         """
         Instantiate a QEffFluxTransformer2DModel from pretrained Diffusers models.
 
@@ -105,7 +161,14 @@ class QEFFFluxPipeline(FluxPipeline):
             **kwargs,
         )
         model.to("cpu")
-        return cls(model, pretrained_model_name_or_path, **kwargs)
+        return cls(
+            model=model,
+            use_onnx_function=use_onnx_function,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            height=height,
+            width=width,
+            **kwargs,
+        )
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
@@ -118,15 +181,21 @@ class QEFFFluxPipeline(FluxPipeline):
             :str: Path of the generated ``ONNX`` graph.
         """
 
-        for _, module_obj in self.has_module:
+        for module_name, module_obj in self.has_module:
             example_inputs_text_encoder, dynamic_axes_text_encoder, output_names_text_encoder = (
                 module_obj.get_onnx_config()
             )
+            export_kwargs = {}
+            if module_name == "transformer" and self.use_onnx_function:
+                export_kwargs = {
+                    "export_modules_as_functions": self.transformer.model._block_classes,
+                }
             module_obj.export(
                 inputs=example_inputs_text_encoder,
                 output_names=output_names_text_encoder,
                 dynamic_axes=dynamic_axes_text_encoder,
                 export_dir=export_dir,
+                export_kwargs=export_kwargs,
             )
 
     def compile(

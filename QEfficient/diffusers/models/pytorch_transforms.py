@@ -58,7 +58,6 @@ class AttentionTransform(ModuleMappingTransform):
         JointTransformerBlock: QEffJointTransformerBlock,
         FluxSingleTransformerBlock: QEffFluxSingleTransformerBlock,
         FluxTransformerBlock: QEffFluxTransformerBlock,
-        FluxTransformer2DModel: QEffFluxTransformer2DModel,
         FluxAttention: QEffFluxAttention,
         FluxAttnProcessor: QEffFluxAttnProcessor,
     }
@@ -75,6 +74,15 @@ class NormalizationTransform(ModuleMappingTransform):
         AdaLayerNormZeroSingle: QEffAdaLayerNormZeroSingle,
         AdaLayerNormContinuous: QEffAdaLayerNormContinuous,
     }
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        model, transformed = super().apply(model)
+        return model, transformed
+
+
+class OnnxFunctionTransform(ModuleMappingTransform):
+    _module_mapping = {FluxTransformer2DModel: QEffFluxTransformer2DModel}
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:

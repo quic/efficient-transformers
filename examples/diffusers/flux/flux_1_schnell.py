@@ -19,6 +19,7 @@ pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_
 pipeline.transformer.model.config.num_layers = 1
 pipeline.transformer.model.config.num_single_layers = 1
 
+
 pipeline.compile(compile_config="QEfficient/diffusers/pipelines/flux/config/default_flux_compile_config.json")
 
 generator = torch.manual_seed(42)
