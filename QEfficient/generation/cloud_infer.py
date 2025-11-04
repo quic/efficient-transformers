@@ -90,8 +90,10 @@ class QAICInferenceSession:
         self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
         if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
             raise RuntimeError("Failed to load program")
+        self.is_active = False
         if activate:
             self.activate()
+            self.is_active = True
         # Create input qbuffers and buf_dims
         self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
         self.buf_dims = qaicrt.BufferDimensionsVecRef(
@@ -108,15 +110,17 @@ class QAICInferenceSession:
 
     def activate(self):
         """Activate qpc"""
-
-        self.program.activate()
-        self.execObj = qaicrt.ExecObj(self.context, self.program)
+        if not self.is_active:
+            self.program.activate()
+            self.execObj = qaicrt.ExecObj(self.context, self.program)
+            self.is_active = True
 
     def deactivate(self):
         """Deactivate qpc"""
-
-        del self.execObj
-        self.program.deactivate()
+        if self.is_active:
+            del self.execObj
+            self.program.deactivate()
+            self.is_active = False
 
     def set_buffers(self, buffers: Dict[str, np.ndarray]):
         """
