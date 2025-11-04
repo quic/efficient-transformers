@@ -33,5 +33,3 @@ def config_manager(cls, config_source: Optional[str] = None):
         raise FileNotFoundError(f"Configuration file not found: {config_source}")
 
     cls._compile_config = load_json(config_source)
-
-   

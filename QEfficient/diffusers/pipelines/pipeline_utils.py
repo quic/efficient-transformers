@@ -17,6 +17,7 @@ from QEfficient.diffusers.models.pytorch_transforms import (
     AttentionTransform,
     CustomOpsTransform,
     NormalizationTransform,
+    OnnxFunctionTransform,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
@@ -55,8 +56,21 @@ class QEffTextEncoder(QEFFBaseModel):
             example_inputs["output_hidden_states"] = (True,)
         return example_inputs, dynamic_axes, output_names
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        export_kwargs=None,
+    ):
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            export_kwargs=export_kwargs,
+        )
 
     def get_specializations(
         self,
@@ -149,8 +163,21 @@ class QEffClipTextEncoder(QEFFBaseModel):
 
         return example_inputs, dynamic_axes, output_names
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        export_kwargs=None,
+    ):
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            export_kwargs=export_kwargs,
+        )
 
     def get_specializations(
         self,
@@ -224,8 +251,21 @@ class QEffUNet(QEFFBaseModel):
         super().__init__(model.unet)
         self.model = model.unet
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        export_kwargs=None,
+    ):
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            export_kwargs=export_kwargs,
+        )
 
     def compile(
         self,
@@ -304,8 +344,21 @@ class QEffVAE(QEFFBaseModel):
         }
         return example_inputs, dynamic_axes, output_names
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        export_kwargs=None,
+    ):
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            export_kwargs=export_kwargs,
+        )
 
     def get_specializations(self, batch_size: int, latent_height: int, latent_width: int):
         sepcializations = [
@@ -380,8 +433,21 @@ class QEffSafetyChecker(QEFFBaseModel):
         super().__init__(model.vae)
         self.model = model.safety_checker
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        export_kwargs=None,
+    ):
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            export_kwargs=export_kwargs,
+        )
 
     def compile(
         self,
@@ -439,8 +505,11 @@ class QEffFluxTransformerModel(QEFFBaseModel):
     that uses transformer-based diffusion models instead of traditional UNet architectures.
     """
 
-    def __init__(self, model: nn.modules):
+    def __init__(self, model: nn.modules, use_onnx_function):
         super().__init__(model)
+        if use_onnx_function:
+            self._pytorch_transforms.append(OnnxFunctionTransform)
+            model, _ = OnnxFunctionTransform.apply(model)
         self.model = model
 
     def get_onnx_config(self, batch_size=1, seq_length=256, cl=4096):
@@ -475,8 +544,21 @@ class QEffFluxTransformerModel(QEFFBaseModel):
 
         return example_inputs, dynamic_axes, output_names
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        export_kwargs=None,
+    ):
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            export_kwargs=export_kwargs,
+        )
 
     def get_specializations(self, batch_size: int, seq_len: int, cl: int):
         specializations = [
