@@ -617,8 +617,11 @@ class QEffHybridCacheForGPTOSS:
                 kv_position_ids = position_ids
 
             if batch_index is not None:
-                invalid_scatter_index = torch.iinfo(torch.int32).max
-                scatter_position_ids = torch.where(kv_position_ids < 0, invalid_scatter_index, kv_position_ids)
+                if torch.onnx.is_in_onnx_export():
+                    invalid_scatter_index = torch.iinfo(torch.int32).max
+                    scatter_position_ids = torch.where(kv_position_ids < 0, invalid_scatter_index, kv_position_ids)
+                else:
+                    scatter_position_ids = kv_position_ids
                 self.key_cache[layer_idx] = CtxScatterFuncCB.apply(
                     self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
                 )
