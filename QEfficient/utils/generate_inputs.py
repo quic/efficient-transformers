@@ -92,12 +92,15 @@ class InputHandler:
             inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
 
         past_key_values = []
-        sliding_padding_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
         for i in range(self.n_layer):
+<<<<<<< HEAD
             if (
                 all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
                 and self.config.layer_types[i] == "sliding_attention"
             ):
+=======
+            if hasattr(self.config, "sliding_window") and self.config.layer_types[i] == "sliding_attention":
+>>>>>>> b1ed627 (Fix tests)
                 pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
             else:
                 pad_shape = self.padding_shape
@@ -174,7 +177,6 @@ class InputHandler:
                 inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
                 inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
         else:
-            sliding_padding_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
             for i in range(self.n_layer):
                 if (
                     all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
