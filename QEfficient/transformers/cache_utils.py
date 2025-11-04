@@ -681,6 +681,37 @@ class QEffHybridCacheForGPTOSS:
             legacy_cache += ((self.key_cache[layer_idx], self.value_cache[layer_idx]),)
         return legacy_cache
 
+    def write_only(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if len(self.key_cache) <= layer_idx:
+            self.key_cache.append(key_states)
+            self.value_cache.append(value_states)
+            k_out, v_out = key_states, value_states
+        else:
+            position_ids = cache_kwargs.get("position_ids")
+            is_sliding_layer = cache_kwargs.get("is_sliding")
+            _, _, ctx_len, _ = self.key_cache[layer_idx].shape
+            if is_sliding_layer:
+                kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1)
+                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
+                self.value_cache[layer_idx] = CtxScatterFunc.apply(
+                    self.value_cache[layer_idx], kv_position_ids, value_states
+                )
+            else:
+                kv_position_ids = position_ids
+
+                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
+                self.value_cache[layer_idx] = CtxScatterFunc.apply(
+                    self.value_cache[layer_idx], kv_position_ids, value_states
+                )
+            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+        return k_out, v_out
+
     def update(
         self,
         key_states: torch.Tensor,
