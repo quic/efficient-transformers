@@ -33,6 +33,36 @@ from QEfficient.utils.hash_utils import create_export_hash, json_serializable
 from QEfficient.utils.logging_utils import logger
 
 
+class LRUCache:
+    """Simple LRU cache with size limit for vision outputs"""
+
+    def __init__(self, max_size=100):
+        self._cache = {}
+        self._access_order = []
+        self._max_size = max_size
+
+    def get(self, key):
+        if key in self._cache:
+            self._access_order.remove(key)
+            self._access_order.append(key)
+            return self._cache[key]
+        return None
+
+    def put(self, key, value):
+        if key in self._cache:
+            self._access_order.remove(key)
+        elif len(self._cache) >= self._max_size:
+            oldest = self._access_order.pop(0)
+            del self._cache[oldest]
+
+        self._cache[key] = value
+        self._access_order.append(key)
+
+    def clear(self):
+        self._cache.clear()
+        self._access_order.clear()
+
+
 class DownloadRetryLimitExceeded(Exception):
     """
     Used for raising error when hf_download fails to download the model after given max_retries.
