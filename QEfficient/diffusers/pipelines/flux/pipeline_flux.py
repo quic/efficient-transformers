@@ -12,16 +12,20 @@ from venv import logger
 
 import numpy as np
 import torch
-import onnxruntime as ort
 from diffusers import FluxPipeline
-from diffusers.image_processor import VaeImageProcessor, PipelineImageInput
-from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps # TODO 
+from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps  # TODO
 
-from QEfficient.diffusers.pipelines.pipeline_utils import  QEffTextEncoder, QEffClipTextEncoder, QEffVAE, QEffFluxTransformerModel
+from QEfficient.diffusers.pipelines.config_manager import config_manager
+from QEfficient.diffusers.pipelines.pipeline_utils import (
+    QEffClipTextEncoder,
+    QEffFluxTransformerModel,
+    QEffTextEncoder,
+    QEffVAE,
+)
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import constants
+
 
 class QEFFFluxPipeline(FluxPipeline):
     _hf_auto_class = FluxPipeline
@@ -39,19 +43,27 @@ class QEFFFluxPipeline(FluxPipeline):
         self.transformer = QEffFluxTransformerModel(model.transformer)
         self.vae_decode = QEffVAE(model, "decoder")
 
+        self.has_module = [
+            ("text_encoder", self.text_encoder),
+            ("text_encoder_2", self.text_encoder_2),
+            ("transformer", self.transformer),
+            ("vae_decoder", self.vae_decode),
+        ]
+
         self.tokenizer = model.tokenizer
         self.text_encoder.tokenizer = model.tokenizer
         self.text_encoder_2.tokenizer = model.tokenizer_2
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
-        self.height = kwargs.get("height", 1024)
-        self.width = kwargs.get("width", 1024)
+
+        self.height = kwargs.get("height", 256)
+        self.width = kwargs.get("width", 256)
         self.register_modules(
             vae=self.vae_decode,
-            text_encoder= self.text_encoder,
-            text_encoder_2= self.text_encoder_2,
-            tokenizer= self.tokenizer ,
-            tokenizer_2= self.text_encoder_2.tokenizer,
+            text_encoder=self.text_encoder,
+            text_encoder_2=self.text_encoder_2,
+            tokenizer=self.tokenizer,
+            tokenizer_2=self.text_encoder_2.tokenizer,
             transformer=self.transformer,
             scheduler=self.scheduler,
         )
@@ -106,102 +118,33 @@ class QEFFFluxPipeline(FluxPipeline):
             :str: Path of the generated ``ONNX`` graph.
         """
 
-        # text_encoder - CLIP
-        example_inputs_text_encoder, dynamic_axes_text_encoder, output_names_text_encoder = (
-            self.text_encoder.get_onnx_config(seq_len = self.tokenizer.model_max_length)
-        )
-        self.text_encoder.export(
-            inputs=example_inputs_text_encoder,
-            output_names=output_names_text_encoder,
-            dynamic_axes=dynamic_axes_text_encoder,
-            export_dir=export_dir,
-        )
-
-        # text_encoder_2 - T5
-        example_inputs_text_encoder_2, dynamic_axes_text_encoder_2, output_names_text_encoder_2 = (
-            self.text_encoder_2.get_onnx_config(seq_len = self.text_encoder_2.tokenizer.model_max_length)
-        )
-        self.text_encoder_2.export(
-            inputs=example_inputs_text_encoder_2,
-            output_names=output_names_text_encoder_2,
-            dynamic_axes=dynamic_axes_text_encoder_2,
-            export_dir=export_dir,
-        )
-
-        # transformers
-        example_inputs_transformer, dynamic_axes_transformer, output_names_transformer = (
-            self.transformer.get_onnx_config(batch_size=1, seq_length=256, cl=self.cl)
-        )
-        self.transformer.export(
-            inputs=example_inputs_transformer,
-            output_names=output_names_transformer,
-            dynamic_axes=dynamic_axes_transformer,
-            export_dir=export_dir,
-        )
-
-        # vae
-        example_inputs_vae, dynamic_axes_vae, output_names_vae = self.vae_decode.get_onnx_config(self.latent_height, self.latent_width)
-        self.vae_decoder_onnx_path = self.vae_decode.export(
-            example_inputs_vae,
-            output_names_vae,
-            dynamic_axes_vae,
-            export_dir=export_dir,
-        )
-
+        for _, module_obj in self.has_module:
+            example_inputs_text_encoder, dynamic_axes_text_encoder, output_names_text_encoder = (
+                module_obj.get_onnx_config()
+            )
+            module_obj.export(
+                inputs=example_inputs_text_encoder,
+                output_names=output_names_text_encoder,
+                dynamic_axes=dynamic_axes_text_encoder,
+                export_dir=export_dir,
+            )
 
     def compile(
         self,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
         *,
-        seq_len: Union[int, List[int]] = 256,
-        batch_size: int = 1,
-        num_devices_text_encoder: int = 1,
-        num_devices_transformer: int = 4,
-        num_devices_vae_decoder: int = 1,
-        num_cores: int = 16,  # FIXME: Make this mandatory arg
-        mxfp6_matmul: bool = False,
-        **compiler_options,
+        compile_config: Optional[str] = None,
     ) -> str:
         """
         Compiles the ONNX graphs of the different model components for deployment on Qualcomm AI hardware.
 
         This method takes the ONNX paths of the text encoders, transformer, and VAE decoder,
-        and compiles them into an optimized format for inference.
+        and compiles them into an optimized format for inference using JSON-based configuration.
 
         Args:
-            onnx_path (`str`, *optional*):
-                The base directory where ONNX files were exported. If None, it assumes the ONNX
-                paths are already set as attributes (e.g., `self.text_encoder_onnx_path`).
-                This parameter is currently not fully utilized as individual ONNX paths are derived
-                from the `export` method.
-            compile_dir (`str`, *optional*):
-                The directory path to store the compiled artifacts. If None, a default location
-                might be used by the underlying compilation process.
-            seq_len (`Union[int, List[int]]`, *optional*, defaults to 32):
-                The sequence length(s) to use for compiling the text encoders. Can be a single
-                integer or a list of integers for multiple sequence lengths.
-            batch_size (`int`, *optional*, defaults to 1):
-                The batch size to use for compilation.
-            num_devices_text_encoder (`int`, *optional*, defaults to 1):
-                The number of AI devices to deploy the text encoder models on.
-            num_devices_transformer (`int`, *optional*, defaults to 4):
-                The number of AI devices to deploy the transformer model on.
-            num_devices_vae_decoder (`int`, *optional*, defaults to 1):
-                The number of AI devices to deploy the VAE decoder model on.
-            num_cores (`int`, *optional*, defaults to 16):
-                The number of cores to use for compilation. This argument is currently marked
-                as `FIXME: Make this mandatory arg`.
-            mxfp6_matmul (`bool`, *optional*, defaults to `False`):
-                If `True`, enables mixed-precision floating-point 6-bit matrix multiplication
-                optimization during compilation.
-            **compiler_options:
-                Additional keyword arguments to pass to the underlying compiler.
-
-        Returns:
-            `str`: A message indicating the compilation status or path to compiled artifacts.
-            (Note: The current implementation might need to return specific paths for each compiled model).
+            compile_config (`str`, *optional*):
+                Path to JSON configuration file. If None, uses the default configuration.
         """
+        # Check if ONNX export is needed
         if any(
             path is None
             for path in [
@@ -212,72 +155,26 @@ class QEFFFluxPipeline(FluxPipeline):
             ]
         ):
             self.export()
-        # text_encoder - CLIP
-        specializations_text_encoder = self.text_encoder.get_specializations(
-            batch_size, self.tokenizer.model_max_length
-        )
 
-        self.text_encoder_compile_path = self.text_encoder._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            specializations=specializations_text_encoder,
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=num_devices_text_encoder,
-            aic_num_cores=num_cores,
-            **compiler_options,
-        )
+        # Initialize configuration manager (JSON-only approach)
+        config_manager(self, config_source=compile_config)
 
-        # text encoder 2 - T5
-        specializations_text_encoder_2 = self.text_encoder_2.get_specializations(
-            batch_size, seq_len
-        )
+        for module_name, module_obj in self.has_module:
+            # Get specialization values directly from config
+            module_config = self._compile_config["modules"]
+            specializations = [module_config[module_name]["specializations"]]
 
-        self.text_encoder_2_compile_path = self.text_encoder_2._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            specializations=specializations_text_encoder_2,
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=num_devices_text_encoder,
-            aic_num_cores=num_cores,
-            **compiler_options,
-        )
+            # Get compilation parameters from configuration
+            compile_kwargs = module_config[module_name]["compilation"]
 
-        # transformer
-        start_time =time.time()
-        specializations_transformer = self.transformer.get_specializations(batch_size, seq_len, self.cl)
-        compiler_options = {"mos": 1, "mdts-mos":1}
-        self.trasformer_compile_path = self.transformer._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            specializations=specializations_transformer,
-            convert_to_fp16=True,
-            mxfp6_matmul=True,# mxfp6_matmul
-            mdp_ts_num_devices=num_devices_transformer,
-            aic_num_cores=num_cores,
-            **compiler_options,
-        )
-        end_time =time.time()
-        print(f"Compilation Time for DIT : {end_time - start_time:.2f} seconds")
-
-        # vae
-        start_time =time.time()
-        specializations_vae = self.vae_decode.get_specializations(batch_size, self.latent_height, self.latent_width)
-        self.vae_decoder_compile_path = self.vae_decode._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            specializations=specializations_vae,
-            convert_to_fp16=True,
-            mdp_ts_num_devices=num_devices_vae_decoder,
-        )
-        end_time =time.time()
-        print(f"Compilation Time for VAE : {end_time - start_time:.2f} seconds")
-
+            # Handling dynamic values which depends on image height and width
+            if module_name == "transformer":
+                specializations[0]["cl"] = self.cl
+            elif module_name == "vae_decoder":
+                specializations[0]["latent_height"] = self.latent_height
+                specializations[0]["latent_width"] = self.latent_width
+            # Compile the module
+            module_obj._compile(specializations=specializations, **compile_kwargs)
 
     def _get_t5_prompt_embeds(
         self,
@@ -301,7 +198,6 @@ class QEFFFluxPipeline(FluxPipeline):
             torch.Tensor: The T5 prompt embeddings with shape (batch_size * num_images_per_prompt, seq_len, hidden_size).
         """
 
-
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
         embed_dim = 4096
@@ -309,24 +205,28 @@ class QEFFFluxPipeline(FluxPipeline):
         text_inputs = self.text_encoder_2.tokenizer(
             prompt,
             padding="max_length",
-            max_length= max_sequence_length,
-            truncation= True,
-            return_length= False,
-            return_overflowing_tokens= False,
-            return_tensors= "pt",
+            max_length=max_sequence_length,
+            truncation=True,
+            return_length=False,
+            return_overflowing_tokens=False,
+            return_tensors="pt",
         )
         text_input_ids = text_inputs.input_ids
         untruncated_ids = self.text_encoder_2.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
         if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
-            removed_text = self.text_encoder_2.tokenizer.batch_decode(untruncated_ids[:,self.text_encoder_2.tokenizer.model_max_length - 1 : -1])
+            removed_text = self.text_encoder_2.tokenizer.batch_decode(
+                untruncated_ids[:, self.text_encoder_2.tokenizer.model_max_length - 1 : -1]
+            )
             logger.warning(
                 "The following part of your input was truncated because `max_sequence_length` is set to "
-                f" { self.text_encoder_2.tokenizer.model_max_length} tokens: {removed_text}"
+                f" {self.text_encoder_2.tokenizer.model_max_length} tokens: {removed_text}"
             )
 
         if self.text_encoder_2.qpc_session is None:
-            self.text_encoder_2.qpc_session = QAICInferenceSession(str(self.text_encoder_2_compile_path), device_ids=device_ids)
+            self.text_encoder_2.qpc_session = QAICInferenceSession(
+                str(self.text_encoder_2.qpc_path), device_ids=device_ids
+            )
 
         text_encoder_2_output = {
             "last_hidden_state": np.random.rand(batch_size, max_sequence_length, embed_dim).astype(np.int32),
@@ -335,7 +235,6 @@ class QEFFFluxPipeline(FluxPipeline):
 
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
         prompt_embeds = torch.tensor(self.text_encoder_2.qpc_session.run(aic_text_input)["last_hidden_state"])
-
 
         # # # AIC Testing
         # prompt_embeds_pytorch = self.text_encoder_2.model(text_input_ids, output_hidden_states=False)
@@ -348,7 +247,6 @@ class QEFFFluxPipeline(FluxPipeline):
         prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
         return prompt_embeds
-
 
     def _get_clip_prompt_embeds(
         self,
@@ -391,7 +289,7 @@ class QEFFFluxPipeline(FluxPipeline):
             )
 
         if self.text_encoder.qpc_session is None:
-            self.text_encoder.qpc_session = QAICInferenceSession(str(self.text_encoder_compile_path), device_ids=device_ids)
+            self.text_encoder.qpc_session = QAICInferenceSession(str(self.text_encoder.qpc_path), device_ids=device_ids)
 
         text_encoder_output = {
             "pooler_output": np.random.rand(batch_size, embed_dim).astype(np.int32),
@@ -402,8 +300,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
         aic_embeddings = self.text_encoder.qpc_session.run(aic_text_input)
-        aic_text_encoder_emb = aic_embeddings["pooler_output"]
-
+        # aic_text_encoder_emb = aic_embeddings["pooler_output"]
 
         # # # # [TEMP] CHECK ACC # #
         # prompt_embeds_pytorch = self.text_encoder.model(text_input_ids, output_hidden_states=False)
@@ -430,8 +327,8 @@ class QEFFFluxPipeline(FluxPipeline):
         prompt_embeds: Optional[torch.FloatTensor] = None,
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         max_sequence_length: int = 512,
-        device_ids_text_encoder_1 : Optional[List[int]] = None,
-        device_ids_text_encoder_2 : Optional[List[int]] = None
+        device_ids_text_encoder_1: Optional[List[int]] = None,
+        device_ids_text_encoder_2: Optional[List[int]] = None,
     ):
         r"""
         Encode the given prompts into text embeddings using the two text encoders (CLIP and T5).
@@ -469,7 +366,6 @@ class QEFFFluxPipeline(FluxPipeline):
                 prompt=prompt,
                 device_ids=device_ids_text_encoder_1,
                 num_images_per_prompt=num_images_per_prompt,
-
             )
             prompt_embeds = self._get_t5_prompt_embeds(
                 prompt=prompt_2,
@@ -480,7 +376,6 @@ class QEFFFluxPipeline(FluxPipeline):
 
         text_ids = torch.zeros(prompt_embeds.shape[1], 3)
         return prompt_embeds, pooled_prompt_embeds, text_ids
-
 
     def __call__(
         self,
@@ -507,10 +402,10 @@ class QEFFFluxPipeline(FluxPipeline):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
-        device_ids_text_encoder_1 : Optional[List[int]] = None,
-        device_ids_text_encoder_2 : Optional[List[int]] = None,
-        device_ids_transformer : Optional[List[int]] = None,
-        device_ids_vae_decoder :  Optional[List[int]] = None,
+        device_ids_text_encoder_1: Optional[List[int]] = None,
+        device_ids_text_encoder_2: Optional[List[int]] = None,
+        device_ids_transformer: Optional[List[int]] = None,
+        device_ids_vae_decoder: Optional[List[int]] = None,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -616,7 +511,7 @@ class QEFFFluxPipeline(FluxPipeline):
         """
         height = self.height
         width = self.width
-        device = 'cpu'
+        device = "cpu"
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
@@ -661,7 +556,7 @@ class QEFFFluxPipeline(FluxPipeline):
             num_images_per_prompt=num_images_per_prompt,
             max_sequence_length=max_sequence_length,
             device_ids_text_encoder_1=device_ids_text_encoder_1,
-            device_ids_text_encoder_2=device_ids_text_encoder_2
+            device_ids_text_encoder_2=device_ids_text_encoder_2,
         )
         if do_true_cfg:
             (
@@ -676,7 +571,7 @@ class QEFFFluxPipeline(FluxPipeline):
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
                 device_ids_text_encoder_1=device_ids_text_encoder_1,
-                device_ids_text_encoder_2=device_ids_text_encoder_2
+                device_ids_text_encoder_2=device_ids_text_encoder_2,
             )
 
         # 4. Prepare timesteps
@@ -700,12 +595,12 @@ class QEFFFluxPipeline(FluxPipeline):
         # 6. Denoising loop
         ###### AIC related changes of transformers ######
         if self.transformer.qpc_session is None:
-            self.transformer.qpc_session = QAICInferenceSession(str(self.trasformer_compile_path), device_ids=device_ids_transformer)
+            self.transformer.qpc_session = QAICInferenceSession(
+                str(self.transformer.qpc_path), device_ids=device_ids_transformer
+            )
 
         output_buffer = {
-            "output": np.random.rand(
-                batch_size, self.cl, self.transformer.model.config.in_channels
-            ).astype(np.int32),
+            "output": np.random.rand(batch_size, self.cl, self.transformer.model.config.in_channels).astype(np.int32),
         }
 
         self.transformer.qpc_session.set_buffers(output_buffer)
@@ -721,8 +616,16 @@ class QEFFFluxPipeline(FluxPipeline):
 
                 adaln_emb = []
                 for i in range(len(self.transformer.model.transformer_blocks)):
-                    f1 = self.transformer.model.transformer_blocks[i].norm1.linear(self.transformer.model.transformer_blocks[i].norm1.silu(temb)).chunk(6, dim=1)
-                    f2 = self.transformer.model.transformer_blocks[i].norm1_context.linear(self.transformer.model.transformer_blocks[i].norm1_context.silu(temb)).chunk(6, dim=1)
+                    f1 = (
+                        self.transformer.model.transformer_blocks[i]
+                        .norm1.linear(self.transformer.model.transformer_blocks[i].norm1.silu(temb))
+                        .chunk(6, dim=1)
+                    )
+                    f2 = (
+                        self.transformer.model.transformer_blocks[i]
+                        .norm1_context.linear(self.transformer.model.transformer_blocks[i].norm1_context.silu(temb))
+                        .chunk(6, dim=1)
+                    )
                     adaln_emb.append(torch.cat(list(f1) + list(f2)))
 
                 adaln_dual_emb = torch.stack(adaln_emb)
@@ -730,25 +633,31 @@ class QEFFFluxPipeline(FluxPipeline):
                 adaln_emb = []
 
                 for i in range(len(self.transformer.model.single_transformer_blocks)):
-                    f1 = self.transformer.model.single_transformer_blocks[i].norm.linear(self.transformer.model.single_transformer_blocks[i].norm.silu(temb)).chunk(3, dim=1)
+                    f1 = (
+                        self.transformer.model.single_transformer_blocks[i]
+                        .norm.linear(self.transformer.model.single_transformer_blocks[i].norm.silu(temb))
+                        .chunk(3, dim=1)
+                    )
                     adaln_emb.append(torch.cat(list(f1)))
 
                 adaln_single_emb = torch.stack(adaln_emb)
 
                 temp = self.transformer.model.norm_out
-                adaln_out =  temp.linear(temp.silu(temb))
+                adaln_out = temp.linear(temp.silu(temb))
 
                 timestep = timestep / 1000
 
-                inputs_aic = {"hidden_states": latents.detach().numpy(),
-                "encoder_hidden_states": prompt_embeds.detach().numpy(),
-                "pooled_projections": pooled_prompt_embeds.detach().numpy(),
-                "timestep": timestep.detach().numpy(),
-                "img_ids": latent_image_ids.detach().numpy(),
-                "txt_ids": text_ids.detach().numpy(),
-                "adaln_emb": adaln_dual_emb.detach().numpy(),
-                "adaln_single_emb": adaln_single_emb.detach().numpy(),
-                "adaln_out": adaln_out.detach().numpy()}
+                inputs_aic = {
+                    "hidden_states": latents.detach().numpy(),
+                    "encoder_hidden_states": prompt_embeds.detach().numpy(),
+                    "pooled_projections": pooled_prompt_embeds.detach().numpy(),
+                    "timestep": timestep.detach().numpy(),
+                    "img_ids": latent_image_ids.detach().numpy(),
+                    "txt_ids": text_ids.detach().numpy(),
+                    "adaln_emb": adaln_dual_emb.detach().numpy(),
+                    "adaln_single_emb": adaln_single_emb.detach().numpy(),
+                    "adaln_out": adaln_out.detach().numpy(),
+                }
 
                 # noise_pred_torch = self.transformer.model(
                 #     hidden_states=latents,
@@ -781,7 +690,7 @@ class QEFFFluxPipeline(FluxPipeline):
                 # # # # ###### ACCURACY TESTING #######
                 # mad=np.max(np.abs(noise_pred_torch.detach().numpy()-outputs['output']))
                 # print(f">>>>>>>>> at t = {t} FLUX transfromer model MAD pytorch vs QAIC :{mad}")
-                # mad_O=np.max(np.abs(ort_pred[0]- outputs['output'])) 
+                # mad_O=np.max(np.abs(ort_pred[0]- outputs['output']))
                 # print(f">>>>>>>>>            FLUX transfromer model MAD Onnxrt vs QAIC : {mad_O}")
 
                 # compute the previous noisy sample x_t -> x_t-1
@@ -813,11 +722,16 @@ class QEFFFluxPipeline(FluxPipeline):
             latents = (latents / self.vae_decode.model.scaling_factor) + self.vae_decode.model.shift_factor
 
             if self.vae_decode.qpc_session is None:
-                self.vae_decode.qpc_session = QAICInferenceSession(str(self.vae_decoder_compile_path), device_ids=device_ids_vae_decoder)
+                self.vae_decode.qpc_session = QAICInferenceSession(
+                    str(self.vae_decode.qpc_path), device_ids=device_ids_vae_decoder
+                )
 
             output_buffer = {
                 "sample": np.random.rand(
-                    batch_size, 3, self.height, self.width #self.vae_decode.model.config.sample_size, self.vae_decode.model.config.sample_size
+                    batch_size,
+                    3,
+                    self.height,
+                    self.width,  # self.vae_decode.model.config.sample_size, self.vae_decode.model.config.sample_size
                 ).astype(np.int32)
             }
             self.vae_decode.qpc_session.set_buffers(output_buffer)
@@ -830,7 +744,7 @@ class QEFFFluxPipeline(FluxPipeline):
             # mad= np.max(np.abs(image['sample']-image_torch.detach().numpy()))
             # print(">>>>>>>>>>>> VAE mad: ",mad)
 
-            image_tensor = torch.from_numpy(image['sample'])
+            image_tensor = torch.from_numpy(image["sample"])
             image = self.image_processor.postprocess(image_tensor, output_type=output_type)
 
         # Offload all models
