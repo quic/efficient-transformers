@@ -2992,11 +2992,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for kv in ["key", "value"]:
                     custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
 
-        # HACK for now
-        if self.model.config.model_type == "gpt_oss":
-            for spec in specializations:
-                spec.update({"sliding_window": 128})
-
         qpc_path = self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
