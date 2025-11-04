@@ -123,12 +123,12 @@ def train(
             break
 
         if train_config.use_peft and train_config.from_peft_checkpoint:
-            try: 
+            try:
                 intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
                 intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
             except Exception:
-                intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1]) -1
-                intermediate_step=0
+                intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1]) - 1
+                intermediate_step = 0
 
             if epoch < intermediate_epoch:
                 logger.log_rank_zero(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
@@ -160,9 +160,7 @@ def train(
             if train_config.use_peft and train_config.from_peft_checkpoint:
                 # to bring the count of train_step in sync with where it left off
                 if intermediate_step == 0 and epoch == intermediate_epoch:
-                    logger.log_rank_zero(
-                        f"Skipping epoch {epoch + 1}, since fine tuning has already completed for it."
-                    )
+                    logger.log_rank_zero(f"Skipping epoch {epoch + 1}, since fine tuning has already completed for it.")
                     break
 
                 if epoch == intermediate_epoch and step == 0:
