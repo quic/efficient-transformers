@@ -1412,6 +1412,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 if x.startswith("past_") or x.endswith("_RetainedState")
             ]
         )
+        if not_mllama:
+            lang_session.skip_buffers(vision_outputs.keys())
 
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
