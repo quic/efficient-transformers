@@ -2438,12 +2438,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Dict[str, Union[int, str]]
             A dictionary defining the prefill specialization.
         """
-        spec = {
-            "batch_size": 1 if self.continuous_batching else batch_size,
-            "seq_len": prefill_seq_len,
-            "ctx_len": ctx_len,
-            "num_logits_to_keep": 1 if self.is_tlm else None,
-        }
+        if hasattr(self.model, "get_specializations"):
+            spec = self.model.get_specializations(
+                batch_size=1 if self.continuous_batching else batch_size,
+                prefill_seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
+            )[0]
+        else:
+            spec = {
+                "batch_size": 1 if self.continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+            }
+        spec["num_logits_to_keep"] = 1 if self.is_tlm else None
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -2487,12 +2494,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if prefill_seq_len == 1 and not self.continuous_batching:
             return None  # Avoid duplication with prefill
-        spec = {
-            "batch_size": full_batch_size if self.continuous_batching else batch_size,
-            "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
-            "ctx_len": ctx_len,
-            "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
-        }
+
+        if hasattr(self.model, "get_specializations"):
+            spec = self.model.get_specializations(
+                batch_size=full_batch_size if self.continuous_batching else batch_size,
+                prefill_seq_len=(num_speculative_tokens + 1) if self.is_tlm else 1,
+                ctx_len=ctx_len,
+            )[1]
+        else:
+            spec = {
+                "batch_size": full_batch_size if self.continuous_batching else batch_size,
+                "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
+                "ctx_len": ctx_len,
+            }
+        spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
 
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
@@ -2653,11 +2668,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
-
-        # HACK for now
-        if self.model.config.model_type == "gpt_oss":
-            for spec in specializations:
-                spec.update({"sliding_window": 128})
 
         qpc_path = self._compile(
             onnx_path=onnx_path,

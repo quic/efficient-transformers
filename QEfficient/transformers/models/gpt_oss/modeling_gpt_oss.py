@@ -30,6 +30,7 @@ from transformers.utils import TransformersKwargs
 
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils import constants
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -707,3 +708,29 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
             elif layer_type == "full_attention":
                 pkv_dynamic_axes.append({0: "batch_size", 2: "ctx_len"})
         return pkv_dynamic_axes
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+    ):
+        batch_size = batch_size if batch_size else 1
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.PROMPT_LEN
+        ctx_len = ctx_len if ctx_len else constants.CTX_LEN
+
+        specializations = [
+            {
+                "batch_size": batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "sliding_window": 128,
+            },
+            {
+                "batch_size": batch_size,
+                "seq_len": 1,
+                "ctx_len": ctx_len,
+                "sliding_window": 128,
+            },
+        ]
+        return specializations

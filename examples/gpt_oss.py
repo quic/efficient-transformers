@@ -9,7 +9,7 @@ from transformers import AutoTokenizer, TextStreamer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
-model_id = "openai/gpt-oss-20b"
+model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)

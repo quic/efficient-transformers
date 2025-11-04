@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
+import math
 
 import torch
 from torch import nn
@@ -410,7 +411,6 @@ def convert_moe_packed_tensors(
     """
     reference for this function is taken from: https://github.com/huggingface/transformers/tree/main/src/transformers/models/gpt_oss#L98
     """
-    import math
 
     scales = scales.to(torch.int32) - 127
 

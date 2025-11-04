@@ -92,7 +92,10 @@ class InputHandler:
 
         past_key_values = []
         for i in range(self.n_layer):
-            if hasattr(self.config, "sliding_window") and self.config.layer_types[i] == "sliding_attention":
+            if (
+                all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
+                and self.config.layer_types[i] == "sliding_attention"
+            ):
                 pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
             else:
                 pad_shape = self.padding_shape
@@ -170,7 +173,10 @@ class InputHandler:
                 inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
         else:
             for i in range(self.n_layer):
-                if hasattr(self.config, "sliding_window") and self.config.layer_types[i] == "sliding_attention":
+                if (
+                    all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
+                    and self.config.layer_types[i] == "sliding_attention"
+                ):
                     pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
                 else:
                     pad_shape = self.padding_shape
