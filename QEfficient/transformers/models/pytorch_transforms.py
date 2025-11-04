@@ -259,6 +259,9 @@ from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssForCausalLM,
     QEffGptOssMLP,
     QEffGptOssModel,
+    QEffPrefillOnlyGptOssAttention,
+    QEffPrefillOnlyGptOssMLP,
+    QEffPrefillOnlyGptOssModel,
 )
 from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJAttention,
@@ -628,6 +631,14 @@ class KVCacheTransform(ModuleMappingTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
+
+
+class PrefillOnlyTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
+        QEffGptOssExperts: QEffPrefillOnlyGptOssMLP,
+    }
 
 
 class SpDTransform:

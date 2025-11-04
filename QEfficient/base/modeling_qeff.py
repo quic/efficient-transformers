@@ -57,6 +57,7 @@ class QEFFBaseModel(ABC):
         super().__init__()
         self.model = model
         self.hash_params = create_model_params(self, **kwargs)
+        self.prefill_onnx_path: Optional[str] = None
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
@@ -179,6 +180,7 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
+        prefill_only: Optional[bool] = False,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
@@ -207,7 +209,10 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-            self.onnx_path = onnx_path
+            if prefill_only:
+                self.prefill_onnx_path = onnx_path
+            else:
+                self.onnx_path = onnx_path
             return onnx_path
 
         # check if the model is in meta state or weights are offloaded
@@ -283,8 +288,11 @@ class QEFFBaseModel(ABC):
 
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
-
-        self.onnx_path = onnx_path
+        print(onnx_path)
+        if prefill_only:
+            self.prefill_onnx_path = onnx_path
+        else:
+            self.onnx_path = onnx_path
         return onnx_path
 
     @dump_qconfig
@@ -300,6 +308,8 @@ class QEFFBaseModel(ABC):
         num_speculative_tokens: Optional[int] = None,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
+        prefill_only: Optional[str] = None,
+        offload_pt_weights: Optional[bool] = True,
         **compiler_options,
     ) -> str:
         """
@@ -325,10 +335,16 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-        if onnx_path is None and self.onnx_path is None:
-            self.export()
+        kwargs = {"offload_pt_weights": offload_pt_weights}
+        if prefill_only and self.prefill_onnx_path is None:
+            kwargs.update({"prefill_only": prefill_only, "prefill_seq_len": specializations[0].get("seq_len")})
+            self.export(**kwargs)
+            onnx_path = Path(onnx_path or self.prefill_onnx_path)
 
-        onnx_path = Path(onnx_path or self.onnx_path)
+        if onnx_path is None and self.onnx_path is None:
+            self.export(**kwargs)
+            onnx_path = Path(onnx_path or self.onnx_path)
+
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():
@@ -390,6 +406,7 @@ class QEFFBaseModel(ABC):
             "mdp_ts_num_devices": mdp_ts_num_devices,
             "mdp_ts_json": mdp_ts_json,
             "num_speculative_tokens": num_speculative_tokens,
+            "prefill_only": prefill_only,
         }
         compile_hash = hash_dict_params(compile_hash_params)
 
