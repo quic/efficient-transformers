@@ -158,6 +158,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     """
     replace_transformers_quantizers()
     if config is None:
+        n_layer = get_custom_n_layers(model_name)
         model_hf, _ = load_causal_lm_model(model_name, n_layer=n_layer)
     else:
         model_hf, _ = load_causal_lm_model(model_name, config=config)
