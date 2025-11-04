@@ -16,8 +16,8 @@ from QEfficient import QEFFAutoModelForCausalLM
 ##       - The second comp_ctx_lengths_decode list will be used for decoding. During the decoding process, based on the position_id or cache index it will work with the specific compute-context-length in the list. It will start from a proper compute-context-length in the list based on input prompt length and will gradually increase the compute-context-length if the cache index passes the current compute-context-length. ##
 
 ctx_len = 1024
-comp_ctx_lengths_prefill = [256]
-comp_ctx_lengths_decode = [512, ctx_len]
+comp_ctx_lengths_prefill = [256]  # None
+comp_ctx_lengths_decode = [ctx_len]  # None
 
 # model_name = "google/gemma-7b"
 # model_name = "google/gemma-2-2b"
@@ -27,20 +27,23 @@ comp_ctx_lengths_decode = [512, ctx_len]
 # model_name = "microsoft/phi-1_5"
 # model_name = "microsoft/Phi-3-mini-4k-instruct"
 # model_name = "Qwen/Qwen2.5-7B-Instruct"
-model_name = "meta-llama/Llama-3.2-1B"
+# model_name = "meta-llama/Llama-3.2-1B"
 # model_name = "Qwen/Qwen3-1.7B"
 # model_name = "allenai/OLMo-2-0425-1B"
-# model_name = "ibm-granite/granite-3.3-2b-base"
+model_name = "ibm-granite/granite-3.3-2b-base"
+# model_name = "ibm-granite/granite-3.2-8b-instruct"
 # model_name = "meta-llama/Llama-3.3-70B-Instruct"
 # model_name = "Salesforce/codegen-350M-mono"
 # model_name = "tiiuae/falcon-7b-instruct"
 # model_name = "openai-community/gpt2"
 # model_name = "EleutherAI/gpt-j-6b"
-# model_name = "EleutherAI/gpt-j-6b"
 
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
     continuous_batching=True,
+    comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+    comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+    ctx_len=ctx_len,
 )
 
 # model compilation for either continuous or static batching. For continuous batching full_batch_size is needed.
@@ -48,7 +51,7 @@ model.compile(
     prefill_seq_len=128,
     ctx_len=ctx_len,
     num_cores=16,
-    num_devices=1,
+    num_devices=4,
     full_batch_size=1,
     mxint8_kv_cache=True,
     mxfp6_matmul=True,
