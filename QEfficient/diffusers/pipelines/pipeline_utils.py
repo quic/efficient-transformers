@@ -13,7 +13,11 @@ import torch.nn as nn
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform, NormalizationTransform, CustomOpsTransform
+from QEfficient.diffusers.models.pytorch_transforms import (
+    AttentionTransform,
+    CustomOpsTransform,
+    NormalizationTransform,
+)
 from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
 )
@@ -35,7 +39,7 @@ class QEffTextEncoder(QEFFBaseModel):
         super().__init__(model)
         self.model = copy.deepcopy(model)
 
-    def get_onnx_config(self, seq_len = 512):
+    def get_onnx_config(self, seq_len=512):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = seq_len
 
@@ -124,21 +128,22 @@ class QEffClipTextEncoder(QEFFBaseModel):
         super().__init__(model)
         self.model = copy.deepcopy(model)
 
-    def get_onnx_config(self, seq_len= 77 ):
+    def get_onnx_config(self, seq_len=77):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         # seq_len = self.tokenizer.model_max_length
 
-        example_inputs = { "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-                            "attention_mask": None,
-                            "position_ids": None,
-                            "output_attentions": None
-                        }
+        example_inputs = {
+            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "attention_mask": None,
+            "position_ids": None,
+            "output_attentions": None,
+        }
         example_inputs["output_hidden_states"] = False
 
         dynamic_axes = {
-            'input_ids': {0: 'batch_size', 1: 'sequence_length'},
-            'last_hidden_state': {0: 'batch_size', 1: 'sequence_length'},
-            'pooler_output': {0: 'batch_size'}
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "last_hidden_state": {0: "batch_size", 1: "seq_len"},
+            "pooler_output": {0: "batch_size"},
         }
         output_names = ["last_hidden_state", "pooler_output"]
 
@@ -153,7 +158,7 @@ class QEffClipTextEncoder(QEFFBaseModel):
         seq_len: int,
     ):
         specializations = [
-            {"batch_size": batch_size, "sequence_length": seq_len},
+            {"batch_size": batch_size, "seq_len": seq_len},
         ]
 
         return specializations
@@ -284,11 +289,11 @@ class QEffVAE(QEFFBaseModel):
         self.model = copy.deepcopy(model.vae)
         self.type = type
 
-    def get_onnx_config(self, latent_height, latent_width):
+    def get_onnx_config(self, latent_height=32, latent_width=32):
         # VAE decode
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         example_inputs = {
-            "latent_sample": torch.randn(bs, 16,  latent_height, latent_width),
+            "latent_sample": torch.randn(bs, 16, latent_height, latent_width),
             "return_dict": False,
         }
 
@@ -302,12 +307,7 @@ class QEffVAE(QEFFBaseModel):
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
 
-    def get_specializations(
-        self,
-        batch_size: int,
-        latent_height:int,
-        latent_width:int
-    ):
+    def get_specializations(self, batch_size: int, latent_height: int, latent_width: int):
         sepcializations = [
             {
                 "batch_size": batch_size,
@@ -429,7 +429,7 @@ class QEffSafetyChecker(QEFFBaseModel):
 
 
 class QEffFluxTransformerModel(QEFFBaseModel):
-    _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform ]
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
     """
     QEffFluxTransformerModel is a wrapper class for Flux Transformer2D models that provides ONNX export and compilation capabilities.
@@ -442,16 +442,20 @@ class QEffFluxTransformerModel(QEFFBaseModel):
     def __init__(self, model: nn.modules):
         super().__init__(model)
         self.model = model
-    
+
     def get_onnx_config(self, batch_size=1, seq_length=256, cl=4096):
         example_inputs = {
             "hidden_states": torch.randn(batch_size, cl, self.model.config.in_channels, dtype=torch.float32),
-            "encoder_hidden_states": torch.randn(batch_size, seq_length , self.model.config.joint_attention_dim, dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(
+                batch_size, seq_length, self.model.config.joint_attention_dim, dtype=torch.float32
+            ),
             "pooled_projections": torch.randn(batch_size, self.model.config.pooled_projection_dim, dtype=torch.float32),
             "timestep": torch.tensor([1.0], dtype=torch.float32),
             "img_ids": torch.randn(cl, 3, dtype=torch.float32),
             "txt_ids": torch.randn(seq_length, 3, dtype=torch.float32),
-            "adaln_emb": torch.randn(self.model.config.num_layers, 12, 3072, dtype=torch.float32),  #num_layers, #chunks, # Adalan_hidden_dim
+            "adaln_emb": torch.randn(
+                self.model.config.num_layers, 12, 3072, dtype=torch.float32
+            ),  # num_layers, #chunks, # Adalan_hidden_dim
             "adaln_single_emb": torch.randn(self.model.config.num_single_layers, 3, 3072, dtype=torch.float32),
             "adaln_out": torch.randn(batch_size, 6144, dtype=torch.float32),
         }
@@ -459,8 +463,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         output_names = ["output"]
 
         dynamic_axes = {
-            "hidden_states": {0: "batch_size", 1:"cl" },
-            "encoder_hidden_states": {0: "batch_size", 1: "sequence_length"},
+            "hidden_states": {0: "batch_size", 1: "cl"},
+            "encoder_hidden_states": {0: "batch_size", 1: "seq_len"},
             "pooled_projections": {0: "batch_size"},
             "timestep": {0: "steps"},
             "img_ids": {0: "cl"},
@@ -474,19 +478,14 @@ class QEffFluxTransformerModel(QEFFBaseModel):
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
 
-    def get_specializations(
-        self,
-        batch_size: int,
-        seq_len: int,
-        cl:int
-    ):
+    def get_specializations(self, batch_size: int, seq_len: int, cl: int):
         specializations = [
             {
                 "batch_size": batch_size,
                 "stats-batchsize": batch_size,
-                "num_layers":  self.model.config.num_layers,
+                "num_layers": self.model.config.num_layers,
                 "num_single_layers": self.model.config.num_single_layers,
-                "sequence_length": seq_len,
+                "seq_len": seq_len,
                 "cl": cl,
                 "steps": 1,
             }
@@ -522,7 +521,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
     def model_hash(self) -> str:
         # Compute the hash with: model_config, continuous_batching, transforms
         mhash = hashlib.sha256()
-        dict_model_config  = dict(self.model.config)
+        dict_model_config = dict(self.model.config)
         dict_model_config.pop("_use_default_values", None)
         mhash.update(to_hashable(dict_model_config))
         mhash.update(to_hashable(self._transform_names()))

@@ -4,23 +4,33 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
-import os
-from typing import Any, Callable, Dict, List, Tuple, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
 from venv import logger
 
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-
-from diffusers.models.transformers.transformer_flux import FluxAttention,FluxSingleTransformerBlock, FluxTransformerBlock, FluxTransformer2DModel, FluxPosEmbed, FluxAttnProcessor, _get_qkv_projections
-from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.attention_dispatch import dispatch_attention_fn
+from diffusers.models.modeling_outputs import Transformer2DModelOutput
+from diffusers.models.transformers.transformer_flux import (
+    FluxAttention,
+    FluxAttnProcessor,
+    FluxSingleTransformerBlock,
+    FluxTransformer2DModel,
+    FluxTransformerBlock,
+    _get_qkv_projections,
+)
 
-from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZero, QEffAdaLayerNormZeroSingle, QEffAdaLayerNormContinuous
+from QEfficient.diffusers.models.normalization import (
+    QEffAdaLayerNormContinuous,
+    QEffAdaLayerNormZero,
+    QEffAdaLayerNormZeroSingle,
+)
+
 
 def qeff_apply_rotary_emb(
-    x: torch.Tensor,
-    freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    x: torch.Tensor, freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]]
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Apply rotary embeddings to input tensors using the given frequency tensor. This function applies rotary embeddings
     to the given query or key 'x' tensors using the provided frequency tensor 'freqs_cis'. The input tensors are
@@ -39,11 +49,12 @@ def qeff_apply_rotary_emb(
     cos = cos[None, :, None, :]
     sin = sin[None, :, None, :]
     cos, sin = cos.to(x.device), sin.to(x.device)
-    B, S, H , D  = x.shape
-    x_real, x_imag = x.reshape(B, -1, H, D//2, 2).unbind(-1)
+    B, S, H, D = x.shape
+    x_real, x_imag = x.reshape(B, -1, H, D // 2, 2).unbind(-1)
     x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
     out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
     return out
+
 
 class QEffFluxAttnProcessor(FluxAttnProcessor):
     _attention_backend = None
@@ -102,6 +113,7 @@ class QEffFluxAttnProcessor(FluxAttnProcessor):
         else:
             return hidden_states
 
+
 class QEffFluxAttention(FluxAttention):
     def __qeff_init__(self):
         processor = QEffFluxAttnProcessor()
@@ -158,6 +170,7 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
         encoder_hidden_states, hidden_states = hidden_states[:, :text_seq_len], hidden_states[:, text_seq_len:]
         return encoder_hidden_states, hidden_states
 
+
 class QEffFluxTransformerBlock(FluxTransformerBlock):
     def __init__(
         self, dim: int, num_attention_heads: int, attention_head_dim: int, qk_norm: str = "rms_norm", eps: float = 1e-6
@@ -178,7 +191,6 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
             eps=eps,
         )
 
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -187,15 +199,12 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-
         temb1 = tuple(torch.split(temb[:6], 1))
         temb2 = tuple(torch.split(temb[6:], 1))
         norm_hidden_states = self.norm1(hidden_states, shift_msa=temb1[0], scale_msa=temb1[1])
         gate_msa, shift_mlp, scale_mlp, gate_mlp = temb1[-4:]
 
-        norm_encoder_hidden_states = self.norm1_context(
-            encoder_hidden_states, shift_msa=temb2[0], scale_msa=temb2[1]
-        )
+        norm_encoder_hidden_states = self.norm1_context(encoder_hidden_states, shift_msa=temb2[0], scale_msa=temb2[1])
 
         c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = temb2[-4:]
 
@@ -242,6 +251,7 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
 
         return encoder_hidden_states, hidden_states
 
+
 class QEffFluxTransformer2DModel(FluxTransformer2DModel):
     def __init__(
         self,
@@ -257,7 +267,6 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
         guidance_embeds: bool = False,
         axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
     ):
-
         super().__init__(
             patch_size=patch_size,
             in_channels=in_channels,
@@ -295,7 +304,6 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
         )
 
         self.norm_out = QEffAdaLayerNormContinuous(self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6)
-
 
     def forward(
         self,
