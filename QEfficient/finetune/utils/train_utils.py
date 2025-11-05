@@ -126,7 +126,7 @@ def train(
             try:
                 intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
                 intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
-            except Exception:
+            except (IndexError, ValueError):
                 intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1]) - 1
                 intermediate_step = 0
 
