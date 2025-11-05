@@ -79,7 +79,7 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _model_offloaded_check(self) -> None:
+    def _offload_model_weights(self) -> None:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         try:
             # Clear tensor storage and replace with empty shell
