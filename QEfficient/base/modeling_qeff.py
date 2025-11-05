@@ -79,7 +79,7 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _clear_model_weights(self) -> None:
+    def _model_offloaded_check(self) -> None:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         try:
             # Clear tensor storage and replace with empty shell
@@ -144,7 +144,7 @@ class QEFFBaseModel(ABC):
 
         except Exception as e:
             logger.warning(f"Weight clearing failed, continuing: {e}")
-
+    
     def _model_offloaded_check(self) -> None:
         """
         Check if the model is in meta state or weights are offloaded.
@@ -304,7 +304,7 @@ class QEFFBaseModel(ABC):
 
             # Clear PyTorch weights after successful export to reduce memory usage
             if offload_pt_weights:
-                self._clear_model_weights()
+                self._offload_model_weights()
                 self._is_weights_offloaded = True
                 logger.info("PyTorch weights cleared after ONNX export")
 
@@ -324,7 +324,7 @@ class QEFFBaseModel(ABC):
                 transform_kwargs.update(onnx_transform_kwargs)
 
             transform_kwargs["transforms"] = self._onnx_transforms
-            # for transform in self._onnx_transforms:
+            
             model, transformed = OnnxTransform.apply(model, **transform_kwargs)
 
             model.metadata_props.append(
