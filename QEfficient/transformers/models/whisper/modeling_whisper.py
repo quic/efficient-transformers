@@ -74,8 +74,8 @@ class QEffWhisperAttention(WhisperAttention):
         if self.is_decoder:
             if is_cross_attention and past_key_value:
                 # cross_attentions
-                key_states_old = past_key_value[self.layer_idx][0]
-                value_states_old = past_key_value[self.layer_idx][1]
+                key_states_old = past_key_value.layers[self.layer_idx].keys
+                value_states_old = past_key_value.layers[self.layer_idx].values
                 key_states = self.k_proj(key_value_states).view(bsz, -1, self.num_heads, self.head_dim)
                 value_states = self.v_proj(key_value_states).view(bsz, -1, self.num_heads, self.head_dim)
                 key_states = key_states.transpose(1, 2).contiguous()
@@ -482,11 +482,6 @@ class QEffWhisperDecoder(WhisperDecoder):
             if not isinstance(past_key_values, Cache):
                 return_legacy_cache = True
                 past_key_values = QEffEncoderDecoderCache.from_legacy_cache(past_key_values)
-                logger.warning_once(
-                    "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
-                    "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
-                    "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
-                )
 
         if cache_position is None:
             cache_position = position_ids
