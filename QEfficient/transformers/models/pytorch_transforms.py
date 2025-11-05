@@ -649,7 +649,7 @@ class PrefillOnlyTransform(ModuleMappingTransform):
     _module_mapping = {
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
-        QEffGptOssExperts: QEffPrefillOnlyGptOssMLP,
+        QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
     }
 
 
