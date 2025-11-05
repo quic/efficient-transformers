@@ -242,7 +242,7 @@ class RenameFunctionOutputsTransform(OnnxTransform):
         decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
         transformed = False
         model_graph_outputs = [val.name for val in model.graph.output]
-
+        layer_index = 0
         for node in graph.node:
             if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
                 func = op_type_to_func_map.get(node.op_type)
@@ -253,11 +253,13 @@ class RenameFunctionOutputsTransform(OnnxTransform):
                     if "_InternalRetainedState" in out_name:
                         transformed = True
                         tmp = node.output[i]
-                        new_name = func.output[i].replace("Internal", "")
+                        if "key" in out_name:
+                            new_name = f"past_key.{layer_index}_RetainedState"
+                        elif "value" in out_name:
+                            new_name = f"past_value.{layer_index}_RetainedState"
                         node.output[i] = new_name
-
                         # Update graph output name if it exists
                         if tmp in model_graph_outputs:
                             model.graph.output[model_graph_outputs.index(tmp)].name = new_name
-
+                layer_index = layer_index + 1
         return model, transformed
