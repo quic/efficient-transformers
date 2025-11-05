@@ -144,7 +144,7 @@ class QEFFBaseModel(ABC):
 
         except Exception as e:
             logger.warning(f"Weight clearing failed, continuing: {e}")
-    
+
     def _model_offloaded_check(self) -> None:
         """
         Check if the model is in meta state or weights are offloaded.
@@ -324,7 +324,7 @@ class QEFFBaseModel(ABC):
                 transform_kwargs.update(onnx_transform_kwargs)
 
             transform_kwargs["transforms"] = self._onnx_transforms
-            
+
             model, transformed = OnnxTransform.apply(model, **transform_kwargs)
 
             model.metadata_props.append(
