@@ -953,7 +953,6 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         grid_height = grid_h * grid_w
         grid_width = patch_size * patch_size * temporal_patch_size * channel
         vision_size = grid_height // 4
-        vision_size = vision_size * num_frames
         grid_height = grid_height * batch_size
 
         vision = [
