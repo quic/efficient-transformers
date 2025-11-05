@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
+import os
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
@@ -360,6 +361,79 @@ class QEffQwen2_5_VLRotaryEmbedding(Qwen2_5_VLRotaryEmbedding):
         )
 
 
+def eager_attention_forward_q_blocked(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    **kwargs,
+):
+    """
+    Q-blocked attention for Qwen2.5-VL.
+    Blocks only the query SL dimension.
+
+    Args:
+        query: (BS, NH, Q_LEN, DH)
+        key: (BS, NH_KV, KV_LEN, DH)
+        value: (BS, NH_KV, KV_LEN, DH)
+        attention_mask: (BS, NH, Q_LEN, KV_LEN) or broadcastable
+    """
+    BS, NH, Q_LEN, DH = query.shape
+    _, _, KV_LEN, _ = key.shape
+
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    target_blocks_q = int(os.environ.get("num_q_blocks", Q_LEN))
+    q_block_positions = [(i * Q_LEN) // target_blocks_q for i in range(target_blocks_q)]
+    scaling = 1.0 / math.sqrt(module.head_dim)
+
+    q_output_blocks = []
+    q_attn_weights_blocks = []
+
+    # Process each Q block
+    for q_block_idx in range(target_blocks_q):
+        qi = q_block_positions[q_block_idx]
+
+        # Calculate Q block size
+        if q_block_idx == target_blocks_q - 1:
+            real_q_len = Q_LEN - qi
+        else:
+            real_q_len = q_block_positions[q_block_idx + 1] - qi
+
+        # Extract Q block
+        q_block = query[:, :, qi : qi + real_q_len, :]
+        attn_mask_block = None
+        if attention_mask is not None:
+            attn_mask_block = attention_mask[:, :, qi : qi + real_q_len, :]
+
+        # Compute attention scores for this Q block
+        attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
+        if attn_mask_block is not None:
+            attn_weights = torch.where(
+                attn_mask_block,
+                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=attn_weights.device),
+                attn_weights,
+            )
+
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+
+        # Compute output for this Q block
+        output_block = torch.matmul(attn_weights, value_states)
+
+        q_output_blocks.append(output_block)
+        q_attn_weights_blocks.append(attn_weights)
+
+    attn_output = torch.cat(q_output_blocks, dim=2)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    # Concatenate attention weights
+    attn_weights = torch.cat(q_attn_weights_blocks, dim=2)
+
+    return attn_output, attn_weights
+
+
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -368,20 +442,32 @@ def eager_attention_forward(
     attention_mask: Optional[torch.Tensor],
     **kwargs,
 ):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
+    """
+    Wrapper that routes to blocked or default attention based on environment variable.
+    """
+    blocking_mode = os.environ.get("ATTENTION_BLOCKING_MODE", "default").lower()
 
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
-    if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
+    if blocking_mode == "q":
+        return eager_attention_forward_q_blocked(module, query, key, value, attention_mask, **kwargs)
+    elif blocking_mode == "default":
+        # Original implementation
+        key_states = repeat_kv(key, module.num_key_value_groups)
+        value_states = repeat_kv(value, module.num_key_value_groups)
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_output = torch.matmul(attn_weights, value_states)
-    attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
 
-    return attn_output, attn_weights
+        if attention_mask is not None:
+            attn_weights = torch.where(
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            )
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+
+        return attn_output, attn_weights
+    else:
+        raise ValueError(f"Invalid ATTENTION_BLOCKING_MODE: {blocking_mode}. Must be 'q' or 'default'")
 
 
 class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
@@ -680,7 +766,15 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         self.model = model
         self.language_model = self.model.model.language_model
 
-    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
+    def forward(
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        batch_index: Optional[torch.LongTensor] = None,
+    ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_id
@@ -691,7 +785,11 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
         outputs = self.model.model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            batch_index=batch_index,
+            use_cache=True,
         )
 
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
@@ -709,7 +807,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
     def get_qeff_language_decoder(self):
         return QEffQwen_2_5_vl_DecoderWrapper(self)
 
-    def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(self, kv_offload: bool = False, continuous_batching: bool = False, **kwargs):
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 
@@ -745,17 +843,24 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             .repeat(4, 1, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
+
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
         # Add data for KV
         kv_cache_shape = get_padding_shape_from_config(
-            config=self.model.config,
-            batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            config=self.model.config.text_config,
+            batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
-        lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.num_hidden_layers)]
-        for i in range(self.model.config.num_hidden_layers):
+        lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
+        for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         inputs = {}
         if kv_offload:
@@ -775,14 +880,18 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         img_size: None,
         height: int = None,
         width: int = None,
+        num_frames: int = 1,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         if height is None or width is None:
-            height = 1365
-            width = 2048
+            height = constants.QWEN2_5_VL_HEIGHT
+            width = constants.QWEN2_5_VL_WIDTH
             logger.warning(
-                "Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config"
+                f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
@@ -844,6 +953,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         grid_height = grid_h * grid_w
         grid_width = patch_size * patch_size * temporal_patch_size * channel
         vision_size = grid_height // 4
+        vision_size = vision_size * num_frames
         grid_height = grid_height * batch_size
 
         vision = [
@@ -856,20 +966,37 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 "grid_w": grid_w,
             }
         ]
-        lang = [
-            {
-                "batch_size": batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "vision_size": vision_size,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
-                "ctx_len": ctx_len,
-                "vision_size": vision_size,
-            },
-        ]
+        lang_prefill = {
+            "batch_size": 1 if continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+            "vision_size": vision_size,
+            "vision_batch_size": batch_size,
+        }
+
+        if continuous_batching:
+            lang_prefill["full_batch_size"] = kv_cache_batch_size
+        else:
+            lang_prefill["batch_size"] = kv_cache_batch_size
+        if full_batch_size:
+            lang_prefill["full_batch_exec_size"] = full_batch_size
+
+        lang_decode = {
+            "batch_size": full_batch_size if continuous_batching else batch_size,
+            "seq_len": 1,
+            "ctx_len": ctx_len,
+            "vision_size": vision_size,
+            "vision_batch_size": batch_size,
+        }
+
+        if continuous_batching:
+            lang_decode["full_batch_size"] = kv_cache_batch_size
+        else:
+            lang_decode["batch_size"] = kv_cache_batch_size
+
+        lang = []
+        lang.append(lang_prefill)
+        lang.append(lang_decode)
 
         specializations = {}
 
@@ -878,11 +1005,13 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
+            lang[0].pop("vision_size")
+            lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False, continuous_batching: bool = False):
         # Define dynamic axes
-        num_layers = self.config.num_hidden_layers
+        num_layers = self.config.text_config.num_hidden_layers
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
@@ -892,14 +1021,24 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {1: "batch_size", 2: "seq_len"},
-            "vision_embeds": {0: "batch_size", 1: "vision_size"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
         }
 
         for i in range(num_layers):
-            lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+            lang_dynamic_axes[f"past_key.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+            lang_dynamic_axes[f"past_value.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
 
         dynamic_axes = {}
+
         if kv_offload:
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
@@ -911,7 +1050,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.model.config.num_hidden_layers):
+        for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -926,6 +1065,32 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
+
+    def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
+        input_ids_length = inputs["input_ids"].shape[1]
+
+        inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+
+        pos_ids, rope_deltas = self.model.get_rope_index(
+            inputs["input_ids"],
+            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            video_grid_thw=None,
+            second_per_grid_ts=None,
+            attention_mask=inputs["attention_mask"],
+        )
+
+        inputs["position_ids"] = torch.cat((inputs["position_ids"], pos_ids), dim=0)
+
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+
+        inputs["position_ids"] = F.pad(
+            inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
+        )
+
+        inputs.pop("image_grid_thw", None)
+
+        return inputs
 
     def get_inputs_info(self):
         return [
