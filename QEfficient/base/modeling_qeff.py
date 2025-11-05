@@ -252,7 +252,7 @@ class QEFFBaseModel(ABC):
             CustomOpTransform.register_custom_op("CtxGatherFunc", CtxGatherFunc, CtxGather)
             decoder_layer_classes = get_decoder_layer_classes_for_export(self.model)
             export_kwargs = {} if export_kwargs is None else export_kwargs
-            
+
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -269,8 +269,7 @@ class QEFFBaseModel(ABC):
 
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(tmp_onnx_path, load_external_data=False)
-            model,transformed = rename_function_outputs(model)
-            
+
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "temp_onnx_path": tmp_onnx_path,

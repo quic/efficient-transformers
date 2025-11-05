@@ -15,7 +15,6 @@ import torch
 import torch.nn as nn
 from transformers import (
     AutoImageProcessor,
-    AutoImageProcessor,
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForCTC,
@@ -35,13 +34,6 @@ from QEfficient.base.onnx_transforms import (
     RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
-from QEfficient.base.onnx_transforms import (
-    CustomOpTransform,
-    FP16ClipTransform,
-    OnnxSlimTransform,
-    RenameFunctionOutputsTransform,
-    SplitTensorsTransform,
-)
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
@@ -50,7 +42,6 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     get_compilation_dims,
 )
-from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
@@ -68,7 +59,6 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
-    Mxfp4GptOssExpertDequantizeTransform,
     Mxfp4GptOssExpertDequantizeTransform,
 )
 from QEfficient.utils import (
@@ -366,7 +356,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             dynamic_axes,
             export_dir=export_dir,
         )
- 
+
     def compile(
         self,
         onnx_path: Optional[str] = None,
@@ -1102,22 +1092,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
 
         if kv_cache_batch_size and not full_batch_size:
-        if skip_lang and skip_vision:
-            raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
-
-        if self.continuous_batching and full_batch_size is None:
-            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-
-        if kv_cache_batch_size and not full_batch_size:
             raise ValueError(
-                "KV caching requires continuous batching. Please set `full_batch_size` and "
-                "enable `continuous_batching=True` in `from_pretrained`."
                 "KV caching requires continuous batching. Please set `full_batch_size` and "
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
 
-        # Infer kv_cache_batch_size if not provided
-        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
@@ -1129,9 +1108,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ctx_len=ctx_len,
             img_size=img_size,
             kv_offload=True,
-            continuous_batching=self.continuous_batching,
-            kv_cache_batch_size=kv_cache_batch_size,
-            full_batch_size=full_batch_size,
             continuous_batching=self.continuous_batching,
             kv_cache_batch_size=kv_cache_batch_size,
             full_batch_size=full_batch_size,
@@ -1160,11 +1136,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.lang_model.onnx_path is None and lang_onnx_path is None
         ):
             self.export()
-
-        # TODO this hould be removed once the continous batching is supported for all the models.
-        compiler_options.pop("continuous_batching", None)
-        compiler_options.pop("kv_cache_batch_size", None)
-        compiler_options.pop("full_batch_size", None)
 
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
@@ -1221,11 +1192,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         processor: Optional[AutoImageProcessor] = None,
         images: List[str] = None,
         prompts: List[str] = None,
-        inputs: Optional[torch.Tensor] = None,
-        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer] = None,
-        processor: Optional[AutoImageProcessor] = None,
-        images: List[str] = None,
-        prompts: List[str] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
@@ -1241,14 +1207,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
             Inputs to run the execution, typically includes `pixel_values`, `input_ids`,
             `attention_mask`, etc.
-        tokenizer : PreTrainedTokenizer or PreTrainedTokenizerFast, optional
-            Tokenizer for the model. Used when images and prompts are provided.
-        processor : AutoImageProcessor, optional
-            Processor for the model. Used when images and prompts are provided.
-        images : List[str], optional
-            List of image paths or PIL images to process.
-        prompts : List[str], optional
-            List of text prompts corresponding to the images.
         tokenizer : PreTrainedTokenizer or PreTrainedTokenizerFast, optional
             Tokenizer for the model. Used when images and prompts are provided.
         processor : AutoImageProcessor, optional
@@ -1281,30 +1239,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
-        # Use VisionLanguageGeneration for image-prompt pairs
-        if (processor and images) or (tokenizer and prompts):
-            # Create VisionLanguageGeneration instance
-            batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
-            vlm_gen = VisionLanguageGeneration(
-                qeff_model=self,
-                lang_qpc_path=self.lang_model.qpc_path,
-                vision_qpc_path=self.vision_model.qpc_path,
-                tokenizer=tokenizer,
-                processor=processor,
-                device_id=device_ids,  # if device_ids is not None else [0],
-                ctx_len=ctx_len_comp,
-                full_batch_size=fbs,
-            )
-
-            # Call generate method
-            return vlm_gen.generate(
-                images=images,
-                prompts=prompts,
-                generation_len=generation_len,
-                stream=streamer is not None,
-            )
-
-        # Fallback to kv_offload_generate for direct inputs (backward compatibility)
         # Use VisionLanguageGeneration for image-prompt pairs
         if (processor and images) or (tokenizer and prompts):
             # Create VisionLanguageGeneration instance
@@ -1466,7 +1400,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         lang_session.set_buffers(vision_outputs)
 
         lang_start = perf_counter()
-        lang_start = perf_counter()
 
         # Run prefill
         chunk_inputs = lang_inputs.copy()
@@ -1479,7 +1412,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
-        prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
             [
@@ -1488,8 +1420,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 if x.startswith("past_") or x.endswith("_RetainedState")
             ]
         )
-        if not_mllama:
-            lang_session.skip_buffers(vision_outputs.keys())
         if not_mllama:
             lang_session.skip_buffers(vision_outputs.keys())
 
@@ -2067,7 +1997,7 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
 
-    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, continuous_batching: bool = False, continuous_batching: bool = False, **kwargs):
+    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, continuous_batching: bool = False, **kwargs):
         """
         Instantiate the appropriate internal class for single or dual QPC mode.
 
@@ -2088,24 +2018,18 @@ class QEFFAutoModelForImageTextToText:
             The wrapped model instance, configured for either dual or single QPC.
         """
         if kv_offload:
-            return _QEffAutoModelForImageTextToTextDualQPC(model, continuous_batching, continuous_batching, **kwargs)
+            return _QEffAutoModelForImageTextToTextDualQPC(model, continuous_batching, **kwargs)
         else:
             return _QEFFAutoModelForImageTextToTextSingleQPC(model, **kwargs)
 
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(
-        
         cls,
-       
         pretrained_model_name_or_path: str,
-       
         kv_offload: Optional[bool] = None,
         continuous_batching: bool = False,
-       
-        continuous_batching: bool = False,
         **kwargs,
-    ,
     ):
         """
         Load a QEfficient image-text-to-text model from a pretrained HuggingFace model or local path.
@@ -2138,9 +2062,6 @@ class QEFFAutoModelForImageTextToText:
         if continuous_batching and not kv_offload:
             NotImplementedError("Continuous batching is not supported for kv_offload = False")
 
-        if continuous_batching and not kv_offload:
-            NotImplementedError("Continuous batching is not supported for kv_offload = False")
-
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -2150,17 +2071,11 @@ class QEFFAutoModelForImageTextToText:
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(
-            
             model,
-           
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
-           
-            continuous_batching=continuous_batching,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
-           
             **kwargs,
-        ,
         )
 
 
@@ -2197,24 +2112,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         GPTQToMatmulNbitsTransform,
         FP8DeQuantLinearToLinearTransform,
         Mxfp4GptOssExpertDequantizeTransform,
-        Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = [
-        
         FP16ClipTransform,
         CustomOpTransform,
         RenameFunctionOutputsTransform,
         OnnxSlimTransform,
-       
-        CustomOpTransform,
-        RenameFunctionOutputsTransform,
-        OnnxSlimTransform,
         SplitTensorsTransform,
-    ,
     ]
 
     def __init__(
@@ -2463,7 +2371,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
-                    output_names.append(f"past_{kv}.{i}_InternalInternalRetainedState")
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
         else:
             # HACK: create common function for this including above if condition code
@@ -2476,23 +2384,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 else pkv_dynamic_axes
             )
 
-            # HACK: create common function for this including above if condition code
-            pkv_dynamic_axes = (
-                self.model.get_pkv_dynamic_axes() if hasattr(self.model, "get_pkv_dynamic_axes") else pkv_dynamic_axes
-            )
-            pkv_dynamic_axes = (
-                [pkv_dynamic_axes] * self.model.config.num_hidden_layers
-                if isinstance(pkv_dynamic_axes, dict)
-                else pkv_dynamic_axes
-            )
-
             for i in range(self.num_layers):
-                pkv_dynamic_axes[i][0] = "full_batch_size" if self.continuous_batching else "batch_size"
                 pkv_dynamic_axes[i][0] = "full_batch_size" if self.continuous_batching else "batch_size"
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
-                    output_names.append(f"past_{kv}.{i}_InternalRetainedState")
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -2638,19 +2535,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "ctx_len": ctx_len,
             }
         spec["num_logits_to_keep"] = 1 if self.is_tlm else None
-        if hasattr(self.model, "get_specializations"):
-            spec = self.model.get_specializations(
-                batch_size=1 if self.continuous_batching else batch_size,
-                prefill_seq_len=prefill_seq_len,
-                ctx_len=ctx_len,
-            )[0]
-        else:
-            spec = {
-                "batch_size": 1 if self.continuous_batching else batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-            }
-        spec["num_logits_to_keep"] = 1 if self.is_tlm else None
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -2694,20 +2578,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if prefill_seq_len == 1 and not self.continuous_batching:
             return None  # Avoid duplication with prefill
-
-        if hasattr(self.model, "get_specializations"):
-            spec = self.model.get_specializations(
-                batch_size=full_batch_size if self.continuous_batching else batch_size,
-                prefill_seq_len=(num_speculative_tokens + 1) if self.is_tlm else 1,
-                ctx_len=ctx_len,
-            )[1]
-        else:
-            spec = {
-                "batch_size": full_batch_size if self.continuous_batching else batch_size,
-                "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
-                "ctx_len": ctx_len,
-            }
-        spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
 
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
@@ -2947,8 +2817,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 raise TypeError("Please run compile API first!")
             generation_len = kwargs.pop("generation_len", None)
             return QEfficient.cloud_ai_100_exec_kv(
-                tokenizer=tokenizer=tokenizer,
-                qpc_path=qpc_path=self.qpc_path,
+                tokenizer=tokenizer,
+                qpc_path=self.qpc_path,
                 prompt=prompts,
                 device_id=device_id,
                 generation_len=generation_len,
