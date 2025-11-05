@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
@@ -16,6 +18,7 @@ from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
 
 BS = 1
+FBS = 4
 NUM_CHANNEL = 3
 SEQ_LEN = 592
 CTX_LEN = 1024
@@ -51,7 +54,15 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
         self.lm_head = self.model.lm_head
 
-    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
+    def forward(
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        batch_index: Optional[torch.LongTensor] = None,
+    ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.model.config.image_token_index
@@ -65,6 +76,7 @@ class QEFFLlavaDecoderWrapper(nn.Module):
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            batch_index=batch_index,
             return_dict=True,
         )
 
@@ -120,7 +132,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
         return logits, pixel_values, image_idx, outputs.past_key_values
 
-    def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(self, kv_offload: bool = False, continuous_batching: bool = False, **kwargs):
         num_layers = self.config.text_config.num_hidden_layers
         num_key_value_heads = self.config.text_config.num_key_value_heads
         head_dim = self.config.text_config.hidden_size // self.config.text_config.num_attention_heads
@@ -145,11 +157,13 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         for i in range(num_layers):
             lang_inputs["past_key_values"].append(
                 (
-                    torch.zeros(BS, num_key_value_heads, CTX_LEN, head_dim),
-                    torch.zeros(BS, num_key_value_heads, CTX_LEN, head_dim),
+                    torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim),
+                    torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim),
                 )
             )
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(BS).view(BS, 1)
         inputs = {}
 
         if kv_offload:
@@ -167,6 +181,9 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         ctx_len: int,
         img_size: int,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         max_num_images = compiler_options.pop("max_num_images", 1)
@@ -187,24 +204,40 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                 "img_size": img_size,
             }
         ]
-        lang = [
-            {
-                "batch_size": batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "max_num_images": max_num_images,
-                "img_size": img_size,
-                "vision_size": vision_size,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
-                "ctx_len": ctx_len,
-                "max_num_images": max_num_images,
-                "img_size": img_size,
-                "vision_size": vision_size,
-            },
-        ]
+        lang_prefill = {
+            "batch_size": 1 if continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+            "max_num_images": max_num_images,
+            "img_size": img_size,
+            "vision_size": vision_size,
+            "vision_batch_size": batch_size,
+        }
+        if continuous_batching:
+            lang_prefill["full_batch_size"] = kv_cache_batch_size
+        else:
+            lang_prefill["batch_size"] = kv_cache_batch_size
+        if full_batch_size:
+            lang_prefill["full_batch_exec_size"] = full_batch_size
+
+        lang_decode = {
+            "batch_size": full_batch_size if continuous_batching else batch_size,
+            "seq_len": "1",
+            "ctx_len": ctx_len,
+            "max_num_images": max_num_images,
+            "img_size": img_size,
+            "vision_size": vision_size,
+            "vision_batch_size": batch_size,
+        }
+        if continuous_batching:
+            lang_decode["full_batch_size"] = kv_cache_batch_size
+        else:
+            lang_decode["batch_size"] = kv_cache_batch_size
+
+        lang = []
+        lang.append(lang_prefill)
+        lang.append(lang_decode)
+
         specializations = {}
 
         if kv_offload:
@@ -212,9 +245,11 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
+            lang[0].pop("vision_size")
+            lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False, continuous_batching: bool = False):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
 
@@ -224,11 +259,19 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
-            "vision_embeds": {0: "batch_size", 1: "vision_size"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
         }
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
         for i in range(num_layers):
-            lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+            lang_dynamic_axes[f"past_key.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+            lang_dynamic_axes[f"past_value.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
 
         dynamic_axes = {}
         if kv_offload:
