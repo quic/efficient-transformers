@@ -72,40 +72,8 @@ class QEffTextEncoder(QEFFBaseModel):
             export_kwargs=export_kwargs,
         )
 
-    def get_specializations(
-        self,
-        batch_size: int,
-        seq_len: int,
-    ):
-        specializations = [
-            {"batch_size": batch_size, "seq_len": seq_len},
-        ]
-
-        return specializations
-
-    def compile(
-        self,
-        compile_dir,
-        compile_only,
-        specializations,
-        convert_to_fp16,
-        mxfp6_matmul,
-        mdp_ts_num_devices,
-        aic_num_cores,
-        custom_io,
-        **compiler_options,
-    ) -> str:
-        return self._compile(
-            compile_dir=compile_dir,
-            compile_only=compile_only,
-            specializations=specializations,
-            convert_to_fp16=convert_to_fp16,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            aic_num_cores=aic_num_cores,
-            custom_io=custom_io,
-            **compiler_options,
-        )
+    def compile(self, specializations, **compiler_options):
+        self._compile(specializations=specializations, **compiler_options)
 
     @property
     def model_hash(self) -> str:
@@ -122,10 +90,6 @@ class QEffTextEncoder(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
-
-    @property
-    def get_model_config(self) -> dict:
-        return self.model.model.vision_model.config.__dict__
 
 
 class QEffClipTextEncoder(QEFFBaseModel):
@@ -179,40 +143,8 @@ class QEffClipTextEncoder(QEFFBaseModel):
             export_kwargs=export_kwargs,
         )
 
-    def get_specializations(
-        self,
-        batch_size: int,
-        seq_len: int,
-    ):
-        specializations = [
-            {"batch_size": batch_size, "seq_len": seq_len},
-        ]
-
-        return specializations
-
-    def compile(
-        self,
-        compile_dir,
-        compile_only,
-        specializations,
-        convert_to_fp16,
-        mxfp6_matmul,
-        mdp_ts_num_devices,
-        aic_num_cores,
-        custom_io,
-        **compiler_options,
-    ) -> str:
-        return self._compile(
-            compile_dir=compile_dir,
-            compile_only=compile_only,
-            specializations=specializations,
-            convert_to_fp16=convert_to_fp16,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            aic_num_cores=aic_num_cores,
-            custom_io=custom_io,
-            **compiler_options,
-        )
+    def compile(self, specializations, **compiler_options):
+        self._compile(specializations=specializations, **compiler_options)
 
     @property
     def model_hash(self) -> str:
@@ -267,29 +199,8 @@ class QEffUNet(QEFFBaseModel):
             export_kwargs=export_kwargs,
         )
 
-    def compile(
-        self,
-        compile_dir,
-        compile_only,
-        specializations,
-        convert_to_fp16,
-        mxfp6_matmul,
-        mdp_ts_num_devices,
-        aic_num_cores,
-        custom_io,
-        **compiler_options,
-    ) -> str:
-        return self._compile(
-            compile_dir=compile_dir,
-            compile_only=compile_only,
-            specializations=specializations,
-            convert_to_fp16=convert_to_fp16,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            aic_num_cores=aic_num_cores,
-            custom_io=custom_io,
-            **compiler_options,
-        )
+    def compile(self, specializations, **compiler_options):
+        self._compile(specializations=specializations, **compiler_options)
 
     @property
     def model_hash(self) -> str:
@@ -306,10 +217,6 @@ class QEffUNet(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
-
-    @property
-    def get_model_config(self) -> dict:
-        return self.model.model.vision_model.config.__dict__
 
 
 class QEffVAE(QEFFBaseModel):
@@ -360,40 +267,8 @@ class QEffVAE(QEFFBaseModel):
             export_kwargs=export_kwargs,
         )
 
-    def get_specializations(self, batch_size: int, latent_height: int, latent_width: int):
-        sepcializations = [
-            {
-                "batch_size": batch_size,
-                "channels": 16,
-                "latent_height": latent_height,
-                "latent_width": latent_width,
-            }
-        ]
-        return sepcializations
-
-    def compile(
-        self,
-        compile_dir,
-        compile_only,
-        specializations,
-        convert_to_fp16,
-        mxfp6_matmul,
-        mdp_ts_num_devices,
-        aic_num_cores,
-        custom_io,
-        **compiler_options,
-    ) -> str:
-        return self._compile(
-            compile_dir=compile_dir,
-            compile_only=compile_only,
-            specializations=specializations,
-            convert_to_fp16=convert_to_fp16,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            aic_num_cores=aic_num_cores,
-            custom_io=custom_io,
-            **compiler_options,
-        )
+    def compile(self, specializations, **compiler_options):
+        self._compile(specializations=specializations, **compiler_options)
 
     @property
     def model_hash(self) -> str:
@@ -411,10 +286,6 @@ class QEffVAE(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
-
-    @property
-    def get_model_config(self) -> dict:
-        return self.model.model.vision_model.config.__dict__
 
 
 class QEffSafetyChecker(QEFFBaseModel):
@@ -449,29 +320,8 @@ class QEffSafetyChecker(QEFFBaseModel):
             export_kwargs=export_kwargs,
         )
 
-    def compile(
-        self,
-        compile_dir,
-        compile_only,
-        specializations,
-        convert_to_fp16,
-        mxfp6_matmul,
-        mdp_ts_num_devices,
-        aic_num_cores,
-        custom_io,
-        **compiler_options,
-    ) -> str:
-        return self._compile(
-            compile_dir=compile_dir,
-            compile_only=compile_only,
-            specializations=specializations,
-            convert_to_fp16=convert_to_fp16,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            aic_num_cores=aic_num_cores,
-            custom_io=custom_io,
-            **compiler_options,
-        )
+    def compile(self, specializations, **compiler_options):
+        self._compile(specializations=specializations, **compiler_options)
 
     @property
     def model_hash(self) -> str:
@@ -488,10 +338,6 @@ class QEffSafetyChecker(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
-
-    @property
-    def get_model_config(self) -> dict:
-        return self.model.model.vision_model.config.__dict__
 
 
 class QEffFluxTransformerModel(QEFFBaseModel):
@@ -575,29 +421,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
 
         return specializations
 
-    def compile(
-        self,
-        compile_dir,
-        compile_only,
-        specializations,
-        convert_to_fp16,
-        mxfp6_matmul,
-        mdp_ts_num_devices,
-        aic_num_cores,
-        custom_io,
-        **compiler_options,
-    ) -> str:
-        return self._compile(
-            compile_dir=compile_dir,
-            compile_only=compile_only,
-            specializations=specializations,
-            convert_to_fp16=convert_to_fp16,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            aic_num_cores=aic_num_cores,
-            custom_io=custom_io,
-            **compiler_options,
-        )
+    def compile(self, specializations, **compiler_options):
+        self._compile(specializations=specializations, **compiler_options)
 
     @property
     def model_hash(self) -> str:

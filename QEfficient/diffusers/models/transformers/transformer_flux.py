@@ -5,10 +5,13 @@
 #
 # ----------------------------------------------------------------------------
 from typing import Any, Dict, Optional, Tuple, Union
+from venv import logger
 
+import numpy as np
 import torch
 import torch.nn as nn
 from diffusers.models.attention_dispatch import dispatch_attention_fn
+from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.transformers.transformer_flux import (
     FluxAttention,
     FluxAttnProcessor,
@@ -19,6 +22,7 @@ from diffusers.models.transformers.transformer_flux import (
 )
 
 from QEfficient.diffusers.models.normalization import (
+    QEffAdaLayerNormContinuous,
     QEffAdaLayerNormZero,
     QEffAdaLayerNormZeroSingle,
 )
@@ -249,28 +253,198 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
 
 
 class QEffFluxTransformer2DModel(FluxTransformer2DModel):
-    def __qeff_init__(self):
-        self.transformer_blocks = nn.ModuleList()
-        self._block_classes = set()
+    def __init__(
+        self,
+        patch_size: int = 1,
+        in_channels: int = 64,
+        out_channels: Optional[int] = None,
+        num_layers: int = 19,
+        num_single_layers: int = 38,
+        attention_head_dim: int = 128,
+        num_attention_heads: int = 24,
+        joint_attention_dim: int = 4096,
+        pooled_projection_dim: int = 768,
+        guidance_embeds: bool = False,
+        axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
+    ):
+        super().__init__(
+            patch_size=patch_size,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            num_layers=num_layers,
+            num_single_layers=num_single_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            joint_attention_dim=joint_attention_dim,
+            pooled_projection_dim=pooled_projection_dim,
+            guidance_embeds=guidance_embeds,
+            axes_dims_rope=axes_dims_rope,
+        )
 
-        for _ in range(self.config.num_layers):
-            BlockClass = QEffFluxTransformerBlock
-            block = BlockClass(
-                dim=self.inner_dim,
-                num_attention_heads=self.config.num_attention_heads,
-                attention_head_dim=self.config.attention_head_dim,
+        self.transformer_blocks = nn.ModuleList(
+            [
+                QEffFluxTransformerBlock(
+                    dim=self.inner_dim,
+                    num_attention_heads=num_attention_heads,
+                    attention_head_dim=attention_head_dim,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+        self.single_transformer_blocks = nn.ModuleList(
+            [
+                QEffFluxSingleTransformerBlock(
+                    dim=self.inner_dim,
+                    num_attention_heads=num_attention_heads,
+                    attention_head_dim=attention_head_dim,
+                )
+                for _ in range(num_single_layers)
+            ]
+        )
+
+        self.norm_out = QEffAdaLayerNormContinuous(self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor = None,
+        pooled_projections: torch.Tensor = None,
+        timestep: torch.LongTensor = None,
+        img_ids: torch.Tensor = None,
+        txt_ids: torch.Tensor = None,
+        adaln_emb: torch.Tensor = None,
+        adaln_single_emb: torch.Tensor = None,
+        adaln_out: torch.Tensor = None,
+        guidance: torch.Tensor = None,
+        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        controlnet_block_samples=None,
+        controlnet_single_block_samples=None,
+        return_dict: bool = True,
+        controlnet_blocks_repeat: bool = False,
+    ) -> Union[torch.Tensor, Transformer2DModelOutput]:
+        """
+        The [`FluxTransformer2DModel`] forward method.
+
+        Args:
+            hidden_states (`torch.Tensor` of shape `(batch_size, image_sequence_length, in_channels)`):
+                Input `hidden_states`.
+            encoder_hidden_states (`torch.Tensor` of shape `(batch_size, text_sequence_length, joint_attention_dim)`):
+                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
+            pooled_projections (`torch.Tensor` of shape `(batch_size, projection_dim)`): Embeddings projected
+                from the embeddings of input conditions.
+            timestep ( `torch.LongTensor`):
+                Used to indicate denoising step.
+            block_controlnet_hidden_states: (`list` of `torch.Tensor`):
+                A list of tensors that if specified are added to the residuals of transformer blocks.
+            joint_attention_kwargs (`dict`, *optional*):
+                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
+                `self.processor` in
+                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
+                tuple.
+        Returns:
+            If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
+            `tuple` where the first element is the sample tensor.
+        """
+
+        hidden_states = self.x_embedder(hidden_states)
+
+        timestep = timestep.to(hidden_states.dtype) * 1000
+        if guidance is not None:
+            guidance = guidance.to(hidden_states.dtype) * 1000
+
+        temb = (
+            self.time_text_embed(timestep, pooled_projections)
+            if guidance is None
+            else self.time_text_embed(timestep, guidance, pooled_projections)
+        )
+        encoder_hidden_states = self.context_embedder(encoder_hidden_states)
+
+        if txt_ids.ndim == 3:
+            logger.warning(
+                "Passing `txt_ids` 3d torch.Tensor is deprecated."
+                "Please remove the batch dimension and pass it as a 2d torch Tensor"
             )
-            self.transformer_blocks.append(block)
-            self._block_classes.add(BlockClass)
-
-        self.single_transformer_blocks = nn.ModuleList()
-
-        for _ in range(self.config.num_single_layers):
-            SingleBlockClass = QEffFluxSingleTransformerBlock
-            single_block = SingleBlockClass(
-                dim=self.inner_dim,
-                num_attention_heads=self.config.num_attention_heads,
-                attention_head_dim=self.config.attention_head_dim,
+            txt_ids = txt_ids[0]
+        if img_ids.ndim == 3:
+            logger.warning(
+                "Passing `img_ids` 3d torch.Tensor is deprecated."
+                "Please remove the batch dimension and pass it as a 2d torch Tensor"
             )
-            self.single_transformer_blocks.append(single_block)
-            self._block_classes.add(SingleBlockClass)
+            img_ids = img_ids[0]
+
+        ids = torch.cat((txt_ids, img_ids), dim=0)
+        image_rotary_emb = self.pos_embed(ids)
+
+        if joint_attention_kwargs is not None and "ip_adapter_image_embeds" in joint_attention_kwargs:
+            ip_adapter_image_embeds = joint_attention_kwargs.pop("ip_adapter_image_embeds")
+            ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
+            joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
+
+        for index_block, block in enumerate(self.transformer_blocks):
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    image_rotary_emb,
+                    joint_attention_kwargs,
+                )
+
+            else:
+                encoder_hidden_states, hidden_states = block(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    temb=adaln_emb[index_block],
+                    image_rotary_emb=image_rotary_emb,
+                    joint_attention_kwargs=joint_attention_kwargs,
+                )
+
+            # controlnet residual
+            if controlnet_block_samples is not None:
+                interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
+                interval_control = int(np.ceil(interval_control))
+                # For Xlabs ControlNet.
+                if controlnet_blocks_repeat:
+                    hidden_states = (
+                        hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
+                    )
+                else:
+                    hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
+
+        for index_block, block in enumerate(self.single_transformer_blocks):
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    image_rotary_emb,
+                    joint_attention_kwargs,
+                )
+
+            else:
+                encoder_hidden_states, hidden_states = block(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    temb=adaln_single_emb[index_block],
+                    image_rotary_emb=image_rotary_emb,
+                    joint_attention_kwargs=joint_attention_kwargs,
+                )
+
+            # controlnet residual
+            if controlnet_single_block_samples is not None:
+                interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
+                interval_control = int(np.ceil(interval_control))
+                hidden_states = hidden_states + controlnet_single_block_samples[index_block // interval_control]
+
+        hidden_states = self.norm_out(hidden_states, adaln_out)
+        output = self.proj_out(hidden_states)
+
+        if not return_dict:
+            return (output,)
+
+        return Transformer2DModelOutput(sample=output)

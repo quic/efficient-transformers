@@ -243,7 +243,7 @@ class QEFFFluxPipeline(FluxPipeline):
                 specializations[0]["latent_height"] = self.latent_height
                 specializations[0]["latent_width"] = self.latent_width
             # Compile the module
-            module_obj._compile(specializations=specializations, **compile_kwargs)
+            module_obj.compile(specializations=specializations, **compile_kwargs)
 
     def _get_t5_prompt_embeds(
         self,

@@ -58,6 +58,7 @@ class AttentionTransform(ModuleMappingTransform):
         JointTransformerBlock: QEffJointTransformerBlock,
         FluxSingleTransformerBlock: QEffFluxSingleTransformerBlock,
         FluxTransformerBlock: QEffFluxTransformerBlock,
+        FluxTransformer2DModel: QEffFluxTransformer2DModel,
         FluxAttention: QEffFluxAttention,
         FluxAttnProcessor: QEffFluxAttnProcessor,
     }
