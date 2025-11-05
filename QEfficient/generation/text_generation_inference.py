@@ -437,15 +437,19 @@ class QEffTextGenerationBase:
         include_sampler: bool = False,
         return_pdfs: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
+        activate: bool = True,
     ) -> None:
         self._ctx_len = ctx_len
         self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
         self.return_pdfs = return_pdfs
         self.sampling_params = sampling_params
+        self._qpc_path = qpc_path  # Store qpc_path for later use
 
         # Load QPC
-        self._session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
+        self._session = QAICInferenceSession(
+            qpc_path, device_id, activate=activate, enable_debug_logs=enable_debug_logs
+        )
 
         # Validate sampler inputs for On-Device Sampling
         self.include_sampler = validate_sampler_inputs(
@@ -778,6 +782,7 @@ class QEffTextGenerationBase:
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
+
         if self.is_tlm:
             inputs["num_logits_to_keep"] = np.zeros((1, 1))
         if self.include_sampler:
@@ -808,6 +813,7 @@ class QEffTextGenerationBase:
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
             outputs = self._session.run(chunk_inputs)
+
             if self._write_io_dir is not None:
                 write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
         return (
