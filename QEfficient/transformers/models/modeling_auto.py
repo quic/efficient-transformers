@@ -14,6 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from transformers import (
+    AutoImageProcessor,
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForCTC,
@@ -35,6 +36,7 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     get_compilation_dims,
 )
+from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
@@ -857,6 +859,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def __init__(
         self,
         model: nn.Module,
+        continuous_batching: bool = False,
         **kwargs,
     ):
         """
@@ -880,6 +883,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.config = model.config
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
+        self.continuous_batching = continuous_batching
         self.input_shapes, self.output_names = None, None
 
     @property
@@ -979,8 +983,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         List[str]
             A list containing the paths to the generated ONNX graph files for both components.
         """
-        inputs = self.model.get_dummy_inputs(kv_offload=True)
-        dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True)
+        # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
+        try:
+            inputs = self.model.get_dummy_inputs(kv_offload=True, continuous_batching=self.continuous_batching)
+            dynamic_axes = self.model.get_onnx_dynamic_axes(
+                kv_offload=True, continuous_batching=self.continuous_batching
+            )
+        except TypeError:
+            inputs = self.model.get_dummy_inputs(kv_offload=True)
+            dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True)
         output_names = self.model.get_output_names(kv_offload=True)
 
         self.vision_model.export(
@@ -1012,7 +1023,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
-        num_speculative_tokens: Optional[int] = None,
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         **compiler_options,
@@ -1069,14 +1079,20 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
             If both `skip_lang` and `skip_vision` are True.
         """
-        if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
-            raise ValueError(
-                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
-                f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
-            )
-
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
+
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+
+        if kv_cache_batch_size and not full_batch_size:
+            raise ValueError(
+                "KV caching requires continuous batching. Please set `full_batch_size` and "
+                "enable `continuous_batching=True` in `from_pretrained`."
+            )
+
+        # Infer kv_cache_batch_size if not provided
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
         output_names = self.model.get_output_names(kv_offload=True)
 
@@ -1086,6 +1102,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ctx_len=ctx_len,
             img_size=img_size,
             kv_offload=True,
+            continuous_batching=self.continuous_batching,
+            kv_cache_batch_size=kv_cache_batch_size,
+            full_batch_size=full_batch_size,
             **compiler_options,
         )
 
@@ -1111,6 +1130,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.lang_model.onnx_path is None and lang_onnx_path is None
         ):
             self.export()
+
+        # TODO this hould be removed once the continous batching is supported for all the models.
+        compiler_options.pop("continuous_batching", None)
+        compiler_options.pop("kv_cache_batch_size", None)
+        compiler_options.pop("full_batch_size", None)
 
         if not skip_vision:
             self.vision_model._compile(
@@ -1157,7 +1181,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def generate(
         self,
-        inputs: torch.Tensor,
+        inputs: Optional[torch.Tensor] = None,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer] = None,
+        processor: Optional[AutoImageProcessor] = None,
+        images: List[str] = None,
+        prompts: List[str] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
@@ -1173,6 +1201,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
             Inputs to run the execution, typically includes `pixel_values`, `input_ids`,
             `attention_mask`, etc.
+        tokenizer : PreTrainedTokenizer or PreTrainedTokenizerFast, optional
+            Tokenizer for the model. Used when images and prompts are provided.
+        processor : AutoImageProcessor, optional
+            Processor for the model. Used when images and prompts are provided.
+        images : List[str], optional
+            List of image paths or PIL images to process.
+        prompts : List[str], optional
+            List of text prompts corresponding to the images.
         streamer : TextStreamer, optional
             A streamer object to display generated tokens in real-time. Default is None.
         device_ids : List[int], optional
@@ -1197,6 +1233,30 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
+        # Use VisionLanguageGeneration for image-prompt pairs
+        if (processor and images) or (tokenizer and prompts):
+            # Create VisionLanguageGeneration instance
+            batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
+            vlm_gen = VisionLanguageGeneration(
+                qeff_model=self,
+                lang_qpc_path=self.lang_model.qpc_path,
+                vision_qpc_path=self.vision_model.qpc_path,
+                tokenizer=tokenizer,
+                processor=processor,
+                device_id=device_ids,  # if device_ids is not None else [0],
+                ctx_len=ctx_len_comp,
+                full_batch_size=fbs,
+            )
+
+            # Call generate method
+            return vlm_gen.generate(
+                images=images,
+                prompts=prompts,
+                generation_len=generation_len,
+                stream=streamer is not None,
+            )
+
+        # Fallback to kv_offload_generate for direct inputs (backward compatibility)
         return self.kv_offload_generate(
             inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
         )
@@ -1333,9 +1393,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         lang_session.set_buffers(vision_outputs)
 
-        # Prepare inputs for prefill
-        chunk_inputs = lang_inputs.copy()
-        prefill_start = perf_counter()
+        lang_start = perf_counter()
 
         # Run prefill
         chunk_inputs = lang_inputs.copy()
@@ -1347,7 +1405,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
-        prefill_time = perf_counter() - prefill_start + vision_end - vision_start
+        prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
             [
@@ -1356,6 +1414,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 if x.startswith("past_") or x.endswith("_RetainedState")
             ]
         )
+        if not_mllama:
+            lang_session.skip_buffers(vision_outputs.keys())
 
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
@@ -1931,7 +1991,7 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
 
-    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, **kwargs):
+    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, continuous_batching: bool = False, **kwargs):
         """
         Instantiate the appropriate internal class for single or dual QPC mode.
 
@@ -1952,13 +2012,19 @@ class QEFFAutoModelForImageTextToText:
             The wrapped model instance, configured for either dual or single QPC.
         """
         if kv_offload:
-            return _QEffAutoModelForImageTextToTextDualQPC(model, **kwargs)
+            return _QEffAutoModelForImageTextToTextDualQPC(model, continuous_batching, **kwargs)
         else:
             return _QEFFAutoModelForImageTextToTextSingleQPC(model, **kwargs)
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, kv_offload: Optional[bool] = None, **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        kv_offload: Optional[bool] = None,
+        continuous_batching: bool = False,
+        **kwargs,
+    ):
         """
         Load a QEfficient image-text-to-text model from a pretrained HuggingFace model or local path.
 
@@ -1987,18 +2053,24 @@ class QEFFAutoModelForImageTextToText:
             If `continuous_batching` is provided as True.
         """
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
+        if continuous_batching and not kv_offload:
+            NotImplementedError("Continuous batching is not supported for kv_offload = False")
+
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
 
-        if kwargs.pop("continuous_batching", None):
-            NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
+        return cls(
+            model,
+            kv_offload=kv_offload,
+            continuous_batching=continuous_batching,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            **kwargs,
+        )
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {
@@ -2733,8 +2805,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 raise TypeError("Please run compile API first!")
             generation_len = kwargs.pop("generation_len", None)
             return QEfficient.cloud_ai_100_exec_kv(
-                tokenizer,
-                self.qpc_path,
+                tokenizer=tokenizer,
+                qpc_path=self.qpc_path,
                 prompt=prompts,
                 device_id=device_id,
                 generation_len=generation_len,
