@@ -53,6 +53,7 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
+    Mxfp4GptOssExpertDequantizeTransform,
 )
 from QEfficient.utils import (
     constants,
@@ -1413,6 +1414,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 if x.startswith("past_") or x.endswith("_RetainedState")
             ]
         )
+        if not_mllama:
+            lang_session.skip_buffers(vision_outputs.keys())
 
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
@@ -2102,6 +2105,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         FP8DeQuantLinearToLinearTransform,
+        Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,
@@ -2358,10 +2362,21 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         else:
+            # HACK: create common function for this including above if condition code
+            pkv_dynamic_axes = (
+                self.model.get_pkv_dynamic_axes() if hasattr(self.model, "get_pkv_dynamic_axes") else pkv_dynamic_axes
+            )
+            pkv_dynamic_axes = (
+                [pkv_dynamic_axes] * self.model.config.num_hidden_layers
+                if isinstance(pkv_dynamic_axes, dict)
+                else pkv_dynamic_axes
+            )
+
             for i in range(self.num_layers):
+                pkv_dynamic_axes[i][0] = "full_batch_size" if self.continuous_batching else "batch_size"
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
@@ -2495,12 +2510,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Dict[str, Union[int, str]]
             A dictionary defining the prefill specialization.
         """
-        spec = {
-            "batch_size": 1 if self.continuous_batching else batch_size,
-            "seq_len": prefill_seq_len,
-            "ctx_len": ctx_len,
-            "num_logits_to_keep": 1 if self.is_tlm else None,
-        }
+        if hasattr(self.model, "get_specializations"):
+            spec = self.model.get_specializations(
+                batch_size=1 if self.continuous_batching else batch_size,
+                prefill_seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
+            )[0]
+        else:
+            spec = {
+                "batch_size": 1 if self.continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+            }
+        spec["num_logits_to_keep"] = 1 if self.is_tlm else None
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -2544,12 +2566,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if prefill_seq_len == 1 and not self.continuous_batching:
             return None  # Avoid duplication with prefill
-        spec = {
-            "batch_size": full_batch_size if self.continuous_batching else batch_size,
-            "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
-            "ctx_len": ctx_len,
-            "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
-        }
+
+        if hasattr(self.model, "get_specializations"):
+            spec = self.model.get_specializations(
+                batch_size=full_batch_size if self.continuous_batching else batch_size,
+                prefill_seq_len=(num_speculative_tokens + 1) if self.is_tlm else 1,
+                ctx_len=ctx_len,
+            )[1]
+        else:
+            spec = {
+                "batch_size": full_batch_size if self.continuous_batching else batch_size,
+                "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
+                "ctx_len": ctx_len,
+            }
+        spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
 
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size

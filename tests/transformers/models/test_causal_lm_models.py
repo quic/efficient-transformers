@@ -25,6 +25,7 @@ from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig
 
 test_models_causal = [
+    "openai/gpt-oss-20b",
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "gpt2",
     "Salesforce/codegen-350M-mono",
@@ -76,11 +77,11 @@ def get_custom_n_layers(model_name):
 
     :return n_layer
     """
-    if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8"}:
+    if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8", "openai/gpt-oss-20b"}:
         return 2
     elif model_name in ModelConfig.SWIFTKV_MODELS:
         return None
-    return 16
+    return 1
 
 
 def load_causal_lm_model(model_name, n_layer=1, config=None):
@@ -157,6 +158,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     """
     replace_transformers_quantizers()
     if config is None:
+        n_layer = get_custom_n_layers(model_name)
         model_hf, _ = load_causal_lm_model(model_name, n_layer=n_layer)
     else:
         model_hf, _ = load_causal_lm_model(model_name, config=config)
