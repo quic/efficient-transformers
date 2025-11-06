@@ -487,7 +487,8 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         hidden_shape = (*input_shape, -1, self.head_dim)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+
+        cos, sin = self.rotary_emb(value_states, seq_len=getattr(self.config, "max_position_embeddings", 32 * 1024))
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -565,7 +566,7 @@ class QEffGptOssAttention(GptOssAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        cos, sin = self.rotary_emb(value_states, seq_len=getattr(self.config, "max_position_embeddings", 32 * 1024))
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -804,7 +805,6 @@ class QEffGptOssModel(GptOssModel):
         )
 
         hidden_states = inputs_embeds
-        # position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
