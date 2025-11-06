@@ -49,6 +49,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheTransform,
     PoolingTransform,
     PrefillOnlyTransform,
+    RevertPrefillOnlyTransform,
     SamplerTransform,
     SpDTransform,
     VlmKVOffloadTransform,
@@ -2273,6 +2274,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
+    def prefill(self, enable: Optional[bool] = True):
+        if enable:
+            self.model, tf = PrefillOnlyTransform.apply(self.model)
+            self.prefill_enabled = True
+        else:
+            self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+            self.prefill_enabled = False
+
     def __init__(
         self,
         model: nn.Module,
@@ -2496,8 +2505,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             os.environ["NUM_BLOCKS"] = str(prefill_seq_len // block_size)
             if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
-
+                self.prefill(True)
+        else:
+            self.prefill(False)
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN if not prefill_only else prefill_seq_len // block_size
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS

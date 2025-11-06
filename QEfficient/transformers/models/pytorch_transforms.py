@@ -653,6 +653,10 @@ class PrefillOnlyTransform(ModuleMappingTransform):
     }
 
 
+class RevertPrefillOnlyTransform(ModuleMappingTransform):
+    _module_mapping = {v: k for k, v in PrefillOnlyTransform._module_mapping.items()}
+
+
 class SpDTransform:
     """
     Apply generic QEffForCausalLM forward pass to extract `num_speculative_tokens+1` hidden states before computing logits during decode phase and extract last predicted token during prefill.
