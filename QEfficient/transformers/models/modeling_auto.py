@@ -2371,7 +2371,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
-                    output_names.append(f"past_{kv}.{i}_RetainedState")
+                    output_names.append(f"past_{kv}.{i}_InternalRetainedState")
 
         else:
             # HACK: create common function for this including above if condition code
@@ -2389,7 +2389,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
-                    output_names.append(f"past_{kv}.{i}_RetainedState")
+                    output_names.append(f"past_{kv}.{i}_InternalRetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
