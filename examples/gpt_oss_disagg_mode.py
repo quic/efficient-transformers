@@ -9,18 +9,13 @@ import time
 
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, HybridCache
+from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
-# prompt = """
-# Billions of years ago, in the vast emptiness of the early universe, tiny fluctuations in the density of matter began to grow under the influence of gravity. Clouds of gas—mostly hydrogen and helium—started to collapse, forming the first stars. These stars grouped together, bound by gravity, creating the earliest galaxies.
-# Over time, these galaxies merged, collided, and evolved, shaping their spiral arms, elliptical forms, or irregular structures. Within their swirling depths, stars were born and died, enriching the galactic gas with heavier elements. These elements became the building blocks for planets, moons, and eventually life.
-# Life is a very interesting phenomenon that occured in this universe
-# """
-# prompt = "Once upon a time"
+
 prompt = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
 
@@ -44,15 +39,6 @@ padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 max_gen_len = CTX_LEN - position_ids.max()
 generation_len = max_gen_len
 
-# model = AutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
-# config = model.config
-# inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-# inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-# inputs.pop("token_type_ids", None)
-# inputs = {k: torch.from_numpy(v).to(model.device) for k, v in inputs.items()}
-# cache = HybridCache(config=config, batch_size=1, max_cache_len=8192)
-# out = model(**tokenizer(prompt, return_tensors="pt"), past_key_values=cache)
-
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 config = qeff_model.model.config
@@ -70,7 +56,6 @@ for i in range(config.num_hidden_layers):
     past_key_values.append(pkv)
 inputs["past_key_values"] = past_key_values
 
-# qeff_out = qeff_model.model(**inputs)
 
 decode_qpc_path = qeff_model.compile(
     prefill_seq_len=1,
@@ -141,9 +126,6 @@ for i in range(generation_len - 2):
         "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
         "position_ids": pos_id,
     }
-    # for i in range(config.num_hidden_layers):
-    #     loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
-    #     loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
     all_outputs.append(loop_decode_inputs["input_ids"][0][0])
     decode_out = decode_session.run(loop_decode_inputs)
     pos_id += 1
