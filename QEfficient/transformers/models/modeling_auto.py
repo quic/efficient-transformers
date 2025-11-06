@@ -2132,6 +2132,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
+        max_seq_len_cached: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -2177,6 +2178,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
+        setattr(model.config, "max_seq_len_cached", max_seq_len_cached)
         super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
@@ -2185,6 +2187,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.is_tlm = transformed
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
@@ -2221,6 +2224,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         pretrained_model_name_or_path,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
+        max_seq_len_cached: Optional[int] = None,
         *args,
         **kwargs,
     ):
@@ -2294,6 +2298,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             continuous_batching=continuous_batching,
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
+            max_seq_len_cached=max_seq_len_cached,
             **kwargs,
         )
 
