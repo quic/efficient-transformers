@@ -154,6 +154,7 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
     hash_params["peft_config"] = None
     hash_params["applied_transform_names"] = qeff_model._transform_names()
     hash_params["qeff_auto_class"] = qeff_model.__class__.__name__
+    hash_params["max_seq_len_cached"] = None
     hash_params["qaic_config"] = None
 
     # Create parameters separately for hash creation
@@ -204,6 +205,7 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
     export_params["output_names"] = output_names
     export_params["dynamic_axes"] = dynamic_axes
     hash_params["export_params"] = export_params
+    hash_params["prefill_only"] = False
     manual_hash = hash_dict_params(hash_params)
 
     assert manual_hash == qeff_model.export_hash

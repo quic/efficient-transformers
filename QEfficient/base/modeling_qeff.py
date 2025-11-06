@@ -376,11 +376,12 @@ class QEFFBaseModel(ABC):
         if prefill_only and self.prefill_onnx_path is None:
             kwargs.update({"prefill_only": prefill_only, "prefill_seq_len": specializations[0].get("seq_len")})
             self.export(**kwargs)
-            onnx_path = Path(onnx_path or self.prefill_onnx_path)
-
-        if onnx_path is None and self.onnx_path is None:
+            onnx_path = Path(self.prefill_onnx_path)
+        elif onnx_path is None:
             self.export(**kwargs)
-            onnx_path = Path(onnx_path or self.onnx_path)
+            onnx_path = Path(self.onnx_path)
+        else:
+            onnx_path = Path(onnx_path)
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
