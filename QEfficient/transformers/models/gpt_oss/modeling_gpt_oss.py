@@ -422,7 +422,7 @@ def eager_attention_forward_blocked(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     BS, NH, CL, DH = query.shape
-    target_blocks = int(os.environ.get("NUM_BLOCKS"))
+    target_blocks = int(os.environ.get("NUM_BLOCKS", 1))
     block_positions = []
     for j in range(target_blocks):
         block_positions.append(j * (CL // target_blocks))
