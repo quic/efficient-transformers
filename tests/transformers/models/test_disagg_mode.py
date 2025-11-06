@@ -16,8 +16,6 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
-replace_transformers_quantizers()
-
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
 prompt2 = """
@@ -45,6 +43,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
+    replace_transformers_quantizers()
     model = AutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
     config = model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
