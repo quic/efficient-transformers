@@ -32,4 +32,16 @@ def config_manager(cls, config_source: Optional[str] = None):
     if not os.path.exists(config_source):
         raise FileNotFoundError(f"Configuration file not found: {config_source}")
 
-    cls._compile_config = load_json(config_source)
+    cls.custom_config = load_json(config_source)
+
+
+def set_module_device_ids(cls):
+    """
+    Set device IDs for each module based on the custom configuration.
+
+    Iterates through all modules in the pipeline and assigns device IDs
+    from the configuration file to each module's device_ids attribute.
+    """
+    config_modules = cls.custom_config["modules"]
+    for module_name, module_obj in cls.has_module:
+        module_obj.device_ids = config_modules[module_name]["execute"]["device_ids"]
