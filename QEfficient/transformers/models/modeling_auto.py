@@ -2497,30 +2497,38 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         str
             Path to the generated ONNX graph file.
         """
-        if prefill_only:
-            block_size = os.environ.get("BLOCK_SIZE", None)
-            if block_size is None:
-                block_size = 128
-                logger.warning(
-                    "Setting BLOCK_SIZE=128 for prefill_only model, please set ENV variable `BLOCK_SIZE` to override"
-                )
-            if prefill_seq_len is None or prefill_seq_len % block_size != 0:
-                raise ValueError(
-                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
-                    f"Received: prefill_seq_len={prefill_seq_len}"
-                )
-
-            os.environ["NUM_BLOCKS"] = str(prefill_seq_len // block_size)
-            if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH:
-                self.prefill(True)
-        else:
-            self.prefill(False)
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN if not prefill_only else prefill_seq_len // block_size
+        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
+        if prefill_only:
+            assert not self.continuous_batching, "prefill_only=True is not supported with continuous_batching=True"
+
+            if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH:
+                block_size = os.environ.get("BLOCK_SIZE", None)
+                if block_size is None:
+                    block_size = 128
+                    logger.warning(
+                        "Setting BLOCK_SIZE=128 for prefill_only model, please set ENV variable `BLOCK_SIZE` to override"
+                    )
+                if prefill_seq_len is None or prefill_seq_len % block_size != 0:
+                    raise ValueError(
+                        f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
+                        f"Received: prefill_seq_len={prefill_seq_len}"
+                    )
+                os.environ["NUM_BLOCKS"] = str(prefill_seq_len // block_size)
+
+                self.prefill(True)
+                self.hash_params["prefill_only"] = True
+                self.hash_params["num_blocks"] = os.environ["NUM_BLOCKS"]
+                seq_len = prefill_seq_len // block_size if (prefill_seq_len // block_size) > seq_len else seq_len
+        else:
+            self.prefill(False)
+            self.hash_params.pop("prefill_only", None)
+            self.hash_params.pop("num_blocks", None)
+
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),

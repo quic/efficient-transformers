@@ -69,6 +69,5 @@ def create_export_hash(**kwargs):
         export_hash_params.update(onnx_transform_kwargs)
     if export_hash_params.get("peft_config") is not None and not isinstance(export_hash_params["peft_config"], dict):
         export_hash_params["peft_config"] = export_hash_params["peft_config"].to_dict()
-    export_hash_params["prefill_only"] = kwargs.get("prefill_only")
 
     return hash_dict_params(export_hash_params), export_hash_params
