@@ -856,6 +856,7 @@ class QEffLlama4DecoderWrapper(nn.Module):
         position_ids,
         image_idx,
         past_key_values,
+        batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
         inputs_embeds = self.model.language_model.get_input_embeddings()(input_ids)
@@ -871,6 +872,7 @@ class QEffLlama4DecoderWrapper(nn.Module):
             position_ids=position_ids,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             use_cache=True,
         )
         next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
@@ -935,6 +937,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         **compiler_options,
     ):
         max_num_tiles = compiler_options.pop("max_num_tiles", None)
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+
         if max_num_tiles is None:
             logger.warning(
                 "User should pass `max_num_tiles` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 17"
@@ -1013,29 +1018,87 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                     }
                 )
 
-        else:
-            lang = [
-                {
-                    "batch_size": batch_size,
+        if comp_ctx_lengths_prefill is not None:
+            lang = []
+
+            for i in range(0, len(comp_ctx_lengths_prefill)):
+                lang_prefill = {
+                    "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "max_num_tiles": max_num_tiles,
                     "img_size": img_size,
                     "vision_size": vision_size,
                     "chunk_length": prefill_seq_len,
                     "chunk_ctx_len": chunk_ctx_len,
-                },
-                {
-                    "batch_size": batch_size,
+                }
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
+
+                lang.append(lang_prefill)
+
+            for i in range(0, len(comp_ctx_lengths_decode)):
+                lang_decode = {
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "max_num_tiles": max_num_tiles,
                     "img_size": img_size,
                     "vision_size": vision_size,
                     "chunk_length": prefill_seq_len,
                     "chunk_ctx_len": chunk_ctx_len,
-                },
-            ]
+                }
+
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
+
+                lang.append(lang_decode)
+
+        else:
+            lang_prefill = {
+                "batch_size": 1 if continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "max_num_tiles": max_num_tiles,
+                "img_size": img_size,
+                "vision_size": vision_size,
+                "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
+            }
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
+
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": 1,
+                "ctx_len": ctx_len,
+                "max_num_tiles": max_num_tiles,
+                "img_size": img_size,
+                "vision_size": vision_size,
+                "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
+            }
+
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
+
+            lang = []
+            lang.append(lang_prefill)
+            lang.append(lang_decode)
 
         specializations = {}
 
@@ -1046,7 +1109,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
@@ -1121,7 +1186,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             past_key_values.append(pkv)
         return past_key_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_dummy_inputs(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 336)
         else:
@@ -1177,6 +1244,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(past_key_values[0][0].shape, dtype=torch.float32))
+
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         if comp_ctx_lengths is not None:
             lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)

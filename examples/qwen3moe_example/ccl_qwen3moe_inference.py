@@ -24,11 +24,13 @@ comp_ctx_lengths_decode = [256, 512, ctx_len]
 
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
-    comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
-    comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-    ctx_len=ctx_len,
     continuous_batching=False,
-    prefill_seq_len=prefill_seq_len,
+    qaic_config={
+        "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+        "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+        "ctx_len": ctx_len,
+        "prefill_seq_len": prefill_seq_len,
+    },
 )
 
 model.compile(

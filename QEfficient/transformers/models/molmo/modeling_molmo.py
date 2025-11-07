@@ -281,7 +281,6 @@ class QEffMolmoBlock(nn.Module):
         if layer_past is not None:
             if comp_ctx_lengths is not None:
                 attention_bias = attention_bias[:, :, :, : comp_ctx_lengths.shape[-1]]
-                print(f"attention_bias: {attention_bias.shape}")
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,

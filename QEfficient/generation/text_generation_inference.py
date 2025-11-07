@@ -809,14 +809,12 @@ class QEffTextGenerationBase:
             self.list_of_comp_ctx_lengths_prefill = [np.zeros(length) for length in self.comp_ctx_lengths_prefill]
             prefill_ccl_id = 0
             inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
-            print(f"CCL Prefill: {self.comp_ctx_lengths_prefill[prefill_ccl_id]}")
 
         for i in range(num_chunks):
             if self.comp_ctx_lengths_prefill is not None:
                 if (i + 1) * self._prefill_seq_len > self.comp_ctx_lengths_prefill[prefill_ccl_id]:
                     prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
                     inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
-                    print(f"CCL Prefill: {self.comp_ctx_lengths_prefill[prefill_ccl_id]}")
 
             chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][

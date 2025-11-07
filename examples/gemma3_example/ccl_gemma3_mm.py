@@ -31,9 +31,11 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     config=config,
     attn_implementation="eager",
     kv_offload=True,
-    comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
-    comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-    ctx_len=ctx_len,
+    qaic_config={
+        "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+        "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+        "ctx_len": ctx_len,
+    },
 )
 
 ### use skip_vision=Ture, if want to run only text, or false ###

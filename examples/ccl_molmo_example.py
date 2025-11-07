@@ -19,18 +19,20 @@ config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
 # config.num_hidden_layers = 2
 
 # load the model
-ctx_len = 32768
+ctx_len = 8192
 comp_ctx_lengths_prefill = [3072]
-comp_ctx_lengths_decode = [4096, 8192, ctx_len]
+comp_ctx_lengths_decode = [4096, 8192]
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_id,
     kv_offload=True,
-    comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
-    comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-    ctx_len=ctx_len,
     trust_remote_code=True,
     config=config,
+    qaic_config={
+        "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+        "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+        "ctx_len": ctx_len,
+    },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -91,7 +93,7 @@ else:
     inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
 
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[8, 9, 10, 11], generation_len=100)
+    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3], generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)

@@ -189,10 +189,12 @@ def run_intern_on_aic(
     model = QEFFAutoModelForCausalLM.from_pretrained(
         model_name,
         kv_offload=kv_offload,
-        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
-        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-        ctx_len=ctx_len,
         trust_remote_code=True,
+        qaic_config={
+            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+            "ctx_len": ctx_len,
+        },
     )
 
     ## STEP 2 -- EXPORT & COMPILE THE MODEL

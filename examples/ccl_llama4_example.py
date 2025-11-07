@@ -7,7 +7,7 @@
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, TextStreamer
+from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -17,23 +17,25 @@ config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
-model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", config=config)
-model.eval()
-tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-processor = AutoProcessor.from_pretrained(model_id)
-
-### For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
 ctx_len = 8192
+# Set the list of ccl during prefilling process
 comp_ctx_lengths_prefill = [3072]
+# Set the list of ccl during decoding process
 comp_ctx_lengths_decode = [4096, ctx_len]
 
-qeff_model = QEFFAutoModelForImageTextToText(
-    model,
+qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+    model_id,
+    attn_implementation="eager",
     kv_offload=True,
-    comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
-    comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-    ctx_len=ctx_len,
+    qaic_config={
+        "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+        "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+        "ctx_len": ctx_len,
+    },
+    config=config,
 )
+tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
+processor = AutoProcessor.from_pretrained(model_id)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
 skip_vision = False
@@ -75,7 +77,7 @@ if skip_vision:
     )
 
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, generation_len=700)
+    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3], generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
@@ -119,7 +121,7 @@ else:
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, generation_len=1024)
+    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3], generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)

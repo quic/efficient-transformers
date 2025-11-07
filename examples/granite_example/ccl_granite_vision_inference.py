@@ -43,9 +43,11 @@ def run_model(
         model_name,
         token=token,
         kv_offload=kv_offload,
-        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
-        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-        ctx_len=ctx_len,
+        qaic_config={
+            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+            "ctx_len": ctx_len,
+        },
     )
 
     ## STEP - 2 Export & Compile the Model
