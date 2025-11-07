@@ -1,5 +1,5 @@
 {
-  "description": "Example compilation configuration for Flux pipeline",
+  "description": "Default configuration for Flux pipeline",
   "model_type": "flux",
 
   "modules": 
@@ -52,9 +52,7 @@
                                         {
                                           "batch_size": 1,
                                           "seq_len": 256,
-                                          "steps": 1,
-                                          "num_layers": 1,
-                                          "num_single_layers": 1
+                                          "steps": 1
                                         },
                       "compilation": 
                                         {

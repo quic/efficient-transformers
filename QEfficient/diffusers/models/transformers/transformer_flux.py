@@ -22,7 +22,6 @@ from diffusers.models.transformers.transformer_flux import (
 )
 
 from QEfficient.diffusers.models.normalization import (
-    QEffAdaLayerNormContinuous,
     QEffAdaLayerNormZero,
     QEffAdaLayerNormZeroSingle,
 )
@@ -253,58 +252,6 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
 
 
 class QEffFluxTransformer2DModel(FluxTransformer2DModel):
-    def __init__(
-        self,
-        patch_size: int = 1,
-        in_channels: int = 64,
-        out_channels: Optional[int] = None,
-        num_layers: int = 19,
-        num_single_layers: int = 38,
-        attention_head_dim: int = 128,
-        num_attention_heads: int = 24,
-        joint_attention_dim: int = 4096,
-        pooled_projection_dim: int = 768,
-        guidance_embeds: bool = False,
-        axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
-    ):
-        super().__init__(
-            patch_size=patch_size,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            num_layers=num_layers,
-            num_single_layers=num_single_layers,
-            attention_head_dim=attention_head_dim,
-            num_attention_heads=num_attention_heads,
-            joint_attention_dim=joint_attention_dim,
-            pooled_projection_dim=pooled_projection_dim,
-            guidance_embeds=guidance_embeds,
-            axes_dims_rope=axes_dims_rope,
-        )
-
-        self.transformer_blocks = nn.ModuleList(
-            [
-                QEffFluxTransformerBlock(
-                    dim=self.inner_dim,
-                    num_attention_heads=num_attention_heads,
-                    attention_head_dim=attention_head_dim,
-                )
-                for _ in range(num_layers)
-            ]
-        )
-
-        self.single_transformer_blocks = nn.ModuleList(
-            [
-                QEffFluxSingleTransformerBlock(
-                    dim=self.inner_dim,
-                    num_attention_heads=num_attention_heads,
-                    attention_head_dim=attention_head_dim,
-                )
-                for _ in range(num_single_layers)
-            ]
-        )
-
-        self.norm_out = QEffAdaLayerNormContinuous(self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -448,3 +395,31 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
             return (output,)
 
         return Transformer2DModelOutput(sample=output)
+
+
+class QEffFluxTransformer2DModelOF(QEffFluxTransformer2DModel):
+    def __qeff_init__(self):
+        self.transformer_blocks = nn.ModuleList()
+        self._block_classes = set()
+
+        for _ in range(self.config.num_layers):
+            BlockClass = QEffFluxTransformerBlock
+            block = BlockClass(
+                dim=self.inner_dim,
+                num_attention_heads=self.config.num_attention_heads,
+                attention_head_dim=self.config.attention_head_dim,
+            )
+            self.transformer_blocks.append(block)
+            self._block_classes.add(BlockClass)
+
+        self.single_transformer_blocks = nn.ModuleList()
+
+        for _ in range(self.config.num_single_layers):
+            SingleBlockClass = QEffFluxSingleTransformerBlock
+            single_block = SingleBlockClass(
+                dim=self.inner_dim,
+                num_attention_heads=self.config.num_attention_heads,
+                attention_head_dim=self.config.attention_head_dim,
+            )
+            self.single_transformer_blocks.append(single_block)
+            self._block_classes.add(SingleBlockClass)

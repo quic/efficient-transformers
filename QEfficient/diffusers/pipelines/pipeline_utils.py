@@ -40,90 +40,20 @@ class QEffTextEncoder(QEFFBaseModel):
         super().__init__(model)
         self.model = copy.deepcopy(model)
 
-    def get_onnx_config(self, seq_len=512):
+    def get_onnx_config(self):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = seq_len
 
         example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "input_ids": torch.zeros((bs, self.model.config.max_position_embeddings), dtype=torch.int64),
         }
 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
-        output_names = ["pooler_output", "last_hidden_state"]
+        output_names = ["last_hidden_state", "pooler_output"]
+
         if self.model.__class__.__name__ == "T5EncoderModel":
             output_names = ["last_hidden_state"]
         else:
-            example_inputs["output_hidden_states"] = (True,)
-        return example_inputs, dynamic_axes, output_names
-
-    def export(
-        self,
-        inputs,
-        output_names,
-        dynamic_axes,
-        export_dir=None,
-        export_kwargs=None,
-    ):
-        return self._export(
-            example_inputs=inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            export_kwargs=export_kwargs,
-        )
-
-    def compile(self, specializations, **compiler_options):
-        self._compile(specializations=specializations, **compiler_options)
-
-    @property
-    def model_hash(self) -> str:
-        # Compute the hash with: model_config, continuous_batching, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(self.model.config.to_diff_dict()))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
-
-    @property
-    def model_name(self) -> str:
-        mname = self.model.__class__.__name__
-        if mname.startswith("QEff") or mname.startswith("QEFF"):
-            mname = mname[4:]
-        return mname
-
-
-class QEffClipTextEncoder(QEFFBaseModel):
-    _pytorch_transforms = [CustomOpsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-    """
-    class QEffClipTextEncoder  is a wrapper class for CLIP text encoder models that provides ONNX export and compilation capabilities.
-
-    This class extends QEFFBaseModel to handle clip text encoder models  with specific
-    transformations and optimizations for efficient inference on Qualcomm AI hardware.
-    """
-
-    def __init__(self, model: nn.modules):
-        super().__init__(model)
-        self.model = copy.deepcopy(model)
-
-    def get_onnx_config(self, seq_len=77):
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        # seq_len = self.tokenizer.model_max_length
-
-        example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "attention_mask": None,
-            "position_ids": None,
-            "output_attentions": None,
-        }
-        example_inputs["output_hidden_states"] = False
-
-        dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "last_hidden_state": {0: "batch_size", 1: "seq_len"},
-            "pooler_output": {0: "batch_size"},
-        }
-        output_names = ["last_hidden_state", "pooler_output"]
+            example_inputs["output_hidden_states"] = False
 
         return example_inputs, dynamic_axes, output_names
 
@@ -161,10 +91,6 @@ class QEffClipTextEncoder(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
-
-    @property
-    def get_model_config(self) -> dict:
-        return self.model.model.config.__dict__
 
 
 class QEffUNet(QEFFBaseModel):
@@ -383,9 +309,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             "pooled_projections": {0: "batch_size"},
             "timestep": {0: "steps"},
             "img_ids": {0: "cl"},
-            # "txt_ids": {0: "text_tokens"},
-            "adaln_emb": {0: "num_layers"},
-            "adaln_single_emb": {0: "num_single_layers"},
         }
 
         return example_inputs, dynamic_axes, output_names
