@@ -7,13 +7,11 @@
 
 import onnxscript
 import torch
-
 from QEfficient.utils import constants
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
-
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+# @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatter(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
     # Find dims
     batch_size = ops.Gather(ops.Shape(data), [0])
@@ -34,31 +32,42 @@ def CtxScatter(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: 
     return ops.ScatterND(data, indices, updates)
 
 
-class CtxScatterFunc(torch.autograd.Function):
-    """
-    Function to scatter the current key values into KV-cache.
-    """
+@torch.library.custom_op("qefficient::ctx_scatter", mutates_args=())
+def ctx_scatter_op(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    """Custom context scatter operation"""
+    result = data.clone()
+    batch_idx = torch.arange(result.shape[0]).view(-1, 1, 1)
+    head_idx = torch.arange(result.shape[1]).view(1, -1, 1)
+    ctx_idx = position_ids.unsqueeze(1)
+    result[batch_idx, head_idx, ctx_idx] = updates
+    return result
+ 
+@ctx_scatter_op.register_fake
+def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    """Fake implementation for torch.export - just returns data tensor with same shape/dtype"""
+    return data.clone()
 
-    @staticmethod
-    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
-        # batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
-        # head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
-        # ctx_idx = position_ids.unsqueeze(1)
-        # data[batch_idx, head_idx, ctx_idx] = updates
-        # return data
-        B, H, T, D = data.shape
-        idx = position_ids.unsqueeze(1).unsqueeze(-1).expand(B, H, T, D).to(dtype=torch.long)
-        out = data.scatter_reduce(dim=2, index=idx, src=updates, reduce="sum", include_self=False)
-        return out
+# class CtxScatterFunc(torch.autograd.Function):
+#     """
+#     Function to scatter the current key values into KV-cache.
+#     """
 
-    @staticmethod
-    def setup_context(ctx, inputs, outputs):
-        pass
+#     @staticmethod
+#     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+#         # batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
+#         # head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
+#         # ctx_idx = position_ids.unsqueeze(1)
+#         # data[batch_idx, head_idx, ctx_idx] = updates
+#         # return data
 
-    @staticmethod
-    def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
-        return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
+#     @staticmethod
+#     def setup_context(ctx, inputs, outputs):
+#         pass
 
+#     @staticmethod
+#     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
+#         return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
+    
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
@@ -143,3 +152,6 @@ class CtxGatherFunc(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGather, data, ctx_indices).setTypeAs(data)
+
+
+custom_translation_table = {torch.ops.qefficient.ctx_scatter.default : CtxScatter, }

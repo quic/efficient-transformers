@@ -22,6 +22,7 @@ from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.customop.ctx_scatter_gather import custom_translation_table
 from QEfficient.utils import (
     constants,
     create_json,
@@ -35,7 +36,11 @@ from QEfficient.utils import (
 
 logger = logging.getLogger(__name__)
 
+import torch._dynamo.config
 
+# Allow custom ops to be treated as black boxes
+torch._dynamo.config.capture_scalar_outputs = True
+torch._dynamo.config.capture_dynamic_output_shape_ops = True
 class QEFFBaseModel(ABC):
     """
     Base class for all the model classes (i.e. LLMs, SD, quantized etc.).
@@ -245,18 +250,26 @@ class QEFFBaseModel(ABC):
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
-            torch.onnx.export(
+            import time
+            start = time.perf_counter()
+            onnx_program  = torch.onnx.export(
                 self.model,
                 (example_inputs,),
-                str(tmp_onnx_path),
+                # str(tmp_onnx_path),
                 input_names=input_names,
                 output_names=output_names,
+                # dynamic_axes=dynamic_axes,
                 dynamic_shapes=dynamic_shapes,
+                custom_translation_table=custom_translation_table,
                 opset_version=constants.ONNX_EXPORT_OPSET,
                 dynamo=True,
                 report=True,
                 **export_kwargs,
             )
+            end = time.perf_counter()
+            print("Dynamo enabled onnx export in memory time in sec", round(end - start,2))
+
+            onnx_program.save(str(tmp_onnx_path))
             logger.info("PyTorch export successful")
 
             _ = self._offload_model_weights(offload_pt_weights)
