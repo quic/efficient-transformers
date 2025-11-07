@@ -566,7 +566,6 @@ def export_wrapper(func):
             dynamic_axes=all_args.get("dynamic_axes"),
             export_kwargs=all_args.get("export_kwargs", None),
             onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
-            prefill_only=all_args.get("prefill_only", False),
         )
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
