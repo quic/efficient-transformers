@@ -20,9 +20,9 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 ctx_len = 4096
-#Set the list of ccl during prefilling process
+# Set the list of ccl during prefilling process
 comp_ctx_lengths_prefill = [3072]
-#Set the list of ccl during decoding process
+# Set the list of ccl during decoding process
 comp_ctx_lengths_decode = [ctx_len]
 
 continious_batching = True
@@ -34,9 +34,9 @@ if continious_batching:
         config=config,
         continuous_batching=True,
         qaic_config={
-            "comp_ctx_lengths_prefill":comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode":comp_ctx_lengths_decode,
-            "ctx_len":ctx_len,
+            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+            "ctx_len": ctx_len,
         },
     )
 
@@ -61,9 +61,9 @@ else:
         kv_offload=True,
         config=config,
         qaic_config={
-            "comp_ctx_lengths_prefill":comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode":comp_ctx_lengths_decode,
-            "ctx_len":ctx_len,
+            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+            "ctx_len": ctx_len,
         },
     )
 
@@ -100,7 +100,7 @@ exec_info = qeff_model.generate(
     prompts=prompts,
     processor=processor,
     images=image_urls,
-    device_ids=[0,1,2,3],
+    device_ids=[0, 1, 2, 3],
     generation_len=100,
 )
 

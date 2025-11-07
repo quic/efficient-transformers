@@ -29,9 +29,9 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     config=config,
     continuous_batching=True,
     qaic_config={
-        "comp_ctx_lengths_prefill":comp_ctx_lengths_prefill,
-        "comp_ctx_lengths_decode":comp_ctx_lengths_decode,
-        "ctx_len":ctx_len,
+        "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+        "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+        "ctx_len": ctx_len,
     },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)

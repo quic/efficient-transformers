@@ -18,21 +18,21 @@ config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
 ctx_len = 8192
-#Set the list of ccl during prefilling process
+# Set the list of ccl during prefilling process
 comp_ctx_lengths_prefill = [5376]
-#Set the list of ccl during decoding process
+# Set the list of ccl during decoding process
 comp_ctx_lengths_decode = [6144, ctx_len]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-        model_id,
-        attn_implementation="eager",
-        kv_offload=True,
-        config=config,
-        qaic_config={
-            "comp_ctx_lengths_prefill":comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode":comp_ctx_lengths_decode,
-            "ctx_len":ctx_len,
-        },
+    model_id,
+    attn_implementation="eager",
+    kv_offload=True,
+    config=config,
+    qaic_config={
+        "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+        "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+        "ctx_len": ctx_len,
+    },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -83,7 +83,7 @@ inputs = processor.apply_chat_template(
 
 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 streamer = TextStreamer(tokenizer)
-output = qeff_model.generate(inputs=inputs, device_ids=[0,1,2,3], generation_len=100)
+output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3], generation_len=100)
 print(output.generated_ids)
 print(tokenizer.batch_decode(output.generated_ids))
 print(output)

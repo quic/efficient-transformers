@@ -12,19 +12,19 @@ from QEfficient import QEFFAutoModelForCausalLM
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
 ctx_len = 512
-#Set the list of ccl during prefilling process
-comp_ctx_lengths_prefill = [128,500]
-#Set the list of ccl during decoding process
-comp_ctx_lengths_decode = [256,ctx_len]
+# Set the list of ccl during prefilling process
+comp_ctx_lengths_prefill = [128, 500]
+# Set the list of ccl during decoding process
+comp_ctx_lengths_decode = [256, ctx_len]
 
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-    model_id, 
+    model_id,
     qaic_config={
-        "comp_ctx_lengths_prefill":comp_ctx_lengths_prefill,
-        "comp_ctx_lengths_decode":comp_ctx_lengths_decode,
-        "ctx_len":ctx_len,
-        "prefill_seq_len":1, #Passing prefill_seq_len is mandatory for CCL goal in moe models. Currently we can get best perf using PL=1.
+        "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+        "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
+        "ctx_len": ctx_len,
+        "prefill_seq_len": 1,  # Passing prefill_seq_len is mandatory for CCL goal in moe models. Currently we can get best perf using PL=1.
     },
 )
 tokenizer = AutoTokenizer.from_pretrained(model_id)
