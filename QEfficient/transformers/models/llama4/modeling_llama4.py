@@ -470,6 +470,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
@@ -503,6 +504,8 @@ class QEffLlama4TextAttention(Llama4TextAttention):
 
         if past_key_value is not None:
             chunk_position_ids = position_ids
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
 
             if self.use_rope:
                 chunk_position_ids = torch.where(
@@ -510,7 +513,11 @@ class QEffLlama4TextAttention(Llama4TextAttention):
                 )
 
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_position_ids}
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": chunk_position_ids,
+                "CCL": attention_mask.shape[-1],
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -543,6 +550,7 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         output_router_logits: Optional[bool] = False,
@@ -562,6 +570,7 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
             position_embeddings=position_embeddings,
             position_ids=position_ids,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -615,6 +624,7 @@ class QEffLlama4TextModel(Llama4TextModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -682,6 +692,7 @@ class QEffLlama4TextModel(Llama4TextModel):
                 attention_mask=causal_mask_mapping[decoder_layer.attention_type],
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
@@ -731,6 +742,7 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -754,6 +766,7 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -844,6 +857,7 @@ class QEffLlama4DecoderWrapper(nn.Module):
         image_idx,
         past_key_values,
         batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         inputs_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         selected = input_ids == self.model.config.image_token_index
@@ -857,6 +871,7 @@ class QEffLlama4DecoderWrapper(nn.Module):
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=True,
         )
@@ -872,7 +887,15 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEffLlama4DecoderWrapper(self)
 
-    def forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values):
+    def forward(
+        self,
+        input_ids,
+        position_ids,
+        pixel_values,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
+    ):
         inputs_embeds = self.language_model.get_input_embeddings()(input_ids)
         vision_feature_layer = self.config.vision_config.vision_feature_layer
         vision_feature_select_strategy = self.config.vision_config.vision_feature_select_strategy
@@ -892,7 +915,11 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         image_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
         outputs = self.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            use_cache=True,
         )
         next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
@@ -911,6 +938,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         **compiler_options,
     ):
         max_num_tiles = compiler_options.pop("max_num_tiles", None)
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+
         if max_num_tiles is None:
             logger.warning(
                 "User should pass `max_num_tiles` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 17"
@@ -957,41 +987,87 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             }
         ]
 
-        lang_prefill = {
-            "batch_size": 1 if continuous_batching else batch_size,
-            "seq_len": prefill_seq_len,
-            "ctx_len": ctx_len,
-            "max_num_tiles": max_num_tiles,
-            "img_size": img_size,
-            "vision_size": vision_size,
-            "chunk_length": prefill_seq_len,
-            "chunk_ctx_len": chunk_ctx_len,
-        }
-        if continuous_batching:
-            lang_prefill["full_batch_size"] = kv_cache_batch_size
-        else:
-            lang_prefill["batch_size"] = kv_cache_batch_size
-        if full_batch_size:
-            lang_prefill["full_batch_exec_size"] = full_batch_size
+        if comp_ctx_lengths_prefill is not None:
+            lang = []
 
-        lang_decode = {
-            "batch_size": full_batch_size if continuous_batching else batch_size,
-            "seq_len": 1,
-            "ctx_len": ctx_len,
-            "max_num_tiles": max_num_tiles,
-            "img_size": img_size,
-            "vision_size": vision_size,
-            "chunk_length": prefill_seq_len,
-            "chunk_ctx_len": chunk_ctx_len,
-        }
-        if continuous_batching:
-            lang_decode["full_batch_size"] = kv_cache_batch_size
-        else:
-            lang_decode["batch_size"] = kv_cache_batch_size
+            for i in range(0, len(comp_ctx_lengths_prefill)):
+                lang_prefill = {
+                    "batch_size": 1 if continuous_batching else batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
+                    "max_num_tiles": max_num_tiles,
+                    "img_size": img_size,
+                    "vision_size": vision_size,
+                    "chunk_length": prefill_seq_len,
+                    "chunk_ctx_len": chunk_ctx_len,
+                }
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
 
-        lang = []
-        lang.append(lang_prefill)
-        lang.append(lang_decode)
+                lang.append(lang_prefill)
+
+            for i in range(0, len(comp_ctx_lengths_decode)):
+                lang_decode = {
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_decode[i],
+                    "max_num_tiles": max_num_tiles,
+                    "img_size": img_size,
+                    "vision_size": vision_size,
+                    "chunk_length": prefill_seq_len,
+                    "chunk_ctx_len": chunk_ctx_len,
+                }
+
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
+
+                lang.append(lang_decode)
+
+        else:
+            lang_prefill = {
+                "batch_size": 1 if continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "max_num_tiles": max_num_tiles,
+                "img_size": img_size,
+                "vision_size": vision_size,
+                "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
+            }
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
+
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": 1,
+                "ctx_len": ctx_len,
+                "max_num_tiles": max_num_tiles,
+                "img_size": img_size,
+                "vision_size": vision_size,
+                "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
+            }
+
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
+
+            lang = []
+            lang.append(lang_prefill)
+            lang.append(lang_decode)
 
         specializations = {}
 
@@ -1004,7 +1080,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False, continuous_batching: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
@@ -1025,6 +1103,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
             for kv in ["key", "value"]:
                 lang_dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+
+        if comp_ctx_lengths is not None:
+            lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         dynamic_axes = {}
         if kv_offload:
@@ -1079,7 +1160,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             past_key_values.append(pkv)
         return past_key_values
 
-    def get_dummy_inputs(self, kv_offload: bool = False, continuous_batching: bool = False):
+    def get_dummy_inputs(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 336)
         else:
@@ -1142,6 +1225,10 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
+
+        if comp_ctx_lengths is not None:
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+
         inputs = {}
         if kv_offload:
             inputs["vision"] = vision_inputs

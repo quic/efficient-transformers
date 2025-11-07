@@ -65,6 +65,7 @@ class QEffGPT2Attention(GPT2Attention):
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -118,9 +119,11 @@ class QEffGPT2Attention(GPT2Attention):
         if (past_key_value is not None and not is_cross_attention) or (
             past_key_value is not None and is_cross_attention and not is_updated
         ):
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             # save all key/value_layer to cache to be re-used for fast auto-regressive generation
             # Update the cache_kwargs with position_ids for Cloud AI 100
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index, "CCL": attention_mask.shape[-1]}
             key_states, value_states = curr_past_key_value.update(
                 key_states, value_states, self.layer_idx, cache_kwargs
             )
@@ -156,6 +159,7 @@ class QEffGPT2Block(GPT2Block):
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -174,6 +178,7 @@ class QEffGPT2Block(GPT2Block):
             hidden_states,
             past_key_value=past_key_value,
             attention_mask=attention_mask,
+            comp_ctx_lengths=comp_ctx_lengths,
             position_ids=position_ids,
             batch_index=batch_index,
             head_mask=head_mask,
@@ -232,6 +237,7 @@ class QEffGPT2Model(GPT2Model):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -341,6 +347,7 @@ class QEffGPT2Model(GPT2Model):
             outputs = block(
                 hidden_states,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 batch_index=batch_index,
@@ -392,6 +399,7 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -418,6 +426,7 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
