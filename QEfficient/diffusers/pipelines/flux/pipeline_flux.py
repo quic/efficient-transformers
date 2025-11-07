@@ -19,7 +19,6 @@ from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retri
 
 from QEfficient.diffusers.pipelines.config_manager import config_manager, set_module_device_ids
 from QEfficient.diffusers.pipelines.pipeline_utils import (
-    QEffClipTextEncoder,
     QEffFluxTransformerModel,
     QEffTextEncoder,
     QEffVAE,
@@ -38,11 +37,13 @@ class QEFFFluxPipeline(FluxPipeline):
     """
 
     def __init__(self, model, use_onnx_function, *args, **kwargs):
-        self.text_encoder = QEffClipTextEncoder(model.text_encoder)
+        self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
         self.transformer = QEffFluxTransformerModel(model.transformer, use_onnx_function=use_onnx_function)
         self.vae_decode = QEffVAE(model, "decoder")
         self.use_onnx_function = use_onnx_function
+
+        # Add all modules of FluxPipeline
         self.has_module = [
             ("text_encoder", self.text_encoder),
             ("text_encoder_2", self.text_encoder_2),
@@ -77,6 +78,10 @@ class QEFFFluxPipeline(FluxPipeline):
         self.latent_height = self.height // self.vae_scale_factor
         self.latent_width = self.width // self.vae_scale_factor
         self.cl = (self.latent_height * self.latent_width) // 4
+
+        self.text_encoder_2.model.config.max_position_embeddings = (
+            self.text_encoder.model.config.max_position_embeddings
+        )
 
     @classmethod
     def from_pretrained(
@@ -140,6 +145,15 @@ class QEFFFluxPipeline(FluxPipeline):
                 export_kwargs=export_kwargs,
             )
 
+    def get_default_config_path():
+        """
+        Returns the default configuration file path for Flux pipeline.
+
+        Returns:
+            str: Path to the default flux_config.json file.
+        """
+        return os.path.join(os.path.dirname(__file__), "flux_config.json")
+
     def compile(
         self,
         compile_config: Optional[str] = None,
@@ -193,7 +207,6 @@ class QEFFFluxPipeline(FluxPipeline):
         num_images_per_prompt: int = 1,
         max_sequence_length: int = 512,
         device_ids: Optional[List[int]] = None,
-        dtype: Optional[torch.dtype] = None,
     ):
         """
         Get T5 prompt embeddings for the given prompt(s).
@@ -203,7 +216,6 @@ class QEFFFluxPipeline(FluxPipeline):
             num_images_per_prompt (int, defaults to 1): Number of images to generate per prompt.
             max_sequence_length (int, defaults to 256): Maximum sequence length for tokenization.
             device ids (Optional[torch.device], optional): The device to place tensors on QAIC device ids.
-            dtype (Optional[torch.dtype], optional): The data type for tensors.
 
         Returns:
             torch.Tensor: The T5 prompt embeddings with shape (batch_size * num_images_per_prompt, seq_len, hidden_size).
@@ -245,12 +257,12 @@ class QEFFFluxPipeline(FluxPipeline):
         self.text_encoder_2.qpc_session.set_buffers(text_encoder_2_output)
 
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
-        prompt_embeds = torch.tensor(self.text_encoder_2.qpc_session.run(aic_text_input)["last_hidden_state"])
+        import time
 
-        # # # AIC Testing
-        # prompt_embeds_pytorch = self.text_encoder_2.model(text_input_ids, output_hidden_states=False)
-        # mad = torch.abs(prompt_embeds_pytorch["last_hidden_state"] - prompt_embeds).mean()
-        # print(">>>>>>>>>>>> MAD for text-encoder-2 - T5 => Pytorch vs AI 100:", mad)
+        start_time = time.time()
+        prompt_embeds = torch.tensor(self.text_encoder_2.qpc_session.run(aic_text_input)["last_hidden_state"])
+        end_time = time.time()
+        print(f"T5 Text encoder inference time: {end_time - start_time:.4f} seconds")
 
         _, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
@@ -303,26 +315,21 @@ class QEFFFluxPipeline(FluxPipeline):
             self.text_encoder.qpc_session = QAICInferenceSession(str(self.text_encoder.qpc_path), device_ids=device_ids)
 
         text_encoder_output = {
-            "pooler_output": np.random.rand(batch_size, embed_dim).astype(np.int32),
             "last_hidden_state": np.random.rand(batch_size, self.tokenizer_max_length, embed_dim).astype(np.int32),
+            "pooler_output": np.random.rand(batch_size, embed_dim).astype(np.int32),
         }
 
         self.text_encoder.qpc_session.set_buffers(text_encoder_output)
 
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
+
+        import time
+
+        start_time = time.time()
         aic_embeddings = self.text_encoder.qpc_session.run(aic_text_input)
-        # aic_text_encoder_emb = aic_embeddings["pooler_output"]
-
-        # # # # [TEMP] CHECK ACC # #
-        # prompt_embeds_pytorch = self.text_encoder.model(text_input_ids, output_hidden_states=False)
-        # pt_pooled_embed = prompt_embeds_pytorch["pooler_output"].detach().numpy()
-        # mad = np.max(np.abs(pt_pooled_embed - aic_text_encoder_emb))
-        # print(f">>>>>>>>>>>> CLIP text encoder pooled embed MAD: ", mad) ## 0.0043082903 ##TODO : Clean up
-        ### END CHECK ACC ###
-
-        # Use pooled output of CLIPTextModel
+        end_time = time.time()
+        print(f"CLIP Text encoder inference time: {end_time - start_time:.4f} seconds")
         prompt_embeds = torch.tensor(aic_embeddings["pooler_output"])
-        # prompt_embeds = prompt_embeds.to(dtype=self.text_encoder.dtype, device=device)
 
         # duplicate text embeddings for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt)
@@ -491,23 +498,6 @@ class QEFFFluxPipeline(FluxPipeline):
             [`~pipelines.flux.FluxPipelineOutput`] or `tuple`: [`~pipelines.flux.FluxPipelineOutput`] if `return_dict`
             is True, otherwise a `tuple`. When returning a tuple, the first element is a list with the generated
             images.
-
-        Examples:
-            ```python
-            # Basic text-to-image generation
-            from QEfficient import QEFFFluxPipeline
-            pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
-            pipeline.compile(num_devices_text_encoder=1, num_devices_transformer=4, num_devices_vae_decoder=1)
-
-            generator = torch.manual_seed(42)
-            # NOTE: guidance_scale <=1 is not supported
-            image = pipeline("A cat holding a sign that says hello world",
-                guidance_scale=0.0,
-                num_inference_steps=4,
-                max_sequence_length=256,
-                generator=generator).images[0]
-            image.save("flux-schnell_aic.png")
-            ```
         """
         device = "cpu"
 
@@ -663,7 +653,7 @@ class QEFFFluxPipeline(FluxPipeline):
                 start_time = time.time()
                 outputs = self.transformer.qpc_session.run(inputs_aic)
                 end_time = time.time()
-                print(f"Time : {end_time - start_time:.2f} seconds")
+                print(f"Transformers inference time : {end_time - start_time:.2f} seconds")
 
                 noise_pred = torch.from_numpy(outputs["output"])
 
@@ -711,8 +701,10 @@ class QEFFFluxPipeline(FluxPipeline):
             self.vae_decode.qpc_session.set_buffers(output_buffer)
 
             inputs = {"latent_sample": latents.numpy()}
+            start_time = time.time()
             image = self.vae_decode.qpc_session.run(inputs)
-
+            end_time = time.time()
+            print(f"Decoder Text encoder inference time: {end_time - start_time:.4f} seconds")
             image_tensor = torch.from_numpy(image["sample"])
             image = self.image_processor.postprocess(image_tensor, output_type=output_type)
 

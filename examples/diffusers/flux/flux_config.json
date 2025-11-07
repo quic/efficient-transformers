@@ -1,5 +1,6 @@
 {
   "description": "Default configuration for Flux pipeline",
+  "model_type": "flux",
 
   "modules": 
   {
@@ -16,8 +17,7 @@
                                           "mdp_ts_num_devices": 1,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
-                                          "aic_num_cores": 16,
-                                          "compile_only":true
+                                          "aic_num_cores": 16
                                         },
                       "execute":
                                         {
@@ -39,8 +39,7 @@
                                           "mdp_ts_num_devices": 1,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
-                                          "aic_num_cores": 16,
-                                          "compile_only": true
+                                          "aic_num_cores": 16
                                         },
                       "execute":
                                         {
@@ -64,8 +63,7 @@
                                           "convert_to_fp16": true,
                                           "aic_num_cores": 16,
                                           "mos": 1,
-                                          "mdts-mos": 1,
-                                          "compile_only":true
+                                          "mdts-mos": 1
                                         },
                       "execute":
                                         {
@@ -86,9 +84,7 @@
                                           "mdp_ts_num_devices": 1,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
-                                          "aic_num_cores": 16,
-                                          "aic-enable-depth-first": true,
-                                          "compile_only":true
+                                          "aic_num_cores": 16
                                         },
                       "execute":
                                         {
