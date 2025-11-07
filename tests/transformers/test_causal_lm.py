@@ -17,7 +17,7 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.hash_utils import hash_dict_params
 
-configs = [
+test_configs = [
     # name, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
     ("gpt2", 256, 2, 4, 128, 512, 127, {}),
     ("codegen", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
@@ -36,29 +36,42 @@ configs = [
     ("gpt_oss", 256, 3, 4, 128, 512, 127, {"num_key_value_heads": 2}),
 ]
 
-configs = [
-    AutoConfig.for_model(
-        model_name,
-        max_position_embeddings=max_position_embeddings,
-        num_hidden_layers=num_hidden_layers,
-        num_attention_heads=num_attention_heads,
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        vocab_size=vocab_size,
-        **additional_params,
-    )
-    for (
-        model_name,
-        max_position_embeddings,
-        num_hidden_layers,
-        num_attention_heads,
-        hidden_size,
-        intermediate_size,
-        vocab_size,
-        additional_params,
-    ) in configs
+test_prefill_only_specialized_models_configs = [
+    ("gpt_oss", 256, 2, 2, 32, 32, 127, {"num_key_value_heads": 2}),
 ]
+
+
+def get_auto_config_from_test_config(configs):
+    auto_configs = [
+        AutoConfig.for_model(
+            model_name,
+            max_position_embeddings=max_position_embeddings,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            vocab_size=vocab_size,
+            **additional_params,
+        )
+        for (
+            model_name,
+            max_position_embeddings,
+            num_hidden_layers,
+            num_attention_heads,
+            hidden_size,
+            intermediate_size,
+            vocab_size,
+            additional_params,
+        ) in configs
+    ]
+    return auto_configs
+
+
+configs = get_auto_config_from_test_config(test_configs)
 config_ids = [x.model_type for x in configs]
+
+prefill_only_configs = get_auto_config_from_test_config(test_prefill_only_specialized_models_configs)
+prefill_only_config_ids = [x.model_type for x in prefill_only_configs]
 
 model_kwargs = {"attn_implementation": "eager"}
 
@@ -158,7 +171,6 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
     hash_params["qaic_config"] = None
 
     # Create parameters separately for hash creation
-
     bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
     seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
     fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
@@ -205,10 +217,27 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
     export_params["output_names"] = output_names
     export_params["dynamic_axes"] = dynamic_axes
     hash_params["export_params"] = export_params
-    hash_params["prefill_only"] = False
     manual_hash = hash_dict_params(hash_params)
 
     assert manual_hash == qeff_model.export_hash
+
+
+@pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
+@pytest.mark.parametrize("config", prefill_only_configs, ids=prefill_only_config_ids)
+def test_prefill_only_specialized_models(config, cb, tmp_path):
+    model = AutoModelForCausalLM.from_config(config, **model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(model, cb)
+    if cb:
+        with pytest.raises(AssertionError):
+            qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
+    else:
+        with pytest.raises(ValueError):
+            qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
+        qeff_model.export(tmp_path, prefill_only=True, prefill_seq_len=256, offload_pt_weights=False)
+        first_export_hash = qeff_model.export_hash
+        qeff_model.export(tmp_path, prefill_only=False, offload_pt_weights=False)
+        second_export_hash = qeff_model.export_hash
+        assert first_export_hash != second_export_hash
 
 
 @pytest.fixture

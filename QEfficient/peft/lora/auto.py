@@ -327,7 +327,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         # load_weight to model
         self._load_adapter_weights_to_model()
 
-    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model with all loaded adapters to ONNX format using ``torch.onnx.export``.
 
@@ -387,7 +387,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            **kwargs,
         )
 
     def generate(

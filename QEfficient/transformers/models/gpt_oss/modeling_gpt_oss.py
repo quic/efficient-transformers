@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+import math
 import os
 from typing import Callable, Optional, Union
 
@@ -97,6 +98,167 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits
 
+    def blocked_ffn_forward(self, hidden: torch.Tensor):
+        B, S, H = hidden.shape
+        T = B * S
+        hidden = hidden.view(T, H)
+
+        # Router computation
+        router_logits = F.linear(hidden, self.router.weight, self.router.bias)
+
+        # Top-k selection
+        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
+        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
+
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, top_i, top_w)
+
+        # Routing weights for each expert [T, E]
+        routing_weights = masked_logits
+
+        # ────────────────── allocate the output tensor ─────
+        expert_out = hidden.new_zeros((T, H))  # accumulation buffer
+        target_blocks = int(os.environ.get("NUM_BLOCKS", 1))
+        block_positions = []
+        for j in range(target_blocks):
+            block_positions.append(j * (T // target_blocks))
+        # ───────────────────────── Expert computation loop ─────────────────────────────
+        for e in range(self.experts.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+
+            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]  # [H, I], [H, I]
+            b_g, b_u = self.experts.gate_proj_bias[e], self.experts.up_proj_bias[e]  # [I], [I]
+            W_d = self.experts.down_proj[e]  # [I, H]
+            b_d = self.experts.down_proj_bias[e]  # [H]
+
+            block_count = 0
+            outs = []
+            for block_idx in range(target_blocks):
+                block_count += 1
+                qi = block_positions[block_idx]
+
+                # Calculate block size (last block should be handled with remainder)
+                if block_idx == target_blocks - 1:
+                    real_q_len = T - qi
+                else:
+                    real_q_len = block_positions[block_idx + 1] - qi
+
+                tgb = hidden[qi : qi + real_q_len, :]
+                # Gate and Up projections
+                # Gate and Up projections
+                gate = (tgb @ W_g) + b_g  # [T, I]
+                up = (tgb @ W_u) + b_u  # [T, I]
+
+                # Apply GptOss activation with clamping
+                gate = gate.clamp(min=None, max=self.experts.limit)
+                up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+
+                # GLU activation
+                glu = gate * torch.sigmoid(gate * self.experts.alpha)
+                intermediate = (up + 1) * glu  # [T, I]
+
+                # Down projection
+                down_out_block = (intermediate @ W_d) + b_d  # [T, H]
+
+                outs.append(down_out_block)
+
+            down_out = torch.cat(outs, dim=0)
+
+            # Apply routing weights and accumulate
+            masked_down = torch.where(routing_weight > 0, down_out * routing_weight, torch.zeros_like(expert_out))
+            expert_out += masked_down
+
+        # original shape [B, S, H]
+        return expert_out.view(B, S, H), router_logits
+
+    def blocked_ffn_forward_block_weights(self, hidden: torch.Tensor):
+        B, S, H = hidden.shape
+        T = B * S
+        hidden = hidden.view(T, H)
+
+        # Router computation
+        router_logits = F.linear(hidden, self.router.weight, self.router.bias)
+
+        # Top-k selection
+        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
+        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
+
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, top_i, top_w)
+
+        # Routing weights for each expert [T, E]
+        routing_weights = masked_logits
+
+        # ────────────────── allocate the output tensor ─────
+        expert_out = hidden.new_zeros((T, H))  # accumulation buffer
+        target_blocks = int(os.environ.get("NUM_BLOCKS", 1))
+        block_positions = []
+        for j in range(target_blocks):
+            block_positions.append(j * (T // target_blocks))
+        # ───────────────────────── Expert computation loop ─────────────────────────────
+        for e in range(self.experts.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+
+            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]  # [H, I], [H, I]
+            b_g, b_u = self.experts.gate_proj_bias[e], self.experts.up_proj_bias[e]  # [I], [I]
+            W_d = self.experts.down_proj[e]  # [I, H]
+            b_d = self.experts.down_proj_bias[e]  # [H]
+
+            block_count = 0
+            outs = []
+            for block_idx in range(target_blocks):
+                block_count += 1
+                qi = block_positions[block_idx]
+
+                # Calculate block size (last block should be handled with remainder)
+                if block_idx == target_blocks - 1:
+                    real_q_len = T - qi
+                else:
+                    real_q_len = block_positions[block_idx + 1] - qi
+
+                tgb = hidden[qi : qi + real_q_len, :]
+                # Gate and Up projections
+
+                wg_col_shape = W_g.shape[1]
+                wg_num_blocks = math.ceil(wg_col_shape / 128)
+                last_block_size = wg_col_shape % 128 if wg_col_shape % 128 != 0 else 128
+
+                intermediates = []
+                for i in range(wg_num_blocks):
+                    if i == wg_num_blocks - 1:
+                        cur_gate = (tgb @ W_g[:, -last_block_size:]) + b_g[-last_block_size:]
+                        cur_up = (tgb @ W_u[:, -last_block_size:]) + b_u[-last_block_size:]
+                    else:
+                        cur_gate = (tgb @ W_g[:, i * 128 : (i + 1) * 128]) + b_g[i * 128 : (i + 1) * 128]
+                        cur_up = (tgb @ W_u[:, i * 128 : (i + 1) * 128]) + b_u[i * 128 : (i + 1) * 128]
+
+                    cur_gate = cur_gate.clamp(min=None, max=self.experts.limit)
+                    cur_up = cur_up.clamp(min=-self.experts.limit, max=self.experts.limit)
+                    cur_glu = cur_gate * torch.sigmoid(cur_gate * self.experts.alpha)
+                    cur_intermediate = (cur_up + 1) * cur_glu
+                    intermediates.append(cur_intermediate)
+
+                intermediate = torch.cat(intermediates, dim=-1)
+
+                downs = []
+                for i in range(wg_num_blocks):
+                    if i == wg_num_blocks - 1:
+                        downs.append((intermediate @ W_d[:, -last_block_size:]) + b_d[-last_block_size:])
+                    else:
+                        downs.append((intermediate @ W_d[:, i * 128 : (i + 1) * 128]) + b_d[i * 128 : (i + 1) * 128])
+
+                down_out_block = torch.cat(downs, dim=1)
+                outs.append(down_out_block)
+
+            down_out = torch.cat(outs, dim=0)
+
+            # Apply routing weights and accumulate
+            masked_down = torch.where(routing_weight > 0, down_out * routing_weight, torch.zeros_like(expert_out))
+            expert_out += masked_down
+
+        # original shape [B, S, H]
+        return expert_out.view(B, S, H), router_logits
+
 
 class QEffGptOssMLP(GptOssMLP):
     # ------------------- Gather based, weights as activation approach ---------------
@@ -146,7 +308,6 @@ class QEffGptOssMLP(GptOssMLP):
 
     # ------------------- Gather based, weights as activation approach, With Seperate Gate, up Projections ---------------
     def forward(self, hidden_states):
-        # print("Seperate Split, Up, Gate Projections")
         bs, seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(bs * seq_len, self.experts.hidden_size)
 
@@ -417,7 +578,6 @@ def eager_attention_forward_blocked(
     scaling: float,
     **kwargs,
 ):
-    softmax_count = 0
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
@@ -426,9 +586,6 @@ def eager_attention_forward_blocked(
     block_positions = []
     for j in range(target_blocks):
         block_positions.append(j * (CL // target_blocks))
-
-    print(f"CL={CL}, target_blocks={target_blocks}")
-
     block_count = 0
     outs = []
     for block_idx in range(target_blocks):
@@ -458,7 +615,6 @@ def eager_attention_forward_blocked(
         outs.append(out_block)
     output = torch.cat(outs, dim=2)
 
-    print(f"Completed {block_count} blocks, {softmax_count} softmax operations")
     output = output.view(BS, NH, CL, DH).transpose(1, 2).contiguous()
     return output, output
 
@@ -487,8 +643,9 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         hidden_shape = (*input_shape, -1, self.head_dim)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-
-        cos, sin = self.rotary_emb(value_states, seq_len=getattr(self.config, "max_seq_len_cached", 32 * 1024))
+        if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
+            max_seq_len_cached = 32 * 1024
+        cos, sin = self.rotary_emb(value_states, seq_len=max_seq_len_cached)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -565,8 +722,9 @@ class QEffGptOssAttention(GptOssAttention):
         query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-
-        cos, sin = self.rotary_emb(value_states, seq_len=getattr(self.config, "max_seq_len_cached", 32 * 1024))
+        if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
+            max_seq_len_cached = 32 * 1024
+        cos, sin = self.rotary_emb(value_states, seq_len=max_seq_len_cached)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
