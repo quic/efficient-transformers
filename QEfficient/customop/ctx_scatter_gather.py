@@ -7,9 +7,11 @@
 
 import onnxscript
 import torch
+
 from QEfficient.utils import constants
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+
 
 # @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatter(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
@@ -41,11 +43,13 @@ def ctx_scatter_op(data: torch.Tensor, position_ids: torch.Tensor, updates: torc
     ctx_idx = position_ids.unsqueeze(1)
     result[batch_idx, head_idx, ctx_idx] = updates
     return result
- 
+
+
 @ctx_scatter_op.register_fake
 def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
     """Fake implementation for torch.export - just returns data tensor with same shape/dtype"""
     return data.clone()
+
 
 # class CtxScatterFunc(torch.autograd.Function):
 #     """
@@ -67,7 +71,7 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
 #     @staticmethod
 #     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
 #         return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
-    
+
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
@@ -154,4 +158,6 @@ class CtxGatherFunc(torch.autograd.Function):
         return g.onnxscript_op(CtxGather, data, ctx_indices).setTypeAs(data)
 
 
-custom_translation_table = {torch.ops.qefficient.ctx_scatter.default : CtxScatter, }
+custom_translation_table = {
+    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
+}

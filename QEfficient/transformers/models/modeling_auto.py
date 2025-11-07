@@ -85,11 +85,11 @@ def convert_dynamic_axes_to_dynamic_shapes(dynamic_axes: Dict[str, Dict[int, str
                 # Create or reuse Dim object for this dimension name
                 if dim_name not in dim_registry:
                     if dim_name == "batch_size":
-                        dim_registry[dim_name] = Dim.DYNAMIC  
+                        dim_registry[dim_name] = Dim.DYNAMIC
                     elif "seq_len" in dim_name:
-                        dim_registry[dim_name] = Dim.DYNAMIC  
+                        dim_registry[dim_name] = Dim.DYNAMIC
                     else:
-                        dim_registry[dim_name] = Dim.DYNAMIC 
+                        dim_registry[dim_name] = Dim.DYNAMIC
 
                 input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
 
@@ -106,11 +106,11 @@ def convert_dynamic_axes_to_dynamic_shapes(dynamic_axes: Dict[str, Dict[int, str
             for axis_idx, dim_name in axes_map.items():
                 if dim_name not in dim_registry:
                     if dim_name == "batch_size":
-                        dim_registry[dim_name] = Dim.DYNAMIC 
+                        dim_registry[dim_name] = Dim.DYNAMIC
                     elif "seq_len" in dim_name:
-                        dim_registry[dim_name] = Dim.DYNAMIC 
+                        dim_registry[dim_name] = Dim.DYNAMIC
                     else:
-                        dim_registry[dim_name] = Dim.DYNAMIC  
+                        dim_registry[dim_name] = Dim.DYNAMIC
                 layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
             past_keys[layer_idx] = layer_dynamic_shapes
 
@@ -120,11 +120,11 @@ def convert_dynamic_axes_to_dynamic_shapes(dynamic_axes: Dict[str, Dict[int, str
             for axis_idx, dim_name in axes_map.items():
                 if dim_name not in dim_registry:
                     if dim_name == "batch_size":
-                        dim_registry[dim_name] = Dim.DYNAMIC  
+                        dim_registry[dim_name] = Dim.DYNAMIC
                     elif "seq_len" in dim_name:
-                        dim_registry[dim_name] = Dim.DYNAMIC 
+                        dim_registry[dim_name] = Dim.DYNAMIC
                     else:
-                        dim_registry[dim_name] = Dim.DYNAMIC  
+                        dim_registry[dim_name] = Dim.DYNAMIC
                 layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
             past_values[layer_idx] = layer_dynamic_shapes
 

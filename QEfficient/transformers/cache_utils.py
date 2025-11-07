@@ -95,10 +95,6 @@ class QEffDynamicLayer(DynamicLayer):
                 self.keys = torch.ops.qefficient.ctx_scatter(self.keys, position_ids, key_states)
                 self.values = torch.ops.qefficient.ctx_scatter(self.values, position_ids, value_states)
 
-
-
-                
-
     def update(
         self,
         key_states: torch.Tensor,
@@ -160,7 +156,6 @@ class QEffDynamicLayer(DynamicLayer):
                 k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices)
                 v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices)
             else:
-                
                 k_out = CtxGatherFunc.apply(k_out, ctx_indices)
                 v_out = CtxGatherFunc.apply(v_out, ctx_indices)
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
@@ -343,7 +338,6 @@ class QEffEncoderDecoderCache(EncoderDecoderCache):
 
 # TODO:This function will be depercated in future.
 class QEffHybridCache(HybridCache):
-    
     def __init__(self, config, batch_size, max_cache_len):
         super().__init__(config, batch_size, max_cache_len=max_cache_len)
         self.key_cache: List[torch.Tensor] = []
@@ -419,10 +413,13 @@ class QEffHybridCache(HybridCache):
             value_states = torch.where(valid_mask == 1, value_states, torch.zeros_like(value_states))
             # self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
             # self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], kv_position_ids, value_states)
-            self.key_cache[layer_idx] = torch.ops.qefficient.ctx_scatter(self.key_cache[layer_idx], kv_position_ids, key_states)
-            self.value_cache[layer_idx] = torch.ops.qefficient.ctx_scatter(self.value_cache[layer_idx], kv_position_ids, value_states)
+            self.key_cache[layer_idx] = torch.ops.qefficient.ctx_scatter(
+                self.key_cache[layer_idx], kv_position_ids, key_states
+            )
+            self.value_cache[layer_idx] = torch.ops.qefficient.ctx_scatter(
+                self.value_cache[layer_idx], kv_position_ids, value_states
+            )
 
-            
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
             # Original Gather
@@ -523,10 +520,13 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             value_states = torch.where(valid_mask == 1, value_states, torch.zeros_like(value_states))
             # self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
             # self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], kv_position_ids, value_states)
-            self.key_cache[layer_idx] = torch.ops.qefficient.ctx_scatter(self.key_cache[layer_idx], kv_position_ids, key_states)
-            self.value_cache[layer_idx] = torch.ops.qefficient.ctx_scatter(self.value_cache[layer_idx], kv_position_ids, value_states)
+            self.key_cache[layer_idx] = torch.ops.qefficient.ctx_scatter(
+                self.key_cache[layer_idx], kv_position_ids, key_states
+            )
+            self.value_cache[layer_idx] = torch.ops.qefficient.ctx_scatter(
+                self.value_cache[layer_idx], kv_position_ids, value_states
+            )
 
-            
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
             # Original Gather
