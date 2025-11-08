@@ -12,7 +12,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
 ctx_len = 4096
-#In moe models like gpt-oss, since prefill_seq_len=1 both comp_ctx_lengths_prefill and comp_ctx_lengths_decode can share similar lists.
+# In moe models like gpt-oss, since prefill_seq_len=1 both comp_ctx_lengths_prefill and comp_ctx_lengths_decode can share similar lists.
 # Set the list of ccl during prefilling process
 comp_ctx_lengths_prefill = [512, ctx_len]
 # Set the list of ccl during decoding process
