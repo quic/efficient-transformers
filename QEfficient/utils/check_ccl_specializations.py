@@ -7,10 +7,10 @@
 
 
 def process_ccl_specializations(qaic_config):
-    ccl_prefill = qaic_config.get("comp_ctx_lengths_prefill", None)
-    ccl_decode = qaic_config.get("comp_ctx_lengths_decode", None)
-    ctx_len = qaic_config.get("ctx_len", None)
-    prefill_seq_len = qaic_config.get("prefill_seq_len", 128)
+    ccl_prefill = qaic_config.pop("comp_ctx_lengths_prefill", None)
+    ccl_decode = qaic_config.pop("comp_ctx_lengths_decode", None)
+    ctx_len = qaic_config.pop("ctx_len", None)
+    prefill_seq_len = qaic_config.pop("prefill_seq_len", 128)
 
     if ccl_prefill is None or ccl_decode is None:
         return None, None

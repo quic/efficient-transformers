@@ -1716,6 +1716,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
             )
 
+        # Infer kv_cache_batch_size if not provided
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
         output_names = self.model.get_output_names()
 
         # For supporting VLLM and Disaggregated with CCL
@@ -1731,6 +1733,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             ctx_len=ctx_len,
             comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
+            kv_cache_batch_size=kv_cache_batch_size,
             img_size=img_size,
             **compiler_options,
         )
@@ -2276,14 +2279,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
+
+        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
+
         super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
-
-        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 

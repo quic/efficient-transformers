@@ -83,7 +83,7 @@ inputs = processor.apply_chat_template(
 
 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 streamer = TextStreamer(tokenizer)
-output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3], generation_len=100)
+output = qeff_model.generate(inputs=inputs, device_ids=[32,33,34,35], generation_len=100)
 print(output.generated_ids)
 print(tokenizer.batch_decode(output.generated_ids))
 print(output)

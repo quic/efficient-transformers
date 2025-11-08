@@ -100,7 +100,7 @@ exec_info = qeff_model.generate(
     prompts=prompts,
     processor=processor,
     images=image_urls,
-    device_ids=[0, 1, 2, 3],
+    device_ids=[32,33,34,35],
     generation_len=100,
 )
 
