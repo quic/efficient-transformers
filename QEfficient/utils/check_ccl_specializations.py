@@ -7,6 +7,8 @@
 
 
 def process_ccl_specializations(qaic_config):
+    if qaic_config is None:
+        return None, None
     ccl_prefill = qaic_config.pop("comp_ctx_lengths_prefill", None)
     ccl_decode = qaic_config.pop("comp_ctx_lengths_decode", None)
     ctx_len = qaic_config.pop("ctx_len", None)
