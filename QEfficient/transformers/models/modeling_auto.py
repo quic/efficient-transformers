@@ -2388,7 +2388,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 pkv_dynamic_axes[i][0] = "full_batch_size" if self.continuous_batching else "batch_size"
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_InternalRetainedState")
 
         if self.continuous_batching:
