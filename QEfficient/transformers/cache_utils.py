@@ -24,6 +24,7 @@ from QEfficient.customop import (
     CtxScatterFuncCB3D,
 )
 
+
 def _get_invalid_idx_value():
     """
     Get the appropriate invalid index value for CtxGather operations.
@@ -46,6 +47,7 @@ def _get_invalid_idx_value():
     else:
         # For runtime: use 0
         return 0
+
 
 class QEffDynamicLayer(DynamicLayer):
     def read_only(self, cache_kwargs):
