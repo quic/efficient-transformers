@@ -2500,9 +2500,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-        kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
-        )
         if prefill_only:
             assert not self.continuous_batching, "prefill_only=True is not supported with continuous_batching=True"
 
@@ -2529,6 +2526,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params.pop("prefill_only", None)
             self.hash_params.pop("num_blocks", None)
 
+        kv_cache_shape = get_padding_shape_from_config(
+            self.model.config, fbs if self.continuous_batching else bs, seq_len
+        )
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
