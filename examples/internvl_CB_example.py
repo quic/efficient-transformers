@@ -45,7 +45,7 @@ if continuous_batching:
         num_cores=16,
         num_devices=4,
         batch_size=1,
-        full_batch_size=1,
+        full_batch_size=4,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,

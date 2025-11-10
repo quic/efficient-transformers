@@ -168,6 +168,9 @@ class VisionHandler:
             else:
                 image = Image.open(image_url)
 
+            if "mistral3" in self._qeff_model.model.config.model_type:
+                image = image.resize((1540, 1540))
+
             # Prepare conversation format
             conversation = [
                 {

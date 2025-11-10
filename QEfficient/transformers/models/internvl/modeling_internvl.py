@@ -151,7 +151,7 @@ class QEffInternVLModel(nn.Module):
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
+                    "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "num_patches": num_patches,
                     "img_size": img_size,
                     "vision_size": vision_size,
