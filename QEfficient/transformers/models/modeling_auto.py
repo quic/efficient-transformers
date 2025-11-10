@@ -1752,6 +1752,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
 
+        # TODO this hould be removed once the continous batching is supported for all the models.
+        compiler_options.pop("continuous_batching", None)
+        compiler_options.pop("kv_cache_batch_size", None)
+        compiler_options.pop("full_batch_size", None)
+
         self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
