@@ -11,9 +11,9 @@
 
 * Optimized for Qualcomm Cloud AI 100*
 
-<img src="../../docs/image/girl_laughing.png" alt="Sample Output" width="400">
+<img src="../../docs/image/git_laughing_flux.png" alt="Sample Output" width="400">
 
-**Generated with**: `stabilityai/stable-diffusion-3.5-large` • `"A girl laughing"` • 28 steps • 2.0 guidance scale •  ⚡
+**Generated with**: `black-forest-labs/FLUX.1-schnell` • `"A girl laughing"` • 4 steps • 0.0 guidance scale •  ⚡
 
 
 
@@ -21,7 +21,7 @@
 
 
 
-[![Diffusers](https://img.shields.io/badge/Diffusers-0.31.0-orange.svg)](https://github.com/huggingface/diffusers)
+[![Diffusers](https://img.shields.io/badge/Diffusers-0.35.1-orange.svg)](https://github.com/huggingface/diffusers)
 </div>
 
 ---
@@ -70,8 +70,8 @@ pip install "QEfficient[diffusers]"
 ## 🎯 Supported Models
 
 ### Stable Diffusion 3.x Series
-- ✅ [`stabilityai/stable-diffusion-3.5-large`](https://huggingface.co/stabilityai/stable-diffusion-3.5-large)
-- ✅ [`stabilityai/stable-diffusion-3.5-large-turbo`](https://huggingface.co/stabilityai/stable-diffusion-3.5-large-turbo)
+- ✅ [`black-forest-labs/FLUX.1-schnell`](https://huggingface.co/black-forest-labs/FLUX.1-schnell)
+
 ---
 
 
