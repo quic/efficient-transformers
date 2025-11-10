@@ -56,9 +56,7 @@ def test_disagg_mode_prefill(model_id, prompt):
 
     undo_transformers_quantizers()
 
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_id, num_hidden_layers=2, max_position_embeddings=64 * 1024
-    )
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
     qeff_model.prefill(True)
     config = qeff_model.model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
