@@ -112,7 +112,7 @@ output = pipeline(
     generator=torch.manual_seed(42),
 )
 
-image = output.images[0]
+images = output.images[0]
 # Save the generated image to disk
-image.save("girl_laughing.png")
+images.save("girl_laughing.png")
 print(output)

@@ -21,7 +21,12 @@ from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffTextEncoder,
     QEffVAE,
 )
-from QEfficient.diffusers.pipelines.pipeline_utils import QEffPipelineOutput, config_manager, set_module_device_ids
+from QEfficient.diffusers.pipelines.pipeline_utils import (
+    ModulePerf,
+    QEffPipelineOutput,
+    config_manager,
+    set_module_device_ids,
+)
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 
@@ -42,13 +47,13 @@ class QEFFFluxPipeline(FluxPipeline):
         self.vae_decode = QEffVAE(model, "decoder")
         self.use_onnx_function = use_onnx_function
 
-        # Add all modules of FluxPipeline
-        self.has_module = [
-            ("text_encoder", self.text_encoder),
-            ("text_encoder_2", self.text_encoder_2),
-            ("transformer", self.transformer),
-            ("vae_decoder", self.vae_decode),
-        ]
+        # All modules of FluxPipeline stored in a dictionary for easy access and iteration
+        self.modules = {
+            "text_encoder": self.text_encoder,
+            "text_encoder_2": self.text_encoder_2,
+            "transformer": self.transformer,
+            "vae_decoder": self.vae_decode,
+        }
 
         self.tokenizer = model.tokenizer
         self.text_encoder.tokenizer = model.tokenizer
@@ -127,7 +132,7 @@ class QEFFFluxPipeline(FluxPipeline):
             :str: Path of the generated ``ONNX`` graph.
         """
 
-        for module_name, module_obj in self.has_module:
+        for module_name, module_obj in self.modules.items():
             example_inputs_text_encoder, dynamic_axes_text_encoder, output_names_text_encoder = (
                 module_obj.get_onnx_config()
             )
@@ -183,7 +188,7 @@ class QEFFFluxPipeline(FluxPipeline):
         if self.custom_config is None:
             config_manager(self, config_source=compile_config)
 
-        for module_name, module_obj in self.has_module:
+        for module_name, module_obj in self.modules.items():
             # Get specialization values directly from config
             module_config = self.custom_config["modules"]
             specializations = [module_config[module_name]["specializations"]]
@@ -256,19 +261,18 @@ class QEFFFluxPipeline(FluxPipeline):
         self.text_encoder_2.qpc_session.set_buffers(text_encoder_2_output)
 
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
-        import time
 
         start_t5_time = time.time()
         prompt_embeds = torch.tensor(self.text_encoder_2.qpc_session.run(aic_text_input)["last_hidden_state"])
         end_t5_time = time.time()
-        self.text_encoder_2.inference_time = end_t5_time - start_t5_time
+        text_encoder_2_perf = end_t5_time - start_t5_time
 
         _, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
         prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-        return prompt_embeds
+        return prompt_embeds, text_encoder_2_perf
 
     def _get_clip_prompt_embeds(
         self,
@@ -322,20 +326,17 @@ class QEFFFluxPipeline(FluxPipeline):
 
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
 
-        import time
-
-        global start_text_encoder_time
         start_text_encoder_time = time.time()
         aic_embeddings = self.text_encoder.qpc_session.run(aic_text_input)
         end_text_encoder_time = time.time()
-        self.text_encoder.inference_time = end_text_encoder_time - start_text_encoder_time
+        text_encoder_perf = end_text_encoder_time - start_text_encoder_time
         prompt_embeds = torch.tensor(aic_embeddings["pooler_output"])
 
         # duplicate text embeddings for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt)
         prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, -1)
 
-        return prompt_embeds
+        return prompt_embeds, text_encoder_perf
 
     def encode_prompt(
         self,
@@ -378,12 +379,12 @@ class QEFFFluxPipeline(FluxPipeline):
             prompt_2 = [prompt_2] if isinstance(prompt_2, str) else prompt_2
 
             # We only use the pooled prompt output from the CLIPTextModel
-            pooled_prompt_embeds = self._get_clip_prompt_embeds(
+            pooled_prompt_embeds, text_encoder_perf = self._get_clip_prompt_embeds(
                 prompt=prompt,
                 device_ids=self.text_encoder.device_ids,
                 num_images_per_prompt=num_images_per_prompt,
             )
-            prompt_embeds = self._get_t5_prompt_embeds(
+            prompt_embeds, text_encoder_2_perf = self._get_t5_prompt_embeds(
                 prompt=prompt_2,
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
@@ -391,7 +392,7 @@ class QEFFFluxPipeline(FluxPipeline):
             )
 
         text_ids = torch.zeros(prompt_embeds.shape[1], 3)
-        return prompt_embeds, pooled_prompt_embeds, text_ids
+        return prompt_embeds, pooled_prompt_embeds, text_ids, [text_encoder_perf, text_encoder_2_perf]
 
     def __call__(
         self,
@@ -539,11 +540,7 @@ class QEFFFluxPipeline(FluxPipeline):
             negative_prompt_embeds is not None and negative_pooled_prompt_embeds is not None
         )
         do_true_cfg = true_cfg_scale > 1 and has_neg_prompt
-        (
-            prompt_embeds,
-            pooled_prompt_embeds,
-            text_ids,
-        ) = self.encode_prompt(
+        (prompt_embeds, pooled_prompt_embeds, text_ids, text_encoder_perf) = self.encode_prompt(
             prompt=prompt,
             prompt_2=prompt_2,
             prompt_embeds=prompt_embeds,
@@ -551,6 +548,7 @@ class QEFFFluxPipeline(FluxPipeline):
             num_images_per_prompt=num_images_per_prompt,
             max_sequence_length=max_sequence_length,
         )
+
         if do_true_cfg:
             (
                 negative_prompt_embeds,
@@ -595,7 +593,7 @@ class QEFFFluxPipeline(FluxPipeline):
         }
 
         self.transformer.qpc_session.set_buffers(output_buffer)
-        self.transformer.inference_time = []
+        transformer_perf = []
         self.scheduler.set_begin_index(0)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -653,7 +651,7 @@ class QEFFFluxPipeline(FluxPipeline):
                 start_transformer_step_time = time.time()
                 outputs = self.transformer.qpc_session.run(inputs_aic)
                 end_transfromer_step_time = time.time()
-                self.transformer.inference_time.append(end_transfromer_step_time - start_transformer_step_time)
+                transformer_perf.append(end_transfromer_step_time - start_transformer_step_time)
 
                 noise_pred = torch.from_numpy(outputs["output"])
 
@@ -678,7 +676,6 @@ class QEFFFluxPipeline(FluxPipeline):
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
-
         if output_type == "latent":
             image = latents
         else:
@@ -704,14 +701,22 @@ class QEFFFluxPipeline(FluxPipeline):
             start_decode_time = time.time()
             image = self.vae_decode.qpc_session.run(inputs)
             end_decode_time = time.time()
-            self.vae_decode.inference_time = end_decode_time - start_decode_time
+            vae_decode_perf = end_decode_time - start_decode_time
             image_tensor = torch.from_numpy(image["sample"])
             image = self.image_processor.postprocess(image_tensor, output_type=output_type)
 
-            total_time_taken = end_decode_time - start_text_encoder_time
+            # Collect performance data in a dict
+            perf_data = {
+                "text_encoder": text_encoder_perf[0],
+                "text_encoder_2": text_encoder_perf[1],
+                "transformer": transformer_perf,
+                "vae_decoder": vae_decode_perf,
+            }
 
-        return QEffPipelineOutput(
-            pipeline=self,
-            images=image,
-            E2E_time=total_time_taken,
-        )
+            # Build performance metrics dynamically
+            perf_metrics = [ModulePerf(module_name=name, perf=perf_data[name]) for name in self.modules.keys()]
+
+            return QEffPipelineOutput(
+                pipeline_module=perf_metrics,
+                images=image,
+            )
