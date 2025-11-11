@@ -277,6 +277,54 @@ class ApiRunnerVlm:
         self.gen_len = max_gen_len
 
     @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch_CB(self, model, images, queries):
+        """
+        Function responsible for running HuggingFace ``PyTorch`` model for continuous batching
+        and return the output tokens for each prompt/image pair.
+
+        ``Mandatory`` Args:
+            :model (torch.nn.module): Original ``PyTorch`` model
+            :images (List[PIL.Image]): List of input images
+            :queries (List[str]): List of input queries
+
+        Return:
+            :List[numpy.ndarray]: List of generated output tokens for each prompt
+        """
+        generated_ids = []
+
+        for idx, (image, query) in enumerate(zip(images, queries)):
+            # Prepare conversation format for each image-query pair
+            conversation = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": query},
+                        {"type": "image"},
+                    ],
+                },
+            ]
+            prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
+
+            # Process inputs
+            inputs = self.processor(images=image, text=prompt, return_tensors="pt")
+            if "pixel_values" in inputs:
+                inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+
+            # Generate tokens
+            output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)
+            offset_output = output[0, inputs["input_ids"].shape[1]:]
+
+            # Decode and print output
+            py_output = self.processor.tokenizer.decode(offset_output).strip()
+            print(f"Original HF Model Outputs (Torch CPU) for prompt {idx}:")
+            print("Query:", repr(query))
+            print("Completion:", repr(py_output))
+
+            generated_ids.append(offset_output.numpy())
+
+        return generated_ids
+
+    @torch.no_grad()
     def run_vlm_hf_model_on_pytorch(self, model, inputs):
         output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)
         offset_output = output[0, inputs["input_ids"].shape[1] :]
