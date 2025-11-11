@@ -38,6 +38,7 @@ test_models_config = [
     # model_name,
     # kv_offload,
     # batch_size,
+    # full_batch_size,
     # prompt_len,
     # ctx_len,
     # img_size,
@@ -49,6 +50,7 @@ test_models_config = [
         "llava-hf/llava-1.5-7b-hf",
         True,
         1,
+        4,
         784,
         1024,
         336,
@@ -60,6 +62,7 @@ test_models_config = [
         "llava-hf/llava-1.5-7b-hf",
         False,
         1,
+        4,
         784,
         1024,
         336,
@@ -72,6 +75,7 @@ test_models_config = [
     #     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
     #     True,
     #     1,
+    #     4,
     #     128,
     #     3072,
     #     336,
@@ -83,6 +87,7 @@ test_models_config = [
     #     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
     #     False,
     #     1,
+    #     4,
     #     128,
     #     3072,
     #     336,
@@ -94,6 +99,7 @@ test_models_config = [
         "google/gemma-3-4b-it",
         True,
         1,
+        4,
         128,
         3072,
         896,
@@ -105,6 +111,7 @@ test_models_config = [
         "google/gemma-3-4b-it",
         False,
         1,
+        4,
         128,
         3072,
         896,
@@ -116,6 +123,7 @@ test_models_config = [
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         True,
         1,
+        4,
         128,
         4096,
         1540,
@@ -127,6 +135,7 @@ test_models_config = [
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         False,
         1,
+        4,
         128,
         4096,
         1540,
@@ -138,6 +147,7 @@ test_models_config = [
         "Qwen/Qwen2.5-VL-3B-Instruct",
         True,
         1,
+        4,
         128,
         4096,
         1540,
@@ -149,6 +159,7 @@ test_models_config = [
     #     "meta-llama/Llama-3.2-11B-Vision-Instruct",
     #     True,
     #     1,
+    #     4,
     #     32,
     #     512,
     #     560,
@@ -256,6 +267,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     query: str,
     prompt_len: int,
     ctx_len: int,
+    full_batch_size: int,
     max_gen_len: int = 20,
     batch_size: int = 1,
     n_layer: int = 1,
@@ -341,8 +353,56 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
-    return
 
+    # testing for CB models
+    if not kv_offload: # CB not yet enabled for Single QPC
+        return
+    images = [image] * full_batch_size
+    queries = [query] * full_batch_size
+
+    streamer = TextStreamer(processor.tokenizer)
+    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries)
+
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        model_config["model_name"],
+        kv_offload=kv_offload,
+        config=config,
+        continuous_batching=True,
+    )
+
+    qeff_model.export()
+
+    if not get_available_device_id():
+        pytest.skip("No available devices to run model on Cloud AI 100")
+
+    qeff_model.compile(
+        img_size=model_config["img_size"],
+        num_cores=16,
+        num_devices=num_devices,
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        batch_size=batch_size,
+        full_batch_size=full_batch_size,
+        mxfp6_matmul=True,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
+    )
+
+    print("QPC Outputs (QAIC):")
+    exec_info = qeff_model.generate(
+        tokenizer=processor.tokenizer,
+        processor=processor,
+        images=[img_url] * full_batch_size,
+        prompts=queries,
+        generation_len=max_gen_len,
+    )
+
+    qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
+
+    for i in range(full_batch_size):
+        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), f"Tokens don't match for prompt {i} between HF and QPC output"
+
+    return
 
 def check_molmo_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
@@ -527,10 +587,10 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
+    "model_name, kv_offload, batch_size, full_batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
 )
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
+    model_name, kv_offload, batch_size, full_batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
 ):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
@@ -547,6 +607,7 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         query=query,
         n_layer=n_layer,
         batch_size=batch_size,
+        full_batch_size=full_batch_size,
         kv_offload=kv_offload,
     )
 
