@@ -14,15 +14,14 @@ import numpy as np
 import torch
 from diffusers import FluxPipeline
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps  # TODO
 
-from QEfficient.diffusers.pipelines.config_manager import config_manager, set_module_device_ids
-from QEfficient.diffusers.pipelines.pipeline_utils import (
+from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffFluxTransformerModel,
     QEffTextEncoder,
     QEffVAE,
 )
+from QEfficient.diffusers.pipelines.pipeline_utils import QEffPipelineOutput, config_manager, set_module_device_ids
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 
@@ -259,10 +258,10 @@ class QEFFFluxPipeline(FluxPipeline):
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
         import time
 
-        start_time = time.time()
+        start_t5_time = time.time()
         prompt_embeds = torch.tensor(self.text_encoder_2.qpc_session.run(aic_text_input)["last_hidden_state"])
-        end_time = time.time()
-        print(f"T5 Text encoder inference time: {end_time - start_time:.4f} seconds")
+        end_t5_time = time.time()
+        self.text_encoder_2.inference_time = end_t5_time - start_t5_time
 
         _, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
@@ -325,10 +324,11 @@ class QEFFFluxPipeline(FluxPipeline):
 
         import time
 
-        start_time = time.time()
+        global start_text_encoder_time
+        start_text_encoder_time = time.time()
         aic_embeddings = self.text_encoder.qpc_session.run(aic_text_input)
-        end_time = time.time()
-        print(f"CLIP Text encoder inference time: {end_time - start_time:.4f} seconds")
+        end_text_encoder_time = time.time()
+        self.text_encoder.inference_time = end_text_encoder_time - start_text_encoder_time
         prompt_embeds = torch.tensor(aic_embeddings["pooler_output"])
 
         # duplicate text embeddings for each generation per prompt, using mps friendly method
@@ -595,7 +595,7 @@ class QEFFFluxPipeline(FluxPipeline):
         }
 
         self.transformer.qpc_session.set_buffers(output_buffer)
-
+        self.transformer.inference_time = []
         self.scheduler.set_begin_index(0)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -650,10 +650,10 @@ class QEFFFluxPipeline(FluxPipeline):
                     "adaln_out": adaln_out.detach().numpy(),
                 }
 
-                start_time = time.time()
+                start_transformer_step_time = time.time()
                 outputs = self.transformer.qpc_session.run(inputs_aic)
-                end_time = time.time()
-                print(f"Transformers inference time : {end_time - start_time:.2f} seconds")
+                end_transfromer_step_time = time.time()
+                self.transformer.inference_time.append(end_transfromer_step_time - start_transformer_step_time)
 
                 noise_pred = torch.from_numpy(outputs["output"])
 
@@ -701,14 +701,17 @@ class QEFFFluxPipeline(FluxPipeline):
             self.vae_decode.qpc_session.set_buffers(output_buffer)
 
             inputs = {"latent_sample": latents.numpy()}
-            start_time = time.time()
+            start_decode_time = time.time()
             image = self.vae_decode.qpc_session.run(inputs)
-            end_time = time.time()
-            print(f"Decoder Text encoder inference time: {end_time - start_time:.4f} seconds")
+            end_decode_time = time.time()
+            self.vae_decode.inference_time = end_decode_time - start_decode_time
             image_tensor = torch.from_numpy(image["sample"])
             image = self.image_processor.postprocess(image_tensor, output_type=output_type)
 
-        if not return_dict:
-            return (image,)
+            total_time_taken = end_decode_time - start_text_encoder_time
 
-        return FluxPipelineOutput(images=image)
+        return QEffPipelineOutput(
+            pipeline=self,
+            images=image,
+            E2E_time=total_time_taken,
+        )
