@@ -40,7 +40,7 @@ max_gen_len = CTX_LEN - position_ids.max()
 generation_len = max_gen_len
 
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, max_seq_len_cached=65*1024, num_hidden_layers=2)
 config = qeff_model.model.config
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
 inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -69,6 +69,7 @@ decode_qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     offload_pt_weights=False,
 )
+exit()
 prefill_qpc_path = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,

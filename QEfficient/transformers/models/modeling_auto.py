@@ -2127,7 +2127,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         FP16ClipTransform,
         CustomOpTransform,
         RenameFunctionOutputsTransform,
-        OnnxSlimTransform,
+        # OnnxSlimTransform,
         SplitTensorsTransform,
     ]
 
@@ -2355,9 +2355,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-        kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
-        )
         if prefill_only:
             assert not self.continuous_batching, "prefill_only=True is not supported with continuous_batching=True"
 
@@ -2378,12 +2375,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.prefill(True)
                 self.hash_params["prefill_only"] = True
                 self.hash_params["num_blocks"] = os.environ["NUM_BLOCKS"]
-                seq_len = prefill_seq_len // block_size if (prefill_seq_len // block_size) > seq_len else seq_len
+                seq_len = prefill_seq_len // block_size if (prefill_seq_len // block_size) > 128 else 128
+                # seq_len = prefill_seq_len // block_size if (prefill_seq_len // block_size) > seq_len else seq_len
+
         else:
             self.prefill(False)
             self.hash_params.pop("prefill_only", None)
             self.hash_params.pop("num_blocks", None)
 
+        kv_cache_shape = get_padding_shape_from_config(
+            self.model.config, fbs if self.continuous_batching else bs, seq_len
+)
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
