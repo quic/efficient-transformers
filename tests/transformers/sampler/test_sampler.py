@@ -211,7 +211,7 @@ def test_greedy_sampling(
             "top_ks": np.array(512, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
             "top_ps": np.array(1.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "min_ps": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "random_numbers": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "random_numbers": np.zeros((full_batch_size, 512), dtype=np.float32),
         },
     )
     model_wo_sampler_exec_info = model_wo_sampler.generate(
@@ -233,7 +233,6 @@ def test_greedy_sampling(
 
 
 @pytest.mark.on_qaic
-@pytest.mark.skip
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
     random_sampling_configs,
@@ -291,6 +290,7 @@ def test_random_sampling(
 
     # Generate texts from prompts
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model)
+    np.random.seed(0)
     model_w_sampler_exec_info = model_w_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
@@ -301,11 +301,13 @@ def test_random_sampling(
             "repetition_penalties": np.array(20.2, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "presence_penalties": np.array(10.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             # "frequency_penalties": np.array(0.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "temperatures": np.array(100.1, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "top_ks": np.array(54720, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
+            "temperatures": np.array(4.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "top_ks": np.array(512, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
             "top_ps": np.array(0.89, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "min_ps": np.array(0.6, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "random_numbers": np.array(0.26, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "random_numbers": np.tile(np.random.uniform(low=0.0, high=1.0, size=512), (full_batch_size, 1)).astype(
+                np.float32
+            ),
         },
     )
     model_wo_sampler_exec_info = model_wo_sampler.generate(
@@ -319,32 +321,32 @@ def test_random_sampling(
 
     # Compare generated texts
     golden_texts = {
-        "w_sampler": "Raymond and my favorite color, alongside reds or purples (I can’t have them both",
+        "w_sampler": "Aiden and I am a freelance writer who loves to explore the world. With over",
         "wo_sampler": "John Smith and I am a software engineer. I have been working in the industry for the past ",
     }
     golden_ids = {
         "w_sampler": [
             [
-                21380,
+                319,
+                3615,
                 322,
-                590,
-                25448,
-                2927,
-                29892,
-                19963,
-                2654,
-                29879,
-                470,
-                3708,
-                2701,
-                313,
-                29902,
-                508,
-                30010,
-                29873,
-                505,
-                963,
-                1716,
+                306,
+                626,
+                263,
+                3005,
+                295,
+                749,
+                9227,
+                1058,
+                12355,
+                267,
+                304,
+                26987,
+                278,
+                3186,
+                29889,
+                2973,
+                975,
             ]
         ],
         "wo_sampler": [
