@@ -721,7 +721,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model, qaic_config: Optional[dict] = None, **kwargs):
+    def __init__(self, model, continuous_batching: bool = False, qaic_config: Optional[dict] = None, **kwargs):
         """
         Initializes the language decoder component for multimodal models.
 
@@ -729,6 +729,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         ----------
         model : nn.Module
             The full HuggingFace multimodal model from which the language decoder is extracted.
+        continuous_batching : bool, optional
+            If True, enables continuous batching mode for future compilation and execution.
+            This setting must be consistent across `from_pretrained` and `compile` calls. Default is False.
         qaic_config : dict, optional
             A dictionary for QAIC-specific configurations.
             Only the following keys are supported by the text model of the dual QPC multimodal model:
@@ -741,6 +744,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
@@ -804,6 +808,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             sampling-related parameters.
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         assert "logits" in output_names, "logits must be part of the output names to suport on-device sampling"
 
@@ -816,10 +821,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
 
         example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
-            (bs, self.model.language_model.config.vocab_size), dtype=torch.bool
+            (fbs if self.continuous_batching else bs, self.model.language_model.config.vocab_size), dtype=torch.bool
         )
         dynamic_axes["past_repetition_penalty_buffer"] = {
-            0: "batch_size",
+            0: "full_batch_size" if self.continuous_batching else "batch_size",
         }
         output_names.append("past_repetition_penalty_buffer_RetainedState")
 
@@ -829,10 +834,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         dynamic_axes["repetition_penalties"] = {0: "batch_size"}
 
         example_inputs["past_presence_penalty_buffer"] = torch.zeros(
-            (bs, self.model.language_model.config.vocab_size), dtype=torch.bool
+            (fbs if self.continuous_batching else bs, self.model.language_model.config.vocab_size), dtype=torch.bool
         )
         dynamic_axes["past_presence_penalty_buffer"] = {
-            0: "batch_size",
+            0: "full_batch_size" if self.continuous_batching else "batch_size",
         }
         output_names.append("past_presence_penalty_buffer_RetainedState")
 
@@ -981,7 +986,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.model = model
         self.config = model.config
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
-        self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
+        self.lang_model = QEffCausalLMForTextImageToTextModel(model, continuous_batching=continuous_batching, **kwargs)
         self.continuous_batching = continuous_batching
         self.input_shapes, self.output_names = None, None
 

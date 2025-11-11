@@ -175,13 +175,17 @@ def sampler_forward(
             Must be in [-1, 1].
     """
     if vision_embeds is not None:
-        logits, vision_embeds, image_idx, past_key_values = self.old_forward(
+        forward_kwargs = dict(
             input_ids=input_ids,
             vision_embeds=vision_embeds,
             position_ids=position_ids,
             image_idx=image_idx,
             past_key_values=past_key_values,
         )
+        if batch_index is not None:
+            forward_kwargs["batch_index"] = batch_index
+
+        logits, vision_embeds, image_idx, past_key_values = self.old_forward(**forward_kwargs)
         outputs = dict(logits=logits, vision_embeds=vision_embeds, image_idx=image_idx, past_key_values=past_key_values)
         if position_ids.dim() == 3:  # For models using m-rope
             position_ids = position_ids[0]
