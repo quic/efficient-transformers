@@ -8,6 +8,8 @@
 import os
 from dataclasses import dataclass
 
+import torch
+
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
 ROOT_DIR = os.path.dirname(QEFF_DIR)
@@ -46,6 +48,9 @@ KWARGS_INCLUSION_LIST = [
 
 # Minimum value for causal mask
 MIN_MASKED_ATTENTION_VALUE = float("-inf")
+
+# Invalid index for position ids to be used during reading and writing the cache
+INVALID_IDX = torch.iinfo(torch.int32).max
 
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
