@@ -27,7 +27,6 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
@@ -222,7 +221,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     _hf_auto_class = AutoModel
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
         """
@@ -364,6 +363,27 @@ class QEFFAutoModel(QEFFTransformersBase):
         **compiler_options,
     ) -> str:
         """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :seq_len (Union[int, List[int]]): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+            :num_cores (int): Number of cores used to compile the model.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :compiler_options (dict, optional): Additional compiler options.
+                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
+                    :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+                    :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+                For QNN Compiler: Following arguments can be passed.
+                    :enable_qnn (bool): Enables QNN Compilation.
+                    :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
@@ -577,7 +597,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model: nn.modules, **kwargs):
         """
@@ -719,7 +739,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         VlmKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model, **kwargs):
         """
@@ -1475,7 +1495,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         VlmNoKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(
         self,
@@ -2111,7 +2131,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(
         self,
@@ -2606,80 +2626,37 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **compiler_options,
     ) -> str:
         """
-        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
 
-        This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-exec`
-        compiler can be passed as keyword arguments.
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :num_cores (int): Number of cores used to compile the model.
+            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
+            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
+            :full_batch_size (int, optional): Continuous batching batch size.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
+            :prefill_only (bool): if ``True`` compile for prefill only and if ``False`` compile for decode only. Defaults to None, which compiles for both ``prefill and ``decode``.
+            :compiler_options (dict, optional): Additional compiler options. ``Defaults to None``.
+                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
+                    :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
+                    :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+                    :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+                    Params are converted to flags as below:
+                    - aic_num_cores=16 -> -aic-num-cores=16
+                    - convert_to_fp16=True -> -convert-to-fp16
+                For QNN Compiler: Following arguments can be passed.
+                    :enable_qnn (bool): Enables QNN Compilation.
+                    :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
 
-        Parameters
-        ----------
-        onnx_path : str, optional
-            Path to a pre-exported ONNX model. If not provided, the model will be exported first.
-        compile_dir : str, optional
-            Directory to save the generated QPC package. If not provided, a default directory is used.
-        prefill_seq_len : int, optional
-            Length of the prefill prompt. Default is 32.
-        ctx_len : int, optional
-            Maximum context length the compiled model can remember. Default is 128.
-        batch_size : int, optional
-            Batch size. Default is 1.
-        full_batch_size : int, optional
-            Continuous batching batch size. Required if `continuous_batching=True` was
-            set during `from_pretrained`.
-        kv_cache_batch_size : int, optional
-            Batch size for KV cache. If not provided, it defaults to `full_batch_size` (if
-            continuous batching) or `batch_size`.
-        num_devices : int, optional
-            Number of devices to compile for. Default is 1.
-        num_cores : int, optional
-            Number of cores to use for compilation.
-        mxfp6_matmul : bool, optional
-            Use MXFP6 compression for weights. Default is False.
-        mxint8_kv_cache : bool, optional
-            Use MXINT8 compression for KV cache. Default is False.
-        num_speculative_tokens : int, optional
-            Number of speculative tokens for Speculative Decoding Target Language Model.
-            Required if the model is configured as a Target Language Model (`is_tlm=True`).
-        prefill_only : bool, optional
-            If True, compiles only for the prefill stage. If False, compiles only for
-            the decode stage. If None, compiles for both stages. Default is None.
-        **compiler_options : dict
-            Additional compiler options for QAIC or QNN compilers.
-
-            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
-
-            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
-            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
-            - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
-
-            Params are converted to flags as below:
-
-            - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
-            - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
-
-            **For QNN Compiler:** Following arguments can be passed as:
-
-            - enable_qnn (bool): Enables QNN Compilation.
-            - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
-
-        Returns
-        -------
-        str
-            Path to the compiled QPC package.
-
-        Raises
-        ------
-        TypeError
-            If `prefill_only` is not a boolean.
-            If `full_batch_size` is None when `continuous_batching` is True.
-            If `num_speculative_tokens` is None when the model is a TLM.
-        ValueError
-            If KV caching is requested without continuous batching (`full_batch_size`).
-            If `include_sampler` is True and `num_speculative_tokens` is greater than 0.
-            If `num_speculative_tokens` is not an integer greater than 1.
-            If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
-
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
         """
         # --- Validation ---
         if prefill_only is not None and not isinstance(prefill_only, bool):
@@ -2904,7 +2881,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model: nn.Module, **kwargs):
         """
@@ -2985,6 +2962,24 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         **compiler_options,
     ) -> str:
         """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :encoder_ctx_len (int, optional): The maximum length of context for encoder, based on the AutoProcessor output. ``Defaults to checking config, if None in config then 1500``
+            :ctx_len (int, optional): The maximum length of context to keep for decoding. ``Defaults to 150``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+            :num_cores (int): Number of cores used to compile the model.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+
+            Other args are not yet implemented for AutoModelForSpeechSeq2Seq
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
@@ -3240,7 +3235,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
     _hf_auto_class = AutoModelForCTC
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model, **kwargs)
