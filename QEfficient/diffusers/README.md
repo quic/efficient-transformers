@@ -11,7 +11,7 @@
 
 * Optimized for Qualcomm Cloud AI 100*
 
-<img src="../../docs/image/git_laughing_flux.png" alt="Sample Output" width="400">
+<img src="../../docs/image/girl_laughing.png" alt="Sample Output" width="400">
 
 **Generated with**: `black-forest-labs/FLUX.1-schnell` • `"A girl laughing"` • 4 steps • 0.0 guidance scale •  ⚡
 
