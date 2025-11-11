@@ -312,7 +312,7 @@ class ApiRunnerVlm:
 
             # Generate tokens
             output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)
-            offset_output = output[0, inputs["input_ids"].shape[1]:]
+            offset_output = output[0, inputs["input_ids"].shape[1] :]
 
             # Decode and print output
             py_output = self.processor.tokenizer.decode(offset_output).strip()

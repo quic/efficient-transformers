@@ -355,7 +355,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
 
     # testing for CB models
-    if not kv_offload: # CB not yet enabled for Single QPC
+    if not kv_offload:  # CB not yet enabled for Single QPC
         return
     images = [image] * full_batch_size
     queries = [query] * full_batch_size
@@ -400,9 +400,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
 
     for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), f"Tokens don't match for prompt {i} between HF and QPC output"
+        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
+            f"Tokens don't match for prompt {i} between HF and QPC output"
+        )
 
     return
+
 
 def check_molmo_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
@@ -587,7 +590,8 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, full_batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
+    "model_name, kv_offload, batch_size, full_batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer",
+    test_models_config,
 )
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name, kv_offload, batch_size, full_batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
