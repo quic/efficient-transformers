@@ -295,9 +295,12 @@ class QEFFBaseModel(ABC):
             self.onnx_path = onnx_path
         return onnx_path
 
-    def get_onnx_path(self, prefill_only: Optional[bool] = False,
-                      specializations: Optional[List[Dict[str, int]]] = None, 
-                      offload_pt_weights: Optional[bool] = True):
+    def get_onnx_path(
+        self,
+        prefill_only: Optional[bool] = False,
+        specializations: Optional[List[Dict[str, int]]] = None,
+        offload_pt_weights: Optional[bool] = True,
+    ):
         kwargs = {"offload_pt_weights": offload_pt_weights}
         if prefill_only:
             if self.prefill_onnx_path is None:
@@ -349,7 +352,9 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-        onnx_path = Path(onnx_path if onnx_path else self.get_onnx_path(prefill_only, specializations, offload_pt_weights))
+        onnx_path = Path(
+            onnx_path if onnx_path else self.get_onnx_path(prefill_only, specializations, offload_pt_weights)
+        )
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():
