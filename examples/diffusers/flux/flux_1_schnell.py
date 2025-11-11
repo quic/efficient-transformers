@@ -17,7 +17,7 @@ output = pipeline(
     max_sequence_length=256,
     generator=torch.manual_seed(42),
 )
-image = pipeline.images[0]
+image = output.images[0]
 image.save("cat_with_sign.png")
 
 print(output)
