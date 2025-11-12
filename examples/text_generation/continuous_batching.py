@@ -63,7 +63,7 @@ def main():
     # Display results
     print("\n" + "=" * 80)
     for i, (prompt, generated) in enumerate(zip(prompt_list, exec_info.generated_texts)):
-        print(f"\nPrompt {i+1}: {prompt}")
+        print(f"\nPrompt {i + 1}: {prompt}")
         print(f"Generated: {generated}")
         print("-" * 80)
 
