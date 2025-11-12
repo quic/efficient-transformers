@@ -43,7 +43,7 @@ skip_vision = True
 
 if skip_vision:
     ## TEXT-ONLY MODE ##
-    
+
     ## STEP 3: Compile Model for Text-Only Execution
     # Set skip_vision=True to bypass image processing
     qeff_model.compile(
@@ -83,7 +83,7 @@ if skip_vision:
     ## STEP 6: Run Text-Only Inference
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
-    
+
     ## STEP 7: Display Results
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
@@ -91,7 +91,7 @@ if skip_vision:
 
 else:
     ## VISION + TEXT MODE ##
-    
+
     ## STEP 3: Compile Model for Vision+Text Execution
     # Do not set skip_vision (defaults to False) to enable image processing
     qeff_model.compile(
@@ -134,11 +134,11 @@ else:
     )
     # Convert pixel values to float32 for processing
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-    
+
     ## STEP 6: Run Vision+Text Inference
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
-    
+
     ## STEP 7: Display Results
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))

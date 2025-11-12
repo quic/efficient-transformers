@@ -33,7 +33,7 @@ def main():
     print(f"Loading Whisper model: {args.model_name}")
 
     ## STEP 1 -- load audio sample
-    
+
     # Using a standard english dataset
     print("Loading audio sample from dataset...")
     ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
