@@ -50,6 +50,7 @@ def set_module_device_ids(cls):
     for module_name, module_obj in cls.modules.items():
         module_obj.device_ids = config_modules[module_name]["execute"]["device_ids"]
 
+
 @dataclass(frozen=True)
 class ModulePerf:
     module_name: str
