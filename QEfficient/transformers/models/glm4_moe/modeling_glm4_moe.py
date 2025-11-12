@@ -54,7 +54,7 @@ class QEffGlm4MoeRotaryEmbedding(Glm4MoeRotaryEmbedding):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
+    def forward(self, x: torch.Tensor, seq_len: int = None):
         # x: [bs, num_attention_heads, seq_len, head_size]
         if seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
@@ -63,6 +63,7 @@ class QEffGlm4MoeRotaryEmbedding(Glm4MoeRotaryEmbedding):
             self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
             self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
         )
+
 
 def qeff_apply_rotary_pos_emb(
     q: torch.Tensor,
@@ -95,11 +96,22 @@ def qeff_apply_rotary_pos_emb(
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
-    # Apply rotation
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
+    # Keep half or full tensor for later concatenation
+    rotary_dim = cos.shape[-1]
+    q_rot, q_pass = q[..., :rotary_dim], q[..., rotary_dim:]
+    k_rot, k_pass = k[..., :rotary_dim], k[..., rotary_dim:]
+
+    # Apply rotary embeddings on the first half or full tensor
+    q_embed = (q_rot * cos) + (rotate_half(q_rot) * sin)
+    k_embed = (k_rot * cos) + (rotate_half(k_rot) * sin)
+
+    # Concatenate back to full shape
+    q_embed = torch.cat([q_embed, q_pass], dim=-1)
+    k_embed = torch.cat([k_embed, k_pass], dim=-1)
+
     # Cast back to original dtype
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
+
 
 def eager_attention_forward(
     module: nn.Module,
@@ -126,8 +138,13 @@ def eager_attention_forward(
 
     return attn_output, attn_weights
 
+
 class QEffGlm4MoeAttention(Glm4MoeAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffGlm4MoeRotaryEmbedding(config=self.config)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -136,6 +153,7 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
         past_key_value: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -153,12 +171,20 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
 
-        cos, sin = position_embeddings
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; position_ids needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "cache_position": cache_position,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -180,7 +206,6 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
 
 
 class QEffGlm4MoeDecoderLayer(Glm4MoeDecoderLayer):
-   
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -232,20 +257,17 @@ class QEffGlm4MoeModel(Glm4MoeModel):
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-        
+
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-                
+
         if inputs_embeds is None:
             inputs_embeds: torch.Tensor = self.embed_tokens(input_ids)
 
-        return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
-            return_legacy_cache = True
             if past_key_values is None:
                 past_key_values = QEffDynamicCache()
             else:
-                cache_kwargs = {"batch_index" : batch_index, "position_ids": position_ids}
-                past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values,cache_kwargs)
+                past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
                 logger.warning_once(
                     "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
                     "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
@@ -261,43 +283,30 @@ class QEffGlm4MoeModel(Glm4MoeModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = _create_causal_mask(
-            config=self.config,
-            input_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            cache_position=cache_position,
-            past_key_values=past_key_values,
-            batch_index=batch_index,
-            position_ids=position_ids,
-        )
+        attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
         hidden_states = inputs_embeds
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask,
+                attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
                 batch_index=batch_index,
                 cache_position=cache_position,
-                position_embeddings=position_embeddings,
                 **kwargs,
             )
 
         hidden_states = self.norm(hidden_states)
-
-        if return_legacy_cache:
-            past_key_values = past_key_values.to_legacy_cache()
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
         )
 
+
 class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
-    
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -312,23 +321,6 @@ class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
-        r"""
-        Example:
-
-        ```python
-        >>> from transformers import AutoTokenizer, Glm4MoeForCausalLM
-
-        >>> model = Glm4MoeForCausalLM.from_pretrained("meta-glm4_moe/Glm4Moe-2-7b-hf")
-        >>> tokenizer = AutoTokenizer.from_pretrained("meta-glm4_moe/Glm4Moe-2-7b-hf")
-
-        >>> prompt = "Hey, are you conscious? Can you talk to me?"
-        >>> inputs = tokenizer(prompt, return_tensors="pt")
-
-        >>> # Generate
-        >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
-        >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
-        ```"""
         outputs: BaseModelOutputWithPast = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -357,4 +349,3 @@ class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
