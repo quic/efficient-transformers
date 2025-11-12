@@ -126,7 +126,7 @@ def sampler_forward(
     random_numbers: Optional[torch.Tensor] = None,
     vision_embeds: Optional[torch.Tensor] = None,
     image_idx: Optional[torch.Tensor] = None,
-    bitmask: Optional[torch.Tensor] = None,
+    token_bitmasks: Optional[torch.Tensor] = None,
 ) -> Union[Tuple, SamplerOutput]:
     r"""
     Perform the sampling of next tokens on the QAIC device (instead of the host)
@@ -175,8 +175,8 @@ def sampler_forward(
             Sampling parameter that represents the random seeds to use for random sampling.
             Must be in [-1, 1].
 
-        bitmask (`torch.Tensor`, *optional*):
-            A boolean mask used to guide token-level filtering during decoding. Each
+        token_bitmasks (`torch.Tensor`, *optional*):
+            Boolean mask used to guide token-level filtering during decoding. Each
             element of this tensor indicates whether the corresponding token should be
             kept (1) or masked (0). Shape: (batch_size, vocab_size)
     """
@@ -224,10 +224,10 @@ def sampler_forward(
     batch_index_reshaped = batch_index.view(-1)
 
     # Guided decoding
-    if (bitmask != 1).any():
+    if (token_bitmasks != 1).any():
         assert spec_length == 1, "Currently, guided decoding is not supported with Speculative Decoding"
-        # Mask logits where bitmask is 0 with -inf
-        logits = torch.where(bitmask == 1, logits, torch.finfo(torch.float16).min)
+        # Mask logits where token_bitmasks is 0 with -inf
+        logits = torch.where(token_bitmasks == 1, logits, torch.finfo(torch.float16).min)
 
     # Prefill
     past_repetition_penalty_buffer_prefill, past_presence_penalty_buffer_prefill = prefill_path(
