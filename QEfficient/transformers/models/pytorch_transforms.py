@@ -488,7 +488,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
         Olmo2RMSNorm: CustomRMSNormAIC,
-        Glm4MoeRMSNorm:CustomRMSNormAIC,
+        Glm4MoeRMSNorm: CustomRMSNormAIC,
     }
 
 
