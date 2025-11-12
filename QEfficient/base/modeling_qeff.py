@@ -319,7 +319,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path = onnx_path
         return onnx_path
 
-    # @dump_qconfig
+    @dump_qconfig
     def _compile(
         self,
         onnx_path: Optional[str] = None,

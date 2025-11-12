@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import copy
-import hashlib
 
 import torch
 import torch.nn as nn
@@ -23,7 +22,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
 )
 from QEfficient.utils import constants
-from QEfficient.utils.cache import to_hashable
 
 
 class QEffTextEncoder(QEFFBaseModel):
@@ -57,6 +55,18 @@ class QEffTextEncoder(QEFFBaseModel):
 
         return example_inputs, dynamic_axes, output_names
 
+    @property
+    def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
+        return self.model.config.__dict__
+
     def export(
         self,
         inputs,
@@ -75,15 +85,6 @@ class QEffTextEncoder(QEFFBaseModel):
 
     def compile(self, specializations, **compiler_options):
         self._compile(specializations=specializations, **compiler_options)
-
-    @property
-    def model_hash(self) -> str:
-        # Compute the hash with: model_config, continuous_batching, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(self.model.config.to_diff_dict()))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
 
     @property
     def model_name(self) -> str:
@@ -125,17 +126,20 @@ class QEffUNet(QEFFBaseModel):
             export_kwargs=export_kwargs,
         )
 
+    @property
+    def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
+        return self.model.config.__dict__
+
     def compile(self, specializations, **compiler_options):
         self._compile(specializations=specializations, **compiler_options)
-
-    @property
-    def model_hash(self) -> str:
-        # Compute the hash with: model_config, continuous_batching, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(dict(self.model.config)))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
 
     @property
     def model_name(self) -> str:
@@ -197,14 +201,16 @@ class QEffVAE(QEFFBaseModel):
         self._compile(specializations=specializations, **compiler_options)
 
     @property
-    def model_hash(self) -> str:
-        # Compute the hash with: model_config, continuous_batching, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(dict(self.model.config)))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash.update(to_hashable(self.type))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
+    def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
+        return self.model.config.__dict__
 
     @property
     def model_name(self) -> str:
@@ -250,13 +256,16 @@ class QEffSafetyChecker(QEFFBaseModel):
         self._compile(specializations=specializations, **compiler_options)
 
     @property
-    def model_hash(self) -> str:
-        # Compute the hash with: model_config, continuous_batching, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(self.model.config.to_diff_dict()))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
+    def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
+        return self.model.config.__dict__
 
     @property
     def model_name(self) -> str:
@@ -282,7 +291,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         if use_onnx_function:
             self._pytorch_transforms.append(OnnxFunctionTransform)
             model, _ = OnnxFunctionTransform.apply(model)
-        self.model = model
+        # Ensure the model and all its submodules are on CPU to avoid meta device issues
+        self.model = model.to("cpu")
 
     def get_onnx_config(self, batch_size=1, seq_length=256, cl=4096):
         example_inputs = {
@@ -312,6 +322,18 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         }
 
         return example_inputs, dynamic_axes, output_names
+
+    @property
+    def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
+        return self.model.config.__dict__
 
     def export(
         self,
@@ -346,17 +368,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
 
     def compile(self, specializations, **compiler_options):
         self._compile(specializations=specializations, **compiler_options)
-
-    @property
-    def model_hash(self) -> str:
-        # Compute the hash with: model_config, continuous_batching, transforms
-        mhash = hashlib.sha256()
-        dict_model_config = dict(self.model.config)
-        dict_model_config.pop("_use_default_values", None)
-        mhash.update(to_hashable(dict_model_config))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
 
     @property
     def model_name(self) -> str:

@@ -601,7 +601,7 @@ class QEFFFluxPipeline(FluxPipeline):
                     continue
 
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
-                temb = self.transformer.model.time_text_embed(timestep, pooled_prompt_embeds)
+                temb = self.transformer.model.time_text_embed(timestep.cpu(), pooled_prompt_embeds.cpu())
 
                 adaln_emb = []
                 for i in range(len(self.transformer.model.transformer_blocks)):
