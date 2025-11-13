@@ -8,6 +8,7 @@
 from typing import Callable, List, Optional, Union
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
@@ -17,7 +18,9 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeDecoderLayer,
     Glm4MoeForCausalLM,
     Glm4MoeModel,
+    Glm4MoeMoE,
     Glm4MoeRotaryEmbedding,
+    Glm4MoeTopkRouter,
     repeat_kv,
     rotate_half,
 )
@@ -252,9 +255,14 @@ class QEffGlm4MoeModel(Glm4MoeModel):
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        output_hidden_states: Optional[bool] = None,
         use_cache: Optional[bool] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
@@ -263,7 +271,9 @@ class QEffGlm4MoeModel(Glm4MoeModel):
         if inputs_embeds is None:
             inputs_embeds: torch.Tensor = self.embed_tokens(input_ids)
 
+        return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
+            return_legacy_cache = True
             if past_key_values is None:
                 past_key_values = QEffDynamicCache()
             else:
@@ -287,7 +297,13 @@ class QEffGlm4MoeModel(Glm4MoeModel):
 
         hidden_states = inputs_embeds
 
+        # decoder layers
+        all_hidden_states = () if output_hidden_states else None
+
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=attention_mask,
@@ -300,10 +316,76 @@ class QEffGlm4MoeModel(Glm4MoeModel):
 
         hidden_states = self.norm(hidden_states)
 
+        # add hidden states from the last decoder layer
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+
+        if return_legacy_cache:
+            past_key_values = past_key_values.to_legacy_cache()
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
+            hidden_states=all_hidden_states,
         )
+
+
+class QEffGlm4MoeTopkRouter(Glm4MoeTopkRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.view(-1, self.config.hidden_size)
+        router_logits = F.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
+        scores = router_logits.sigmoid()
+        topk_indices = self.get_topk_indices(scores)
+        topk_weights = scores.gather(1, topk_indices)
+        if self.norm_topk_prob:
+            denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
+            topk_weights /= denominator
+        topk_weights = topk_weights * self.routed_scaling_factor
+
+        # Create expert mask similar to Granite
+        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=self.n_routed_experts)
+        expert_mask = expert_mask.permute(2, 0, 1)  # [num_experts, batch*seq, top_k]
+
+        return topk_weights, expert_mask, router_logits, self.n_routed_experts
+
+
+class QEffGlm4MoeMoE(Glm4MoeMoE):
+    """
+    Optimized mixed expert module for ONNX export.
+    """
+
+    def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
+        """
+        Optimized MoE forward pass avoiding dynamic operations.
+        """
+        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
+
+        for expert_idx in range(num_experts):
+            expert = self.experts[expert_idx]
+            mask = expert_mask[expert_idx].to(hidden_states.dtype)
+            mask_weight = (topk_weights * mask).sum(dim=1, keepdim=True)
+            gate_out = expert.gate_proj(hidden_states)
+            up_out = expert.up_proj(hidden_states)
+            hidden = expert.act_fn(gate_out) * up_out
+            expert_output = expert.down_proj(hidden)
+            current_hidden_states = expert_output * mask_weight
+            final_hidden_states += current_hidden_states
+
+        return final_hidden_states.type(hidden_states.dtype)
+
+    def forward(self, hidden_states):
+        """
+        Forward pass of the mixture of experts layer.
+        """
+        residuals = hidden_states
+        orig_shape = hidden_states.shape
+
+        topk_weights, expert_mask, router_logits, num_experts = self.gate(hidden_states)
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        hidden_states = self.moe(hidden_states, topk_weights, expert_mask, num_experts).view(*orig_shape)
+        hidden_states = hidden_states + self.shared_experts(residuals)
+
+        return hidden_states
 
 
 class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
@@ -315,10 +397,9 @@ class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
         outputs: BaseModelOutputWithPast = self.model(
@@ -329,21 +410,18 @@ class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
+            output_hidden_states=output_hidden_states,
             cache_position=cache_position,
             **kwargs,
         )
 
         hidden_states = outputs.last_hidden_state
-        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        logits = self.lm_head(hidden_states[:, slice_indices, :])
-
-        loss = None
-        if labels is not None:
-            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        logits = self.lm_head(hidden_states).float()
 
         return CausalLMOutputWithPast(
-            loss=loss,
+            loss=None,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
