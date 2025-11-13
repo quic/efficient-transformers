@@ -126,8 +126,30 @@ class QEFFBaseModel(ABC):
             raise RuntimeError(error_msg)
 
     @property
-    @abstractmethod
-    def model_name(self) -> str: ...
+    def model_name(self) -> str:
+        """
+        Get the model class name without QEff/QEFF prefix.
+
+        This property extracts the underlying model's class name and removes
+        any QEff or QEFF prefix that may have been added during wrapping.
+
+        Returns:
+            str: Model class name (e.g., "CLIPTextModel" instead of "QEffCLIPTextModel")
+        """
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname
+
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying HuggingFace model
+        """
+        return self.model.config.__dict__
 
     @abstractmethod
     def export(self, export_dir: Optional[str] = None) -> Path:
@@ -273,8 +295,7 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=17,
-                # verbose=True,
+                opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
@@ -463,7 +484,6 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
-        print(command)
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
