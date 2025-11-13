@@ -68,8 +68,6 @@ pip install "QEfficient[diffusers]"
 ---
 
 ## 🎯 Supported Models
-
-### Stable Diffusion 3.x Series
 - ✅ [`black-forest-labs/FLUX.1-schnell`](https://huggingface.co/black-forest-labs/FLUX.1-schnell)
 
 ---

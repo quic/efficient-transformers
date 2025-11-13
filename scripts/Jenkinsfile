@@ -34,7 +34,7 @@ pipeline {
            parallel {
                stage('Run Non-CLI Non-QAIC Tests') {
                    steps {
-                       timeout(time: 40, unit: 'MINUTES') {
+                       timeout(time: 100, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&

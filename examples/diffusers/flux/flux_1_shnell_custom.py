@@ -37,8 +37,8 @@ from QEfficient import QEFFFluxPipeline
 # Option 1: Basic initialization with custom image dimensions
 pipeline = QEFFFluxPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-schnell",
-    height=256,
-    width=256,
+    height=512,
+    width=512,
 )
 
 # Option 2: Advanced initialization with custom modules
@@ -46,8 +46,8 @@ pipeline = QEFFFluxPipeline.from_pretrained(
 #
 # pipeline = QEFFFluxPipeline.from_pretrained(
 #     "black-forest-labs/FLUX.1-schnell",
-#     height=256,
-#     width=256,
+#     height=512,
+#     width=512,
 #     text_encoder=custom_text_encoder,      # Your custom CLIP text encoder
 #     transformer=custom_transformer,         # Your custom transformer model
 #     tokenizer=custom_tokenizer,             # Your custom tokenizer

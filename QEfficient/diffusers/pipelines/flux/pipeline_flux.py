@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import logging
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -28,9 +27,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     set_module_device_ids,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-
-# Initialize logger for this module
-logger = logging.getLogger(__name__)
+from QEfficient.utils.logging_utils import logger
 
 
 class QEFFFluxPipeline(FluxPipeline):
@@ -224,18 +221,18 @@ class QEFFFluxPipeline(FluxPipeline):
         # Compile each module with its specific configuration
         for module_name, module_obj in self.modules.items():
             module_config = self.custom_config["modules"]
-            specializations = [module_config[module_name]["specializations"]]
+            specializations = module_config[module_name]["specializations"]
             compile_kwargs = module_config[module_name]["compilation"]
 
             # Set dynamic specialization values based on image dimensions
             if module_name == "transformer":
-                specializations[0]["cl"] = self.cl
+                specializations["cl"] = self.cl
             elif module_name == "vae_decoder":
-                specializations[0]["latent_height"] = self.latent_height
-                specializations[0]["latent_width"] = self.latent_width
+                specializations["latent_height"] = self.latent_height
+                specializations["latent_width"] = self.latent_width
 
             # Compile the module to QPC format
-            module_obj.compile(specializations=specializations, **compile_kwargs)
+            module_obj.compile(specializations=[specializations], **compile_kwargs)
 
     def _get_t5_prompt_embeds(
         self,
