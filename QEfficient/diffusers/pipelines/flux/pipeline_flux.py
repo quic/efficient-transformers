@@ -14,6 +14,7 @@ import torch
 from diffusers import FluxPipeline
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
+from tqdm import tqdm
 
 from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffFluxTransformerModel,
@@ -161,7 +162,7 @@ class QEFFFluxPipeline(FluxPipeline):
         Returns:
             str: Path to the export directory
         """
-        for module_name, module_obj in self.modules.items():
+        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration for this module
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_config()
 
@@ -219,7 +220,7 @@ class QEFFFluxPipeline(FluxPipeline):
             config_manager(self, config_source=compile_config)
 
         # Compile each module with its specific configuration
-        for module_name, module_obj in self.modules.items():
+        for module_name, module_obj in tqdm(self.modules.items(), desc="Compiling modules", unit="module"):
             module_config = self.custom_config["modules"]
             specializations = module_config[module_name]["specializations"]
             compile_kwargs = module_config[module_name]["compilation"]
