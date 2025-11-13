@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import copy
-import logging
 from typing import Dict, List, Tuple
 
 import torch
@@ -24,9 +23,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
 )
 from QEfficient.utils import constants
-
-# Initialize logger for this module
-logger = logging.getLogger(__name__)
 
 
 class QEffTextEncoder(QEFFBaseModel):
@@ -397,7 +393,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             self._pytorch_transforms.append(OnnxFunctionTransform)
             model, _ = OnnxFunctionTransform.apply(model)
 
-        # Ensure model is on CPU to avoid meta device issues during export
+        # Ensure model is on CPU to avoid meta device issues
         self.model = model.to("cpu")
 
     def get_onnx_config(
