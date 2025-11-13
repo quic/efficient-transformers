@@ -19,7 +19,6 @@ from onnx import external_data_helper
 
 from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransform
 
-
 def export_onnx(
     pt_model: torch.nn.Module,
     inputs: Dict[str, torch.Tensor],
@@ -97,7 +96,7 @@ def export_onnx(
             input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
-            opset_version=13,
+            opset_version=constants.ONNX_EXPORT_OPSET,
             custom_opsets={"com.qti.aisw.onnx": 1},
         )
     except Exception as e:
