@@ -56,7 +56,6 @@ pipeline = QEFFFluxPipeline.from_pretrained(
 # ============================================================================
 # OPTIONAL: CUSTOM SCHEDULER CONFIGURATION
 # ============================================================================
-# The scheduler controls the denoising process during image generation.
 # Uncomment to use a custom scheduler (e.g., different sampling methods):
 #
 # pipeline.scheduler = custom_scheduler.from_config(pipeline.scheduler.config)

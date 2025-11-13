@@ -1,6 +1,5 @@
 {
   "description": "Default configuration for Flux pipeline",
-  "model_type": "flux",
 
   "modules": 
   {

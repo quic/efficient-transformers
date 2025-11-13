@@ -136,18 +136,14 @@ class QEFFBaseModel(ABC):
         return mname
 
     @property
-    @abstractmethod
     def get_model_config(self) -> Dict:
         """
         Get the model configuration as a dictionary.
 
-        This is an abstract property that must be implemented by all subclasses.
-        Typically returns: self.model.config.__dict__
-
         Returns:
-            Dict: The configuration dictionary of the underlying model
+            Dict: The configuration dictionary of the underlying HuggingFace model
         """
-        pass
+        return self.model.config.__dict__
 
     @abstractmethod
     def export(self, export_dir: Optional[str] = None) -> Path:
@@ -282,8 +278,7 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=17,
-                # verbose=True,
+                opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
@@ -466,7 +461,6 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
-        print(command)
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
