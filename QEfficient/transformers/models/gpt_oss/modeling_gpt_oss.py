@@ -47,6 +47,8 @@ class QEffGptOssExperts(GptOssExperts):
 
 class QEffPrefillOnlyGptOssMLP(GptOssMLP):
     def forward(self, hidden: torch.Tensor):
+        if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
+            return self.blocked_ffn_forward(hidden)
         B, S, H = hidden.shape
         T = B * S
         hidden = hidden.view(T, H)
@@ -118,7 +120,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
 
         # ────────────────── allocate the output tensor ─────
         expert_out = hidden.new_zeros((T, H))  # accumulation buffer
-        target_blocks = int(os.environ.get("NUM_BLOCKS", 1))
+        target_blocks = int(os.environ.get("NUM_FFN_BLOCKS", 1))
         block_positions = []
         for j in range(target_blocks):
             block_positions.append(j * (T // target_blocks))

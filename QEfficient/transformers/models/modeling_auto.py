@@ -2470,6 +2470,35 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
+    def get_seq_len_and_handle_specialized_prefill_model(self, prefill_seq_len: Optional[int] = None) -> int:
+        num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
+        if num_q_blocks is None:
+            block_size = 128
+            if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
+                raise ValueError(
+                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
+                    f"Or set `NUM_BLOCKS` ENV variable"
+                    f"Received: prefill_seq_len={prefill_seq_len}"
+                )
+
+            num_q_blocks = prefill_seq_len // block_size
+            logger.warning(
+                f"Setting NUM_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_BLOCKS` to override"
+            )
+            os.environ["NUM_Q_BLOCKS"] = num_q_blocks
+
+        num_ffn_blocks = os.environ.get("NUM_FFN_BLOCKS", None)
+        min_seq_len = int(max(num_q_blocks, num_ffn_blocks)) if num_ffn_blocks else num_q_blocks
+
+        self.prefill(True)
+        self.hash_params["prefill_only"] = True
+        self.hash_params["num_blocks"] = os.environ["NUM_BLOCKS"]
+        return (
+            min_seq_len
+            if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+            else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        )
+
     def export(
         self,
         export_dir: Optional[str] = None,
@@ -2502,25 +2531,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         if prefill_only:
             assert not self.continuous_batching, "prefill_only=True is not supported with continuous_batching=True"
-
-            if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH:
-                block_size = os.environ.get("BLOCK_SIZE", None)
-                if block_size is None:
-                    block_size = 128
-                    logger.warning(
-                        "Setting BLOCK_SIZE=128 for prefill_only model, please set ENV variable `BLOCK_SIZE` to override"
-                    )
-                if prefill_seq_len is None or prefill_seq_len % block_size != 0:
-                    raise ValueError(
-                        f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
-                        f"Received: prefill_seq_len={prefill_seq_len}"
-                    )
-                os.environ["NUM_BLOCKS"] = str(prefill_seq_len // block_size)
-
-                self.prefill(True)
-                self.hash_params["prefill_only"] = True
-                self.hash_params["num_blocks"] = os.environ["NUM_BLOCKS"]
-                seq_len = prefill_seq_len // block_size if (prefill_seq_len // block_size) > seq_len else seq_len
+            seq_len = (
+                self.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len)
+                if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
+                else seq_len
+            )
         else:
             self.prefill(False)
             self.hash_params.pop("prefill_only", None)
