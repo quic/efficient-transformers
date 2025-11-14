@@ -76,7 +76,7 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
         model_name=model_name,
         qpc_path=qpc_path,
         prompt="My name is",
-        prompts_txt_file_path="examples/prompts.txt",
+        prompts_txt_file_path="examples/sample_prompts/prompts.txt",
         generation_len=20,
         full_batch_size=full_batch_size,
     )
