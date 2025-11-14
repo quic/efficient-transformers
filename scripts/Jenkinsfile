@@ -17,8 +17,8 @@ pipeline {
                    sudo docker exec ${BUILD_TAG} bash -c "
                    cd /efficient-transformers &&
                    apt update &&
-                   apt install -y python3.10-venv &&
-                   python3.10 -m venv preflight_qeff &&
+                   DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv &&
+                   python3.12 -m venv preflight_qeff &&
                    . preflight_qeff/bin/activate &&
                    pip install --upgrade pip setuptools &&
                    pip install .[test] &&
