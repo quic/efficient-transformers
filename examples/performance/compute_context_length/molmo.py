@@ -37,7 +37,7 @@ qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
-### use skip_vision=Ture, if want to run only text, ow false ###
+### use skip_vision=True, if want to run only text, or false ###
 skip_vision = False
 
 if skip_vision:

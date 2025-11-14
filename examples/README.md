@@ -67,6 +67,7 @@ Optimization techniques.
 | Prompt Lookup | N-gram speculation | [performance/speculative_decoding/prompt_lookup.py](performance/speculative_decoding/prompt_lookup.py) |
 | Multi-Projection | Turbo models | [performance/speculative_decoding/multi_projection.py](performance/speculative_decoding/multi_projection.py) |
 | On-Device Sampling | Sampling parameters | [performance/on_device_sampling.py](performance/on_device_sampling.py) |
+| Compute Context Length | Dynamic context optimization | [performance/compute_context_length/basic_inference.py](performance/compute_context_length/basic_inference.py) |
 | C++ Execution | Native C++ API | [performance/cpp_execution/](performance/cpp_execution/) |
 
 [See all performance examples →](performance/)
