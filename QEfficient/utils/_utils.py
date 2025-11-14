@@ -568,7 +568,8 @@ def export_wrapper(func):
             model_params=self.hash_params,
             output_names=all_args.get("output_names"),
             dynamic_axes=all_args.get("dynamic_axes"),
-            export_kwargs=all_args.get("export_kwargs", None),
+            # TODO: Re-enable export_kwargs hashing before merging this PR
+            # export_kwargs=all_args.get("export_kwargs", None),
             onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
             use_onnx_subfunctions=all_args.get("use_onnx_subfunctions", False),
         )

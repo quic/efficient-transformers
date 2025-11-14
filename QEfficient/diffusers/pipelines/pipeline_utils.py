@@ -6,13 +6,16 @@
 # ----------------------------------------------------------------------------
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import PIL.Image
+from tqdm import tqdm
 
 from QEfficient.utils._utils import load_json
+from QEfficient.utils.logging_utils import logger
 
 
 def config_manager(cls, config_source: Optional[str] = None):
@@ -51,14 +54,101 @@ def set_module_device_ids(cls):
         module_obj.device_ids = config_modules[module_name]["execute"]["device_ids"]
 
 
+def compile_modules_parallel(
+    modules: Dict[str, Any],
+    config: Dict[str, Any],
+    specialization_updates: Dict[str, Dict[str, Any]] = None,
+) -> None:
+    """
+    Compile multiple pipeline modules in parallel using ThreadPoolExecutor.
+
+    Args:
+        modules: Dictionary of module_name -> module_object pairs to compile
+        config: Configuration dictionary containing module-specific compilation settings
+        specialization_updates: Optional dictionary of module_name -> specialization_updates
+                               to apply dynamic values (e.g., image dimensions)
+    """
+
+    def _prepare_and_compile(module_name: str, module_obj: Any) -> None:
+        """Prepare specializations and compile a single module."""
+        specializations = config["modules"][module_name]["specializations"].copy()
+        compile_kwargs = config["modules"][module_name]["compilation"]
+
+        if specialization_updates and module_name in specialization_updates:
+            specializations.update(specialization_updates[module_name])
+
+        module_obj.compile(specializations=[specializations], **compile_kwargs)
+
+    # Execute compilations in parallel
+    with ThreadPoolExecutor(max_workers=len(modules)) as executor:
+        futures = {executor.submit(_prepare_and_compile, name, obj): name for name, obj in modules.items()}
+
+        with tqdm(total=len(futures), desc="Compiling modules", unit="module") as pbar:
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Compilation failed for {futures[future]}: {e}")
+                    raise
+                pbar.update(1)
+
+
+def compile_modules_sequential(
+    modules: Dict[str, Any],
+    config: Dict[str, Any],
+    specialization_updates: Dict[str, Dict[str, Any]] = None,
+) -> None:
+    """
+    Compile multiple pipeline modules sequentially.
+
+    This function provides a generic way to compile diffusion pipeline modules
+    sequentially, which is the default behavior for backward compatibility.
+
+    Args:
+        modules: Dictionary of module_name -> module_object pairs to compile
+        config: Configuration dictionary containing module-specific compilation settings
+        specialization_updates: Optional dictionary of module_name -> specialization_updates
+                               to apply dynamic values (e.g., image dimensions)
+
+    """
+    for module_name, module_obj in tqdm(modules.items(), desc="Compiling modules", unit="module"):
+        module_config = config["modules"]
+        specializations = module_config[module_name]["specializations"].copy()
+        compile_kwargs = module_config[module_name]["compilation"]
+
+        # Apply dynamic specialization updates if provided
+        if specialization_updates and module_name in specialization_updates:
+            specializations.update(specialization_updates[module_name])
+
+        # Compile the module to QPC format
+        module_obj.compile(specializations=[specializations], **compile_kwargs)
+
+
 @dataclass(frozen=True)
 class ModulePerf:
+    """
+    Data class to store performance metrics for a pipeline module.
+
+    Attributes:
+        module_name: Name of the pipeline module (e.g., 'text_encoder', 'transformer', 'vae_decoder')
+        perf: Performance metric in seconds. Can be a single float for modules that run once,
+              or a list of floats for modules that run multiple times (e.g., transformer steps)
+    """
+
     module_name: str
     perf: int
 
 
 @dataclass(frozen=True)
 class QEffPipelineOutput:
+    """
+    Data class to store the output of a QEfficient diffusion pipeline.
+
+    Attributes:
+        pipeline_module: List of ModulePerf objects containing performance metrics for each module
+        images: Generated images as either a list of PIL Images or numpy array
+    """
+
     pipeline_module: list[ModulePerf]
     images: Union[List[PIL.Image.Image], np.ndarray]
 

@@ -24,6 +24,8 @@ from QEfficient.diffusers.pipelines.pipeline_module import (
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
+    compile_modules_parallel,
+    compile_modules_sequential,
     config_manager,
     set_module_device_ids,
 )
@@ -192,7 +194,7 @@ class QEFFFluxPipeline(FluxPipeline):
         """
         return os.path.join(os.path.dirname(__file__), "flux_config.json")
 
-    def compile(self, compile_config: Optional[str] = None) -> None:
+    def compile(self, compile_config: Optional[str] = None, parallel: bool = False) -> None:
         """
         Compile ONNX models for deployment on Qualcomm AI hardware.
 
@@ -202,6 +204,8 @@ class QEFFFluxPipeline(FluxPipeline):
         Args:
             compile_config (str, optional): Path to JSON configuration file.
                                            If None, uses default configuration.
+            parallel (bool): If True, compile modules in parallel using ProcessPoolExecutor.
+                           If False, compile sequentially (default: False).
         """
         # Ensure all modules are exported to ONNX before compilation
         if any(
@@ -219,21 +223,20 @@ class QEFFFluxPipeline(FluxPipeline):
         if self.custom_config is None:
             config_manager(self, config_source=compile_config)
 
-        # Compile each module with its specific configuration
-        for module_name, module_obj in tqdm(self.modules.items(), desc="Compiling modules", unit="module"):
-            module_config = self.custom_config["modules"]
-            specializations = module_config[module_name]["specializations"]
-            compile_kwargs = module_config[module_name]["compilation"]
+        # Prepare dynamic specialization updates based on image dimensions
+        specialization_updates = {
+            "transformer": {"cl": self.cl},
+            "vae_decoder": {
+                "latent_height": self.latent_height,
+                "latent_width": self.latent_width,
+            },
+        }
 
-            # Set dynamic specialization values based on image dimensions
-            if module_name == "transformer":
-                specializations["cl"] = self.cl
-            elif module_name == "vae_decoder":
-                specializations["latent_height"] = self.latent_height
-                specializations["latent_width"] = self.latent_width
-
-            # Compile the module to QPC format
-            module_obj.compile(specializations=[specializations], **compile_kwargs)
+        # Use generic utility functions for compilation
+        if parallel:
+            compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
+        else:
+            compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
 
     def _get_t5_prompt_embeds(
         self,
@@ -467,6 +470,7 @@ class QEFFFluxPipeline(FluxPipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
         custom_config_path: Optional[str] = None,
+        parallel_compile: bool = False,
     ):
         """
         Generate images from text prompts using the Flux pipeline.
@@ -501,6 +505,8 @@ class QEFFFluxPipeline(FluxPipeline):
             callback_on_step_end_tensor_inputs (List[str]): Tensors to pass to callback
             max_sequence_length (int): Maximum sequence length for T5 (default: 512)
             custom_config_path (str, optional): Path to custom compilation config
+            parallel_compile (bool): If True, compile modules in parallel for faster compilation.
+                                    If False, compile sequentially (default: False).
 
         Returns:
             QEffPipelineOutput or tuple: Generated images and performance metrics
@@ -512,7 +518,7 @@ class QEFFFluxPipeline(FluxPipeline):
             config_manager(self, custom_config_path)
             set_module_device_ids(self)
 
-        self.compile(compile_config=custom_config_path)
+        self.compile(compile_config=custom_config_path, parallel=parallel_compile)
 
         # Validate all inputs
         self.check_inputs(

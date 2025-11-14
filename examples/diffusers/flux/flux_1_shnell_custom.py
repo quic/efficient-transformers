@@ -35,10 +35,11 @@ from QEfficient import QEFFFluxPipeline
 # Note: Smaller dimensions = faster generation but lower resolution
 
 # Option 1: Basic initialization with custom image dimensions
+# NOTE: use_onnx_function=True enables modular ONNX export optimizations (Experimental so not recommended)
+#       This feature improves export performance by breaking down the model into smaller,
+#       more manageable ONNX functions, which can lead to better compilation and runtime efficiency.
 pipeline = QEFFFluxPipeline.from_pretrained(
-    "black-forest-labs/FLUX.1-schnell",
-    height=512,
-    width=512,
+    "black-forest-labs/FLUX.1-schnell", height=256, width=256, use_onnx_function=False
 )
 
 # Option 2: Advanced initialization with custom modules
@@ -109,6 +110,7 @@ output = pipeline(
     num_inference_steps=4,
     max_sequence_length=256,
     generator=torch.manual_seed(42),
+    parallel_compile=True,
 )
 
 images = output.images[0]

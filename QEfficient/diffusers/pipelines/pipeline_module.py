@@ -374,7 +374,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         _onnx_transforms (List): ONNX transformations applied after export
     """
 
-    _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform]
+    _pytorch_transforms = [AttentionTransform, NormalizationTransform, CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, use_onnx_function: bool) -> None:
@@ -386,12 +386,16 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             use_onnx_function (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
         """
-        super().__init__(model)
 
         # Optionally apply ONNX function transform for modular export
+
+        if use_onnx_function:
+            model, _ = OnnxFunctionTransform.apply(model)
+
+        super().__init__(model)
+
         if use_onnx_function:
             self._pytorch_transforms.append(OnnxFunctionTransform)
-            model, _ = OnnxFunctionTransform.apply(model)
 
         # Ensure model is on CPU to avoid meta device issues
         self.model = model.to("cpu")
