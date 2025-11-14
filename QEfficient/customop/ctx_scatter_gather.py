@@ -145,3 +145,28 @@ class CtxGatherFunc(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value, comp_ctx_len: int) -> torch.Value:
         return g.onnxscript_op(CtxGather, data, ctx_indices, comp_ctx_len).setTypeAs(data)
+
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxGatherBlockedKV(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
+    ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
+    return ops.GatherND(data, ctx_indices, batch_dims=2)
+
+
+class CtxGatherFuncBlockedKV(torch.autograd.Function):
+    """
+    Function to gather only the valid key values from KV-cache.
+    """
+
+    @staticmethod
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+        batch_indices = torch.arange(data.shape[0]).view(-1, 1, 1)
+        head_indices = torch.arange(data.shape[1]).view(1, -1, 1)
+        return data[batch_indices, head_indices, ctx_indices]
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxGatherBlockedKV, data, ctx_indices).setTypeAs(data)

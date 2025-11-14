@@ -67,6 +67,10 @@ test_models_spd = [
     "Qwen/Qwen2-0.5B",
 ]
 
+test_models_blockedKV = [
+    "meta-llama/Llama-3.3-70B-Instruct",
+]
+
 
 def get_custom_n_layers(model_name):
     """
@@ -147,6 +151,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     pytorch_hf_tokens: Optional[list] = None,
+    qaic_config: Optional[dict] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -179,7 +184,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     is_tlm = False if num_speculative_tokens is None else True
     qeff_model = QEFFAutoModelForCausalLM(
-        copy.deepcopy(model_hf), is_tlm=is_tlm, pretrained_model_name_or_path=model_name
+        copy.deepcopy(model_hf), is_tlm=is_tlm, pretrained_model_name_or_path=model_name, qaic_config=qaic_config
     )
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
@@ -243,7 +248,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytorch_hf_tokens = [pytorch_hf_tokens for _ in range(full_batch_size)]
 
     qeff_model = QEFFAutoModelForCausalLM(
-        model_hf, continuous_batching=True, is_tlm=is_tlm, pretrained_model_name_or_path=model_name
+        model_hf, continuous_batching=True, is_tlm=is_tlm, pretrained_model_name_or_path=model_name, qaic_config=qaic_config
     )
     onnx_model_path = qeff_model.export()
 
@@ -488,3 +493,32 @@ def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100_qnn():
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name, n_layer=n_layer, prefill_only=False, enable_qnn=True, qnn_config=qnn_config_json_path
     )
+
+
+@pytest.mark.parametrize("model_name", test_models_blockedKV)
+def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    n_layer = get_custom_n_layers(model_name)
+
+    qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, qaic_config=qaic_config
+    )
+
+@pytest.mark.parametrize("model_name", test_models_blockedKV)
+def test_causal_nonBlockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    n_layer = get_custom_n_layers(model_name)
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer
+    )
+

@@ -42,6 +42,7 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
+    BlockedKVAttentionTransform,
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
@@ -2336,6 +2337,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             - **return_pdfs** (bool): If True, returns probability distributions along with sampled tokens.
               For Speculative Decoding Target Language Models, this is always True.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
 
@@ -2383,6 +2385,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
+
+        if self.model.qaic_config["num_kv_blocks"] is not None:
+            BlockedKVAttentionTransform.apply(model, num_kv_blocks=self.model.qaic_config["num_kv_blocks"])
 
     @property
     def model_name(self) -> str:

@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict, Any
 
 import torch
 from torch import nn
@@ -103,21 +103,70 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
+    num_kv_blocks: Optional[torch.Tensor] = None,
+    cache_kwargs: Optional[Dict[str, Any]] = None,
+    layer_idx: int = None,
+    past_key_value: Optional[Cache] = None,
     **kwargs,
 ):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
 
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-        )
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_output = torch.matmul(attn_weights, value_states)
-    attn_output = attn_output.transpose(1, 2).contiguous()
+    if num_kv_blocks is not None:
+        # Initialize result tensor
+        output = torch.zeros_like(query)
+        
+        # Perform blockwise computation for K and V
+        M = torch.full((query.shape[0], query.shape[1], query.shape[2],),float(MIN_MASKED_ATTENTION_VALUE))           # Running Maximum
+        D = torch.zeros((query.shape[0], query.shape[1], query.shape[2],))
 
-    return attn_output, attn_weights
+        past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+        position_ids = cache_kwargs.get("position_ids")
+        num_kv_blocks = torch.tensor(num_kv_blocks, dtype=torch.int)
+        block_size = -(-past_seen_tokens // num_kv_blocks)
+        for j in range(num_kv_blocks):
+            start_index = j*block_size
+            end_index = (j+1)*block_size
+            K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
+            K_block_states = repeat_kv(K_block, module.num_key_value_groups)
+            V_block_states = repeat_kv(V_block, module.num_key_value_groups)
+            past_seen_tokens_start = start_index
+            past_seen_tokens_end = torch.where(past_seen_tokens < end_index, past_seen_tokens, end_index)
+            causal_mask_block = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start)
+            
+            # Compute attention scores for the block 
+            attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
+            if attention_mask is not None:
+                attn_weights_block = torch.where(causal_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights_block)
+        
+            # Update Running row maximum
+            prevM = M
+            M = torch.max(prevM, torch.max(attn_weights_block,axis=-1).values)
+            deltaM = prevM - M 
+            
+            currentExp = torch.exp(attn_weights_block - M.unsqueeze(-1))  # Subract M from each column of attn_weights_block
+        
+            #update Running denominator
+            prevD = D
+            D = prevD*torch.exp(deltaM) + currentExp.sum(axis = -1)
+            
+            P = currentExp/D.unsqueeze(-1)
+        
+            prevO = output
+            output = ((prevD/D).unsqueeze(-1))*prevO*torch.exp(deltaM.unsqueeze(-1)) +  torch.matmul(P, V_block_states) # This in higher precision.
+        attn_output = output.transpose(1, 2).contiguous()
+
+    else:	#regular attention
+        key_states = repeat_kv(key, module.num_key_value_groups)
+        value_states = repeat_kv(value, module.num_key_value_groups)
+
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output
 
 
 class QEffLlamaAttention(LlamaAttention):
@@ -136,6 +185,7 @@ class QEffLlamaAttention(LlamaAttention):
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        num_kv_blocks: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -151,31 +201,40 @@ class QEffLlamaAttention(LlamaAttention):
         value_states = self.v_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if num_kv_blocks is not None:
+                cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids, "past_seen_tokens": past_seen_tokens}
+                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+                if comp_ctx_lengths is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface = eager_attention_forward
 
-        attn_output, attn_weights = attention_interface(
+        attn_output = attention_interface(
             self,
             query_states,
             key_states,
             value_states,
             attention_mask,
             scaling=self.scaling,
+            num_kv_blocks=num_kv_blocks,
+            cache_kwargs=cache_kwargs,
+            layer_idx=self.layer_idx,
+            past_key_value=past_key_value,
             **kwargs,
         )
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output, **kwargs)
 
-        return attn_output, attn_weights
+        return attn_output
 
 
 class QEffLlamaDecoderLayer(LlamaDecoderLayer):
@@ -202,7 +261,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states, _ = self.self_attn(
+        hidden_states = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
