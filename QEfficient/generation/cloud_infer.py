@@ -84,7 +84,7 @@ class QAICInferenceSession:
         self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
         # Create and load Program
         prog_properties = qaicrt.QAicProgramProperties()
-        prog_properties.SubmitRetryTimeoutMs = 60_000
+        prog_properties.SubmitRetryTimeoutMs = 60_00000
         if device_ids and len(device_ids) > 1:
             prog_properties.devMapping = ":".join(map(str, device_ids))
         self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
