@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Union, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -109,58 +109,83 @@ def eager_attention_forward(
     past_key_value: Optional[Cache] = None,
     **kwargs,
 ):
-
     if num_kv_blocks is not None:
         # Initialize result tensor
         output = torch.zeros_like(query)
-        
+
         # Perform blockwise computation for K and V
-        M = torch.full((query.shape[0], query.shape[1], query.shape[2],),float(MIN_MASKED_ATTENTION_VALUE))           # Running Maximum
-        D = torch.zeros((query.shape[0], query.shape[1], query.shape[2],))
+        M = torch.full(
+            (
+                query.shape[0],
+                query.shape[1],
+                query.shape[2],
+            ),
+            float(MIN_MASKED_ATTENTION_VALUE),
+        )  # Running Maximum
+        D = torch.zeros(
+            (
+                query.shape[0],
+                query.shape[1],
+                query.shape[2],
+            )
+        )
 
         past_seen_tokens = cache_kwargs.get("past_seen_tokens")
         position_ids = cache_kwargs.get("position_ids")
-        num_kv_blocks = torch.tensor(num_kv_blocks, dtype=torch.int)
         block_size = -(-past_seen_tokens // num_kv_blocks)
         for j in range(num_kv_blocks):
-            start_index = j*block_size
-            end_index = (j+1)*block_size
+            start_index = j * block_size
+            end_index = (j + 1) * block_size
             K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
             K_block_states = repeat_kv(K_block, module.num_key_value_groups)
             V_block_states = repeat_kv(V_block, module.num_key_value_groups)
             past_seen_tokens_start = start_index
-            past_seen_tokens_end = torch.where(past_seen_tokens < end_index, past_seen_tokens, end_index)
-            causal_mask_block = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start)
-            
-            # Compute attention scores for the block 
+            past_seen_tokens_end = torch.where(
+                torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+                past_seen_tokens,
+                end_index,
+            )
+            causal_mask_block = _create_causal_mask(
+                position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start
+            )
+
+            # Compute attention scores for the block
             attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
             if attention_mask is not None:
-                attn_weights_block = torch.where(causal_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights_block)
-        
+                attn_weights_block = torch.where(
+                    causal_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights_block
+                )
+
             # Update Running row maximum
             prevM = M
-            M = torch.max(prevM, torch.max(attn_weights_block,axis=-1).values)
-            deltaM = prevM - M 
-            
-            currentExp = torch.exp(attn_weights_block - M.unsqueeze(-1))  # Subract M from each column of attn_weights_block
-        
-            #update Running denominator
+            M = torch.max(prevM, torch.max(attn_weights_block, axis=-1).values)
+            deltaM = prevM - M
+
+            currentExp = torch.exp(
+                attn_weights_block - M.unsqueeze(-1)
+            )  # Subract M from each column of attn_weights_block
+
+            # update Running denominator
             prevD = D
-            D = prevD*torch.exp(deltaM) + currentExp.sum(axis = -1)
-            
-            P = currentExp/D.unsqueeze(-1)
-        
+            D = prevD * torch.exp(deltaM) + currentExp.sum(axis=-1)
+
+            P = currentExp / D.unsqueeze(-1)
+
             prevO = output
-            output = ((prevD/D).unsqueeze(-1))*prevO*torch.exp(deltaM.unsqueeze(-1)) +  torch.matmul(P, V_block_states) # This in higher precision.
+            output = ((prevD / D).unsqueeze(-1)) * prevO * torch.exp(deltaM.unsqueeze(-1)) + torch.matmul(
+                P, V_block_states
+            )  # This in higher precision.
         attn_output = output.transpose(1, 2).contiguous()
 
-    else:	#regular attention
+    else:  # regular attention
         key_states = repeat_kv(key, module.num_key_value_groups)
         value_states = repeat_kv(value, module.num_key_value_groups)
 
         attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
         if attention_mask is not None:
-            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
+            attn_weights = torch.where(
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
@@ -207,7 +232,11 @@ class QEffLlamaAttention(LlamaAttention):
 
         if past_key_value is not None:
             if num_kv_blocks is not None:
-                cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids, "past_seen_tokens": past_seen_tokens}
+                cache_kwargs = {
+                    "batch_index": batch_index,
+                    "position_ids": position_ids,
+                    "past_seen_tokens": past_seen_tokens,
+                }
                 past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
             else:
                 cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
