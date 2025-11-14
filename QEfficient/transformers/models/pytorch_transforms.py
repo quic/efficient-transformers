@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+from functools import partial
 import warnings
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
@@ -820,4 +821,20 @@ class PoolingTransform:
         )
         model = PooledModel(model, pooling_method)
         warnings.warn("Pooling is applied to the model.")
+        return model, transformed
+
+class BlockedKVAttentionTransform:  
+    _module_mapping = {
+        QEffLlamaAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, num_kv_blocks) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in model.modules():
+            if type(module) in cls._module_mapping:
+                repl_module = type(module)
+                module.__class__ = repl_module
+                module.forward = MethodType(partial(repl_module.forward, num_kv_blocks=num_kv_blocks), module)
+                transformed = True  # Set to True if at least one transformation occurs
         return model, transformed
