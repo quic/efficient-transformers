@@ -22,7 +22,7 @@ dependencies = [
     "transformers==4.55.0",
     "huggingface-hub==0.34.0",
     "hf_transfer==0.1.9",
-    "peft==0.13.2",
+    "peft==0.17.0",
     "datasets==2.20.0",
     "fsspec==2023.6.0",
     "multidict==6.0.4",
@@ -50,7 +50,7 @@ dependencies = [
 test = ["pytest","pytest-mock"]
 docs = ["Sphinx==7.1.2","sphinx-rtd-theme==2.0.0","myst-parser==3.0.1","sphinx-multiversion"]
 quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
-
+diffusers = ["diffusers== 0.35.1"]
 [build-system]
 requires = ["setuptools>=62.0.0"]
 build-backend = "setuptools.build_meta"
