@@ -94,9 +94,10 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids, "CCL": attention_mask.shape[-1]}
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_states, value_states = past_key_value.update(key_states, value_states, layer_idx, cache_kwargs)
 
         # repeat k/v heads if n_kv_heads < n_heads

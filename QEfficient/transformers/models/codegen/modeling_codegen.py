@@ -124,9 +124,10 @@ class QEffCodeGenAttention(CodeGenAttention):
         query = query.permute(0, 2, 1, 3)
 
         if layer_past is not None:
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index, "CCL": attention_mask.shape[-1]}
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key, value = layer_past.update(key.to(hidden_states.dtype), value, self.layer_idx, cache_kwargs)
 
         # compute self-attention: V x Softmax(QK^T)

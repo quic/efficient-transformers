@@ -105,16 +105,16 @@ class QEffPhiAttention(PhiAttention):
         key_states = torch.cat((key_rot, key_pass), dim=-1)
 
         if past_key_value is not None:
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             # Update the cache_kwargs with position_ids for Cloud AI 100
             cache_kwargs = {
                 "sin": sin,
                 "cos": cos,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
-                "CCL": attention_mask.shape[-1],
             }
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward

@@ -143,8 +143,6 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         if past_key_value is not None:
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
@@ -152,8 +150,10 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
                 "cache_position": cache_position,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
-                "CCL": attention_mask.shape[-1],
             }
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface = eager_attention_forward

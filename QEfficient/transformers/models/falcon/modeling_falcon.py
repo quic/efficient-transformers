@@ -141,9 +141,10 @@ class QEffFalconAttention(FalconAttention):
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
 
         if layer_past is not None:
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids, "CCL": attention_mask.shape[-1]}
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
 
         if attention_mask is not None:

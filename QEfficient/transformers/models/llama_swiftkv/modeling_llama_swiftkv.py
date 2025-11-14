@@ -99,6 +99,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         # Reshape the query, key, and value tensors.
         query_states = query.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
 
+        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         if past_key_value is not None:
             if self.layer_idx is None:
                 raise ValueError(
@@ -108,8 +109,8 @@ class QEffLlamaSwiftKVAttention(nn.Module):
                 )
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
-        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index, "CCL": attention_mask.shape[-1]}
         key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)

@@ -434,8 +434,6 @@ class QEffGptOssAttention(GptOssAttention):
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
@@ -445,8 +443,10 @@ class QEffGptOssAttention(GptOssAttention):
                 "config": self.config,
                 "is_sliding": self.sliding_window is not None,
                 "sliding_window": past_key_value.sliding_window_len,
-                "CCL": attention_mask.shape[-1],
             }
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         if self.sliding_window is not None:

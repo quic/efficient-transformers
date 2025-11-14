@@ -504,9 +504,6 @@ class QEffLlama4TextAttention(Llama4TextAttention):
 
         if past_key_value is not None:
             chunk_position_ids = position_ids
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-
             if self.use_rope:
                 chunk_position_ids = torch.where(
                     chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
@@ -516,8 +513,11 @@ class QEffLlama4TextAttention(Llama4TextAttention):
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": chunk_position_ids,
-                "CCL": attention_mask.shape[-1],
             }
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
+
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward

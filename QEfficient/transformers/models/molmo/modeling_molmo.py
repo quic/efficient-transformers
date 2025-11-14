@@ -279,16 +279,16 @@ class QEffMolmoBlock(nn.Module):
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
 
         if layer_past is not None:
-            if comp_ctx_lengths is not None:
-                attention_bias = attention_bias[:, :, :, : comp_ctx_lengths.shape[-1]]
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
                 "cos": cos,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
-                "CCL": attention_bias.shape[-1],
             }
+            if comp_ctx_lengths is not None:
+                attention_bias = attention_bias[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_bias.shape[-1]
             k, v = layer_past.update(k, v, self.layer_id, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward

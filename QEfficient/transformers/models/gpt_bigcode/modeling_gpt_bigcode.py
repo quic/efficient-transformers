@@ -152,10 +152,11 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
                 )
 
         if layer_past is not None:
+            # save all key/value_states to cache to be re-used for fast auto-regressive generation
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-            # save all key/value_states to cache to be re-used for fast auto-regressive generation
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index, "CCL": attention_mask.shape[-1]}
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key, value = curr_past_key_value.update(key, value, self.layer_idx, cache_kwargs)
             # set flag that curr layer for cross-attn is already updated so we can re-use in subsequent calls
             if self.is_cross_attention:
