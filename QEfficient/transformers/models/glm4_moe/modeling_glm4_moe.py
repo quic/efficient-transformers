@@ -30,12 +30,11 @@ from transformers.utils import TransformersKwargs
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.logging_utils import logger
 
 
 class QEffGlm4MoeRotaryEmbedding(Glm4MoeRotaryEmbedding):
     """
-    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    Copied from Glm4MoeForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/glm4_moe/modeling_glm4_moe.py
     The only differences are:
     - Add static sin/cos computations.
     """
@@ -151,7 +150,6 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         past_key_value: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -274,15 +272,7 @@ class QEffGlm4MoeModel(Glm4MoeModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            if past_key_values is None:
-                past_key_values = QEffDynamicCache()
-            else:
-                past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-                logger.warning_once(
-                    "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
-                    "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
-                    "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
-                )
+            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -351,13 +341,10 @@ class QEffGlm4MoeTopkRouter(Glm4MoeTopkRouter):
 
 class QEffGlm4MoeMoE(Glm4MoeMoE):
     """
-    Optimized mixed expert module for ONNX export.
+    MoE Block
     """
 
     def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
-        """
-        Optimized MoE forward pass avoiding dynamic operations.
-        """
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
 
         for expert_idx in range(num_experts):
@@ -375,7 +362,7 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
 
     def forward(self, hidden_states):
         """
-        Forward pass of the mixture of experts layer.
+        Forward pass of MoE block.
         """
         residuals = hidden_states
         orig_shape = hidden_states.shape
@@ -389,6 +376,10 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
 
 
 class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
+    """
+    Copied from Glm4MoeForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/glm4_moe/modeling_glm4_moe.py
+    """
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
