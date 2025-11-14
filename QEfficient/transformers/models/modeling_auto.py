@@ -2386,8 +2386,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
-        if self.model.qaic_config["num_kv_blocks"] is not None:
-            BlockedKVAttentionTransform.apply(model, num_kv_blocks=self.model.qaic_config["num_kv_blocks"])
+        num_kv_blocks = self.model.qaic_config.get("num_kv_blocks", None)
+        if num_kv_blocks is not None:
+            BlockedKVAttentionTransform.apply(model, num_kv_blocks=num_kv_blocks)
 
     @property
     def model_name(self) -> str:
