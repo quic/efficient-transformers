@@ -166,7 +166,15 @@ class QEFFMistral3DecoderWrapper(nn.Module):
         self.config = self.model.config
         self.language_model = self.model.language_model
 
-    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
+    def forward(
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        batch_index: Optional[torch.LongTensor] = None,
+    ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.model.config.image_token_index
@@ -179,6 +187,7 @@ class QEFFMistral3DecoderWrapper(nn.Module):
             inputs_embeds=inputs_embeds_1,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            batch_index=batch_index,
         )
 
         # Cast to int32 to avoid ONNXRT issue
@@ -230,7 +239,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
 
         return logits, pixel_values, image_idx, outputs.past_key_values
 
-    def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(self, kv_offload: bool = False, continuous_batching: bool = False, **kwargs):
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         height = self.config.vision_config.image_size
@@ -270,10 +279,14 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
+
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
         # Add data for KV
         kv_cache_shape = get_padding_shape_from_config(
-            config=self.language_model.config,
-            batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            config=self.model.config.text_config,
+            batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
@@ -281,6 +294,9 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         inputs = {}
         if kv_offload:
@@ -299,6 +315,9 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         ctx_len: int,
         img_size: int,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
@@ -323,22 +342,36 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
                 "vision_size": vision_size,
             }
         ]
-        lang = [
-            {
-                "batch_size": batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "image_size": img_size,
-                "vision_size": vision_size,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
-                "ctx_len": ctx_len,
-                "image_size": img_size,
-                "vision_size": vision_size,
-            },
-        ]
+        lang_prefill = {
+            "batch_size": 1 if continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+            "image_size": img_size,
+            "vision_size": vision_size,
+        }
+        if continuous_batching:
+            lang_prefill["full_batch_size"] = kv_cache_batch_size
+        else:
+            lang_prefill["batch_size"] = kv_cache_batch_size
+        if full_batch_size:
+            lang_prefill["full_batch_exec_size"] = full_batch_size
+
+        lang_decode = {
+            "batch_size": full_batch_size if continuous_batching else batch_size,
+            "seq_len": "1",
+            "ctx_len": ctx_len,
+            "image_size": img_size,
+            "vision_size": vision_size,
+        }
+
+        if continuous_batching:
+            lang_decode["full_batch_size"] = kv_cache_batch_size
+        else:
+            lang_decode["batch_size"] = kv_cache_batch_size
+
+        lang = []
+        lang.append(lang_prefill)
+        lang.append(lang_decode)
 
         specializations = {}
 
@@ -351,7 +384,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False, continuous_batching: bool = False):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
 
@@ -364,9 +397,18 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             "vision_embeds": {0: "vision_size"},
         }
 
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+
         for i in range(num_layers):
-            lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+            lang_dynamic_axes[f"past_key.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+            lang_dynamic_axes[f"past_value.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
 
         dynamic_axes = {}
         if kv_offload:
