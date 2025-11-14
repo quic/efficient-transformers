@@ -83,6 +83,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         vision_qpc_path: str,
         device_id: Optional[List[int]] = None,
         ctx_len: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         full_batch_size: Optional[int] = None,
@@ -123,6 +125,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             qpc_path=lang_qpc_path,
             full_batch_size=full_batch_size,
             ctx_len=ctx_len,
+            comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+            comp_ctx_lengths_decode=comp_ctx_lengths_decode,
             device_id=device_id,
             enable_debug_logs=enable_debug_logs,
             write_io_dir=write_io_dir,
@@ -294,6 +298,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         outputs = None
         chunk_image_idx = None
 
+        if self.comp_ctx_lengths_prefill is not None:
+            self.list_of_comp_ctx_lengths_prefill = [np.zeros(length) for length in self.comp_ctx_lengths_prefill]
+            prefill_ccl_id = 0
+            lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
         for i in range(num_chunks):
             input_ids_slice = lang_inputs["input_ids"][:, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len]
             position_ids_slice = lang_inputs["position_ids"][
@@ -311,6 +320,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
             if "cross_attention_mask" in lang_inputs:
                 chunk_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"]
+
+            if self.comp_ctx_lengths_prefill is not None:
+                if (i + 1) * self._prefill_seq_len > self.comp_ctx_lengths_prefill[prefill_ccl_id]:
+                    prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
+                    lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
+                chunk_inputs["comp_ctx_lengths"] = lang_inputs["comp_ctx_lengths"]
 
             outputs = self._session.run(chunk_inputs)
 

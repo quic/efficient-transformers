@@ -341,6 +341,18 @@ if __name__ == "__main__":
     )
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
     parser.add_argument(
+        "--comp-ctx-lengths-prefill",
+        type=lambda comp_ctx_lengths_prefill: [int(x) for x in comp_ctx_lengths_prefill.split(",")],
+        default=[512],
+        help="Define ccl list in csv format (e.g.,--comp-ctx-lengths 512,1024,2048).",
+    )
+    parser.add_argument(
+        "--comp-ctx-lengths-decode",
+        type=lambda comp_ctx_lengths_decode: [int(x) for x in comp_ctx_lengths_decode.split(",")],
+        default=[2048],
+        help="Define ccl list in csv format (e.g.,--comp-ctx-lengths 512,1024,2048).",
+    )
+    parser.add_argument(
         "--mxfp6",
         "--mxfp6_matmul",
         "--mxfp6-matmul",

@@ -42,15 +42,15 @@ class LinearMultiLoRA(nn.Linear):
         # multilora implementation: lora_ids <batch_size, 1>
         other_indices_a = torch.arange(self.lora_a_weights.shape[2]).view(1, 1, -1)
         selected_lora_a_weights = CtxGatherFuncCB.apply(
-            self.lora_a_weights, lora_ids, other_indices_a
+            self.lora_a_weights, lora_ids, other_indices_a, self.lora_a_weights.shape[2]
         )  # <num_loras, 1, feature, r>
         other_indices_b = torch.arange(self.lora_b_weights.shape[2]).view(1, 1, -1)
         selected_lora_b_weights = CtxGatherFuncCB.apply(
-            self.lora_b_weights, lora_ids, other_indices_b
+            self.lora_b_weights, lora_ids, other_indices_b, self.lora_b_weights.shape[2]
         )  # <num_loras, 1, r, feature>
         other_indices_s = torch.arange(self.lora_scalings.shape[2]).view(1, 1, -1)
         selected_lora_scalings = CtxGatherFuncCB.apply(
-            self.lora_scalings, lora_ids, other_indices_s
+            self.lora_scalings, lora_ids, other_indices_s, self.lora_scalings.shape[2]
         )  # <num_loras, 1, 1, 1>
 
         selected_lora_a_weights = selected_lora_a_weights.squeeze(1)
