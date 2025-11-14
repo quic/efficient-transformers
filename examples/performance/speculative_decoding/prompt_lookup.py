@@ -103,7 +103,7 @@ def run_prefill_on_draft_and_target(
     prefill_seq_len: int,
     slot_idx: int,
 ):
-    input_len = inputs.input_ids.shape[1]
+    input_len = inputs["input_ids"].shape[1]
     num_chunks = input_len // prefill_seq_len
     cache_index = np.array([[0]], np.int64)
     batch_index = np.array([[slot_idx]], np.int64)
@@ -234,7 +234,7 @@ def pld_spec_decode_inference(
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
     target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, is_tlm=True
+        target_model_name, continuous_batching=continuous_batching, qaic_config={"speculative_model_type": "target"}
     )
 
     num_devices = len(device_group)
@@ -270,6 +270,7 @@ def pld_spec_decode_inference(
         p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
         position_ids = np.where(p_tok.pop("attention_mask"), np.arange(input_len_padded), -1)
         p_tok["position_ids"] = position_ids
+        p_tok["num_logits_to_keep"] = np.array([[1]], dtype=np.int64)
         prompts_tokenized.append(p_tok)
     # create caches to hold generated ids and input prompt lengths
     generated_ids = [[] for i in range(decode_batch_size)]
@@ -280,6 +281,7 @@ def pld_spec_decode_inference(
         input_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         position_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         batch_index=np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1),
+        num_logits_to_keep=np.arange(num_speculative_tokens + 1, dtype=np.int64).reshape(-1, 1),
     )
     num_logits_to_keep = num_speculative_tokens + 1
     max_gen_len = [ctx_len] * decode_batch_size

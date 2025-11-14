@@ -38,7 +38,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     },
 )
 
-### use skip_vision=Ture, if want to run only text, or false ###
+### use skip_vision=True, if want to run only text, or false ###
 skip_vision = False
 
 if skip_vision:

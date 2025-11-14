@@ -200,7 +200,7 @@ def draft_spec_decode_inference(
     continuous_batching = full_batch_size is not None
     if target_model_session is None:
         target_model = AutoModelForCausalLM.from_pretrained(
-            target_model_name, continuous_batching=continuous_batching, is_tlm=True
+            target_model_name, continuous_batching=continuous_batching, qaic_config={"speculative_model_type": "target"}
         )
         target_num_devices = len(target_device_group)
         target_model_qpc_path: str = target_model.compile(
@@ -248,6 +248,7 @@ def draft_spec_decode_inference(
         p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
         position_ids = np.where(p_tok.pop("attention_mask"), np.arange(input_len_padded), -1)
         p_tok["position_ids"] = position_ids
+        p_tok["num_logits_to_keep"] = np.array([[1]], dtype=np.int64)
         prompts_tokenized.append(p_tok)
     # create caches to hold generated ids and input prompt lengths
     generated_ids = [[] for i in range(decode_batch_size)]
@@ -264,6 +265,7 @@ def draft_spec_decode_inference(
         input_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         position_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         batch_index=np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1),
+        num_logits_to_keep=np.arange(num_speculative_tokens + 1, dtype=np.int64).reshape(-1, 1),
     )
     max_gen_len = [ctx_len] * decode_batch_size
     num_logits_to_keep = num_speculative_tokens + 1
