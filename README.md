@@ -108,8 +108,8 @@ For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Li
 
 ## Documentation
 
-* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
-* [Python API](https://quic.github.io/efficient-transformers/source/hl_api.html)
+* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)
+* [QEFF API](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
 * [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html)
 * [Models coming soon](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon)
 
