@@ -56,6 +56,7 @@ class CtxScatterFunc(torch.autograd.Function):
         return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
 
 
+# TODO : This function will be deprecated in future.
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
     # Find dims
@@ -75,6 +76,7 @@ def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates
     return ops.ScatterND(data, indices, updates)
 
 
+# TODO : This function will be deprecated in future.
 class CtxScatterFunc3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
@@ -92,6 +94,7 @@ class CtxScatterFunc3D(torch.autograd.Function):
         return g.onnxscript_op(CtxScatter3D, data, position_ids, updates).setTypeAs(data)
 
 
+# TODO : This function will be deprecated in future.
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
     ctx_indices = ops.Expand(ctx_indices, ops.Slice(ops.Shape(data), starts=[0], ends=[2], axes=[0]))
@@ -99,6 +102,7 @@ def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxsc
     return ops.GatherND(data, ctx_indices, batch_dims=1)
 
 
+# TODO : This function will be deprecated in future.
 class CtxGatherFunc3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
