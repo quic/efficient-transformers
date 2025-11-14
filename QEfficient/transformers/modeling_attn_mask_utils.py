@@ -13,8 +13,8 @@ import torch
 def _create_causal_mask(
     position_ids,
     target_length,
-    start_index: Optional[torch.Tensor] = torch.tensor(0, dtype=torch.int),
     sliding_window: Optional[int] = None,
+    start_index: Optional[int] = 0,
 ):
     """
     A utility attention mask class that allows one to:
