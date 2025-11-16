@@ -143,7 +143,13 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
         return logits, pixel_values, image_idx, outputs.past_key_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False, **kwargs):
+    def get_dummy_inputs(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        **kwargs,
+    ):
         num_layers = self.config.text_config.num_hidden_layers
         num_key_value_heads = self.config.text_config.num_key_value_heads
         head_dim = self.config.text_config.hidden_size // self.config.text_config.num_attention_heads
@@ -246,7 +252,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
 
             for i in range(0, len(comp_ctx_lengths_decode)):
                 lang_decode = {
-                    "batch_size": full_batch_size if continuous_batching else batch_size,,
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
@@ -306,7 +312,9 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
 

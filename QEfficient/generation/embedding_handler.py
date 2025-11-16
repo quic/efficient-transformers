@@ -143,6 +143,61 @@ class VisionHandler:
 
         return vision_inputs, lang_inputs
 
+    def prepare_molmo_inputs(self, image_url: str, query: str) -> Dict[str, np.ndarray]:
+        """
+        Download and preprocess image into model inputs
+        Args:
+            image_url: URL or path to image
+            query: Text query to process with image
+        Returns:
+            Dictionary of vision model inputs
+        Raises:
+            ValueError: If vision handler is not properly initialized
+            RuntimeError: If image processing fails
+        """
+        if not self.is_available():
+            raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
+
+        try:
+            # Download image
+            if image_url.startswith(("http://", "https://")):
+                image = Image.open(requests.get(image_url, stream=True).raw)
+            else:
+                image = Image.open(image_url)
+            image = image.resize((536, 354))
+            inputs = self._processor.process(images=[image], text=query)
+            inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
+            inputs["attention_mask"] = torch.ones((inputs["input_ids"].shape), dtype=torch.int64)
+            valid = inputs["image_input_idx"] > 0
+            valid = valid.reshape(1, -1)
+            inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
+            inputs["pixel_values"] = inputs.pop("images")
+
+            # Convert to numpy arrays
+            vision_inputs = {}
+            for k, v in inputs.items():
+                if k in {
+                    "pixel_values",
+                    "image_masks",
+                    "image_input_idx",
+                    "valid_idx",
+                    "aspect_ratio_ids",
+                    "aspect_ratio_mask",
+                }:
+                    vision_inputs[k] = np.array(v)
+
+            # Convert specific inputs to float16
+            vision_inputs_fp16 = {"pixel_values", "image_masks"}
+            for k in vision_inputs_fp16:
+                if k in vision_inputs:
+                    vision_inputs[k] = vision_inputs[k].astype("float16")
+
+            lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
+
+            return vision_inputs, lang_inputs
+        except Exception as e:
+            raise RuntimeError(f"Failed to process image {image_url}: {str(e)}")
+
     def prepare_vlm_inputs(self, image_url: str, query: str, prefill_seq_len: int) -> Dict[str, np.ndarray]:
         """
         Download and preprocess image into model inputs
@@ -404,6 +459,11 @@ class VisionHandler:
                 and self._qeff_model.model.config.model_type == "internvl_chat"
             ):
                 vision_inputs, lang_inputs = self.prepare_internVL_inputs(image_url, query)
+            elif (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "molmo"
+            ):
+                vision_inputs, lang_inputs = self.prepare_molmo_inputs(image_url, query)
             else:
                 vision_inputs, lang_inputs = self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
 
