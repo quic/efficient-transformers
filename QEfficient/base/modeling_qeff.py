@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import re
 import shutil
 import subprocess
 import warnings
@@ -18,10 +19,14 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import CustomOpTransform, OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
+from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.cache_utils import InvalidIndexProvider
+from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils import (
     constants,
     create_json,
@@ -32,6 +37,7 @@ from QEfficient.utils import (
     hash_dict_params,
     load_json,
 )
+from QEfficient.utils.patches import apply_torch_patches, undo_torch_patches
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +59,7 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
-    def __init__(self, model: torch.nn.Module, **kwargs) -> None:
+    def __init__(self, model: torch.nn.Module, use_subfunctions: bool = False, **kwargs) -> None:
         super().__init__()
         self.model = model
         self.hash_params = create_model_params(self, **kwargs)
@@ -64,6 +70,7 @@ class QEFFBaseModel(ABC):
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
 
+        self.use_subfunctions = use_subfunctions
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
 
@@ -179,6 +186,7 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
+        use_subfunctions: bool = False,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
@@ -243,7 +251,21 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
+            # Initialize the registry with your custom ops
             export_kwargs = {} if export_kwargs is None else export_kwargs
+            CustomOpTransform.register_custom_op("CustomRMSNormFunc", CustomRMSNormFunc, CustomRMSNorm)
+            CustomOpTransform.register_custom_op("CtxScatterFunc", CtxScatterFunc, CtxScatter)
+            CustomOpTransform.register_custom_op("CtxGatherFunc", CtxGatherFunc, CtxGather)
+            if use_subfunctions:
+                warnings.warn(
+                    "The subfunction feature is experimental. Please note that using compile consecutively with and without subfunction may produce inconsistent results."
+                )
+                apply_torch_patches()
+                InvalidIndexProvider.SUBFUNC_ENABLED = True
+                output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
+                export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
+                self._onnx_transforms.append(CustomOpTransform)
+
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -252,15 +274,16 @@ class QEFFBaseModel(ABC):
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
+                do_constant_folding=True,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
-
             _ = self._offload_model_weights(offload_pt_weights)
 
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
+                "temp_onnx_path": tmp_onnx_path,
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
@@ -284,6 +307,10 @@ class QEFFBaseModel(ABC):
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
+        if use_subfunctions:
+            undo_torch_patches()
+            InvalidIndexProvider.SUBFUNC_ENABLED = False
+
         self.onnx_path = onnx_path
         return onnx_path
 
@@ -300,6 +327,7 @@ class QEFFBaseModel(ABC):
         num_speculative_tokens: Optional[int] = None,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
+        use_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -325,9 +353,9 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-        if onnx_path is None and self.onnx_path is None:
-            self.export()
 
+        if onnx_path is None and self.onnx_path is None:
+            self.export(use_subfunctions=use_subfunctions)
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
