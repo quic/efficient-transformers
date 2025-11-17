@@ -2485,14 +2485,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning(
                 f"Setting NUM_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_BLOCKS` to override"
             )
-            os.environ["NUM_Q_BLOCKS"] = num_q_blocks
+            os.environ["NUM_Q_BLOCKS"] = str(num_q_blocks)
+        num_q_blocks = int(num_q_blocks)
 
         num_ffn_blocks = os.environ.get("NUM_FFN_BLOCKS", None)
-        min_seq_len = int(max(num_q_blocks, num_ffn_blocks)) if num_ffn_blocks else num_q_blocks
+        num_ffn_blocks = int(num_ffn_blocks) if num_ffn_blocks else num_ffn_blocks
+        min_seq_len = max(num_q_blocks, num_ffn_blocks) if num_ffn_blocks else num_q_blocks
+        if (num_ffn_blocks and min_seq_len % num_ffn_blocks != 0) or min_seq_len % num_q_blocks != 0:
+            raise ValueError(
+                f"Got NUM_FFN_BLOCKS={num_ffn_blocks} and NUM_Q_BLOCKS={num_q_blocks}, tried to set seq_len={min_seq_len} for export but,"
+                "seq_len is not divisible by either num_ffn_blocks or num_q_blocks, try chaning the values."
+            )
 
         self.prefill(True)
         self.hash_params["prefill_only"] = True
-        self.hash_params["num_blocks"] = os.environ["NUM_BLOCKS"]
+        self.hash_params["num_blocks"] = num_q_blocks
+        self.hash_params["num_ffn_blocks"] = num_ffn_blocks
         return (
             min_seq_len
             if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
