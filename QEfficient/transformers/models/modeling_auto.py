@@ -42,6 +42,7 @@ from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
 )
+from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
     CustomOpsTransform,
@@ -2369,6 +2370,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
             raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
 
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
         # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -2468,6 +2473,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
+        if kwargs.pop("enable_proxy", False):
+            cls._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -3119,6 +3128,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments. Currently supports:
             - `generation_len (int, optional)`: The maximum number of tokens to generate.
+            - `write_io (bool, optional)`: Whether to save the io files.
 
         Returns
         -------
@@ -3136,6 +3146,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
             generation_len = kwargs.pop("generation_len", None)
+            write_io = kwargs.pop("write_io", False)
             return QEfficient.cloud_ai_100_exec_kv(
                 tokenizer=tokenizer,
                 qpc_path=self.qpc_path,
@@ -3147,6 +3158,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 automation=kwargs.pop("automation", False),
                 iteration=kwargs.pop("iteration", 1),
                 is_tlm=self.is_tlm,
+                write_io_dir=os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None,
                 **kwargs,
             )
         else:

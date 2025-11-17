@@ -32,6 +32,33 @@ class PytorchTransform:
         raise NotImplementedError("Use subclasses for Pytorch transform")
 
 
+class ProxyModuleMappingTransform(PytorchTransform):
+    """
+    Replaces the PyTorch modules based on the _module_mapping class variable.
+    """
+
+    _module_mapping: Dict[Type[nn.Module], Type[nn.Module]]
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for name, module in model.named_modules():
+            for base_type, repl_type in cls._module_mapping.items():
+                if isinstance(module, base_type):
+                    if base_type is nn.Linear:
+                        short_name = name.split(".")[-1] if name else ""
+                        if short_name != "lm_head":
+                            continue
+                    # Perform in-place class replacement (preserve parameters/state)
+                    try:
+                        module.__class__ = repl_type
+                        transformed = True
+                    except Exception as e:
+                        logger.warning(f"Failed to replace module {name} ({base_type}) -> {repl_type}: {e}")
+
+        return model, transformed
+
+
 class ModuleMappingTransform(PytorchTransform):
     """
     Replaces the PyTorch modules based on the _module_mapping class variable.
