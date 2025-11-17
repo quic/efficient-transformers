@@ -68,7 +68,8 @@ test_models_spd = [
 ]
 
 test_models_blockedKV = [
-    "meta-llama/Llama-3.3-70B-Instruct",
+    # "meta-llama/Llama-3.3-70B-Instruct",
+    "meta-llama/Llama-3.2-1B",
 ]
 
 
@@ -248,7 +249,11 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytorch_hf_tokens = [pytorch_hf_tokens for _ in range(full_batch_size)]
 
     qeff_model = QEFFAutoModelForCausalLM(
-        model_hf, continuous_batching=True, is_tlm=is_tlm, pretrained_model_name_or_path=model_name, qaic_config=qaic_config
+        model_hf,
+        continuous_batching=True,
+        is_tlm=is_tlm,
+        pretrained_model_name_or_path=model_name,
+        qaic_config=qaic_config,
     )
     onnx_model_path = qeff_model.export()
 
@@ -505,9 +510,8 @@ def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     n_layer = get_custom_n_layers(model_name)
 
     qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=n_layer, qaic_config=qaic_config
-    )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
+
 
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_nonBlockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
@@ -518,7 +522,4 @@ def test_causal_nonBlockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     n_layer = get_custom_n_layers(model_name)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=n_layer
-    )
-
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)

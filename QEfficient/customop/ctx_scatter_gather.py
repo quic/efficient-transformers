@@ -146,6 +146,7 @@ class CtxGatherFunc(torch.autograd.Function):
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value, comp_ctx_len: int) -> torch.Value:
         return g.onnxscript_op(CtxGather, data, ctx_indices, comp_ctx_len).setTypeAs(data)
 
+
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGatherBlockedKV(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
     ctx_indices = ops.Unsqueeze(ctx_indices, [-1])

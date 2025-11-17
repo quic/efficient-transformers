@@ -5,8 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
-from functools import partial
 import warnings
+from functools import partial
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
