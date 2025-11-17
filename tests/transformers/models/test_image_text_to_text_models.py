@@ -384,7 +384,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         ctx_len=ctx_len,
         batch_size=batch_size,
         full_batch_size=full_batch_size,
-        mxfp6_matmul=True,
+        mxfp6_matmul=False,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )
@@ -399,12 +399,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     )
 
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
+    print("QPC Outputs (QAIC) for Continuous Batching:")
+    print(exec_info.generated_texts)
 
     for i in range(full_batch_size):
         assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
             f"Tokens don't match for prompt {i} between HF and QPC output"
         )
-
     return
 
 

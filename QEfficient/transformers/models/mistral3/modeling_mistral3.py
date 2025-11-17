@@ -178,16 +178,16 @@ class QEFFMistral3DecoderWrapper(nn.Module):
         comp_ctx_lengths: Optional[List[int]] = None,
         batch_index: Optional[torch.LongTensor] = None,
     ):
-        inputs_embeds = self.model.get_input_embeddings()(input_ids)
-        vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+        inputs_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         mask = input_ids == self.model.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
         image_features_expanded = vision_embeds.unsqueeze(0)[indices0, indices1]
-        inputs_embeds_1 = torch.where(mask.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        outputs = self.model.model(
-            inputs_embeds=inputs_embeds_1,
+        image_embeds = torch.where(mask.unsqueeze(-1), image_features_expanded, inputs_embeds)
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
+        outputs = self.language_model(
+            inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
@@ -428,6 +428,9 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
                 lang_decode["full_batch_size"] = kv_cache_batch_size
             else:
                 lang_decode["batch_size"] = kv_cache_batch_size
+            lang = []
+            lang.append(lang_prefill)
+            lang.append(lang_decode)
 
         specializations = {}
 
