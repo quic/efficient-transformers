@@ -99,16 +99,20 @@ class CtxScatterFuncCB3D(torch.autograd.Function):
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGatherCB(
-    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32
+    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32, comp_ctx_len: onnxscript.INT32
 ) -> onnxscript.FLOAT:
     batch_size = ops.Gather(ops.Shape(batch_index), [0])
     num_heads = ops.Gather(ops.Shape(data), [1])
-    ctx_len = ops.Gather(ops.Shape(data), [2])
+    # using compute-context-length (CCL) instead of context-length to do gather process based on CCL and later do attention computations based on CCL as well.
+    ctx_len = ops.Reshape(comp_ctx_len, [1])
 
     # Expanded shape to create indices
     zero = ops.Constant(value_ints=[0])
     one = ops.Constant(value_ints=[1])
-    exp_shape = ops.Concat(batch_size, num_heads, ctx_len, one, axis=0)
+    # exp_shape = ops.Concat(batch_size, num_heads, ctx_len, one, axis=0)
+    exp_shape = ops.Concat(
+        ops.Reshape(batch_size, [1]), ops.Reshape(num_heads, [1]), ops.Reshape(ctx_len, [1]), one, axis=0
+    )
 
     # Create indices
     batch_idx = ops.Expand(ops.Unsqueeze(batch_index, [2, 3]), exp_shape)
@@ -121,7 +125,7 @@ def CtxGatherCB(
 
 class CtxGatherFuncCB(torch.autograd.Function):
     @staticmethod
-    def forward(data: torch.Tensor, batch_index: torch.Tensor, ctx_indices: torch.Tensor):
+    def forward(data: torch.Tensor, batch_index: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: int):
         batch_indices = batch_index.view(-1, 1, 1)
         head_indices = torch.arange(data.shape[1]).view(1, -1, 1)
         return data[batch_indices, head_indices, ctx_indices]
@@ -131,8 +135,10 @@ class CtxGatherFuncCB(torch.autograd.Function):
         pass
 
     @staticmethod
-    def symbolic(g: torch.Graph, data: torch.Value, batch_index: torch.Value, ctx_indices: torch.Value) -> torch.Value:
-        return g.onnxscript_op(CtxGatherCB, data, batch_index, ctx_indices).setTypeAs(data)
+    def symbolic(
+        g: torch.Graph, data: torch.Value, batch_index: torch.Value, ctx_indices: torch.Value, comp_ctx_len: int
+    ) -> torch.Value:
+        return g.onnxscript_op(CtxGatherCB, data, batch_index, ctx_indices, comp_ctx_len).setTypeAs(data)
 
 
 # TODO : This function will be deprecated in future.

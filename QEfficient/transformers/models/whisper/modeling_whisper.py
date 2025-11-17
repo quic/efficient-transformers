@@ -55,6 +55,7 @@ class QEffWhisperAttention(WhisperAttention):
         position_ids_layer: torch.Tensor = None,
         key_value_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
@@ -100,6 +101,9 @@ class QEffWhisperAttention(WhisperAttention):
                 value_states = value_states.transpose(1, 2).contiguous()
                 if past_key_value is not None:
                     cache_kwargs = {"position_ids": position_ids_layer}
+                    if comp_ctx_lengths is not None:
+                        attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                        cache_kwargs["CCL"] = attention_mask.shape[-1]
                     key_states, value_states = past_key_value.update(
                         key_states, value_states, self.layer_idx, cache_kwargs
                     )
@@ -181,6 +185,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
         layer_head_mask: Optional[torch.Tensor] = None,
         cross_attn_layer_head_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = True,
         cache_position: Optional[torch.LongTensor] = None,
@@ -215,6 +220,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
             past_key_value=self_attn_past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
@@ -388,6 +394,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         cross_attn_head_mask=None,
         position_ids=None,
         past_key_values=None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         inputs_embeds=None,
         use_cache=None,
         output_attentions=None,
@@ -527,6 +534,7 @@ class QEffWhisperDecoder(WhisperDecoder):
                 layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                 cross_attn_layer_head_mask=(cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None),
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 position_ids_layer=position_ids,
@@ -638,6 +646,7 @@ class QEffWhisperModel(WhisperModel):
         cross_attn_head_mask=None,
         encoder_outputs=None,
         past_key_values=None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         decoder_inputs_embeds=None,
         use_cache=None,
         output_attentions=None,
@@ -669,6 +678,7 @@ class QEffWhisperModel(WhisperModel):
             head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             inputs_embeds=decoder_inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
@@ -714,6 +724,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         cross_attn_head_mask: Optional[torch.Tensor] = None,
         encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         past_key_values: Optional[Union[EncoderDecoderCache, Tuple[torch.FloatTensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         decoder_inputs_embeds: Optional[Tuple[torch.FloatTensor]] = None,
         position_ids: Optional[Tuple[torch.LongTensor]] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -735,6 +746,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
             decoder_head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             decoder_inputs_embeds=decoder_inputs_embeds,
             decoder_position_ids=position_ids,
             use_cache=use_cache,
