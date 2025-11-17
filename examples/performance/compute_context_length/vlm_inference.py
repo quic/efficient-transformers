@@ -39,7 +39,7 @@ def run_model(
 ):
     """
     Run VLM inference with CCL optimization.
-    
+
     Args:
         model_name: HuggingFace model ID
         query: Text query about the image
@@ -100,7 +100,7 @@ def run_model(
 
     print(f"\nLoading image from: {image_url}")
     image = Image.open(requests.get(image_url, stream=True).raw)
-    
+
     messages = [
         {
             "role": "user",
@@ -127,7 +127,7 @@ def run_model(
     print("Generated response:")
     streamer = TextStreamer(processor.tokenizer)
     output_statistics = model.generate(inputs=inputs, streamer=streamer, generation_len=generation_len)
-    
+
     print(f"Tokens generated: {len(output_statistics.generated_ids[0])}")
 
 
