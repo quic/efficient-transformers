@@ -744,7 +744,10 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = opt_eager_attention_forward_blocked
+        if os.environ.get("ENABLE_OPT_SWA", "0") == "1":
+            attention_interface: Callable = opt_eager_attention_forward_blocked
+        else:
+            attention_interface: Callable = eager_attention_forward_blocked
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
