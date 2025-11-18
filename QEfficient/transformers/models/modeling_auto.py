@@ -3046,6 +3046,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     kv_cache_batch_size=kv_cache_batch_size,
                     full_batch_size=full_batch_size,
                     num_speculative_tokens=num_speculative_tokens,
+                    prefill_only=prefill_only,
                 )
                 if decode_spec:
                     specializations.append(decode_spec)
