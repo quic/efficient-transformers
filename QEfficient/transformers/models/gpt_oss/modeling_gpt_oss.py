@@ -47,6 +47,8 @@ class QEffGptOssExperts(GptOssExperts):
 
 class QEffPrefillOnlyGptOssMLP(GptOssMLP):
     def forward(self, hidden: torch.Tensor):
+        if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
+            return self.blocked_ffn_forward(hidden)
         B, S, H = hidden.shape
         T = B * S
         hidden = hidden.view(T, H)
@@ -118,7 +120,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
 
         # ────────────────── allocate the output tensor ─────
         expert_out = hidden.new_zeros((T, H))  # accumulation buffer
-        target_blocks = int(os.environ.get("NUM_BLOCKS", 1))
+        target_blocks = int(os.environ.get("NUM_FFN_BLOCKS", 1))
         block_positions = []
         for j in range(target_blocks):
             block_positions.append(j * (T // target_blocks))
@@ -661,8 +663,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
             }
             if self.sliding_window is not None:
                 sliding_window_len = past_key_value.sliding_window_len
-                # short_read_idx = torch.arange(sliding_window_len)
-                short_read_idx = torch.arange(self.config.sliding_window)
+                short_read_idx = torch.arange(sliding_window_len)
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )
@@ -724,7 +725,6 @@ class QEffGptOssAttention(GptOssAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
             max_seq_len_cached = 32 * 1024
-        import ipdb; ipdb.set_trace()
         cos, sin = self.rotary_emb(value_states, seq_len=max_seq_len_cached)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
@@ -847,9 +847,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
             past_key_values = QEffHybridCacheForGPTOSS.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
-            # inputs_embeds = self.embed_tokens(input_ids)
-            inputs_embeds = input_ids[:, :, None].expand(-1, -1, self.config.hidden_size).float()
-            
+            inputs_embeds = self.embed_tokens(input_ids)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -1074,8 +1072,7 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
-        # logits = logits.float()
-        logits = hidden_states
+        logits = logits.float()
 
         return MoeCausalLMOutputWithPast(
             loss=None,
