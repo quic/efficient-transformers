@@ -8,8 +8,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import onnx
-import onnxslim
 import torch
 from onnx import ModelProto, external_data_helper, numpy_helper
 
@@ -101,37 +99,6 @@ class SplitTensorsTransform(OnnxTransform):
                     file_num += 1
                     current_file_size = tsize
                 external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
-        return model, transformed
-
-
-class OnnxSlimTransform(OnnxTransform):
-    """
-    Applies onnx-slim transformations on the given ONNX graph.
-    """
-
-    @classmethod
-    def apply(
-        cls,
-        model: ModelProto,
-        *,
-        onnx_base_dir: Optional[str] = None,
-        **kwargs,
-    ) -> Tuple[ModelProto, bool]:
-        """
-        :param enable_onnx_slim_transform: If True, applies onnx-slim transformations.
-        :param temp_onnx_path: Path to save the slimmed ONNX model.
-        """
-        transformed = False
-        onnx_slim_transform = True  # kwargs.get("enable_onnx_slim_transform", False)
-        temp_onnx_path = kwargs.get("temp_onnx_path", None)
-        if not temp_onnx_path:
-            err_str = "temp_onnx_path is required for onnx-slim transform."
-            raise RuntimeError(err_str)
-        if onnx_slim_transform:
-            transformed = True
-            slimmed_model = onnxslim.slim(model)
-            onnx.save(slimmed_model, temp_onnx_path)
-            return slimmed_model, transformed
         return model, transformed
 
 
