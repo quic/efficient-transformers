@@ -2400,6 +2400,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
                 else seq_len
             )
+            # TODO: hack to get around unsupported dynamic range by compiler, fix later.
+            seq_len = 128 if seq_len < 128 else seq_len
         else:
             self.prefill(False)
             self.hash_params.pop("prefill_only", None)
