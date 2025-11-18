@@ -83,7 +83,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
             up = (hidden @ W_u) + b_u  # [T, I]
 
             # Apply GptOss activation with clamping
-            gate = gate.clamp(min=None, max=self.experts.limit)
+            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
             up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
             # GLU activation
@@ -584,11 +584,12 @@ def eager_attention_forward_blocked(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     BS, NH, CL, DH = query.shape
-    target_blocks = int(os.environ.get("NUM_BLOCKS", 1))
+    target_blocks = int(os.environ.get("NUM_Q_BLOCKS", 1))
     block_positions = []
     for j in range(target_blocks):
         block_positions.append(j * (CL // target_blocks))
     block_count = 0
+
     outs = []
     for block_idx in range(target_blocks):
         block_count += 1
@@ -614,6 +615,69 @@ def eager_attention_forward_blocked(
         curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
         curr_attn_weights = curr_attn_weights[..., :-1]
         out_block = torch.matmul(curr_attn_weights, value_states)
+        outs.append(out_block)
+    output = torch.cat(outs, dim=2)
+
+    output = output.view(BS, NH, CL, DH).transpose(1, 2).contiguous()
+    return output, output
+
+
+def opt_eager_attention_forward_blocked(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    **kwargs,
+):
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    BS, NH, CL, DH = query.shape
+    target_blocks = int(os.environ.get("NUM_Q_BLOCKS", 1))
+    block_positions = []
+    for j in range(target_blocks):
+        block_positions.append(j * (CL // target_blocks))
+    block_count = 0
+    outs = []
+    for block_idx in range(target_blocks):
+        block_count += 1
+        qi = block_positions[block_idx]
+        # Calculate block size (last block should be handled with remainder)
+
+        if block_idx == target_blocks - 1:
+            real_q_len = CL - qi
+        else:
+            real_q_len = block_positions[block_idx + 1] - qi
+
+        if block_idx == 0:
+            kv_start_idx = 0
+        else:
+            kv_start_idx = qi - 128
+
+        q_block = query[:, :, qi : qi + real_q_len, :]
+        if kwargs.get("sliding_window"):
+            k_block = key_states[:, :, kv_start_idx : qi + real_q_len, :]
+            v_block = value_states[:, :, kv_start_idx : qi + real_q_len, :]
+            attn_mask_block = attention_mask[:, :, qi : qi + real_q_len, kv_start_idx : qi + real_q_len]
+        else:
+            k_block = key_states
+            v_block = value_states
+            attn_mask_block = attention_mask[:, :, qi : qi + real_q_len, :]
+
+        scores = torch.matmul(q_block, k_block.transpose(2, 3)) * scaling
+        curr_attn_weights = torch.where(
+            attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), scores
+        )
+        sinks = module.sinks.reshape(1, -1, 1, 1).expand(
+            curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1
+        )
+        combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
+        combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
+        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
+        curr_attn_weights = curr_attn_weights[..., :-1]
+        out_block = torch.matmul(curr_attn_weights, v_block)
         outs.append(out_block)
     output = torch.cat(outs, dim=2)
 
@@ -667,7 +731,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )
-                # This is a trick to export with NUM_BLOCKS<seq_len<sliding_window_len, disabling it by default.
+                # This is a trick to export with seq_len<sliding_window_len
                 read_idx = torch.where(read_idx > position_ids.max(), 0, read_idx)
                 k_cache = key_states[:, :, read_idx, :]
                 v_cache = value_states[:, :, read_idx, :]
@@ -680,7 +744,10 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = eager_attention_forward_blocked
+        if os.environ.get("ENABLE_OPT_SWA", "0") == "1":
+            attention_interface: Callable = opt_eager_attention_forward_blocked
+        else:
+            attention_interface: Callable = eager_attention_forward_blocked
         attn_output, attn_weights = attention_interface(
             self,
             query_states,

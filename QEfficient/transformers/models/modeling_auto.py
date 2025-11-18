@@ -2477,13 +2477,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
                 raise ValueError(
                     f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
-                    f"Or set `NUM_BLOCKS` ENV variable"
+                    f"Or set `NUM_Q_BLOCKS` ENV variable"
                     f"Received: prefill_seq_len={prefill_seq_len}"
                 )
 
             num_q_blocks = prefill_seq_len // block_size
             logger.warning(
-                f"Setting NUM_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_BLOCKS` to override"
+                f"Setting NUM_Q_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_Q_BLOCKS` to override"
             )
             os.environ["NUM_Q_BLOCKS"] = str(num_q_blocks)
         num_q_blocks = int(num_q_blocks)
