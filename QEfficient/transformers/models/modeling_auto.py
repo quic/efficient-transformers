@@ -319,7 +319,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, use_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -354,7 +354,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_subfunctions=use_subfunctions,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -367,7 +367,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -608,7 +608,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         dynamic_axes,
         export_dir=None,
         offload_pt_weights=True,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
     ):
         """
         Exports the vision encoder component to ONNX format.
@@ -637,7 +637,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
-            use_subfunctions=use_subfunctions,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -650,7 +650,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mdp_ts_num_devices,
         aic_num_cores,
         custom_io,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -764,7 +764,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         dynamic_axes,
         export_dir=None,
         offload_pt_weights=True,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
     ):
         """
         Exports the language decoder component to ONNX format.
@@ -793,7 +793,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
-            use_subfunctions=use_subfunctions,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -806,7 +806,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mdp_ts_num_devices,
         aic_num_cores,
         custom_io,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1007,7 +1007,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def export(
         self,
         export_dir: Optional[str] = None,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -1078,7 +1078,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         mxint8_kv_cache: bool = False,
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1191,7 +1191,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.lang_model.onnx_path is None and lang_onnx_path is None
         ):
             self.export(
-                use_subfunctions=use_subfunctions,
+                use_onnx_subfunctions=use_onnx_subfunctions,
             )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
@@ -1662,7 +1662,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def export(
         self,
         export_dir: Optional[str] = None,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -1688,7 +1688,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_subfunctions=use_subfunctions,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -1707,7 +1707,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -2473,7 +2473,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, use_subfunctions: bool = False, **kwargs) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -2582,7 +2582,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_subfunctions=use_subfunctions,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             offload_pt_weights=kwargs.get("offload_pt_weights", True),
         )
 
@@ -2794,7 +2794,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
         prefill_only: Optional[bool] = None,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -3188,7 +3188,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, use_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -3214,7 +3214,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_subfunctions=use_subfunctions,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -3233,7 +3233,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -3559,7 +3559,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     def get_model_config(self) -> dict:
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, use_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
@@ -3585,7 +3585,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_subfunctions=use_subfunctions,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -3598,7 +3598,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
-        use_subfunctions: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """

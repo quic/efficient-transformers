@@ -51,10 +51,10 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     tokenizer = AutoTokenizer.from_pretrained(config.model_type)
     model_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb=False)
 
-    with_sub_func_onnx = model_0_0.export(tmp_path, use_subfunctions=True, offload_pt_weights=False)
+    with_sub_func_onnx = model_0_0.export(tmp_path, use_onnx_subfunctions=True, offload_pt_weights=False)
     hash_0_0 = model_0_0.export_hash
 
-    without_sub_func_onnx = model_0_0.export(tmp_path, use_subfunctions=False)
+    without_sub_func_onnx = model_0_0.export(tmp_path, use_onnx_subfunctions=False)
     hash_0_1 = model_0_0.export_hash
 
     assert hash_0_0 != hash_0_1
@@ -65,5 +65,4 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
 
     model_0_0.compile(onnx_path=without_sub_func_onnx, **compile_params)
     generation_01 = model_0_0.generate(prompts=["Help me with this"], tokenizer=tokenizer)
-
     assert generation_00.generated_texts == generation_01.generated_texts
