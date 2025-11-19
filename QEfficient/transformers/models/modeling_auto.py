@@ -738,6 +738,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Only the following keys are supported by the text model of the dual QPC multimodal model:
             - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+            - **include_guided_decoding** (bool): If True, enables guided token-level filtering
+              during decoding. Only works when include_sampler=True.
             Additional keys will be ignored.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
@@ -865,10 +867,11 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         example_inputs["random_numbers"] = torch.rand((bs, max_top_k_ids), dtype=torch.float)
         dynamic_axes["random_numbers"] = {0: "batch_size"}
 
-        example_inputs["token_bitmasks"] = torch.zeros(
-            (bs, self.model.language_model.config.vocab_size), dtype=torch.bool
-        )
-        dynamic_axes["token_bitmasks"] = {0: "batch_size"}
+        if self.model.qaic_config.get("include_guided_decoding", False):
+            example_inputs["token_bitmasks"] = torch.zeros(
+                (bs, self.model.language_model.config.vocab_size), dtype=torch.bool
+            )
+            dynamic_axes["token_bitmasks"] = {0: "batch_size"}
 
         return example_inputs, output_names, dynamic_axes
 
@@ -2271,6 +2274,8 @@ class QEFFAutoModelForImageTextToText:
             Only the following keys are supported by the text model of the dual QPC multimodal model:
             - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+            - **include_guided_decoding** (bool): If True, enables guided token-level filtering
+              during decoding. Only works when include_sampler=True.
             Additional keys will be ignored.
         **kwargs :
             Additional arguments passed to HuggingFace's ``from_pretrained``.
@@ -2376,6 +2381,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             - **return_pdfs** (bool): If True, returns probability distributions along with sampled tokens.
               For Speculative Decoding Target Language Models, this is always True.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+            - **include_guided_decoding** (bool): If True, enables guided token-level filtering
+              during decoding. Only works when include_sampler=True.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
 
@@ -2478,6 +2485,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
               and ``return_pdfs=False`` for regular model.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
               The values provided in ``top_ks`` tensor must be less than this maximum limit.
+            - **include_guided_decoding** (bool): If True, enables guided token-level filtering
+              during decoding. Only works when include_sampler=True.
 
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
@@ -2729,8 +2738,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         example_inputs["random_numbers"] = torch.rand((bs, max_top_k_ids), dtype=torch.float)
         dynamic_axes["random_numbers"] = {0: "batch_size"}
 
-        example_inputs["token_bitmasks"] = torch.zeros((bs, self.model.config.vocab_size), dtype=torch.bool)
-        dynamic_axes["token_bitmasks"] = {0: "batch_size"}
+        if self.model.qaic_config.get("include_guided_decoding", False):
+            example_inputs["token_bitmasks"] = torch.zeros((bs, self.model.config.vocab_size), dtype=torch.bool)
+            dynamic_axes["token_bitmasks"] = {0: "batch_size"}
 
         return example_inputs, output_names, dynamic_axes
 
