@@ -30,6 +30,8 @@ Supported Features
      - Enables execution with FP8 precision, significantly improving performance and reducing memory usage for computational tasks.
    * - Prefill caching
      - Enhances inference speed by caching key-value pairs for shared prefixes, reducing redundant computations and improving efficiency.
+   * - On Device Sampling
+     - Enables sampling operations to be executed directly on the QAIC device rather than the host CPU for QEffForCausalLM models. This enhancement significantly reduces host-device communication overhead and improves inference throughput and scalability. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/on_device_sampling.py>`_ for more **details**.
    * - Prompt-Lookup Decoding
      - Speeds up text generation by using overlapping parts of the input prompt and the generated text, making the process faster without losing quality. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/pld_spd_inference.py>`_ for more **details**.
    * - :ref:`PEFT LoRA support <QEffAutoPeftModelForCausalLM>`
