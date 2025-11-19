@@ -11,7 +11,9 @@ from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 
-def validate_sampler_inputs(session_inputs: Set[str], include_sampler: Optional[bool] = None) -> bool:
+def validate_sampler_inputs(
+    session_inputs: Set[str], include_sampler: Optional[bool] = None, include_guided_decoding: Optional[bool] = None
+) -> bool:
     """
     Validates whether the `QAICInferenceSession` inputs match inputs required for on-device sampling.
 
@@ -28,7 +30,7 @@ def validate_sampler_inputs(session_inputs: Set[str], include_sampler: Optional[
         ValueError if partial support is detected or if user intent conflicts with QPC capabilities.
     """
 
-    sampler_inputs = Constants.SAMPLER_INPUTS
+    sampler_inputs = Constants.SAMPLER_INPUTS | ({"token_bitmasks"} if include_guided_decoding else set())
     count = len(sampler_inputs & session_inputs)
 
     session_includes_sampler = True
