@@ -66,6 +66,10 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformer2DModel,
     FluxTransformerBlock,
 )
+from diffusers.models.transformers.transformer_qwenimage import (
+    QwenEmbedRope,
+    QwenImageTransformer2DModel,
+)
 from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
@@ -87,6 +91,11 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxTransformer2DModel,
     QEffFluxTransformer2DModelOF,
     QEffFluxTransformerBlock,
+)
+from QEfficient.diffusers.models.transformers.transformer_qwenimage import (
+    QEffQwenDoubleStreamAttnProcessor2_0,
+    QEffQwenEmbedRope,
+    QEffQwenImageTransformer2DModel,
 )
 
 
@@ -112,6 +121,9 @@ class AttentionTransform(ModuleMappingTransform):
         FluxTransformer2DModel: QEffFluxTransformer2DModel,
         FluxAttention: QEffFluxAttention,
         FluxAttnProcessor: QEffFluxAttnProcessor,
+        QwenEmbedRope: QEffQwenEmbedRope,
+        QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
+        QEffQwenDoubleStreamAttnProcessor2_0: QEffQwenDoubleStreamAttnProcessor2_0,
     }
 
     @classmethod
@@ -134,7 +146,7 @@ class NormalizationTransform(ModuleMappingTransform):
 
 
 class OnnxFunctionTransform(ModuleMappingTransform):
-    _module_mapping = {QEffFluxTransformer2DModel, QEffFluxTransformer2DModelOF}
+    _module_mapping = {QEffFluxTransformer2DModel, QEffFluxTransformer2DModelOF, QEffQwenImageTransformer2DModel}
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
