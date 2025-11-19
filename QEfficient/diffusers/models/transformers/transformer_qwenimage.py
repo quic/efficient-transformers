@@ -138,8 +138,8 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
             if guidance is None
             else self.time_text_embed(timestep, guidance, hidden_states)
         )
-        # image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens, device=hidden_states.device)
-        image_rotary_emb = (img_rotary_emb, text_rotary_emb)
+        image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens, device=hidden_states.device)
+        # image_rotary_emb = (img_rotary_emb, text_rotary_emb)
 
         for index_block, block in enumerate(self.transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing:

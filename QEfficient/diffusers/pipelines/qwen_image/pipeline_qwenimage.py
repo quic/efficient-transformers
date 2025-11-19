@@ -7,6 +7,7 @@
 
 import os
 from typing import Any, Callable, Dict, List, Optional, Union
+
 import numpy as np
 import torch
 from diffusers import QwenImagePipeline
@@ -14,13 +15,13 @@ from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutput
 from diffusers.pipelines.qwenimage.pipeline_qwenimage import calculate_shift
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
-from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffQwenImageTransformer2DModel,
     QEffTextEncoder,
     QEffVAE,
 )
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 
 class QEFFQwenImagePipeline(QwenImagePipeline):
@@ -458,7 +459,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         negative_txt_seq_lens = (
             negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None
         )
-        
 
         # Initialize transformer session
         if self.transformer.qpc_session is None:
@@ -466,7 +466,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             # self.transformer.qpc_session = onnxruntime.InferenceSession(
             #     "/home/dipankar/.cache/qeff_models/QwenImageTransformer2DModel/QwenImageTransformer2DModel-eec8953b65947df1/QwenImageTransformer2DModel.onnx"
             # )
-        
+
         image_rotary_emb = self.transformer.model.pos_embed(img_shapes, txt_seq_lens, device="cpu")
         img_rotary_emb = image_rotary_emb[0].numpy().astype(np.float32)
         text_rotary_emb = image_rotary_emb[1].numpy().astype(np.float32)
@@ -496,7 +496,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                 # output_names = [output.name for output in self.transformer.qpc_session.get_outputs()]
                 # outputs = self.transformer.qpc_session.run(output_names, transformer_inputs)
                 # noise_pred = torch.tensor(outputs[0])
-            
+
                 if do_true_cfg:
                     # Unconditional pass
                     transformer_inputs_uncond = {
@@ -554,7 +554,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                 1, self.vae_decode.model.config.z_dim, 1, 1, 1
             ).to(latents.device, latents.dtype)
             latents = latents / latents_std + latents_mean
-            
+
             image = self.vae_cpu.decode(latents, return_dict=False)[0][:, :, 0]
             image = self.image_processor.postprocess(image.detach(), output_type=output_type)
 
