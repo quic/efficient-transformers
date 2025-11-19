@@ -55,7 +55,8 @@ def create_export_hash(**kwargs):
     export_params = {}
     export_params["output_names"] = kwargs.get("output_names")
     export_params["dynamic_axes"] = kwargs.get("dynamic_axes")
-    export_params["use_onnx_subfunctions"] = kwargs.get("use_onnx_subfunctions", False)
+    if kwargs.get("use_onnx_subfunctions"):
+        export_params["use_onnx_subfunctions"] = True
     export_hash_params["export_params"] = export_params
 
     export_kwargs = kwargs.get("export_kwargs")

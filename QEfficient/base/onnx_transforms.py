@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -107,11 +107,11 @@ class CustomOpTransform(OnnxTransform):
     Transform to register custom operations and add their function protos to the ONNX model.
     """
 
-    # Registry of custom operations
-    _custom_ops: Dict[str, Tuple[Any, Any]] = {}  # op_name -> (func_class, onnxscript_func)
+    # Registry of custom operations: op_name -> (func_class, onnxscript_func)
+    _custom_ops: Dict[str, Tuple[Any, Any]] = {}
 
     @classmethod
-    def register_custom_op(cls, op_name: str, func_class: Any, onnxscript_func: Any):
+    def register_custom_op(cls, op_name: str, func_class: Any, onnxscript_func: Any) -> None:
         """Register a custom operation."""
         cls._custom_ops[op_name] = (func_class, onnxscript_func)
 
@@ -120,9 +120,9 @@ class CustomOpTransform(OnnxTransform):
         """
         Apply custom op registration and add function protos to the model.
 
-        :param model: The ONNX model to transform
-        :param opset_version: ONNX opset version for symbolic registration
-        :returns: Transformed model and success flag
+        :param model: The ONNX model to transform.
+        :param opset_version: ONNX opset version for symbolic registration.
+        :returns: (Transformed model, success flag).
         """
         transformed = False
 
@@ -131,62 +131,70 @@ class CustomOpTransform(OnnxTransform):
             if hasattr(func_class, "symbolic"):
                 torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, opset_version)
 
-        # Add function protos for custom ops that are used in the model
-        used_protos = cls._get_function_protos_for_model(model)
+        # Gather function names and all nodes (graph + function nodes)
+        func_names: Set[str] = {func.name for func in model.functions}
+        all_nodes = list(model.graph.node)
+        for func in model.functions:
+            all_nodes.extend(func.node)
 
+        # Collect used op types
+        used_op_types: Set[str] = {node.op_type for node in all_nodes}
+
+        # Precompute heuristic flags
+        has_rmsnorm = any("RMSNorm" in op_type for op_type in used_op_types)
+        has_ctx_ops = any(op_type in ["Gather", "GatherND", "Scatter", "ScatterND"] for op_type in used_op_types)
+
+        # Get function protos for custom ops used in the model
+        used_protos = cls._get_function_protos_for_model(used_op_types, has_rmsnorm, has_ctx_ops)
+
+        # Append new function protos if not already present
         for proto in used_protos:
-            # Check if proto already exists to avoid duplicates
-            proto_name = proto.name
-            if not any(func.name == proto_name for func in model.functions):
+            if proto.name not in func_names:
                 model.functions.append(proto)
                 transformed = True
 
         return model, transformed
 
     @classmethod
-    def _get_function_protos_for_model(cls, model: ModelProto) -> List[Any]:
-        """Get function protos for custom ops that are actually used in the model."""
-        used_protos = []
+    def _get_function_protos_for_model(cls, used_op_types: Set[str], has_rmsnorm: bool, has_ctx_ops: bool) -> List[Any]:
+        """
+        Get function protos for custom ops that are actually used in the model.
 
-        # Get all node op_types in the model
-        used_op_types = set()
-        for node in model.graph.node:
-            used_op_types.add(node.op_type)
-
-        # Also check function calls
-        for func in model.functions:
-            for node in func.node:
-                used_op_types.add(node.op_type)
-
-        # Check which custom ops are actually used
-        for op_name, (func_class, onnxscript_func) in cls._custom_ops.items():
-            # Check if the custom op is referenced in the model
-            if cls._is_custom_op_used(model, op_name, used_op_types):
-                proto = onnxscript_func.to_function_proto()
-                used_protos.append(proto)
-
+        :param used_op_types: Set of op types used in the model.
+        :param has_rmsnorm: Flag indicating if RMSNorm-related ops are present.
+        :param has_ctx_ops: Flag indicating if context-related ops are present.
+        :returns: List of ONNX function protos.
+        """
+        used_protos: List[Any] = []
+        for op_name, (_, onnxscript_func) in cls._custom_ops.items():
+            if cls._is_custom_op_used(op_name, used_op_types, has_rmsnorm, has_ctx_ops):
+                used_protos.append(onnxscript_func.to_function_proto())
         return used_protos
 
     @classmethod
-    def _is_custom_op_used(cls, model: ModelProto, op_name: str, used_op_types: set) -> bool:
-        """Check if a custom op is used in the model."""
-        # Check if the op_name appears in node op_types
+    def _is_custom_op_used(cls, op_name: str, used_op_types: Set[str], has_rmsnorm: bool, has_ctx_ops: bool) -> bool:
+        """
+        Check if a custom op is used in the model.
+
+        :param op_name: Name of the custom op.
+        :param used_op_types: Set of op types used in the model.
+        :param has_rmsnorm: Precomputed RMSNorm presence flag.
+        :param has_ctx_ops: Precomputed context ops presence flag.
+        :returns: True if the custom op is used, False otherwise.
+        """
         if op_name in used_op_types:
             return True
 
-        # Check for domain-specific ops (e.g., "com.qti.aisw.onnx::CustomRMSNorm")
-        custom_op_pattern = f"com.qti.aisw.onnx::{op_name.replace('Func', '')}"
-        if custom_op_pattern in used_op_types:
+        # Check for domain-specific ops
+        if f"com.qti.aisw.onnx::{op_name.replace('Func', '')}" in used_op_types:
             return True
 
-        # Heuristic checks based on op type
-        if "RMSNorm" in op_name:
-            # Check if any RMSNorm-related ops are present
-            return any("RMSNorm" in op_type for op_type in used_op_types)
+        # Heuristic checks
+        if "RMSNorm" in op_name and has_rmsnorm:
+            return True
 
-        if "Ctx" in op_name:
-            # Check if Gather/Scatter operations are present (indicating KV cache usage)
-            return any(op_type in ["Gather", "GatherND", "Scatter", "ScatterND"] for op_type in used_op_types)
+        if "Ctx" in op_name and has_ctx_ops:
+            return True
 
         return False
 
@@ -208,7 +216,10 @@ class RenameFunctionOutputsTransform(OnnxTransform):
         op_type_to_func_map = {func.name: func for func in model.functions}
         decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
         transformed = False
-        model_graph_outputs = [val.name for val in model.graph.output]
+
+        # Create a dict mapping output name to its index for quick lookup
+        model_graph_outputs_map = {val.name: idx for idx, val in enumerate(model.graph.output)}
+
         layer_index = 0
         for node in graph.node:
             if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
@@ -219,14 +230,18 @@ class RenameFunctionOutputsTransform(OnnxTransform):
                 for i, out_name in enumerate(func.output):
                     if "_InternalRetainedState" in out_name:
                         transformed = True
-                        tmp = node.output[i]
+                        original_output_name = node.output[i]
+
+                        # Generate new name based on key/value
                         if "key" in out_name:
                             new_name = f"past_key.{layer_index}_RetainedState"
                         elif "value" in out_name:
                             new_name = f"past_value.{layer_index}_RetainedState"
                         node.output[i] = new_name
+
                         # Update graph output name if it exists
-                        if tmp in model_graph_outputs:
-                            model.graph.output[model_graph_outputs.index(tmp)].name = new_name
-                layer_index = layer_index + 1
+                        if original_output_name in model_graph_outputs_map:
+                            idx = model_graph_outputs_map[original_output_name]
+                            model.graph.output[idx].name = new_name
+                layer_index += 1
         return model, transformed

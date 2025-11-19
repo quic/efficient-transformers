@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import CustomOpTransform, OnnxTransform
+from QEfficient.base.onnx_transforms import CustomOpTransform, OnnxTransform, RenameFunctionOutputsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
@@ -37,7 +37,7 @@ from QEfficient.utils import (
     hash_dict_params,
     load_json,
 )
-from QEfficient.utils.patches import apply_torch_patches, undo_torch_patches
+from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
-    def __init__(self, model: torch.nn.Module, use_onnx_subfunctions: bool = False, **kwargs) -> None:
+    def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
         self.hash_params = create_model_params(self, **kwargs)
@@ -70,7 +70,6 @@ class QEFFBaseModel(ABC):
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
 
-        self.use_onnx_subfunctions = use_onnx_subfunctions
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
 
@@ -264,8 +263,10 @@ class QEFFBaseModel(ABC):
                 InvalidIndexProvider.SUBFUNC_ENABLED = True
                 output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
                 export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
+                self._onnx_transforms.append(RenameFunctionOutputsTransform)
                 self._onnx_transforms.append(CustomOpTransform)
 
+            # import pdb; pdb.set_trace()
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -274,7 +275,6 @@ class QEFFBaseModel(ABC):
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
-                do_constant_folding=True,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
@@ -283,7 +283,6 @@ class QEFFBaseModel(ABC):
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
-                "temp_onnx_path": tmp_onnx_path,
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
@@ -310,6 +309,8 @@ class QEFFBaseModel(ABC):
         if use_onnx_subfunctions:
             undo_torch_patches()
             InvalidIndexProvider.SUBFUNC_ENABLED = False
+            self._onnx_transforms.pop()
+            self._onnx_transforms.pop()
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -356,6 +357,7 @@ class QEFFBaseModel(ABC):
 
         if onnx_path is None and self.onnx_path is None:
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
+
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"

@@ -7,7 +7,7 @@
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
@@ -46,10 +46,9 @@ config_ids = [x.model_type for x in configs]
 
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_subfunction_vs_nonsubfunction(config, tmp_path):
-    from transformers import AutoTokenizer
-
     tokenizer = AutoTokenizer.from_pretrained(config.model_type)
     model_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb=False)
+    # model_0_0 = QEFFAutoModelForCausalLM.from_pretrained(config.model_type)
 
     with_sub_func_onnx = model_0_0.export(tmp_path, use_onnx_subfunctions=True, offload_pt_weights=False)
     hash_0_0 = model_0_0.export_hash
