@@ -80,6 +80,17 @@ def test_sampler_transform(
             "max_top_k_ids": 512,
         },
     )
+    model_w_sampler_w_guided_decoding = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        num_hidden_layers=2,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 512,
+            "include_guided_decoding": True,
+        },
+    )
     model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
@@ -90,6 +101,16 @@ def test_sampler_transform(
         },
     )
     model_w_sampler_qpc_path: str = model_w_sampler.compile(
+        prefill_seq_len=prefill_seq_len,
+        ctx_len=ctx_len,
+        full_batch_size=full_batch_size,
+        num_devices=1,
+        num_cores=16,
+        num_speculative_tokens=spec_length - 1,
+        mxint8_kv_cache=True,
+        mxfp6_matmul=True,
+    )
+    model_w_sampler_w_guided_decoding_qpc_path: str = model_w_sampler_w_guided_decoding.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         full_batch_size=full_batch_size,
@@ -112,12 +133,19 @@ def test_sampler_transform(
 
     # Init qaic session
     model_w_sampler_session = QAICInferenceSession(model_w_sampler_qpc_path)
+    model_w_sampler_w_guided_decoding_session = QAICInferenceSession(model_w_sampler_w_guided_decoding_qpc_path)
     model_wo_sampler_session = QAICInferenceSession(model_wo_sampler_qpc_path)
 
     # Skip inputs/outputs buffers
     model_w_sampler_session.skip_buffers(set([x for x in model_w_sampler_session.input_names if x.startswith("past_")]))
     model_w_sampler_session.skip_buffers(
         set([x for x in model_w_sampler_session.output_names if x.endswith("_RetainedState")])
+    )
+    model_w_sampler_w_guided_decoding_session.skip_buffers(
+        set([x for x in model_w_sampler_w_guided_decoding_session.input_names if x.startswith("past_")])
+    )
+    model_w_sampler_w_guided_decoding_session.skip_buffers(
+        set([x for x in model_w_sampler_w_guided_decoding_session.output_names if x.endswith("_RetainedState")])
     )
     model_wo_sampler_session.skip_buffers(
         set([x for x in model_wo_sampler_session.input_names if x.startswith("past_")])
@@ -132,9 +160,15 @@ def test_sampler_transform(
         assert input_name in model_w_sampler_session.input_names, (
             f"Sampler input {input_name} not found in QPC compiled with On Device Sampler"
         )
+        assert input_name in model_w_sampler_w_guided_decoding_session.input_names, (
+            f"Sampler input {input_name} not found in QPC compiled with On Device Sampler and Guided Decoding"
+        )
         assert input_name not in model_wo_sampler_session.input_names, (
             f"Sampler input {input_name} found in QPC compiled without On Device Sampler"
         )
+    assert "token_bitmasks" in model_w_sampler_w_guided_decoding_session.input_names, (
+        "Sampler input token_bitmasks not found in QPC compiled with On Device Sampler and Guided Decoding"
+    )
 
 
 @pytest.mark.on_qaic
