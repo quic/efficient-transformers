@@ -105,5 +105,5 @@ else:
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
-    print(tokenizer.batch_decode(output.generated_ids))
+    print(tokenizer.batch_decode(output.generated_ids, skip_special_tokens=True))
     print(output)
