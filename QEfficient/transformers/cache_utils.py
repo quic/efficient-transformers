@@ -24,7 +24,7 @@ class QEffDynamicLayer(ABC):
     def __init__(self):
         self.keys, self.values = None, None
 
-    def get_seq_length(self, cache_position=None) -> int:
+    def get_seq_length(self) -> int:
         """Returns the sequence length of the cached states."""
         if self.keys is None or self.keys.numel() == 0:
             return 0
@@ -229,10 +229,7 @@ class QEffDynamicCache:
         Converts the `Cache` instance into the its equivalent in the legacy cache format. Used for
         backward compatibility.
         """
-        legacy_cache = ()
-        for layer in self.layers:
-            legacy_cache += ((layer.keys, layer.values),)
-        return legacy_cache
+        return tuple((layer.keys, layer.values) for layer in self.layers)
 
     @classmethod
     def from_legacy_cache(
@@ -265,11 +262,11 @@ class QEffDynamicCache:
             new_layer = new_layer_class()
             self.layers.append(new_layer)
 
-    def get_seq_length(self, layer_idx: int = 0, cache_position=None) -> int:
+    def get_seq_length(self, layer_idx: int = 0) -> int:
         """Returns the sequence length of the cache for the given layer. TODO: deprecate in favor of cache_position"""
         if layer_idx >= len(self.layers):
             return 0
-        return self.layers[layer_idx].get_seq_length(cache_position)
+        return self.layers[layer_idx].get_seq_length()
 
     def read_only(self, layer_idx, cache_kwargs):
         """
@@ -382,7 +379,7 @@ class QEffEncoderDecoderCache:
         return self.self_attention_cache.get_seq_length(layer_idx, cache_position)
 
 
-# TODO:This function will be depercated in future.
+# TODO:This function will be deprecated in future.
 class QEffHybridCache(QEffDynamicCache):
     def __init__(self, config, batch_size, max_cache_len):
         layer_classes = [QEffHybridCacheLayer] * config.num_hidden_layers
@@ -476,7 +473,7 @@ class QEffHybridCacheLayer(QEffDynamicLayer):
         return k_out, v_out
 
 
-# TODO:This function will be depercated in future.
+# TODO:This function will be deprecated in future.
 class QEffHybridChunkedCache(QEffDynamicCache):
     def __init__(self, config, max_batch_size, max_cache_len):
         layer_classes = [QEffHybridChunkedLayer] * config.num_hidden_layers

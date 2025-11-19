@@ -265,15 +265,13 @@ class QEffMolmoBlock(nn.Module):
         v = v.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads).transpose(1, 2)
 
         if self.config.use_position_ids and self.config.rope:
-            kv_seq_len = k.shape[-2]
             kv_seq_len = layer_past.get_seq_length(self.layer_id)
             # Apply rotary embeddings
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
 
         if not self.config.use_position_ids and self.config.rope:
-            kv_seq_len = k.shape[-2]
-            kv_seq_len = layer_past.get_seq_length(kv_seq_len, self.layer_id)
+            kv_seq_len = layer_past.get_seq_length(self.layer_id)
             # Apply rotary embeddings
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
