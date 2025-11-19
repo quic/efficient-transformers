@@ -22,8 +22,6 @@ import torch
 from QEfficient.base.onnx_transforms import CustomOpTransform, OnnxTransform, RenameFunctionOutputsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
-from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
-from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
@@ -252,9 +250,6 @@ class QEFFBaseModel(ABC):
         try:
             # Initialize the registry with your custom ops
             export_kwargs = {} if export_kwargs is None else export_kwargs
-            CustomOpTransform.register_custom_op("CustomRMSNormFunc", CustomRMSNormFunc, CustomRMSNorm)
-            CustomOpTransform.register_custom_op("CtxScatterFunc", CtxScatterFunc, CtxScatter)
-            CustomOpTransform.register_custom_op("CtxGatherFunc", CtxGatherFunc, CtxGather)
             if use_onnx_subfunctions:
                 warnings.warn(
                     "The subfunction feature is experimental. Please note that using compile consecutively with and without subfunction may produce inconsistent results."
@@ -266,7 +261,6 @@ class QEFFBaseModel(ABC):
                 self._onnx_transforms.append(RenameFunctionOutputsTransform)
                 self._onnx_transforms.append(CustomOpTransform)
 
-            # import pdb; pdb.set_trace()
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -309,8 +303,8 @@ class QEFFBaseModel(ABC):
         if use_onnx_subfunctions:
             undo_torch_patches()
             InvalidIndexProvider.SUBFUNC_ENABLED = False
-            self._onnx_transforms.pop()
-            self._onnx_transforms.pop()
+            self._onnx_transforms.remove(CustomOpTransform)
+            self._onnx_transforms.remove(RenameFunctionOutputsTransform)
 
         self.onnx_path = onnx_path
         return onnx_path

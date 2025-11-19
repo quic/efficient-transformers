@@ -11,6 +11,9 @@ import numpy as np
 import torch
 from onnx import ModelProto, external_data_helper, numpy_helper
 
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
+from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
+
 
 class OnnxTransform:
     """
@@ -107,8 +110,11 @@ class CustomOpTransform(OnnxTransform):
     Transform to register custom operations and add their function protos to the ONNX model.
     """
 
-    # Registry of custom operations: op_name -> (func_class, onnxscript_func)
-    _custom_ops: Dict[str, Tuple[Any, Any]] = {}
+    _custom_ops: Dict[str, Tuple[Any, Any]] = {
+        "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
+        "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
+        "CtxGatherFunc": (CtxGatherFunc, CtxGather),
+    }
 
     @classmethod
     def register_custom_op(cls, op_name: str, func_class: Any, onnxscript_func: Any) -> None:
