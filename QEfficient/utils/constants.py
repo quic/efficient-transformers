@@ -129,6 +129,35 @@ QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
 
 
+# wo_sfs: weight output scaling factors (used to normalize T5 encoder output weights before export)
+WO_SFS = [
+    61,
+    203,
+    398,
+    615,
+    845,
+    1190,
+    1402,
+    2242,
+    1875,
+    2393,
+    3845,
+    3213,
+    3922,
+    4429,
+    5020,
+    5623,
+    6439,
+    6206,
+    5165,
+    4593,
+    2802,
+    2618,
+    1891,
+    1419,
+]
+
+
 class Constants:
     # Export Constants.
     SEQ_LEN = 32
