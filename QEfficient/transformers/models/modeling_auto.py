@@ -331,7 +331,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             Directory path where the exported ONNX graph will be saved. If not provided,
             the default export directory is used.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -396,7 +396,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         mxfp6_matmul : bool, optional
             Use MXFP6 compression for weights. Default is False.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers. These are passed directly
             to the underlying compilation command.
@@ -630,7 +630,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         offload_pt_weights : bool, optional
             If True, PyTorch weights will be offloaded after export. Default is True.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -681,7 +681,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         custom_io : Dict[str, str]
             Custom I/O configurations for the compiler.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options :
             Additional compiler options passed to the underlying compilation command.
 
@@ -791,7 +791,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         offload_pt_weights : bool, optional
             If True, PyTorch weights will be offloaded after export. Default is True.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -842,7 +842,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         custom_io : Dict[str, str]
             Custom I/O configurations for the compiler.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options :
             Additional compiler options passed to the underlying compilation command.
 
@@ -1035,7 +1035,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         export_dir : str, optional
             Directory path where the exported ONNX graphs will be saved. Default is None.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **kwargs :
             Additional keyword arguments.
 
@@ -1135,7 +1135,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_lang : bool, optional
             If True, skips compilation of the language decoder. Default is False.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1764,7 +1764,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         num_speculative_tokens : int, optional
             Not supported for this model; must be None.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -2509,7 +2509,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Directory path where the exported ONNX graph will be saved.
             If not provided, the default export directory is used.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         Returns
         -------
         str
@@ -2860,7 +2860,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If True, compiles only for the prefill stage. If False, compiles only for
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -3227,7 +3227,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             Directory path where the exported ONNX graph will be saved.
             If not provided, the default export directory is used.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -3304,7 +3304,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         num_speculative_tokens : int, optional
             Not yet supported for this model.
         use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC.
 
@@ -3597,7 +3597,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         ``Optional`` Args:
            :export_dir (str, optional): The directory path to store ONNX-graph.
            :use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
@@ -3647,7 +3647,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
-            :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Using subfunctions can improve model compilation efficiency and execution performance on hardware. Defaults to False.
+            :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
             :compiler_options (dict, optional): Additional compiler options.
 
                 For QAIC Compiler: Extra arguments for qaic-exec can be passed.
