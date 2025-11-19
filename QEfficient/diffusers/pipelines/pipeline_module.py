@@ -562,34 +562,16 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         text_seq_len = 126
         hidden_dim = 64
         encoder_hidden_dim = 3584
-
         example_inputs = {
             "hidden_states": torch.randn(bs, latent_seq_len, hidden_dim, dtype=torch.float32),
             "encoder_hidden_states": torch.randn(bs, text_seq_len, encoder_hidden_dim, dtype=torch.float32),
             "encoder_hidden_states_mask": torch.ones(bs, text_seq_len, dtype=torch.int64),
-            "timestep": torch.tensor([1.0], dtype=torch.float32),
-            "img_shapes": torch.tensor([1, 58, 104], dtype=torch.int64),
-            # "img_shapes": torch.ones(1, 58, 104, dtype=torch.int64),
+            "timestep": torch.tensor([1000.0], dtype=torch.float32),
+            "frame": torch.tensor([1], dtype=torch.int64),
+            "height": torch.tensor([58], dtype=torch.int64),
+            "width": torch.tensor([104], dtype=torch.int64),
             "txt_seq_lens": torch.tensor([126], dtype=torch.int64),
         }
-        # example_inputs = {
-        #     "hidden_states": torch.randn(1, 6032, 64, dtype=torch.float32),
-        #     "encoder_hidden_states": torch.randn(1, 126, 3584, dtype=torch.float32),
-        #     "encoder_hidden_states_mask": torch.ones(1, 126, dtype=torch.int64),
-        #     "timestep": torch.tensor([1000.0], dtype=torch.float32),
-        #     "frames": torch.tensor([1], dtype=torch.int64),
-        #     "height":torch.tensor([58], dtype=torch.int64),
-        #     "width":torch.tensor([104], dtype=torch.int64),
-        #     "txt_seq_lens": torch.tensor([126], dtype=torch.int64),
-        # }
-
-        image_rotary_emb = self.model.pos_embed(
-            example_inputs["img_shapes"], example_inputs["txt_seq_lens"], device=example_inputs["hidden_states"].device
-        )
-        img_rotary_emb = image_rotary_emb[0]
-        text_rotary_emb = image_rotary_emb[1]
-        example_inputs["img_rotary_emb"] = img_rotary_emb
-        example_inputs["text_rotary_emb"] = text_rotary_emb
 
         output_names = ["output"]
 

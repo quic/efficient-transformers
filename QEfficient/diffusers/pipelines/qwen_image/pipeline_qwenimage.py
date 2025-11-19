@@ -93,6 +93,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         example_inputs_transformer, dynamic_axes_transformer, output_names_transformer = (
             self.transformer.get_onnx_config()
         )
+
         self.transformer.export(
             inputs=example_inputs_transformer,
             output_names=output_names_transformer,
@@ -167,7 +168,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         ]
 
         compiler_options_transformer = {"mos": 1, "ols": 2, "mdts-mos": 1}
-        breakpoint()
         self.transformer_compile_path = self.transformer._compile(
             onnx_path,
             compile_dir,
@@ -461,15 +461,16 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         )
 
         # Initialize transformer session
+        # import onnxruntime
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(str(self.transformer.qpc_path))
             # self.transformer.qpc_session = onnxruntime.InferenceSession(
             #     "/home/dipankar/.cache/qeff_models/QwenImageTransformer2DModel/QwenImageTransformer2DModel-eec8953b65947df1/QwenImageTransformer2DModel.onnx"
             # )
 
-        image_rotary_emb = self.transformer.model.pos_embed(img_shapes, txt_seq_lens, device="cpu")
-        img_rotary_emb = image_rotary_emb[0].numpy().astype(np.float32)
-        text_rotary_emb = image_rotary_emb[1].numpy().astype(np.float32)
+        # image_rotary_emb = self.transformer.model.pos_embed(img_shapes, txt_seq_lens, device="cpu")
+        # img_rotary_emb = image_rotary_emb[0].numpy().astype(np.float32)
+        # text_rotary_emb = image_rotary_emb[1].numpy().astype(np.float32)
 
         # 6. Denoising loop
         self.scheduler.set_begin_index(0)
@@ -485,8 +486,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                     "hidden_states": latents.detach().numpy().astype(np.float32),
                     "encoder_hidden_states": prompt_embeds.detach().numpy().astype(np.float32),
                     "timestep": timestep,
-                    "img_rotary_emb": img_rotary_emb,
-                    "text_rotary_emb": text_rotary_emb,
                 }
                 if guidance is not None:
                     transformer_inputs["guidance"] = guidance.numpy().astype(np.float32)
@@ -496,15 +495,13 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                 # output_names = [output.name for output in self.transformer.qpc_session.get_outputs()]
                 # outputs = self.transformer.qpc_session.run(output_names, transformer_inputs)
                 # noise_pred = torch.tensor(outputs[0])
-
+                # breakpoint()
                 if do_true_cfg:
                     # Unconditional pass
                     transformer_inputs_uncond = {
                         "hidden_states": latents.detach().numpy().astype(np.float32),
                         "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
                         "timestep": timestep,
-                        "img_rotary_emb": img_rotary_emb,
-                        "text_rotary_emb": text_rotary_emb,
                     }
                     if guidance is not None:
                         transformer_inputs_uncond["guidance"] = guidance.numpy().astype(np.float32)

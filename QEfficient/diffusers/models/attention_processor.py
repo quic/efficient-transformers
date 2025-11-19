@@ -10,10 +10,13 @@ from typing import Optional
 import torch
 from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 
+from QEfficient.diffusers.models.transformers.transformer_qwenimage import QEffQwenDoubleStreamAttnProcessor2_0
+
 
 class QEffAttention(Attention):
     def __qeff_init__(self):
-        processor = QEffJointAttnProcessor2_0()
+        # breakpoint()
+        processor = QEffQwenDoubleStreamAttnProcessor2_0()
         self.processor = processor
         processor.query_block_size = 64
 

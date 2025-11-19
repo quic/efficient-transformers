@@ -28,9 +28,12 @@ aspect_ratios = {
 }
 
 width, height = aspect_ratios["16:9"]
+
+# Config for two layers
+
 original_blocks = pipe.transformer.model.transformer_blocks
-pipe.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0]])
-pipe.transformer.model.config.num_layers = 1
+pipe.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1]])
+pipe.transformer.model.config.num_layers = 2
 
 
 pipe.compile()
