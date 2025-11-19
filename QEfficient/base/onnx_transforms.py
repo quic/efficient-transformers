@@ -12,10 +12,11 @@ import warnings
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Tuple
-import torch
+
 import numpy as np
+import torch
 from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
- 
+
 from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils.constants import ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL
@@ -105,6 +106,13 @@ class BaseOnnxTransform:
 
 
 class OnnxTransform(BaseOnnxTransform):
+    # Custom Ops Registry
+    CUSTOM_OPS = {
+        "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
+        "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
+        "CtxGatherFunc": (CtxGatherFunc, CtxGather),
+    }
+
     @classmethod
     def apply(
         cls,
@@ -121,75 +129,67 @@ class OnnxTransform(BaseOnnxTransform):
         if len(transforms) == 0:
             warnings.warn("Transform list is empty. Skipping transformation.")
             return model, False
- 
-        # Custom Ops Registry
-        CUSTOM_OPS = {
-            "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
-            "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
-            "CtxGatherFunc": (CtxGatherFunc, CtxGather),
-        }
- 
+
         try:
             cls._load_external_data(model, onnx_base_dir)
             tensors = external_data_helper._get_all_tensors(model)
- 
+
             TensorInfo = namedtuple("TensorInfo", ["tensor", "tsize"])
             tensor_infos = [
                 TensorInfo(tensor, len(tensor.raw_data) if tensor.HasField("raw_data") else 0) for tensor in tensors
             ]
- 
+
             fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
             file_num_tracker = {"num": 0, "size": 0}
- 
+
             requested_transforms = set(transforms)
             applied_transforms = {name: False for name in requested_transforms}
- 
- 
+
             def process_tensor(index_info: Tuple[int, TensorInfo]) -> List[str]:
                 idx, info = index_info
                 tensor, tsize = info
                 local_applied = []
- 
+
                 if "FP16ClipTransform" in requested_transforms:
                     if cls._clip_tensor(tensor, fp16_min, fp16_max):
                         local_applied.append("FP16ClipTransform")
- 
+
                 if "SplitTensorsTransform" in requested_transforms and tsize > size_threshold:
                     if file_num_tracker["size"] + tsize > file_chunk_size:
                         file_num_tracker["num"] += 1
                         file_num_tracker["size"] = tsize
                     else:
                         file_num_tracker["size"] += tsize
- 
+
                     cls._split_tensor(tensor, model_name, file_num_tracker["num"])
                     local_applied.append("SplitTensorsTransform")
- 
+
                 if (idx + 1) % ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL == 0:
                     cls._cleanup_memory()
- 
+
                 return local_applied
- 
+
             with ThreadPoolExecutor(max_workers=os.cpu_count() * 4) as executor:
                 results = list(executor.map(process_tensor, enumerate(tensor_infos)))
- 
+
             for result in results:
                 for transform_name in result:
                     applied_transforms[transform_name] = True
- 
+
             if "CustomOpTransform" in requested_transforms:
-                applied_transforms["CustomOpTransform"] = cls._custom_op_transform(model,opset_version)
- 
+                applied_transforms["CustomOpTransform"] = cls._custom_op_transform(model, opset_version)
+
             if "RenameFunctionOutputsTransform" in requested_transforms:
                 applied_transforms["RenameFunctionOutputsTransform"] = cls._rename_function_outputs(model)
- 
+
             for name in requested_transforms:
                 if applied_transforms[name]:
                     logger.info(f"Transform '{name}' was applied.")
                 else:
                     logger.warning(f"Transform '{name}' was requested but not applied.")
- 
+
             return model, any(applied_transforms.values())
- 
+
         finally:
             cls._cleanup_memory()
 
@@ -206,7 +206,7 @@ class OnnxTransform(BaseOnnxTransform):
             if proto.name not in existing_names:
                 model.functions.append(proto)
                 op_applied = True
-        
+
         return op_applied
 
     @classmethod
@@ -215,16 +215,16 @@ class OnnxTransform(BaseOnnxTransform):
         op_type_to_func = {func.name: func for func in model.functions}
         decoder_patterns = ["DecoderLayer", "Block", "Layer"]
         renamed = False
- 
+
         model_graph_outputs_map = {val.name: idx for idx, val in enumerate(model.graph.output)}
- 
+
         layer_index = 0
         for node in graph.node:
             if any(p in node.name or p in node.op_type for p in decoder_patterns):
                 func = op_type_to_func.get(node.op_type)
                 if func is None:
                     continue
- 
+
                 for i, out_name in enumerate(func.output):
                     if "_InternalRetainedState" in out_name:
                         renamed = True
@@ -240,9 +240,9 @@ class OnnxTransform(BaseOnnxTransform):
                             idx = model_graph_outputs_map[original]
                             model.graph.output[idx].name = new
                 layer_index += 1
- 
+
         return renamed
- 
+
     @staticmethod
     def _clip_tensor(tensor, fp16_min, fp16_max) -> bool:
         if tensor.data_type != TensorProto.FLOAT:
@@ -257,7 +257,7 @@ class OnnxTransform(BaseOnnxTransform):
             tensor.CopyFrom(new_tensor)
             return True
         return False
- 
+
     @staticmethod
     def _split_tensor(tensor, model_name: str, file_num: int) -> None:
         external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")

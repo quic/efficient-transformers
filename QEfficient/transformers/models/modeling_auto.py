@@ -314,7 +314,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -326,6 +326,8 @@ class QEFFAutoModel(QEFFTransformersBase):
         export_dir : str, optional
             Directory path where the exported ONNX graph will be saved. If not provided,
             the default export directory is used.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -349,6 +351,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -361,9 +364,31 @@ class QEFFAutoModel(QEFFTransformersBase):
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :seq_len (Union[int, List[int]]): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+            :num_cores (int): Number of cores used to compile the model.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :compiler_options (dict, optional): Additional compiler options.
+                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
+                    :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+                    :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+                For QNN Compiler: Following arguments can be passed.
+                    :enable_qnn (bool): Enables QNN Compilation.
+                    :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
@@ -387,6 +412,8 @@ class QEFFAutoModel(QEFFTransformersBase):
             Number of cores to use for compilation.
         mxfp6_matmul : bool, optional
             Use MXFP6 compression for weights. Default is False.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers. These are passed directly
             to the underlying compilation command.
@@ -430,6 +457,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -594,7 +622,15 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        offload_pt_weights=True,
+        use_onnx_subfunctions: bool = False,
+    ):
         """
         Exports the vision encoder component to ONNX format.
 
@@ -610,6 +646,8 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Directory path where the exported ONNX graph will be saved. Default is None.
         offload_pt_weights : bool, optional
             If True, PyTorch weights will be offloaded after export. Default is True.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -617,7 +655,12 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Path to the generated ONNX graph file for the vision encoder.
         """
         return self._export(
-            inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=offload_pt_weights,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -630,6 +673,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mdp_ts_num_devices,
         aic_num_cores,
         custom_io,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -653,6 +697,8 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Number of cores to use for compilation.
         custom_io : Dict[str, str]
             Custom I/O configurations for the compiler.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options :
             Additional compiler options passed to the underlying compilation command.
 
@@ -670,6 +716,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             mdp_ts_num_devices=mdp_ts_num_devices,
             aic_num_cores=aic_num_cores,
             custom_io=custom_io,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -736,7 +783,15 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_language_decoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        offload_pt_weights=True,
+        use_onnx_subfunctions: bool = False,
+    ):
         """
         Exports the language decoder component to ONNX format.
 
@@ -752,6 +807,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Directory path where the exported ONNX graph will be saved. Default is None.
         offload_pt_weights : bool, optional
             If True, PyTorch weights will be offloaded after export. Default is True.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -759,7 +816,12 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Path to the generated ONNX graph file for the language decoder.
         """
         return self._export(
-            inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=offload_pt_weights,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -772,6 +834,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mdp_ts_num_devices,
         aic_num_cores,
         custom_io,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -795,6 +858,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Number of cores to use for compilation.
         custom_io : Dict[str, str]
             Custom I/O configurations for the compiler.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options :
             Additional compiler options passed to the underlying compilation command.
 
@@ -812,6 +877,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             mdp_ts_num_devices=mdp_ts_num_devices,
             aic_num_cores=aic_num_cores,
             custom_io=custom_io,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -972,6 +1038,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def export(
         self,
         export_dir: Optional[str] = None,
+        use_onnx_subfunctions: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -984,6 +1051,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ----------
         export_dir : str, optional
             Directory path where the exported ONNX graphs will be saved. Default is None.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **kwargs :
             Additional keyword arguments.
 
@@ -1017,9 +1086,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             dynamic_axes["vision"],
             export_dir=export_dir,
             offload_pt_weights=False,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
         self.lang_model.export(
-            inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir=export_dir, offload_pt_weights=True
+            inputs["lang"],
+            output_names["lang"],
+            dynamic_axes["lang"],
+            export_dir=export_dir,
+            offload_pt_weights=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
         return self.onnx_path
@@ -1042,6 +1117,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         mxint8_kv_cache: bool = False,
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1081,6 +1157,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If True, skips compilation of the vision encoder. Default is False.
         skip_lang : bool, optional
             If True, skips compilation of the language decoder. Default is False.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1153,7 +1231,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if (self.vision_model.onnx_path is None and vision_onnx_path is None) or (
             self.lang_model.onnx_path is None and lang_onnx_path is None
         ):
-            self.export()
+            self.export(
+                use_onnx_subfunctions=use_onnx_subfunctions,
+            )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
@@ -1171,6 +1251,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 aic_num_cores=num_cores,
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
+                use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
 
@@ -1199,6 +1280,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 aic_num_cores=num_cores,
                 custom_io=custom_io_lang,
                 mxint8_kv_cache=mxint8_kv_cache,
+                use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
         return self.qpc_path
@@ -1623,6 +1705,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def export(
         self,
         export_dir: Optional[str] = None,
+        use_onnx_subfunctions: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -1643,7 +1726,13 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         output_names = self.model.get_output_names()
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        return self._export(
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
 
     def compile(
         self,
@@ -1661,6 +1750,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1696,6 +1786,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             Use MXINT8 compression for KV cache. Default is False.
         num_speculative_tokens : int, optional
             Not supported for this model; must be None.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1768,6 +1860,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
         return self.qpc_path
@@ -2231,6 +2324,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
+
     _onnx_transforms = ["FP16ClipTransform", "SplitTensorsTransform"]
 
     def __init__(
@@ -2422,7 +2516,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -2435,7 +2529,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         export_dir : str, optional
             Directory path where the exported ONNX graph will be saved.
             If not provided, the default export directory is used.
-
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         Returns
         -------
         str
@@ -2531,6 +2626,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            offload_pt_weights=kwargs.get("offload_pt_weights", True),
         )
 
     def get_sampling_inputs_and_outputs(
@@ -2741,110 +2838,117 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
         prefill_only: Optional[bool] = None,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
-        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
+                This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+                If the model has not been exported yet, this method will handle the export process.
+                You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
 
-<<<<<<< HEAD
-        ``Optional`` Args:
-            :onnx_path (str, optional): Path to pre-exported onnx model.
-            :compile_dir (str, optional): Path for saving the qpc generated.
-            :num_cores (int): Number of cores used to compile the model.
-            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
-            :batch_size (int, optional): Batch size. ``Defaults to 1``.
-            :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
-            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
-            :full_batch_size (int, optional): Continuous batching batch size.
-            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
-            :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
-            :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
-            :prefill_only (bool): if ``True`` compile for prefill only and if ``False`` compile for decode only. Defaults to None, which compiles for both ``prefill and ``decode``.
-            :compiler_options (dict, optional): Additional compiler options. ``Defaults to None``.
-                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
-                    :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
-                    :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
-                    :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+        <<<<<<< HEAD
+                ``Optional`` Args:
+                    :onnx_path (str, optional): Path to pre-exported onnx model.
+                    :compile_dir (str, optional): Path for saving the qpc generated.
+                    :num_cores (int): Number of cores used to compile the model.
+                    :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+                    :batch_size (int, optional): Batch size. ``Defaults to 1``.
+                    :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
+                    :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
+                    :full_batch_size (int, optional): Continuous batching batch size.
+                    :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+                    :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+                    :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
+                    :prefill_only (bool): if ``True`` compile for prefill only and if ``False`` compile for decode only. Defaults to None, which compiles for both ``prefill and ``decode``.
+                    :compiler_options (dict, optional): Additional compiler options. ``Defaults to None``.
+                        For QAIC Compiler: Extra arguments for qaic-exec can be passed.
+                            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
+                            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+                            :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+                            Params are converted to flags as below:
+                            - aic_num_cores=16 -> -aic-num-cores=16
+                            - convert_to_fp16=True -> -convert-to-fp16
+                        For QNN Compiler: Following arguments can be passed.
+                            :enable_qnn (bool): Enables QNN Compilation.
+                            :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+        =======
+                This method generates a ``qpc`` package. If the model has not been exported yet,
+                this method will handle the export process. Additional arguments for the `qaic-exec`
+                compiler can be passed as keyword arguments.
+
+                Parameters
+                ----------
+                onnx_path : str, optional
+                    Path to a pre-exported ONNX model. If not provided, the model will be exported first.
+                compile_dir : str, optional
+                    Directory to save the generated QPC package. If not provided, a default directory is used.
+                prefill_seq_len : int, optional
+                    Length of the prefill prompt. Default is 32.
+                ctx_len : int, optional
+                    Maximum context length the compiled model can remember. Default is 128.
+                batch_size : int, optional
+                    Batch size. Default is 1.
+                full_batch_size : int, optional
+                    Continuous batching batch size. Required if `continuous_batching=True` was
+                    set during `from_pretrained`.
+                kv_cache_batch_size : int, optional
+                    Batch size for KV cache. If not provided, it defaults to `full_batch_size` (if
+                    continuous batching) or `batch_size`.
+                num_devices : int, optional
+                    Number of devices to compile for. Default is 1.
+                num_cores : int, optional
+                    Number of cores to use for compilation.
+                mxfp6_matmul : bool, optional
+                    Use MXFP6 compression for weights. Default is False.
+                mxint8_kv_cache : bool, optional
+                    Use MXINT8 compression for KV cache. Default is False.
+                num_speculative_tokens : int, optional
+                    Number of speculative tokens for Speculative Decoding Target Language Model.
+                    Required if the model is configured as a Target Language Model (`is_tlm=True`).
+                prefill_only : bool, optional
+                    If True, compiles only for the prefill stage. If False, compiles only for
+                    the decode stage. If None, compiles for both stages. Default is None.
+                use_onnx_subfunctions: bool, optional
+                    whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+                **compiler_options : dict
+                    Additional compiler options for QAIC or QNN compilers.
+
+                    **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+
+                    - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
+                    - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+                    - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+
                     Params are converted to flags as below:
-                    - aic_num_cores=16 -> -aic-num-cores=16
-                    - convert_to_fp16=True -> -convert-to-fp16
-                For QNN Compiler: Following arguments can be passed.
-                    :enable_qnn (bool): Enables QNN Compilation.
-                    :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
-=======
-        This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-exec`
-        compiler can be passed as keyword arguments.
 
-        Parameters
-        ----------
-        onnx_path : str, optional
-            Path to a pre-exported ONNX model. If not provided, the model will be exported first.
-        compile_dir : str, optional
-            Directory to save the generated QPC package. If not provided, a default directory is used.
-        prefill_seq_len : int, optional
-            Length of the prefill prompt. Default is 32.
-        ctx_len : int, optional
-            Maximum context length the compiled model can remember. Default is 128.
-        batch_size : int, optional
-            Batch size. Default is 1.
-        full_batch_size : int, optional
-            Continuous batching batch size. Required if `continuous_batching=True` was
-            set during `from_pretrained`.
-        kv_cache_batch_size : int, optional
-            Batch size for KV cache. If not provided, it defaults to `full_batch_size` (if
-            continuous batching) or `batch_size`.
-        num_devices : int, optional
-            Number of devices to compile for. Default is 1.
-        num_cores : int, optional
-            Number of cores to use for compilation.
-        mxfp6_matmul : bool, optional
-            Use MXFP6 compression for weights. Default is False.
-        mxint8_kv_cache : bool, optional
-            Use MXINT8 compression for KV cache. Default is False.
-        num_speculative_tokens : int, optional
-            Number of speculative tokens for Speculative Decoding Target Language Model.
-            Required if the model is configured as a Target Language Model (`is_tlm=True`).
-        prefill_only : bool, optional
-            If True, compiles only for the prefill stage. If False, compiles only for
-            the decode stage. If None, compiles for both stages. Default is None.
-        **compiler_options : dict
-            Additional compiler options for QAIC or QNN compilers.
+                    - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
+                    - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
 
-            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+                    **For QNN Compiler:** Following arguments can be passed as:
 
-            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
-            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
-            - allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. Defaults to False.
+                    - enable_qnn (bool): Enables QNN Compilation.
+                    - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
 
-            Params are converted to flags as below:
+                Returns
+                -------
+                str
+                    Path to the compiled QPC package.
 
-            - ``aic_num_cores=16`` -> ``-aic-num-cores=16``
-            - ``convert_to_fp16=True`` -> ``-convert-to-fp16``
+                Raises
+                ------
+                TypeError
+                    If `prefill_only` is not a boolean.
+                    If `full_batch_size` is None when `continuous_batching` is True.
+                    If `num_speculative_tokens` is None when the model is a TLM.
+                ValueError
+                    If KV caching is requested without continuous batching (`full_batch_size`).
+                    If `include_sampler` is True and `num_speculative_tokens` is greater than 0.
+                    If `num_speculative_tokens` is not an integer greater than 1.
+                    If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
+        >>>>>>> origin/main
 
-            **For QNN Compiler:** Following arguments can be passed as:
-
-            - enable_qnn (bool): Enables QNN Compilation.
-            - qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
-
-        Returns
-        -------
-        str
-            Path to the compiled QPC package.
-
-        Raises
-        ------
-        TypeError
-            If `prefill_only` is not a boolean.
-            If `full_batch_size` is None when `continuous_batching` is True.
-            If `num_speculative_tokens` is None when the model is a TLM.
-        ValueError
-            If KV caching is requested without continuous batching (`full_batch_size`).
-            If `include_sampler` is True and `num_speculative_tokens` is greater than 0.
-            If `num_speculative_tokens` is not an integer greater than 1.
-            If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
->>>>>>> 4d2a4d8 ([Docs Update:] Auto Classes are Separated from Python API (#550))
-
+                Returns:
+                    :str: Path of the compiled ``qpc`` package.
         """
 
         # For supporting VLLM and Disaggregated with CCL
@@ -2970,6 +3074,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             num_speculative_tokens=num_speculative_tokens,
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -3176,7 +3281,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -3188,6 +3293,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         export_dir : str, optional
             Directory path where the exported ONNX graph will be saved.
             If not provided, the default export directory is used.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -3197,7 +3304,13 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        return self._export(
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
 
     def compile(
         self,
@@ -3215,12 +3328,14 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
-        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
 
-<<<<<<< HEAD
         ``Optional`` Args:
             :onnx_path (str, optional): Path to pre-exported onnx model.
             :compile_dir (str, optional): Path for saving the qpc generated.
@@ -3231,7 +3346,12 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
-=======
+
+            Other args are not yet implemented for AutoModelForSpeechSeq2Seq
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
+
         This method generates a ``qpc`` package. If the model has not been exported yet,
         this method will handle the export process. Additional arguments for the `qaic-exec`
         compiler can be passed as keyword arguments.
@@ -3268,6 +3388,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             Not yet supported for this model.
         num_speculative_tokens : int, optional
             Not yet supported for this model.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC.
 
@@ -3286,7 +3408,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         -------
         str
             Path to the compiled QPC package.
->>>>>>> 4d2a4d8 ([Docs Update:] Auto Classes are Separated from Python API (#550))
 
         """
         specializations, compiler_options = self.model.get_specializations(
@@ -3336,6 +3457,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             custom_io=custom_io,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -3553,12 +3675,14 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     def get_model_config(self) -> dict:
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
         ``Optional`` Args:
            :export_dir (str, optional): The directory path to store ONNX-graph.
+           :use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
@@ -3579,6 +3703,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -3591,6 +3716,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -3606,6 +3732,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
             :compiler_options (dict, optional): Additional compiler options.
 
                 For QAIC Compiler: Extra arguments for qaic-exec can be passed.
@@ -3638,6 +3765,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
