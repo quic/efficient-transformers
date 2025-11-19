@@ -61,6 +61,7 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -730,28 +731,12 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         ----------
         model : nn.Module
             The full HuggingFace multimodal model from which the language decoder is extracted.
-        continuous_batching : bool, optional
-            If True, enables continuous batching mode for future compilation and execution.
-            This setting must be consistent across `from_pretrained` and `compile` calls. Default is False.
-        qaic_config : dict, optional
-            A dictionary for QAIC-specific configurations.
-            Only the following keys are supported by the text model of the dual QPC multimodal model:
-            - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
-            - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
-            Additional keys will be ignored.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        self.continuous_batching = continuous_batching
-        self.model.qaic_config = qaic_config
-        # ---Sampling---
-        # Note: SamplerTransform should be applied after all other transforms
-        # are done. The role of the sampler is to just add nodes at the output of the
-        # previous transform function.
-        self.model, _ = SamplerTransform.apply(self.model, qaic_config, **kwargs)
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
         """
@@ -775,97 +760,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the generated ONNX graph file for the language decoder.
         """
-        if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
-            inputs, output_names, dynamic_axes = self.get_sampling_inputs_and_outputs(
-                inputs, output_names, dynamic_axes
-            )
         return self._export(
             inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
         )
-
-    def get_sampling_inputs_and_outputs(
-        self,
-        example_inputs: Dict[str, torch.Tensor],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-    ):
-        """
-        Updates the example inputs, output names, and dynamic axes to include
-        parameters relevant for on-device sampling during ONNX export.
-
-        Parameters
-        ----------
-        example_inputs : Dict[str, torch.Tensor]
-            Current dictionary of example inputs.
-        output_names : List[str]
-            Current list of output names.
-        dynamic_axes : Dict[str, Dict[int, str]]
-            Current dictionary of dynamic axes configurations.
-
-        Returns
-        -------
-        Tuple[Dict[str, torch.Tensor], List[str], Dict[str, Dict[int, str]]]
-            Updated example inputs, output names, and dynamic axes including
-            sampling-related parameters.
-        """
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-
-        assert "logits" in output_names, "logits must be part of the output names to suport on-device sampling"
-
-        logits_index = output_names.index("logits")
-        output_names[logits_index] = "next_tokens"
-
-        example_inputs["last_accepted_output_tokens"] = torch.zeros(
-            (bs, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN), dtype=torch.int64
-        )
-        dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
-
-        example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
-            (fbs if self.continuous_batching else bs, self.model.language_model.config.vocab_size), dtype=torch.bool
-        )
-        dynamic_axes["past_repetition_penalty_buffer"] = {
-            0: "full_batch_size" if self.continuous_batching else "batch_size",
-        }
-        output_names.append("past_repetition_penalty_buffer_RetainedState")
-
-        example_inputs["repetition_penalties"] = (
-            torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_REPETITION_PENALTIES
-        )
-        dynamic_axes["repetition_penalties"] = {0: "batch_size"}
-
-        example_inputs["past_presence_penalty_buffer"] = torch.zeros(
-            (fbs if self.continuous_batching else bs, self.model.language_model.config.vocab_size), dtype=torch.bool
-        )
-        dynamic_axes["past_presence_penalty_buffer"] = {
-            0: "full_batch_size" if self.continuous_batching else "batch_size",
-        }
-        output_names.append("past_presence_penalty_buffer_RetainedState")
-
-        example_inputs["presence_penalties"] = (
-            torch.zeros((bs, 1), dtype=torch.float) + constants.ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES
-        )
-        dynamic_axes["presence_penalties"] = {0: "batch_size"}
-
-        example_inputs["temperatures"] = (
-            torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TEMPERATURES
-        )
-        dynamic_axes["temperatures"] = {0: "batch_size"}
-
-        max_top_k_ids = self.model.qaic_config.get("max_top_k_ids", constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS)
-        example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
-        dynamic_axes["top_ks"] = {0: "batch_size"}
-
-        example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
-        dynamic_axes["top_ps"] = {0: "batch_size"}
-
-        example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
-        dynamic_axes["min_ps"] = {0: "batch_size"}
-
-        example_inputs["random_numbers"] = torch.rand((bs, max_top_k_ids), dtype=torch.float)
-        dynamic_axes["random_numbers"] = {0: "batch_size"}
-
-        return example_inputs, output_names, dynamic_axes
 
     def compile(
         self,
@@ -993,7 +890,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, continuous_batching=continuous_batching, **kwargs)
         self.continuous_batching = continuous_batching
+        self.lang_model.model.qaic_config = qaic_config
         self.input_shapes, self.output_names = None, None
+        # ---Sampling---
+        # Note: SamplerTransform should be applied after all other transforms
+        # are done. The role of the sampler is to just add nodes at the output of the
+        # previous transform function.
+        self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
 
     @property
     def model_name(self) -> str:
@@ -1115,6 +1018,19 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
             )
         output_names = self.model.get_output_names(kv_offload=True)
+        if self.lang_model.model.qaic_config is not None and self.lang_model.model.qaic_config.get(
+            "include_sampler", False
+        ):
+            logits_index = output_names["lang"].index("logits")
+            output_names["lang"][logits_index] = "next_tokens"
+            inputs["lang"], output_names["lang"], dynamic_axes["lang"] = get_sampling_inputs_and_outputs(
+                example_inputs=inputs["lang"],
+                output_names=output_names["lang"],
+                dynamic_axes=dynamic_axes["lang"],
+                continuous_batching=self.continuous_batching,
+                vocab_size=self.lang_model.model.config.vocab_size,
+                qaic_config=self.lang_model.model.qaic_config,
+            )
 
         self.vision_model.export(
             inputs["vision"],
@@ -2300,7 +2216,6 @@ class QEFFAutoModelForImageTextToText:
             model,
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
-            qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
             **kwargs,
@@ -2634,10 +2549,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
-            example_inputs, output_names, dynamic_axes = self.get_sampling_inputs_and_outputs(
+            example_inputs, output_names, dynamic_axes = get_sampling_inputs_and_outputs(
                 example_inputs=example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
+                continuous_batching=self.continuous_batching,
+                vocab_size=self.model.config.vocab_size,
+                qaic_config=self.model.qaic_config,
             )
 
         return self._export(
@@ -2646,85 +2564,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes,
             export_dir=export_dir,
         )
-
-    def get_sampling_inputs_and_outputs(
-        self,
-        example_inputs: Dict[str, torch.Tensor],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-    ):
-        """
-        Updates the example inputs, output names, and dynamic axes to include
-        parameters relevant for on-device sampling during ONNX export.
-
-        Parameters
-        ----------
-        example_inputs : Dict[str, torch.Tensor]
-            Current dictionary of example inputs.
-        output_names : List[str]
-            Current list of output names.
-        dynamic_axes : Dict[str, Dict[int, str]]
-            Current dictionary of dynamic axes configurations.
-
-        Returns
-        -------
-        Tuple[Dict[str, torch.Tensor], List[str], Dict[str, Dict[int, str]]]
-            Updated example inputs, output names, and dynamic axes including
-            sampling-related parameters.
-        """
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-
-        example_inputs["last_accepted_output_tokens"] = torch.zeros(
-            (bs, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN), dtype=torch.int64
-        )
-        dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
-
-        example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
-            (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool
-        )
-        dynamic_axes["past_repetition_penalty_buffer"] = {
-            0: "full_batch_size" if self.continuous_batching else "batch_size",
-        }
-        output_names.append("past_repetition_penalty_buffer_RetainedState")
-
-        example_inputs["repetition_penalties"] = (
-            torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_REPETITION_PENALTIES
-        )
-        dynamic_axes["repetition_penalties"] = {0: "batch_size"}
-
-        example_inputs["past_presence_penalty_buffer"] = torch.zeros(
-            (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool
-        )
-        dynamic_axes["past_presence_penalty_buffer"] = {
-            0: "full_batch_size" if self.continuous_batching else "batch_size",
-        }
-        output_names.append("past_presence_penalty_buffer_RetainedState")
-
-        example_inputs["presence_penalties"] = (
-            torch.zeros((bs, 1), dtype=torch.float) + constants.ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES
-        )
-        dynamic_axes["presence_penalties"] = {0: "batch_size"}
-
-        example_inputs["temperatures"] = (
-            torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TEMPERATURES
-        )
-        dynamic_axes["temperatures"] = {0: "batch_size"}
-
-        max_top_k_ids = self.model.qaic_config.get("max_top_k_ids", constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS)
-        example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
-        dynamic_axes["top_ks"] = {0: "batch_size"}
-
-        example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
-        dynamic_axes["top_ps"] = {0: "batch_size"}
-
-        example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
-        dynamic_axes["min_ps"] = {0: "batch_size"}
-
-        example_inputs["random_numbers"] = torch.rand((bs, max_top_k_ids), dtype=torch.float)
-        dynamic_axes["random_numbers"] = {0: "batch_size"}
-
-        return example_inputs, output_names, dynamic_axes
 
     def build_prefill_specialization(
         self,
