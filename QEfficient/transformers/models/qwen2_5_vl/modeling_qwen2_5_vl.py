@@ -503,7 +503,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         value_states = value_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
 
         kv_seq_len = key_states.shape[-2]
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 

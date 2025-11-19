@@ -56,6 +56,7 @@ class CtxScatterFuncCB(torch.autograd.Function):
         return g.onnxscript_op(CtxScatterCB, data, batch_index, position_ids, updates).setTypeAs(data)
 
 
+# TODO : This function will be deprecated in future.
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatterCB3D(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
@@ -76,6 +77,7 @@ def CtxScatterCB3D(
     return ops.ScatterND(data, indices, updates)
 
 
+# TODO : This function will be deprecated in future.
 class CtxScatterFuncCB3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, batch_index: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
@@ -139,6 +141,7 @@ class CtxGatherFuncCB(torch.autograd.Function):
         return g.onnxscript_op(CtxGatherCB, data, batch_index, ctx_indices, comp_ctx_len).setTypeAs(data)
 
 
+# TODO : This function will be deprecated in future.
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGatherCB3D(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32
@@ -158,6 +161,7 @@ def CtxGatherCB3D(
     return ops.GatherND(data, indices)
 
 
+# TODO : This function will be deprecated in future.
 class CtxGatherFuncCB3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, batch_index: torch.Tensor, ctx_indices: torch.Tensor):
