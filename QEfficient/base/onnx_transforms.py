@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -124,7 +124,7 @@ class CustomOpTransform(OnnxTransform):
     @classmethod
     def apply(cls, model: ModelProto, *, opset_version: int = 17, **kwargs) -> Tuple[ModelProto, bool]:
         """
-        Apply custom op registration and add function protos to the model.
+        Apply custom op registration and add all function protos to the model.
 
         :param model: The ONNX model to transform.
         :param opset_version: ONNX opset version for symbolic registration.
@@ -137,72 +137,15 @@ class CustomOpTransform(OnnxTransform):
             if hasattr(func_class, "symbolic"):
                 torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, opset_version)
 
-        # Gather function names and all nodes (graph + function nodes)
-        func_names: Set[str] = {func.name for func in model.functions}
-        all_nodes = list(model.graph.node)
-        for func in model.functions:
-            all_nodes.extend(func.node)
+        func_names = {func.name for func in model.functions}
 
-        # Collect used op types
-        used_op_types: Set[str] = {node.op_type for node in all_nodes}
-
-        # Precompute heuristic flags
-        has_rmsnorm = any("RMSNorm" in op_type for op_type in used_op_types)
-        has_ctx_ops = any(op_type in ["Gather", "GatherND", "Scatter", "ScatterND"] for op_type in used_op_types)
-
-        # Get function protos for custom ops used in the model
-        used_protos = cls._get_function_protos_for_model(used_op_types, has_rmsnorm, has_ctx_ops)
-
-        # Append new function protos if not already present
-        for proto in used_protos:
+        for _, onnxscript_func in cls._custom_ops.values():
+            proto = onnxscript_func.to_function_proto()
             if proto.name not in func_names:
                 model.functions.append(proto)
                 transformed = True
 
         return model, transformed
-
-    @classmethod
-    def _get_function_protos_for_model(cls, used_op_types: Set[str], has_rmsnorm: bool, has_ctx_ops: bool) -> List[Any]:
-        """
-        Get function protos for custom ops that are actually used in the model.
-
-        :param used_op_types: Set of op types used in the model.
-        :param has_rmsnorm: Flag indicating if RMSNorm-related ops are present.
-        :param has_ctx_ops: Flag indicating if context-related ops are present.
-        :returns: List of ONNX function protos.
-        """
-        used_protos: List[Any] = []
-        for op_name, (_, onnxscript_func) in cls._custom_ops.items():
-            if cls._is_custom_op_used(op_name, used_op_types, has_rmsnorm, has_ctx_ops):
-                used_protos.append(onnxscript_func.to_function_proto())
-        return used_protos
-
-    @classmethod
-    def _is_custom_op_used(cls, op_name: str, used_op_types: Set[str], has_rmsnorm: bool, has_ctx_ops: bool) -> bool:
-        """
-        Check if a custom op is used in the model.
-
-        :param op_name: Name of the custom op.
-        :param used_op_types: Set of op types used in the model.
-        :param has_rmsnorm: Precomputed RMSNorm presence flag.
-        :param has_ctx_ops: Precomputed context ops presence flag.
-        :returns: True if the custom op is used, False otherwise.
-        """
-        if op_name in used_op_types:
-            return True
-
-        # Check for domain-specific ops
-        if f"com.qti.aisw.onnx::{op_name.replace('Func', '')}" in used_op_types:
-            return True
-
-        # Heuristic checks
-        if "RMSNorm" in op_name and has_rmsnorm:
-            return True
-
-        if "Ctx" in op_name and has_ctx_ops:
-            return True
-
-        return False
 
 
 class RenameFunctionOutputsTransform(OnnxTransform):
