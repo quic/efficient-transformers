@@ -1069,9 +1069,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             dynamic_axes["vision"],
             export_dir=export_dir,
             offload_pt_weights=False,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
         self.lang_model.export(
-            inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir=export_dir, offload_pt_weights=True
+            inputs["lang"],
+            output_names["lang"],
+            dynamic_axes["lang"],
+            export_dir=export_dir,
+            offload_pt_weights=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
         return self.onnx_path
