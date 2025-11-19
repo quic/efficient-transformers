@@ -24,6 +24,33 @@ from QEfficient.customop import (
 )
 
 
+class InvalidIndexProvider:
+    SUBFUNC_ENABLED = False
+
+    @classmethod
+    def enable_subfunc(cls):
+        cls.SUBFUNC_ENABLED = True
+
+    @classmethod
+    def _get_invalid_idx_value(cls):
+        """
+        Get the appropriate invalid index value for CtxGather operations.
+
+        For ONNX export with functions, we use 0 to avoid INT32_MAX constants
+        that cause issues when functions are inlined at runtime.
+
+        Returns:
+            int: Invalid index value (0 for ONNX functions, INT32_MAX otherwise)
+        """
+        if torch.onnx.is_in_onnx_export():
+            if cls.SUBFUNC_ENABLED:
+                return 0
+            else:
+                return torch.iinfo(torch.int32).max
+        else:
+            return 0
+
+
 class QEffDynamicLayer(DynamicLayer):
     def read_only(self, cache_kwargs):
         """
@@ -46,10 +73,7 @@ class QEffDynamicLayer(DynamicLayer):
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
 
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
@@ -143,10 +167,7 @@ class QEffDynamicLayer(DynamicLayer):
             gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
 
-            if torch.onnx.is_in_onnx_export():
-                invalid_idx_value = torch.iinfo(torch.int32).max
-            else:
-                invalid_idx_value = 0
+            invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
             if batch_index is not None:
@@ -419,10 +440,7 @@ class QEffHybridCache(HybridCache):
             ctx_indices = torch.arange(ctx_len)[None, None, ...]
             gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
-            if torch.onnx.is_in_onnx_export():
-                invalid_idx_value = torch.iinfo(torch.int32).max
-            else:
-                invalid_idx_value = 0
+            invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
             all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
