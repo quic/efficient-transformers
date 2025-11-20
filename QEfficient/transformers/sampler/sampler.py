@@ -224,7 +224,7 @@ def sampler_forward(
     batch_index_reshaped = batch_index.view(-1)
 
     # Guided decoding
-    if (token_bitmasks != 1).any():
+    if token_bitmasks is not None and (token_bitmasks != 1).any():
         assert spec_length == 1, "Currently, guided decoding is not supported with Speculative Decoding"
         # Mask logits where token_bitmasks is 0 with -inf
         logits = torch.where(token_bitmasks == 1, logits, torch.finfo(torch.float16).min)

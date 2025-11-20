@@ -48,6 +48,17 @@ random_sampling_configs = [
         1,  # spec_length
     ),
 ]
+guided_decoding_configs = [
+    pytest.param(
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
+        Constants.INPUT_STR * 4,  # prompts
+        32,  # prefill_seq_len
+        64,  # ctx_len
+        20,  # generation_len
+        4,  # full_batch_size
+        1,  # spec_length
+    ),
+]
 
 
 @pytest.mark.on_qaic
@@ -186,7 +197,7 @@ def test_greedy_sampling(
     spec_length: int,
 ):
     """
-    Test greedy sampling with QPC compiled with and without On Device Sampling.
+    Test greedy sampling with QPCs compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
     model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
@@ -281,7 +292,7 @@ def test_random_sampling(
     spec_length: int,
 ):
     """
-    Test random sampling with QPC compiled with and without On Device Sampling.
+    Test random sampling with QPCs compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
     model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
@@ -421,3 +432,108 @@ def test_random_sampling(
         assert (model_wo_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["wo_sampler"]).all(), (
             "Without sampler generated ids do not match"
         )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.parametrize(
+    "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
+    guided_decoding_configs,
+)
+def test_guided_decoding(
+    model: str,
+    prompts: List[str],
+    prefill_seq_len: int,
+    ctx_len: int,
+    generation_len: int,
+    full_batch_size: int,
+    spec_length: int,
+):
+    """
+    Test with QPCs compiled with and without guided decoding.
+    """
+    # Export and compile QEfficient models
+    model_w_sampler_w_guided_decoding = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        num_hidden_layers=2,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 1024,
+            "include_guided_decoding": True,
+        },
+    )
+    model_w_sampler_wo_guided_decoding = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        num_hidden_layers=2,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 1024,
+        },
+    )
+    model_w_sampler_w_guided_decoding.compile(
+        prefill_seq_len=prefill_seq_len,
+        ctx_len=ctx_len,
+        full_batch_size=full_batch_size,
+        num_devices=1,
+        num_cores=16,
+        num_speculative_tokens=spec_length - 1,
+        mxint8_kv_cache=True,
+        mxfp6_matmul=True,
+    )
+    model_w_sampler_wo_guided_decoding.compile(
+        prefill_seq_len=prefill_seq_len,
+        ctx_len=ctx_len,
+        full_batch_size=full_batch_size,
+        num_devices=1,
+        num_cores=16,
+        num_speculative_tokens=spec_length - 1,
+        mxint8_kv_cache=True,
+        mxfp6_matmul=True,
+    )
+
+    # Generate texts from prompts
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model)
+    np.random.seed(0)
+    sampling_params = {
+        "repetition_penalties": np.array(20.2, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "presence_penalties": np.array(10.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        # "frequency_penalties": np.array(0.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "temperatures": np.array(4.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "top_ks": np.array(1024, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
+        "top_ps": np.array(0.89, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "min_ps": np.array(0.6, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "random_numbers": np.tile(np.random.uniform(low=0.0, high=1.0, size=1024), (full_batch_size, 1)).astype(
+            np.float32
+        ),
+    }
+    model_w_sampler_w_guided_decoding_exec_info = model_w_sampler_w_guided_decoding.generate(
+        tokenizer=tokenizer,
+        prompts=prompts,
+        generation_len=generation_len,
+        include_sampler=True,
+        return_pdfs=False,
+        include_guided_decoding=True,
+        sampling_params={
+            **sampling_params,
+            **{
+                "token_bitmasks": np.random.choice(
+                    [True, False], size=(full_batch_size, model_w_sampler_w_guided_decoding.model.config.vocab_size)
+                )
+            },
+        },
+    )
+    model_w_sampler_wo_guided_decoding_exec_info = model_w_sampler_wo_guided_decoding.generate(
+        tokenizer=tokenizer,
+        prompts=prompts,
+        generation_len=generation_len,
+        include_sampler=True,
+        return_pdfs=False,
+        sampling_params=sampling_params,
+    )
+    assert (
+        model_w_sampler_w_guided_decoding_exec_info.generated_ids
+        != model_w_sampler_wo_guided_decoding_exec_info.generated_ids
+    ), "Sampler outputs with and without guided decoding should not match"
