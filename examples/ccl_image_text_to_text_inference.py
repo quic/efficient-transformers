@@ -14,6 +14,14 @@ from QEfficient import QEFFAutoModelForImageTextToText
 # Add HuggingFace Token to access the model
 HF_TOKEN = ""
 
+## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
+## Use the optional comp_ctx_lengths argument to provide two lists of context lengths for the prefilling and decoding processes. If comp_ctx_lengths=None, the model will run with its default context length.
+##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
+##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
+##   - The second list, comp_ctx_lengths_decode, defines the compute-context-length values for the decoding process.
+##           -- During decoding, the model selects an appropriate context length from the list based on the input prompt length and cache index.
+##           -- It starts from the correct value in the list and increases the context length dynamically when the cache index exceeds the current threshold.
+
 
 def run_model(
     model_name,
@@ -23,6 +31,7 @@ def run_model(
     kv_offload=False,
     prefill_seq_len=32,
     ctx_len=512,
+    ccl_enabled=False,
     comp_ctx_lengths_prefill=None,
     comp_ctx_lengths_decode=None,
     generation_len=128,
@@ -43,11 +52,7 @@ def run_model(
         token=token,
         attn_implementation="eager",
         kv_offload=kv_offload,
-        qaic_config={
-            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
-            "ctx_len": ctx_len,
-        },
+        ccl_enabled=ccl_enabled,
     )
 
     ## STEP - 2 Export & Compile the Model
@@ -59,6 +64,8 @@ def run_model(
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     ## STEP - 3 Load and process the inputs for Inference
@@ -93,22 +100,23 @@ def run_model(
 
 if __name__ == "__main__":
     # Model name and Input parameters
-    # model_name = "llava-hf/llava-1.5-7b-hf"
-    model_name = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    model_name = "llava-hf/llava-1.5-7b-hf"
+    # model_name = "meta-llama/Llama-3.2-11B-Vision-Instruct"
     query = "Describe this image."
     image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
 
     # Compilation parameters for the model
-    kv_offload = True
+    kv_offload = False
     prefill_seq_len = 32
     ctx_len = 8192
     generation_len = 128
-    # img_size = 336
-    img_size = 560
+    img_size = 336
+    # img_size = 560
     num_cores = 16
     num_devices = 4
-    comp_ctx_lengths_prefill = [4096]
-    comp_ctx_lengths_decode = [6144, ctx_len]
+    ccl_enabled = True
+    comp_ctx_lengths_prefill = [4096]  # None #
+    comp_ctx_lengths_decode = [6144, ctx_len]  # None #
 
     run_model(
         model_name=model_name,
@@ -118,6 +126,7 @@ if __name__ == "__main__":
         image_url=image_url,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
+        ccl_enabled=ccl_enabled,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         generation_len=generation_len,
