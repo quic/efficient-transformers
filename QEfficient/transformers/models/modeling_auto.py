@@ -936,6 +936,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
         self.continuous_batching = continuous_batching
         self.ccl_enabled = ccl_enabled
+        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
 
     @property
@@ -1178,7 +1179,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         output_names = self.model.get_output_names(kv_offload=True)
 
         # if ccl_enabled is True read Compute-Context-Length lists
-        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None or comp_ctx_lengths_decode is None:
                 logger.warning(
@@ -1648,6 +1648,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = ccl_enabled
+        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
     @classmethod
     def from_pretrained(
@@ -1811,7 +1812,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
 
         # if ccl_enabled is True read Compute-Context-Length lists
-        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None or comp_ctx_lengths_decode is None:
                 logger.warning(
@@ -2401,6 +2401,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = ccl_enabled
+        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
@@ -2938,7 +2939,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
 
         # if ccl_enabled is True read Compute-Context-Length lists
-        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None or comp_ctx_lengths_decode is None:
                 logger.warning(
