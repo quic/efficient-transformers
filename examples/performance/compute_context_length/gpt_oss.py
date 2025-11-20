@@ -15,16 +15,16 @@ model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 ## Use the optional comp_ctx_lengths argument to provide two lists of context lengths for the prefilling and decoding processes. If comp_ctx_lengths=None, the model will run with its default context length.
 ##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
 ##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
-##   - The second list, comp_ctx_lengths_decode, defines the compute-context-length values for the decoding process. 
+##   - The second list, comp_ctx_lengths_decode, defines the compute-context-length values for the decoding process.
 ##           -- During decoding, the model selects an appropriate context length from the list based on the input prompt length and cache index.
 ##           -- It starts from the correct value in the list and increases the context length dynamically when the cache index exceeds the current threshold.
 
 ctx_len = 4096
 # In moe models like gpt-oss, since prefill_seq_len=1 both comp_ctx_lengths_prefill and comp_ctx_lengths_decode can share similar lists.
 # Set the list of ccl during prefilling process
-comp_ctx_lengths_prefill = [512, ctx_len] #None #
+comp_ctx_lengths_prefill = [512, ctx_len]  # None #
 # Set the list of ccl during decoding process
-comp_ctx_lengths_decode = [512, ctx_len] #None #
+comp_ctx_lengths_decode = [512, ctx_len]  # None #
 
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(

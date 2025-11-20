@@ -21,7 +21,7 @@ config.vision_config.num_hidden_layers = 2
 ## Use the optional comp_ctx_lengths argument to provide two lists of context lengths for the prefilling and decoding processes. If comp_ctx_lengths=None, the model will run with its default context length.
 ##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
 ##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
-##   - The second list, comp_ctx_lengths_decode, defines the compute-context-length values for the decoding process. 
+##   - The second list, comp_ctx_lengths_decode, defines the compute-context-length values for the decoding process.
 ##           -- During decoding, the model selects an appropriate context length from the list based on the input prompt length and cache index.
 ##           -- It starts from the correct value in the list and increases the context length dynamically when the cache index exceeds the current threshold.
 
