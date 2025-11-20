@@ -1791,7 +1791,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
 
         # if ccl_enabled is True read Compute-Context-Length lists
-        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None or comp_ctx_lengths_decode is None:
                 logger.warning(
@@ -2949,7 +2948,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
 
         # if ccl_enabled is True read Compute-Context-Length lists
-        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None or comp_ctx_lengths_decode is None:
                 logger.warning(
