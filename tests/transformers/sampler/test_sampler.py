@@ -639,6 +639,7 @@ def test_guided_decoding(
                     (full_batch_size, 1),
                 )
             },
+            **additional_params,
         },
     )
     model_w_sampler_wo_guided_decoding_exec_info = model_w_sampler_wo_guided_decoding.generate(
@@ -648,6 +649,7 @@ def test_guided_decoding(
         include_sampler=True,
         return_pdfs=False,
         sampling_params=sampling_params,
+        **additional_params,
     )
     assert (
         model_w_sampler_w_guided_decoding_exec_info.generated_ids
