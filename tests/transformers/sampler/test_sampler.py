@@ -195,7 +195,7 @@ def test_sampler_transform(
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
-    sampler_transform_configs,
+    greedy_sampling_configs,
 )
 def test_greedy_sampling(
     model: str,
@@ -221,7 +221,7 @@ def test_greedy_sampling(
         additional_params["processor"] = AutoProcessor.from_pretrained(model)
         prompts = prompts[1]
     else:
-        additional_configs["num_hidden_layers"] = 2
+        additional_configs["num_hidden_layers"] = 4
         qeff_class = QEFFAutoModelForCausalLM
         spec_length -= 1
     model_w_sampler = qeff_class.from_pretrained(
