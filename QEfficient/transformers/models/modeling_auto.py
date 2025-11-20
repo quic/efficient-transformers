@@ -881,7 +881,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If `full_batch_size` is provided.
         """
         if kwargs.pop("full_batch_size", None):
-            raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+            continuous_batching = True
+            warnings.warn(
+                "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
+            )
         self.model = model
         self.config = model.config
 
@@ -1028,7 +1031,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 output_names=output_names["lang"],
                 dynamic_axes=dynamic_axes["lang"],
                 continuous_batching=self.continuous_batching,
-                vocab_size=self.lang_model.model.config.vocab_size,
+                vocab_size=self.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
 
@@ -1235,6 +1238,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
         generation_len: Optional[int] = None,
+        **kwargs,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generates output by executing the compiled QPC(s) on Cloud AI 100 Hardware cards.
@@ -1293,6 +1297,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 full_batch_size=fbs,
                 comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
+                **kwargs,
             )
 
             # Call generate method
@@ -1572,11 +1577,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         Raises
         ------
         NotImplementedError
-            If `full_batch_size` is provided.
+            If `full_batch_size` is provided or `continuous_batching` is True or `include_sampler` is True.
         """
         if kwargs.pop("full_batch_size", None):
+            warnings.warn(
+                "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
+            )
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-        if kwargs.pop("qaic_config", None):
+        if kwargs.pop("continuous_batching", None):
+            raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+        if qaic_config is not None and qaic_config.pop("include_sampler", False):
             raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
         super().__init__(model, **kwargs)
 
