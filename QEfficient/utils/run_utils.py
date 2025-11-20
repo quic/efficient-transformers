@@ -497,6 +497,52 @@ class ApiRunnerInternVL(ApiRunnerVlm):
         self.gen_len = max_gen_len
 
     @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch_CB(self, model, images, queries):
+        """
+        Function responsible for running HuggingFace ``PyTorch`` model for continuous batching
+        and return the output tokens for each prompt/image pair.
+
+        ``Mandatory`` Args:
+            :model (torch.nn.module): Original ``PyTorch`` model
+            :images (List[PIL.Image]): List of input images
+            :queries (List[str]): List of input queries
+
+        Return:
+            :List[numpy.ndarray]: List of generated output tokens for each prompt
+        """
+        generated_ids = []
+
+        for idx, (image, query) in enumerate(zip(images, queries)):
+            num_patches_list = []
+
+            pixel_value = self.processor.load_image(image, max_num=12)
+            num_patches_list.append(pixel_value.shape[0])
+            question = "<image>\n" + query
+
+            # Chat Template information for prompt preprocessing
+            messages: List[List[str]] = []
+            roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+            prompt = self.processor(pixel_value, question, messages, roles, num_patches_list=num_patches_list)
+
+            inputs = self.processor.tokenizer(prompt, return_tensors="pt")
+            batch_size, prompt_len = inputs["input_ids"].shape
+            inputs["pixel_values"] = pixel_value.clone()
+
+            generation_config = dict(max_new_tokens=self.gen_len, do_sample=False)
+            generation_config["eos_token_id"] = self.processor.tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
+
+            # Decode and print output
+            outputs = model.generate(**inputs, **generation_config)
+            offset_output = outputs[0].detach().numpy()
+
+            py_output = self.processor.tokenizer.decode(offset_output, skip_special_tokens=True).strip()
+            print("Original HF Model Outputs (Torch CPU):")
+            print("Completion:", repr(py_output))
+            generated_ids.append(offset_output)
+
+        return generated_ids
+
+    @torch.no_grad()
     def run_vlm_hf_model_on_pytorch(self, model, inputs, generation_config):
         outputs = model.generate(**inputs, **generation_config)
         generated_ids = outputs[0].detach().numpy()
