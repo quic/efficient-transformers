@@ -66,6 +66,6 @@ The example supports different pooling strategies:
 
 ## Documentation
 
-- [QEff Auto Classes](https://quic.github.io/efficient-transformers/qeff_autoclasses.html)
-- [Validated Embedding Models](https://quic.github.io/efficient-transformers/validate.html#embedding-models)
-- [Quick Start Guide](https://quic.github.io/efficient-transformers/quick_start.html)
+- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
+- [Validated Embedding Models](https://quic.github.io/efficient-transformers/source/validate.html#embedding-models)
+- [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)

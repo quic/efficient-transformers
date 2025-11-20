@@ -109,4 +109,4 @@ Some models have specialized examples demonstrating advanced features:
 
 ## Documentation
 - **Full Guide**: [VLM Documentation](../../docs/source/quick_start.md#vision-language-models)
-- **API Reference**: [QEFFAutoModelForImageTextToText](../../docs/source/qeff_autoclasses.md)
+- **API Reference**: [QEFFAutoModelForImageTextToText](../../docs/source/qeff_autoclasses.md#QEFFAutoModelForImageTextToText)

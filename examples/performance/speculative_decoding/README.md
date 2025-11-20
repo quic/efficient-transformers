@@ -176,6 +176,6 @@ Avg number of accepted tokens = 2.8  # Speculation effectiveness
 
 ## Documentation
 
-- [Speculative Decoding Guide](https://quic.github.io/efficient-transformers/features_enablement.html#speculative-decoding)
-- [QEff Auto Classes](https://quic.github.io/efficient-transformers/qeff_autoclasses.html)
-- [Performance Optimization](https://quic.github.io/efficient-transformers/features_enablement.html)
+- [Speculative Decoding Guide](https://quic.github.io/efficient-transformers/source/features_enablement.html#speculative-decoding)
+- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
+- [Performance Optimization](https://quic.github.io/efficient-transformers/source/features_enablement.html)
