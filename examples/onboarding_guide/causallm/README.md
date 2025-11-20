@@ -9,6 +9,42 @@ cd efficient-transformers
 pip install -e .
 ```
 
+---
+
+## Transformers Version Compatibility
+
+**Important:** QEfficient has a pinned `transformers` library version dependency.
+
+**Check the current version:**
+```bash
+grep "transformers==" pyproject.toml
+```
+
+See `dependencies` in [`pyproject.toml`](../../../pyproject.toml) for the exact version.
+
+**Compatibility rules:**
+- You can only onboard models that are supported in the pinned transformers version or earlier
+- Models added to transformers after this version are not yet supported
+- Always verify when your target model was added to the transformers library
+
+**How to verify model compatibility:**
+
+1. Check transformers release history at [HuggingFace Transformers Releases](https://github.com/huggingface/transformers/releases)
+2. Find the release where your model was first introduced
+3. Compare versions:
+   - If model's release version ≤ QEfficient's pinned version → Proceed with onboarding
+   - If model's release version > QEfficient's pinned version → Cannot onboard yet
+
+
+**Need a newer model?**
+
+If you need to onboard a model that requires a newer transformers version:
+1. Open an issue on the [QEfficient GitHub repository](https://github.com/quic/efficient-transformers/issues)
+2. Request a transformers version bump
+3. Provide justification and the specific model you need
+
+---
+
 ## Introduction
 
 This guide walks you through onboarding a new CausalLM model to QEfficient-transformers. We use an example model named `Blueprint` to demonstrate the required changes.
