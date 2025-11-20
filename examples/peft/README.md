@@ -77,7 +77,7 @@ qeff_model.unload_adapter("adapter_name")
 
 ## Documentation
 
-- [QEff Auto Classes](https://quic.github.io/efficient-transformers/qeff_autoclasses.html)
-- [Validated Base Models](https://quic.github.io/efficient-transformers/validate.html#text-only-language-models)
+- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
+- [Validated Base Models](https://quic.github.io/efficient-transformers/source/validate.html#text-only-language-models)
 - [PEFT Documentation](https://huggingface.co/docs/peft)
-- [Quick Start Guide](https://quic.github.io/efficient-transformers/quick_start.html)
+- [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)

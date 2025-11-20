@@ -24,7 +24,7 @@ make -j 8
 cd ../../../  # Need to be in base folder - efficient-transformers to run below cmd
 
 # Run the python script to get the generated text
-python examples/cpp_execution/text_inference_using_cpp.py --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 14 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
+python examples/performance/cpp_execution/text_inference_cpp.py --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 14 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
 
 ```
 

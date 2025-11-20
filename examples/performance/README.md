@@ -37,6 +37,8 @@ python speculative_decoding/draft_based.py \
     --target-device-group 0,1 \
     --draft-device-group 2
 ```
+errors in this example
+
 
 #### prompt_lookup.py
 Prompt Lookup Decoding (PLD) - N-gram based speculation without a draft model.
@@ -57,6 +59,7 @@ Multi-projection speculative decoding (Turbo models).
 python speculative_decoding/multi_projection.py \
     --pretrained-model-name-or-path TinyLlama/TinyLlama-1.1B-Chat-v1.0
 ```
+error 
 
 ### On-Device Sampling
 
@@ -102,6 +105,6 @@ python on_device_sampling.py \
 
 ## Documentation
 
-- [QEff Auto Classes](https://quic.github.io/efficient-transformers/qeff_autoclasses.html)
-- [Performance Features](https://quic.github.io/efficient-transformers/features_enablement.html)
-- [Quick Start Guide](https://quic.github.io/efficient-transformers/quick_start.html)
+- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
+- [Performance Features](https://quic.github.io/efficient-transformers/source/features_enablement.html)
+- [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)

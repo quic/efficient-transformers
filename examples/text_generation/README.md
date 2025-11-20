@@ -144,7 +144,7 @@ python -m QEfficient.cloud.infer \
 2. Compiles to QPC 
 3. Executes inference with your prompt
 
-**CLI API Reference:** [`QEfficient.cloud.infer`](https://quic.github.io/efficient-transformers/cli_api.html#qefficient-cloud-infer)
+**CLI API Reference:** [`QEfficient.cloud.infer`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-infer)
 
 ### Step-by-Step Workflow
 
@@ -162,7 +162,7 @@ python -m QEfficient.cloud.export \
 
 This downloads the model and converts it to ONNX format. The ONNX model is saved in the QEfficient cache directory.
 
-**CLI API Reference:** [`QEfficient.cloud.export`](https://quic.github.io/efficient-transformers/cli_api.html#qefficient-cloud-export)
+**CLI API Reference:** [`QEfficient.cloud.export`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-export)
 
 #### Step 2: Compile Model to QPC
 
@@ -184,7 +184,7 @@ python -m QEfficient.cloud.compile \
 
 **Note:** The `compile` API is deprecated for direct use. Use the unified `infer` API instead for most use cases.
 
-**CLI API Reference:** [`QEfficient.cloud.compile`](https://quic.github.io/efficient-transformers/cli_api.html#qefficient-cloud-compile)
+**CLI API Reference:** [`QEfficient.cloud.compile`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-compile)
 
 #### Step 3: Execute Inference
 
@@ -200,7 +200,7 @@ python -m QEfficient.cloud.execute \
 
 This uses the pre-compiled QPC for fast inference. You can run this multiple times with different prompts without recompiling.
 
-**CLI API Reference:** [`QEfficient.cloud.execute`](https://quic.github.io/efficient-transformers/cli_api.html#qefficient-cloud-execute)
+**CLI API Reference:** [`QEfficient.cloud.execute`](https://quic.github.io/efficient-transformers/source/cli_api.html#qefficient-cloud-execute)
 
 ### Common CLI Parameters
 
@@ -239,7 +239,7 @@ python -m QEfficient.cloud.infer \
     --aic_enable_depth_first
 ```
 
-**Documentation:** [Multi-Qranium Inference](https://quic.github.io/efficient-transformers/features_enablement.html#multi-qranium-inference)
+**Documentation:** [Multi-Qranium Inference](https://quic.github.io/efficient-transformers/source/features_enablement.html#multi-qranium-inference)
 
 #### Continuous Batching
 
@@ -260,7 +260,7 @@ python -m QEfficient.cloud.infer \
 
 **Note:** Use pipe (`|`) to separate multiple prompts. When using continuous batching, do not specify `--batch_size`.
 
-**Documentation:** [Continuous Batching](https://quic.github.io/efficient-transformers/features_enablement.html#continuous-batching)
+**Documentation:** [Continuous Batching](https://quic.github.io/efficient-transformers/source/features_enablement.html#continuous-batching)
 
 #### Batch Processing from File
 
@@ -284,7 +284,7 @@ python -m QEfficient.cloud.infer \
 For a comprehensive collection of copy-paste ready CLI commands, run:
 
 ```bash
-bash examples/text_generation/cli_examples.sh
+bash cli_examples.sh
 ```
 
 This script demonstrates:
@@ -300,11 +300,11 @@ This script demonstrates:
 ## Additional Resources
 
 ### Documentation
-- [CLI API Reference](https://quic.github.io/efficient-transformers/cli_api.html) - Complete CLI command documentation
-- [Quick Start Guide](https://quic.github.io/efficient-transformers/quick_start.html) - Getting started with QEfficient
-- [Features Enablement](https://quic.github.io/efficient-transformers/features_enablement.html) - Advanced features guide
-- [QEff Auto Classes](https://quic.github.io/efficient-transformers/qeff_autoclasses.html) - Python API reference
-- [Validated Models](https://quic.github.io/efficient-transformers/validate.html#text-only-language-models) - Supported models list
+- [CLI API Reference](https://quic.github.io/efficient-transformers/source/cli_api.html) - Complete CLI command documentation
+- [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html) - Getting started with QEfficient
+- [Features Enablement](https://quic.github.io/efficient-transformers/source/features_enablement.html) - Advanced features guide
+- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html) - Python API reference
+- [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html) - Supported models list
 
 
 ### Model Storage

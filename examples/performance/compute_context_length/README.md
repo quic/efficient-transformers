@@ -318,6 +318,6 @@ model = QEFFAutoModelForCausalLM.from_pretrained(
 
 ## Documentation
 
-- [QEff Auto Classes](https://quic.github.io/efficient-transformers/qeff_autoclasses.html)
-- [Performance Features](https://quic.github.io/efficient-transformers/features_enablement.html)
-- [Quick Start Guide](https://quic.github.io/efficient-transformers/quick_start.html)
+- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
+- [Performance Features](https://quic.github.io/efficient-transformers/source/features_enablement.html)
+- [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)

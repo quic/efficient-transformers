@@ -82,6 +82,6 @@ This example:
 
 ## Documentation
 
-- [QEff Auto Classes](https://quic.github.io/efficient-transformers/qeff_autoclasses.html)
-- [Validated Audio Models](https://quic.github.io/efficient-transformers/validate.html#audio-models)
-- [Quick Start Guide](https://quic.github.io/efficient-transformers/quick_start.html)
+- [QEff Auto Classes](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
+- [Validated Audio Models](https://quic.github.io/efficient-transformers/source/validate.html#audio-models)
+- [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)
