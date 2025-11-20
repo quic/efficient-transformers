@@ -723,7 +723,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model, continuous_batching: bool = False, qaic_config: Optional[dict] = None, **kwargs):
+    def __init__(self, model, **kwargs):
         """
         Initializes the language decoder component for multimodal models.
 
@@ -872,13 +872,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ----------
         model : nn.Module
             The full HuggingFace multimodal model.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations.
         **kwargs :
-            Additional keyword arguments. `full_batch_size` is not supported here.
-
-        Raises
-        ------
-        NotImplementedError
-            If `full_batch_size` is provided.
+            Additional keyword arguments.
         """
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -891,7 +888,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
-        self.lang_model = QEffCausalLMForTextImageToTextModel(model, continuous_batching=continuous_batching, **kwargs)
+        self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
         self.continuous_batching = continuous_batching
         self.lang_model.model.qaic_config = qaic_config
         self.input_shapes, self.output_names = None, None
@@ -1577,14 +1574,12 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         Raises
         ------
         NotImplementedError
-            If `full_batch_size` is provided or `continuous_batching` is True or `include_sampler` is True.
+            If `full_batch_size` is provided or `include_sampler` is True.
         """
         if kwargs.pop("full_batch_size", None):
             warnings.warn(
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
-            raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-        if kwargs.pop("continuous_batching", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         if qaic_config is not None and qaic_config.pop("include_sampler", False):
             raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
@@ -2189,10 +2184,6 @@ class QEFFAutoModelForImageTextToText:
             If None, the default behavior of the internal classes is used (typically dual QPC).
         qaic_config : dict, optional
             A dictionary for QAIC-specific configurations.
-            Only the following keys are supported by the text model of the dual QPC multimodal model:
-            - **include_sampler** (bool): If True, enables on-device sampling of next tokens.
-            - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
-            Additional keys will be ignored.
         **kwargs :
             Additional arguments passed to HuggingFace's ``from_pretrained``.
 
