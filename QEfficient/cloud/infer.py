@@ -390,7 +390,7 @@ if __name__ == "__main__":
         "--prompts_txt_file_path",
         "--prompts-txt-file-path",
         type=str,
-        help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
+        help="File path for taking input prompts from txt file, sample prompts.txt file present in examples/sample_prompts folder",
     )
     parser.add_argument("--generation_len", "--generation-len", type=int, help="Number of tokens to generate")
     parser.add_argument(

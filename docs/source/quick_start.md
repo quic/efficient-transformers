@@ -125,10 +125,10 @@ You can pass input prompts in single string but separate with pipe (|) symbol". 
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
 ```
 
-You can also pass path of txt file with input prompts when you want to run inference on lot of prompts, Example below, sample txt file(prompts.txt) is present in examples folder.
+You can also pass path of txt file with input prompts when you want to run inference on lot of prompts, Example below, sample txt file(prompts.txt) is present in examples/sample_prompts folder.
 
 ```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/sample_prompts/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first
 ```
 **QNN CLI Inference Command**
 
