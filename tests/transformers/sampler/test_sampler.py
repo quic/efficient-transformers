@@ -615,16 +615,14 @@ def test_guided_decoding(
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model)
     np.random.seed(0)
     sampling_params = {
-        "repetition_penalties": np.array(20.2, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-        "presence_penalties": np.array(10.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-        # "frequency_penalties": np.array(0.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-        "temperatures": np.array(4.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "repetition_penalties": np.array(1.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "presence_penalties": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        # "frequency_penalties": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "temperatures": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
         "top_ks": np.array(1024, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
-        "top_ps": np.array(0.89, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-        "min_ps": np.array(0.6, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-        "random_numbers": np.tile(np.random.uniform(low=0.0, high=1.0, size=1024), (full_batch_size, 1)).astype(
-            np.float32
-        ),
+        "top_ps": np.array(1.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "min_ps": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+        "random_numbers": np.zeros((full_batch_size, 1024), dtype=np.float32),
     }
     model_w_sampler_w_guided_decoding_exec_info = model_w_sampler_w_guided_decoding.generate(
         tokenizer=tokenizer,
@@ -636,8 +634,9 @@ def test_guided_decoding(
         sampling_params={
             **sampling_params,
             **{
-                "token_bitmasks": np.random.choice(
-                    [True, False], size=(full_batch_size, model_w_sampler_w_guided_decoding.model.config.vocab_size)
+                "token_bitmasks": np.tile(
+                    np.random.choice([True, False], size=(model_w_sampler_w_guided_decoding.model.config.vocab_size,)),
+                    (full_batch_size, 1),
                 )
             },
         },
@@ -653,4 +652,4 @@ def test_guided_decoding(
     assert (
         model_w_sampler_w_guided_decoding_exec_info.generated_ids
         != model_w_sampler_wo_guided_decoding_exec_info.generated_ids
-    ), "Sampler outputs with and without guided decoding should not match"
+    ).any(), "Sampler outputs with and without guided decoding should not match"

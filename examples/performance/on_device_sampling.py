@@ -68,7 +68,11 @@ def main(args, **kwargs):
         # Ideally this should come from a logits processor like xgrammar, but for the sake of the
         # example, we generate a random bitmask
         sampling_params.update(
-            {"token_bitmasks": np.random.choice([True, False], size=(bs, qeff_model.model.config.vocab_size))}
+            {
+                "token_bitmasks": np.tile(
+                    np.random.choice([True, False], size=(qeff_model.model.config.vocab_size,)), (bs, 1)
+                )
+            }
         )
     print("sampling_params:")
     pprint(sampling_params)
