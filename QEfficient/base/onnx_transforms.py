@@ -5,10 +5,14 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+import torch
 from onnx import ModelProto, external_data_helper, numpy_helper
+
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
+from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 
 
 class OnnxTransform:
@@ -98,4 +102,95 @@ class SplitTensorsTransform(OnnxTransform):
                     file_num += 1
                     current_file_size = tsize
                 external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
+        return model, transformed
+
+
+class CustomOpTransform(OnnxTransform):
+    """
+    Transform to register custom operations and add their function protos to the ONNX model.
+    """
+
+    _custom_ops: Dict[str, Tuple[Any, Any]] = {
+        "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
+        "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
+        "CtxGatherFunc": (CtxGatherFunc, CtxGather),
+    }
+
+    @classmethod
+    def register_custom_op(cls, op_name: str, func_class: Any, onnxscript_func: Any) -> None:
+        """Register a custom operation."""
+        cls._custom_ops[op_name] = (func_class, onnxscript_func)
+
+    @classmethod
+    def apply(cls, model: ModelProto, *, opset_version: int = 17, **kwargs) -> Tuple[ModelProto, bool]:
+        """
+        Apply custom op registration and add all function protos to the model.
+
+        :param model: The ONNX model to transform.
+        :param opset_version: ONNX opset version for symbolic registration.
+        :returns: (Transformed model, success flag).
+        """
+        transformed = False
+
+        # Register all custom op symbolic functions with torch.onnx
+        for op_name, (func_class, _) in cls._custom_ops.items():
+            if hasattr(func_class, "symbolic"):
+                torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, opset_version)
+
+        func_names = {func.name for func in model.functions}
+
+        for _, onnxscript_func in cls._custom_ops.values():
+            proto = onnxscript_func.to_function_proto()
+            if proto.name not in func_names:
+                model.functions.append(proto)
+                transformed = True
+
+        return model, transformed
+
+
+class RenameFunctionOutputsTransform(OnnxTransform):
+    """
+    Renames function outputs in decoder layers by removing 'Internal' from '_InternalRetainedState' patterns.
+    """
+
+    @classmethod
+    def apply(cls, model: ModelProto, **kwargs) -> Tuple[ModelProto, bool]:
+        """
+        Rename function outputs in decoder layer nodes.
+
+        :param model: The ONNX model to transform
+        :returns: Transformed model and boolean indicating whether transform was applied
+        """
+        graph = model.graph
+        op_type_to_func_map = {func.name: func for func in model.functions}
+        decoder_layer_patterns = ["DecoderLayer", "Block", "Layer"]
+        transformed = False
+
+        # Create a dict mapping output name to its index for quick lookup
+        model_graph_outputs_map = {val.name: idx for idx, val in enumerate(model.graph.output)}
+
+        layer_index = 0
+        for node in graph.node:
+            if any(pattern in node.name or pattern in node.op_type for pattern in decoder_layer_patterns):
+                func = op_type_to_func_map.get(node.op_type)
+                if func is None:
+                    continue
+
+                for i, out_name in enumerate(func.output):
+                    if "_InternalRetainedState" in out_name:
+                        transformed = True
+                        original_output_name = node.output[i]
+
+                        # Generate new name based on key/value
+                        if "key" in out_name:
+                            new_name = f"past_key.{layer_index}_RetainedState"
+                        elif "value" in out_name:
+                            new_name = f"past_value.{layer_index}_RetainedState"
+                        node.output[i] = new_name
+
+                        # Update graph output name if it exists
+                        if original_output_name in model_graph_outputs_map:
+                            idx = model_graph_outputs_map[original_output_name]
+                            model.graph.output[idx].name = new_name
+                layer_index += 1
         return model, transformed
