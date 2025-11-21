@@ -53,7 +53,67 @@ This guide walks you through onboarding a new CausalLM model to QEfficient-trans
 
 ## Onboarding Process
 
-![Onboarding Flowchart](./Onboarding.png)
+```mermaid
+flowchart TD
+    A["Check Transformers Library
+• Locate model in transformers/models/&lt;model&gt;/modeling_*.py
+• Identify architecture classes (Attention, DecoderLayer, etc.)"]
+    
+    B{"Class already
+Implemented"}
+    
+    C["Create Custom Files
+• Create modeling_*.py
+• Implement custom classes
+• Add __qeff_init__ methods"]
+    
+    D["Test the model using
+the auto model class
+and validate the
+functionality"]
+    
+    E["Add Mappings in pytorch_transforms.py
+• CustomOpsTransform (RMSNorm)
+• KVCacheTransform (all model classes)
+• ExternalModuleMapperTransform (if needed)"]
+    
+    K{"if all test passes"}
+    
+    L["Debug & Fix Issues
+Retest with test pipelines"]
+    
+    M["Submit PR
+(Follow
+CONTRIBUTING
+guidelines)"]
+    
+    A --> B
+    B -->|No| C
+    B -->|Yes| D
+    C --> E
+    E --> F
+    
+    subgraph F["Testing Pipeline (4 Stages)"]
+        direction TB
+        G["Stage 1: PyTorch HF Model (Baseline)
+(tokens should match)"]
+        H["Stage 2: PyTorch KV Model (After QEff transforms)
+(tokens should match)"]
+        I["Stage 3: ONNX/ORT Model (After export)
+(tokens should match)"]
+        J["Stage 4: Cloud AI 100 (Hardware execution)
+(tokens should match)"]
+        
+        G --> H
+        H --> I
+        I --> J
+    end
+    
+    F --> K
+    K -->|No| L
+    L --> F
+    K -->|Yes| M
+```
 
 ---
 
