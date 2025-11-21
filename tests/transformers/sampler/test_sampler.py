@@ -550,7 +550,7 @@ def test_random_sampling(
 )
 def test_guided_decoding(
     model: str,
-    prompts: List[str],
+    prompts: Union[List[str], tuple[List[str], List[str]]],
     prefill_seq_len: int,
     ctx_len: int,
     generation_len: int,
