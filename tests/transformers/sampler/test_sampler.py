@@ -9,7 +9,7 @@ from typing import List, Union
 
 import numpy as np
 import pytest
-from transformers import AutoProcessor
+from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -141,6 +141,9 @@ def test_sampler_transform(
     # Export and compile QEfficient models
     additional_configs = {}
     if is_vlm:
+        config = AutoConfig.from_pretrained(model)
+        config.text_config.num_hidden_layers = 2
+        additional_configs["config"] = config
         additional_configs["kv_offload"] = True
         qeff_class = QEFFAutoModelForImageTextToText
     else:
@@ -274,6 +277,9 @@ def test_greedy_sampling(
     additional_configs = {}
     additional_params = {}
     if is_vlm:
+        config = AutoConfig.from_pretrained(model)
+        config.text_config.num_hidden_layers = 4
+        additional_configs["config"] = config
         additional_configs["kv_offload"] = True
         qeff_class = QEFFAutoModelForImageTextToText
         assert isinstance(prompts, tuple)
@@ -559,6 +565,9 @@ def test_guided_decoding(
     additional_configs = {}
     additional_params = {}
     if is_vlm:
+        config = AutoConfig.from_pretrained(model)
+        config.text_config.num_hidden_layers = 2
+        additional_configs["config"] = config
         additional_configs["kv_offload"] = True
         qeff_class = QEFFAutoModelForImageTextToText
         assert isinstance(prompts, tuple)
