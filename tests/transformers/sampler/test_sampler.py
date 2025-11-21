@@ -102,19 +102,19 @@ guided_decoding_configs = [
         1,  # spec_length
         False,  # is_vlm
     ),
-    # pytest.param(
-    #     "Qwen/Qwen2.5-VL-3B-Instruct",  # model
-    #     (
-    #         ["https://picsum.photos/id/237/536/354"] * 2,
-    #         ["Can you describe the image in detail."] * 2,
-    #     ),  # images and prompts
-    #     128,  # prefill_seq_len
-    #     4096,  # ctx_len
-    #     20,  # generation_len
-    #     2,  # full_batch_size
-    #     None,  # spec_length
-    #     True,  # is_vlm
-    # ),
+    pytest.param(
+        "Qwen/Qwen2.5-VL-3B-Instruct",  # model
+        (
+            ["https://picsum.photos/id/237/536/354"] * 2,
+            ["Can you describe the image in detail."] * 2,
+        ),  # images and prompts
+        128,  # prefill_seq_len
+        4096,  # ctx_len
+        20,  # generation_len
+        2,  # full_batch_size
+        None,  # spec_length
+        True,  # is_vlm
+    ),
 ]
 
 
@@ -553,7 +553,7 @@ def test_guided_decoding(
     is_vlm: bool,
 ):
     """
-    Test with QPCs compiled with and without guided decoding.
+    Test QPCs compiled with and without guided decoding.
     """
     # Export and compile QEfficient models
     additional_configs = {}
@@ -639,8 +639,8 @@ def test_guided_decoding(
                     (full_batch_size, 1),
                 )
             },
-            **additional_params,
         },
+        **additional_params,
     )
     model_w_sampler_wo_guided_decoding_exec_info = model_w_sampler_wo_guided_decoding.generate(
         tokenizer=tokenizer,
