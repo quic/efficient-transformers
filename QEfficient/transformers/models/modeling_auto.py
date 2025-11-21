@@ -752,7 +752,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model, **kwargs):
+    def __init__(self, model, qaic_config: Optional[dict] = None, **kwargs):
         """
         Initializes the language decoder component for multimodal models.
 
@@ -760,11 +760,14 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         ----------
         model : nn.Module
             The full HuggingFace multimodal model from which the language decoder is extracted.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        super().__init__(model, **kwargs)
+        super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.model = model.get_qeff_language_decoder()
+        self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(
@@ -936,9 +939,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
-        self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
+        self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
         self.continuous_batching = continuous_batching
-        self.lang_model.model.qaic_config = qaic_config
         self.input_shapes, self.output_names = None, None
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
