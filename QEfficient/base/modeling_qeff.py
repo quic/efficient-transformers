@@ -67,6 +67,8 @@ class QEFFBaseModel(ABC):
 
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
+     
+        self._original_model_name: Optional[str] = None
 
         # Apply the transformations
         any_transformed = False
@@ -82,6 +84,17 @@ class QEFFBaseModel(ABC):
     def _offload_model_weights(self) -> None:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         try:
+            if self._original_model_name is None:
+                self._original_model_name = self.model_name
+            
+            cached_methods = {}
+            methods_to_cache = constants.CACHE_MODULES
+            for method_name in methods_to_cache:
+                if hasattr(self.model, method_name):
+                    method = getattr(self.model, method_name)
+                    if callable(method):
+                        cached_methods[method_name] = method
+            
             # Clear tensor storage and replace with empty shell
             for param in self.model.parameters():
                 if hasattr(param, "data") and hasattr(param.data, "storage"):
@@ -110,10 +123,25 @@ class QEFFBaseModel(ABC):
 
             # Replace with minimal shell for compatibility
             class ModelShell:
-                def __init__(self, config):
+                def __init__(self, config, original_class_name, cached_methods=None):
                     self.config = config
                     self.qaic_config = None
                     self.device = torch.device("meta")
+                    self._cached_methods = cached_methods or {}
+                    self._original_class_name = original_class_name
+                    
+                    # Create a mock class with the original name
+                    self._mock_class = type(original_class_name, (), {})
+
+                @property
+                def __class__(self):
+                    """Override __class__ to return mock class with original name"""
+                    return self._mock_class
+
+                def __getattr__(self, name):
+                    if name in self._cached_methods:
+                        return self._cached_methods[name]
+                    raise AttributeError(f"'ModelShell' object has no attribute '{name}'")
 
                 def parameters(self):
                     return iter([])
@@ -140,7 +168,8 @@ class QEFFBaseModel(ABC):
                     return self
 
             config = getattr(self.model, "config", None)
-            self.model = ModelShell(config)
+            original_class_name = self.model.__class__.__name__
+            self.model = ModelShell(config, original_class_name, cached_methods)
 
         except Exception as e:
             logger.warning(f"Weight clearing failed, continuing: {e}")

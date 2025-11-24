@@ -130,6 +130,9 @@ WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16
 QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
 
+# Modules to cache while clearing the pytorch weights 
+CACHE_MODULES = ['get_output_names', 'get_dummy_inputs', 'get_onnx_dynamic_axes', 'get_specializations']
+
 
 class Constants:
     # Export Constants.
