@@ -52,7 +52,11 @@ class QEFFBaseModel(ABC):
     @classmethod
     def _transform_names(cls) -> List[str]:
         pytorch_names = [x.__name__ for x in cls._pytorch_transforms]
-        return pytorch_names + cls._onnx_transforms
+        onnx_transforms = [
+            transform.__name__ if "AdapterWeightsToInputsTransform" in str(transform) else transform
+            for transform in cls._onnx_transforms
+        ]
+        return pytorch_names + onnx_transforms
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -67,7 +71,7 @@ class QEFFBaseModel(ABC):
 
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
-     
+
         self._original_model_name: Optional[str] = None
 
         # Apply the transformations
@@ -81,98 +85,104 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _offload_model_weights(self) -> None:
+    def _offload_model_weights(self, offload_pt_weights) -> None:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
-        try:
-            if self._original_model_name is None:
-                self._original_model_name = self.model_name
-            
-            cached_methods = {}
-            methods_to_cache = constants.CACHE_MODULES
-            for method_name in methods_to_cache:
-                if hasattr(self.model, method_name):
-                    method = getattr(self.model, method_name)
-                    if callable(method):
-                        cached_methods[method_name] = method
-            
-            # Clear tensor storage and replace with empty shell
-            for param in self.model.parameters():
-                if hasattr(param, "data") and hasattr(param.data, "storage"):
-                    param.data.storage().resize_(0)
 
-            for buffer in self.model.buffers():
-                if hasattr(buffer, "data") and hasattr(buffer.data, "storage"):
-                    buffer.data.storage().resize_(0)
+        if offload_pt_weights and not self._is_weights_offloaded:
+            try:
+                if self._original_model_name is None:
+                    self._original_model_name = self.model_name
 
-            # Clear module dictionaries and hooks
-            for module in self.model.modules():
-                if hasattr(module, "_parameters"):
-                    module._parameters.clear()
-                if hasattr(module, "_buffers"):
-                    module._buffers.clear()
+                cached_methods = {}
+                methods_to_cache = constants.CACHE_MODULES
+                self._is_weights_offloaded = True
+                for method_name in methods_to_cache:
+                    if hasattr(self.model, method_name):
+                        method = getattr(self.model, method_name)
+                        if callable(method):
+                            cached_methods[method_name] = method
 
-                # Clear hooks
-                for hook_dict in [
-                    getattr(module, "_forward_hooks", {}),
-                    getattr(module, "_forward_pre_hooks", {}),
-                    getattr(module, "_backward_hooks", {}),
-                    getattr(module, "_state_dict_hooks", {}),
-                    getattr(module, "_load_state_dict_pre_hooks", {}),
-                ]:
-                    hook_dict.clear()
+                # Clear tensor storage and replace with empty shell
+                for param in self.model.parameters():
+                    if hasattr(param, "data") and hasattr(param.data, "storage"):
+                        param.data.storage().resize_(0)
 
-            # Replace with minimal shell for compatibility
-            class ModelShell:
-                def __init__(self, config, original_class_name, cached_methods=None):
-                    self.config = config
-                    self.qaic_config = None
-                    self.device = torch.device("meta")
-                    self._cached_methods = cached_methods or {}
-                    self._original_class_name = original_class_name
-                    
-                    # Create a mock class with the original name
-                    self._mock_class = type(original_class_name, (), {})
+                for buffer in self.model.buffers():
+                    if hasattr(buffer, "data") and hasattr(buffer.data, "storage"):
+                        buffer.data.storage().resize_(0)
 
-                @property
-                def __class__(self):
-                    """Override __class__ to return mock class with original name"""
-                    return self._mock_class
+                # Clear module dictionaries and hooks
+                for module in self.model.modules():
+                    if hasattr(module, "_parameters"):
+                        module._parameters.clear()
+                    if hasattr(module, "_buffers"):
+                        module._buffers.clear()
 
-                def __getattr__(self, name):
-                    if name in self._cached_methods:
-                        return self._cached_methods[name]
-                    raise AttributeError(f"'ModelShell' object has no attribute '{name}'")
+                    # Clear hooks
+                    for hook_dict in [
+                        getattr(module, "_forward_hooks", {}),
+                        getattr(module, "_forward_pre_hooks", {}),
+                        getattr(module, "_backward_hooks", {}),
+                        getattr(module, "_state_dict_hooks", {}),
+                        getattr(module, "_load_state_dict_pre_hooks", {}),
+                    ]:
+                        hook_dict.clear()
 
-                def parameters(self):
-                    return iter([])
+                # Replace with minimal shell for compatibility
+                class ModelShell:
+                    def __init__(self, config, original_class_name, cached_methods=None):
+                        self.config = config
+                        self.qaic_config = None
+                        self.device = torch.device("meta")
+                        self._cached_methods = cached_methods or {}
+                        self._original_class_name = original_class_name
 
-                def named_parameters(self):
-                    return iter([])
+                        # Create a mock class with the original name
+                        self._mock_class = type(original_class_name, (), {})
 
-                def buffers(self):
-                    return iter([])
+                    @property
+                    def __class__(self):
+                        """Override __class__ to return mock class with original name"""
+                        return self._mock_class
 
-                def named_buffers(self):
-                    return iter([])
+                    def __getattr__(self, name):
+                        if name in self._cached_methods:
+                            return self._cached_methods[name]
+                        raise AttributeError(f"'ModelShell' object has no attribute '{name}'")
 
-                def modules(self):
-                    return iter([self])
+                    def parameters(self):
+                        return iter([])
 
-                def state_dict(self):
-                    return {}
+                    def named_parameters(self):
+                        return iter([])
 
-                def to(self, device):
-                    return self
+                    def buffers(self):
+                        return iter([])
 
-                def eval(self):
-                    return self
+                    def named_buffers(self):
+                        return iter([])
 
-            config = getattr(self.model, "config", None)
-            original_class_name = self.model.__class__.__name__
-            self.model = ModelShell(config, original_class_name, cached_methods)
+                    def modules(self):
+                        return iter([self])
 
-        except Exception as e:
-            logger.warning(f"Weight clearing failed, continuing: {e}")
+                    def state_dict(self):
+                        return {}
+
+                    def to(self, device):
+                        return self
+
+                    def eval(self):
+                        return self
+
+                config = getattr(self.model, "config", None)
+                original_class_name = self.model.__class__.__name__
+                self.model = ModelShell(config, original_class_name, cached_methods)
+                return True
+
+            except Exception as e:
+                logger.warning(f"Weight clearing failed, continuing: {e}")
+                return False
+        return False
 
     def _model_offloaded_check(self) -> None:
         """
@@ -332,10 +342,7 @@ class QEFFBaseModel(ABC):
             logger.info("PyTorch export successful")
 
             # Clear PyTorch weights after successful export to reduce memory usage
-            if offload_pt_weights:
-                self._offload_model_weights()
-                self._is_weights_offloaded = True
-                logger.info("PyTorch weights cleared after ONNX export")
+            _ = self._offload_model_weights(offload_pt_weights)
 
             # Clear temporary references
             example_inputs.clear()

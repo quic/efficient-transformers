@@ -2971,7 +2971,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
-    
+
     @property
     def get_model_config(self) -> dict:
         """
