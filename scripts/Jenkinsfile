@@ -167,7 +167,8 @@ pipeline {
                     sudo docker exec ${BUILD_TAG} bash -c "
                     source /opt/torch-qaic-env/bin/activate &&
                     cd /efficient-transformers &&
-                    pip install .[test] &&
+                    . preflight_qeff/bin/activate &&
+                    pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
                     mkdir -p $PWD/cli_qaic_finetuning &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli_qaic_finetuning &&
