@@ -24,6 +24,8 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxScatter
+from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import (
     constants,
@@ -208,6 +210,8 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        use_dynamo: bool = False,
+        dynamic_shapes: Optional[Dict[str, Dict[int, any]]] = None,
         **export_kwargs,
     ) -> str:
         """
@@ -275,14 +279,28 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
+            export_kwargs = {} if export_kwargs is None else export_kwargs
+            export_kwargs["dynamo"] = use_dynamo
+
+            if use_dynamo:
+                dynamic_axes = None
+                export_kwargs["report"] = True
+                export_kwargs["custom_translation_table"] = {
+                    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
+                    torch.ops.qefficient.ctx_gather.default: CtxGather,
+                    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
+                }
+
             torch.onnx.export(
                 self.model,
-                (example_inputs,),
-                str(tmp_onnx_path),
+                args=(),
+                kwargs=example_inputs,
+                f=str(tmp_onnx_path),
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                dynamic_shapes=dynamic_shapes,
+                opset_version=18,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
@@ -328,11 +346,13 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
+        use_dynamo: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
     ):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
+            "use_dynamo": use_dynamo, 
             "retain_full_kv": retain_full_kv,
         }
 
@@ -366,6 +386,7 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        use_dynamo: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
@@ -391,6 +412,7 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
+
         onnx_path = Path(
             onnx_path
             if onnx_path
@@ -402,9 +424,11 @@ class QEFFBaseModel(ABC):
                 specializations,
                 offload_pt_weights,
                 use_onnx_subfunctions,
+                use_dynamo, 
                 retain_full_kv,
             )
         )
+
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():

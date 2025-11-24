@@ -6,10 +6,11 @@
 # -----------------------------------------------------------------------------
 
 import copy
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
+from torch.export import Dim
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -33,6 +34,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.custom_op_utils import select_interface
 
 
 class GemmaRMSNormFunc(torch.autograd.Function):
@@ -59,7 +61,8 @@ class QEffGemma3CustomRMSNormAIC(nn.Module):
     """
 
     def forward(self, hidden_states):
-        return GemmaRMSNormFunc.apply(
+        rms_interface = select_interface(GemmaRMSNormFunc.apply, torch.ops.qefficient.rms_norm)
+        return rms_interface(
             hidden_states,
             self.weight.float() + 1.0,
             self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
@@ -846,6 +849,172 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
+
+    def get_onnx_dynamic_shapes(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        - Handles past_key_values as a list of (key, value) pairs per layer
+
+        For kv_offload=False, dynamic_shapes corresponds to the combined forward:
+            forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values, comp_ctx_lengths?)
+
+        For kv_offload=True, it returns:
+            {
+                "vision": { ... dynamic_shapes for vision ... },
+                "lang":   { ... dynamic_shapes for language, including past_key_values ... },
+            }
+        """
+
+        num_layers = self.language_model.config.num_hidden_layers
+        config = self.language_model.config
+
+        layer_switch = config.sliding_window_pattern if hasattr(config, "sliding_window_pattern") else 2
+        has_sliding_window = hasattr(config, "sliding_window")
+        # sliding_window = getattr(config, "sliding_window", None)
+
+        # Registry of Dim objects so that dims with the same name share the same Dim
+        dim_registry: Dict[str, Dim] = {}
+
+        def get_dim(dim_name: str) -> Dim:
+            if dim_name in dim_registry:
+                return dim_registry[dim_name]
+            if dim_name == "batch_size":
+                d = Dim(dim_name, min=1, max=1024)
+            elif "seq_len" in dim_name:
+                d = Dim(dim_name, min=2, max=4095)
+            elif "img_size" in dim_name:
+                d = Dim.STATIC
+            elif "mm_tokens_per_image" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            elif "ctx_len" in dim_name:
+                d = Dim(dim_name, min=2, max=4095)
+            elif "sliding_window" in dim_name:
+                d = Dim(dim_name, min=2, max=4095)
+            elif "idx" in dim_name:
+                d = Dim.STATIC
+            elif "comp_ctx_lengths" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            else:
+                d = Dim(dim_name, min=1, max=4096)
+            dim_registry[dim_name] = d
+            return d
+
+        def build_past_kv_shapes() -> List[Tuple[Dict[int, Any], Dict[int, Any]]]:
+            """
+            Returns:
+                list of length num_layers, each element is:
+                  (past_key_shape_dict, past_value_shape_dict)
+            past_* tensor shape: (batch_size, num_key_value_heads, cache_len, head_dim)
+            where cache_len is either ctx_len or sliding_window, depending on layer.
+            """
+            past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+            for i in range(num_layers):
+                # Decide whether this layer uses global ctx_len or sliding_window
+                if has_sliding_window and ((i + 1) % layer_switch):
+                    # sliding-window layer
+                    cache_len_dim = get_dim("sliding_window")
+                else:
+                    # global cache layer
+                    cache_len_dim = get_dim("ctx_len")
+
+                past_key_shape = {
+                    0: get_dim("batch_size"),
+                    2: cache_len_dim,
+                }
+                past_value_shape = {
+                    0: get_dim("batch_size"),
+                    2: cache_len_dim,
+                }
+                past_kv_shapes.append((past_key_shape, past_value_shape))
+            return past_kv_shapes
+
+        # kv_offload=True  →  separate vision/lang exports
+        if kv_offload:
+            # Vision encoder: pixel_values only
+            vision_dynamic_shapes: Dict[str, Dict[int, Any]] = {
+                "pixel_values": {
+                    0: get_dim("batch_size"),
+                    2: get_dim("img_size"),
+                    3: get_dim("img_size"),
+                }
+            }
+
+            # Language decoder wrapper forward:
+            # forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths=None)
+            lang_dynamic_shapes: Dict[str, Any] = {
+                "input_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "vision_embeds": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("mm_tokens_per_image"),
+                },
+                "position_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "image_idx": {
+                    0: get_dim("idx"),
+                    1: get_dim("idx"),
+                },
+            }
+
+            lang_dynamic_shapes["past_key_values"] = build_past_kv_shapes()
+
+            if comp_ctx_lengths is not None:
+                lang_dynamic_shapes["comp_ctx_lengths"] = {
+                    0: get_dim("comp_ctx_lengths"),
+                }
+
+            return {
+                "vision": vision_dynamic_shapes,
+                "lang": lang_dynamic_shapes,
+            }
+
+        # kv_offload=False  →  combined forward
+        # Combined forward signature in QEffGemma3ForConditionalGeneration:
+        # forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values, comp_ctx_lengths=None)
+
+        dynamic_shapes: Dict[str, Any] = {}
+
+        # pixel_values: (batch, 3, img_size, img_size)
+        dynamic_shapes["pixel_values"] = {
+            0: get_dim("batch_size"),
+            2: get_dim("img_size"),
+            3: get_dim("img_size"),
+        }
+
+        # input_ids: (batch, seq_len)
+        dynamic_shapes["input_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
+
+        # position_ids: (batch, seq_len)
+        dynamic_shapes["position_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
+
+        # image_idx: currently (1, 1); we keep dims static
+        dynamic_shapes["image_idx"] = {
+            0: get_dim("idx"),
+            1: get_dim("idx"),
+        }
+
+        # past_key_values: list[num_layers] of (past_key, past_value)
+        dynamic_shapes["past_key_values"] = build_past_kv_shapes()
+
+        if comp_ctx_lengths is not None:
+            dynamic_shapes["comp_ctx_lengths"] = {
+                0: get_dim("comp_ctx_lengths"),
+            }
+
+        return dynamic_shapes
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         n_heads = config.num_key_value_heads

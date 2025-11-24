@@ -5,11 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
+from torch.export import Dim
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
 )
@@ -346,6 +347,147 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         else:
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
+
+    def get_onnx_dynamic_shapes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+        """
+        - Handles past_key_values as a list of (key, value) pairs per layer
+
+        For kv_offload=False (combined image_text_to_text forward), it returns a flat dict
+        whose top-level keys match the forward signature:
+
+            forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values)
+
+        For kv_offload=True, it returns:
+            {
+                "vision": { ... dynamic_shapes for vision ... },
+                "lang":   { ... dynamic_shapes for language, including past_key_values ... },
+            }
+        """
+
+        num_layers = self.config.text_config.num_hidden_layers
+
+        # Registry of Dim objects so that dims with the same name share the same Dim
+        dim_registry: Dict[str, Dim] = {}
+
+        def get_dim(dim_name: str) -> Dim:
+            if dim_name in dim_registry:
+                return dim_registry[dim_name]
+            if dim_name == "batch_size":
+                d = Dim(dim_name, min=2, max=1023)
+            elif "seq_len" in dim_name:
+                d = Dim(dim_name, min=2, max=4095)
+            elif "img_size" in dim_name:
+                # Image spatial dims are fixed for Llava(336x336)
+                d = Dim.STATIC
+            elif "num_images" in dim_name:
+                d = Dim(dim_name, min=1, max=16)
+            elif "img_tiles" in dim_name:
+                d = Dim(dim_name, min=1, max=32)
+            elif "idx" in dim_name:
+                # image_idx dimensions kept static
+                d = Dim.STATIC
+            elif "ctx_len" in dim_name:
+                d = Dim(dim_name, min=2, max=4096)
+            else:
+                d = Dim(dim_name, min=1, max=4096)
+            dim_registry[dim_name] = d
+            return d
+
+        # kv_offload=True  →  separate vision/lang exports
+        if kv_offload:
+            # Vision: pixel_values: (batch, 3, img_size, img_size)
+            vision_dynamic_shapes: Dict[str, Dict[int, Any]] = {
+                "pixel_values": {
+                    0: get_dim("batch_size"),
+                    2: get_dim("img_size"),
+                    3: get_dim("img_size"),
+                }
+            }
+
+            # Lang: input_ids, position_ids, vision_embeds, image_idx, past_kv
+            lang_dynamic_shapes: Dict[str, Any] = {
+                "input_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "position_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "vision_embeds": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("vision_size"),
+                },
+                "image_idx": {
+                    0: get_dim("idx"),
+                    1: get_dim("idx"),
+                },
+            }
+            past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+            for _ in range(num_layers):
+                past_key_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("ctx_len"),
+                }
+                past_value_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("ctx_len"),
+                }
+                past_kv_shapes.append((past_key_shape, past_value_shape))
+
+            lang_dynamic_shapes["past_key_values"] = past_kv_shapes
+
+            return {
+                "vision": vision_dynamic_shapes,
+                "lang": lang_dynamic_shapes,
+            }
+
+        else:
+            # Combined image_text_to_text forward:
+            # forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values)
+
+            dynamic_shapes: Dict[str, Any] = {}
+
+            # pixel_values: (batch, 3, img_size, img_size)
+            dynamic_shapes["pixel_values"] = {
+                0: get_dim("batch_size"),
+                2: get_dim("img_size"),
+                3: get_dim("img_size"),
+            }
+
+            # input_ids: (batch, seq_len)
+            dynamic_shapes["input_ids"] = {
+                0: get_dim("batch_size"),
+                1: get_dim("seq_len"),
+            }
+
+            # position_ids: (batch, seq_len)
+            dynamic_shapes["position_ids"] = {
+                0: get_dim("batch_size"),
+                1: get_dim("seq_len"),
+            }
+
+            # image_idx: (1, 1) or (batch, 1); we keep idx dims static
+            dynamic_shapes["image_idx"] = {
+                0: get_dim("idx"),
+                1: get_dim("idx"),
+            }
+
+            past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+            for _ in range(num_layers):
+                past_key_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("ctx_len"),
+                }
+                past_value_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("ctx_len"),
+                }
+                past_kv_shapes.append((past_key_shape, past_value_shape))
+
+            dynamic_shapes["past_key_values"] = past_kv_shapes
+
+            return dynamic_shapes
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

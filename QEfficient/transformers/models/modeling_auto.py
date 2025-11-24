@@ -14,6 +14,8 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 import torch.nn as nn
+
+# Optional: helps type hints
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -310,7 +312,18 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
+
+
+    def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes):
+        pass
+
+    def export(
+        self,
+        export_dir: Optional[str] = None,
+        use_dynamo: Optional[bool] = False,
+        **kwargs
+    ) -> str:
+
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -342,12 +355,19 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         output_names = ["output"]
 
+        dynamic_shapes = None
+        if use_dynamo:
+            dynamic_shapes = self.convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
+
         return self._export(
             example_inputs,
             output_names,
             dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes,
+            **kwargs
         )
 
     def compile(
@@ -361,6 +381,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -433,6 +454,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
@@ -597,7 +619,18 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
+
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        dynamic_shapes,
+        export_dir=None,
+        offload_pt_weights=True,
+        use_dynamo: Optional[bool] = False,
+        **kwargs
+    ):
         """
         Exports the vision encoder component to ONNX format.
 
@@ -625,9 +658,12 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             inputs,
             output_names,
             dynamic_axes,
+            dynamic_shapes=dynamic_shapes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            use_dynamo=use_dynamo,
+            **kwargs
         )
 
     def compile(
@@ -641,6 +677,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         aic_num_cores,
         custom_io,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -684,6 +721,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             aic_num_cores=aic_num_cores,
             custom_io=custom_io,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
@@ -742,7 +780,19 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
             BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
+
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        dynamic_shapes,
+        export_dir=None,
+        offload_pt_weights=True,
+        use_dynamo: Optional[bool] = False,
+        **kwargs
+    ):
+
         """
         Exports the language decoder component to ONNX format.
 
@@ -770,9 +820,13 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             inputs,
             output_names,
             dynamic_axes,
+            dynamic_shapes=dynamic_shapes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            use_dynamo=use_dynamo,
+            **kwargs
+
         )
 
     def compile(
@@ -786,6 +840,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         aic_num_cores,
         custom_io,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -829,6 +884,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             aic_num_cores=aic_num_cores,
             custom_io=custom_io,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
@@ -968,6 +1024,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self,
         export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -991,6 +1048,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             A list containing the paths to the generated ONNX graph files for both components.
         """
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
+
         try:
             inputs = self.model.get_dummy_inputs(
                 kv_offload=True,
@@ -1005,6 +1063,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         except TypeError:
             inputs = self.model.get_dummy_inputs(kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode)
             dynamic_axes = self.model.get_onnx_dynamic_axes(
+                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
+            )
+
+        dynamic_shapes = None
+        if use_dynamo:
+            dynamic_shapes = self.model.get_onnx_dynamic_shapes(
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
             )
         output_names = self.model.get_output_names(kv_offload=True)
@@ -1029,6 +1093,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             export_dir=export_dir,
             offload_pt_weights=False,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes["vision"],
         )
         self.lang_model.export(
             inputs["lang"],
@@ -1037,6 +1103,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             export_dir=export_dir,
             offload_pt_weights=True,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes["lang"],
         )
 
         return self.onnx_path
@@ -1062,6 +1130,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1185,6 +1254,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ):
             self.export(
                 use_onnx_subfunctions=use_onnx_subfunctions,
+                use_dynamo=use_dynamo,
             )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
@@ -1204,6 +1274,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
                 use_onnx_subfunctions=use_onnx_subfunctions,
+                use_dynamo=use_dynamo,
                 **compiler_options,
             )
 
@@ -1233,6 +1304,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io=custom_io_lang,
                 mxint8_kv_cache=mxint8_kv_cache,
                 use_onnx_subfunctions=use_onnx_subfunctions,
+                use_dynamo=use_dynamo,
                 **compiler_options,
             )
         return self.qpc_path
@@ -1684,6 +1756,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         self,
         export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -1701,15 +1774,21 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         str
             Path to the generated ONNX graph file.
         """
+
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         output_names = self.model.get_output_names()
+        dynamic_shapes = None
+        if use_dynamo:
+            dynamic_shapes = self.model.get_onnx_dynamic_shapes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         return self._export(
-            inputs,
-            output_names,
-            dynamic_axes,
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes,
         )
 
     def compile(
@@ -1731,6 +1810,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1849,6 +1929,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
         return self.qpc_path
@@ -2558,12 +2639,113 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         )
 
+
+
+    def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
+        """
+        Convert ONNX dynamic_axes format to torch.export dynamic_shapes format
+
+        Args:
+            dynamic_axes: ONNX format like {"input_ids": {0: "batch_size", 1: "seq_len"}}
+
+        Returns:
+            dynamic_shapes: torch.export format with Dim objects matching model forward args
+        """
+        from torch.export import Dim
+
+        # Create dimension registry to reuse Dim objects with same names
+        dim_registry = {}
+        dynamic_shapes = {}
+
+        # Handle regular model inputs (not past_key_values)
+        # These match the QEffLlamaForCausalLM forward signature:
+        # input_ids, attention_mask, position_ids, past_key_values, batch_index, etc.
+        for input_name, axes_map in dynamic_axes.items():
+            if not input_name.startswith("past_"):
+                input_dynamic_shapes = {}
+                for axis_idx, dim_name in axes_map.items():
+                    # Create or reuse Dim object for this dimension name
+                    if dim_name not in dim_registry:
+                        if dim_name == "batch_size":
+                            dim_registry[dim_name] = Dim("batch_size")
+                        elif "seq_len" in dim_name:
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=131071)
+                        elif "ctx_len" in dim_name:
+                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=131071)
+                        else:
+                            dim_registry[dim_name] = Dim.DYNAMIC
+
+                    input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+
+                dynamic_shapes[input_name] = input_dynamic_shapes
+
+        # Handle past_key_values specially - collect all past_key.X and past_value.X
+        past_keys = {}
+        past_values = {}
+
+        for input_name, axes_map in dynamic_axes.items():
+            if input_name.startswith("past_key."):
+                layer_idx = int(input_name.split(".")[1])
+                layer_dynamic_shapes = {}
+                for axis_idx, dim_name in axes_map.items():
+                    if dim_name not in dim_registry:
+                        if dim_name == "batch_size":
+                            dim_registry[dim_name] = Dim("batch_size")
+                        elif "seq_len" in dim_name:
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=131071)
+                        elif "ctx_len" in dim_name:
+                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=131071)
+                        else:
+                            dim_registry[dim_name] = Dim.DYNAMIC
+                    layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+                past_keys[layer_idx] = layer_dynamic_shapes
+
+            elif input_name.startswith("past_value."):
+                layer_idx = int(input_name.split(".")[1])
+                layer_dynamic_shapes = {}
+                for axis_idx, dim_name in axes_map.items():
+                    if dim_name not in dim_registry:
+                        if dim_name == "batch_size":
+                            dim_registry[dim_name] = Dim("batch_size")
+                        elif "seq_len" in dim_name:
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=131071)
+                        elif "ctx_len" in dim_name:
+                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=131071)
+                        else:
+                            dim_registry[dim_name] = Dim.DYNAMIC
+                    layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+                past_values[layer_idx] = layer_dynamic_shapes
+
+        # Reconstruct past_key_values as nested structure if we have past keys/values
+        if past_keys or past_values:
+            max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+            past_kv_shapes = []
+
+            for layer_idx in range(max_layer + 1):
+                layer_shapes = []
+                if layer_idx in past_keys:
+                    layer_shapes.append(past_keys[layer_idx])
+                else:
+                    layer_shapes.append({})
+
+                if layer_idx in past_values:
+                    layer_shapes.append(past_values[layer_idx])
+                else:
+                    layer_shapes.append({})
+
+                past_kv_shapes.append(layer_shapes)
+
+            dynamic_shapes["past_key_values"] = past_kv_shapes
+
+        return dynamic_shapes
+            
     def export(
-        self,
-        export_dir: Optional[str] = None,
+        self, 
+        export_dir: Optional[str] = None, 
         prefill_only: Optional[bool] = False,
-        prefill_seq_len: Optional[int] = None,
-        **kwargs,
+        prefill_seq_len: Optional[int] = None, 
+        use_dynamo: bool = False, 
+        **kwargs
     ) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
@@ -2579,6 +2761,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If not provided, the default export directory is used.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        use_dynamo: bool, optional
+            whether to enable dynamo during export.
         Returns
         -------
         str
@@ -2700,12 +2884,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
+
+        dynamic_shapes = None
+        if use_dynamo:
+            dynamic_shapes = self.convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
+
         return self._export(
             example_inputs,
             output_names,
             dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes,
             offload_pt_weights=kwargs.get("offload_pt_weights", True),
             prefill_only=prefill_only,
         )
@@ -2853,6 +3044,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -2896,6 +3088,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        use_dynamo: bool,optional
+            whether to enable dynamo during export
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -3080,6 +3274,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
