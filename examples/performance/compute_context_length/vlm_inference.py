@@ -30,6 +30,7 @@ def run_model(
     kv_offload=True,
     prefill_seq_len=32,
     ctx_len=8192,
+    ccl_enabled=False,
     comp_ctx_lengths_prefill=None,
     comp_ctx_lengths_decode=None,
     generation_len=128,
@@ -76,11 +77,7 @@ def run_model(
         token=hf_token,
         attn_implementation="eager",
         kv_offload=kv_offload,
-        qaic_config={
-            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
-            "ctx_len": ctx_len,
-        },
+        ccl_enabled=ccl_enabled,
     )
 
     ## STEP 2: Export & Compile the Model
@@ -93,6 +90,8 @@ def run_model(
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
     print(f"Model compiled successfully to: {qpc_path}")
 
@@ -178,6 +177,11 @@ def main():
         help="Maximum context length",
     )
     parser.add_argument(
+        "--ccl-enabled",
+        action="store_true",
+        help="Enable compute-context-length (CCL) feature",
+    )
+    parser.add_argument(
         "--comp-ctx-lengths-prefill",
         type=lambda x: [int(i) for i in x.split(",")],
         default="4096",
@@ -223,6 +227,7 @@ def main():
         kv_offload=args.kv_offload,
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
+        ccl_enabled=args.ccl_enabled,
         comp_ctx_lengths_prefill=args.comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=args.comp_ctx_lengths_decode,
         generation_len=args.generation_len,
