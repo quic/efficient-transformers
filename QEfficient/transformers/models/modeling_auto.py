@@ -2499,8 +2499,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         self.prefill(True)
         self.hash_params["prefill_only"] = True
-        self.hash_params["num_blocks"] = num_q_blocks
-        self.hash_params["num_ffn_blocks"] = num_ffn_blocks
+        self.hash_params["NUM_Q_BLOCKS"] = num_q_blocks
+        self.hash_params["NUM_FFN_BLOCKS"] = num_ffn_blocks
+        self.hash_params["ENABLE_OPT_SWA"] = os.environ.get("ENABLE_OPT_SWA", "0")
         return (
             min_seq_len
             if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
