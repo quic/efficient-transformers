@@ -12,7 +12,6 @@ from typing import Callable, Dict, List, Optional, Union
 import numpy as np
 import torch
 from diffusers import FluxPipeline
-from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
 from tqdm import tqdm
 
@@ -34,7 +33,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.logging_utils import logger
 
 
-class QEFFFluxPipeline(FluxPipeline):
+class QEFFFluxPipeline:
     """
     QEfficient-optimized Flux pipeline for text-to-image generation on Qualcomm AI hardware.
 
@@ -59,6 +58,7 @@ class QEFFFluxPipeline(FluxPipeline):
         """
 
         # Wrap model components with QEfficient optimized versions
+        self.model = model
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
         self.transformer = QEffFluxTransformerModel(model.transformer, use_onnx_subfunctions=use_onnx_subfunctions)
@@ -83,22 +83,6 @@ class QEFFFluxPipeline(FluxPipeline):
         self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
             latent_sample, return_dict
         )
-
-        # Calculate VAE scale factor from model config
-        self.vae_scale_factor = (
-            2 ** (len(model.vae.config.block_out_channels) - 1) if getattr(model, "vae", None) else 8
-        )
-
-        # Flux uses 2x2 patches, so multiply scale factor by patch size
-        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
-
-        # Set tokenizer max length with fallback
-        self.t_max_length = (
-            model.tokenizer.model_max_length if hasattr(model, "tokenizer") and model.tokenizer is not None else 77
-        )
-
-        # Calculate latent dimensions based on image size and VAE scale factor
-        self.default_sample_size = 128
 
         # Sync max position embeddings between text encoders
         self.text_encoder_2.model.config.max_position_embeddings = (
@@ -153,7 +137,7 @@ class QEFFFluxPipeline(FluxPipeline):
         Returns:
             str: Path to the export directory
         """
-        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
+        for _, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration for this module
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_config()
 
@@ -203,11 +187,12 @@ class QEFFFluxPipeline(FluxPipeline):
             self.export()
 
         # Load compilation configuration
-        if self.custom_config is None:
-            config_manager(self, config_source=compile_config)
+        config_manager(self, config_source=compile_config)
 
         # Calculate compressed latent dimension using utility function
-        cl, latent_height, latent_width = calculate_compressed_latent_dimension(height, width, self.vae_scale_factor)
+        cl, latent_height, latent_width = calculate_compressed_latent_dimension(
+            height, width, self.model.vae_scale_factor
+        )
 
         # Prepare dynamic specialization updates based on image dimensions
         specialization_updates = {
@@ -502,14 +487,13 @@ class QEFFFluxPipeline(FluxPipeline):
         if height is None or width is None:
             logger.warning("Height or width is None. Setting default values of 512 for both dimensions.")
 
-        # Step 1: Load configuration and compile models if needed
-        if custom_config_path is not None:
-            config_manager(self, custom_config_path)
-            set_module_device_ids(self)
-
         self.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
+
+        # Set device IDs for all modules based on configuration
+        set_module_device_ids(self)
+
         # Validate all inputs
-        self.check_inputs(
+        self.model.check_inputs(
             prompt,
             prompt_2,
             height,
@@ -572,7 +556,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # Step 5: Prepare initial latents
         num_channels_latents = self.transformer.model.config.in_channels // 4
-        latents, latent_image_ids = self.prepare_latents(
+        latents, latent_image_ids = self.model.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
             height,
@@ -584,7 +568,7 @@ class QEFFFluxPipeline(FluxPipeline):
         )
 
         # Step 6: Calculate compressed latent dimension for transformer buffer allocation
-        cl, _, _ = calculate_compressed_latent_dimension(height, width, self.vae_scale_factor)
+        cl, _, _ = calculate_compressed_latent_dimension(height, width, self.model.vae_scale_factor)
 
         # Initialize transformer inference session
         if self.transformer.qpc_session is None:
@@ -602,11 +586,8 @@ class QEFFFluxPipeline(FluxPipeline):
         self.scheduler.set_begin_index(0)
 
         # Step 7: Denoising loop
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
+        with self.model.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                if self.interrupt:
-                    continue
-
                 # Prepare timestep embedding
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
                 temb = self.transformer.model.time_text_embed(timestep, pooled_prompt_embeds)
@@ -684,7 +665,7 @@ class QEFFFluxPipeline(FluxPipeline):
             image = latents
         else:
             # Unpack and denormalize latents
-            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            latents = self.model._unpack_latents(latents, height, width, self.model.vae_scale_factor)
             latents = (latents / self.vae_decode.model.scaling_factor) + self.vae_decode.model.shift_factor
 
             # Initialize VAE decoder inference session
@@ -706,7 +687,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
             # Post-process image
             image_tensor = torch.from_numpy(image["sample"])
-            image = self.image_processor.postprocess(image_tensor, output_type=output_type)
+            image = self.model.image_processor.postprocess(image_tensor, output_type=output_type)
 
             # Build performance metrics
             perf_metrics = [
