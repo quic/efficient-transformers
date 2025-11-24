@@ -22,6 +22,8 @@ import torch
 from QEfficient.base.onnx_transforms import CustomOpTransform, OnnxTransform, RenameFunctionOutputsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxScatter
+from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
@@ -184,6 +186,8 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
+        dynamic_shapes: Optional[Dict[str, Dict[int, any]]] = None,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
@@ -250,6 +254,7 @@ class QEFFBaseModel(ABC):
         try:
             # Initialize the registry with your custom ops
             export_kwargs = {} if export_kwargs is None else export_kwargs
+            export_kwargs["dynamo"] = use_dynamo
             if use_onnx_subfunctions:
                 warnings.warn(
                     "The subfunction feature is experimental. Please note that using compile consecutively with and without subfunction may produce inconsistent results."
@@ -261,14 +266,26 @@ class QEFFBaseModel(ABC):
                 self._onnx_transforms.append(RenameFunctionOutputsTransform)
                 self._onnx_transforms.append(CustomOpTransform)
 
+            if use_dynamo:
+                dynamic_axes = None
+                export_kwargs["report"] = True
+                # export_kwargs["verify"] =True
+                export_kwargs["custom_translation_table"] = {
+                    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
+                    torch.ops.qefficient.ctx_gather.default: CtxGather,
+                    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
+                }
+
             torch.onnx.export(
                 self.model,
-                (example_inputs,),
-                str(tmp_onnx_path),
+                args=(),
+                kwargs=example_inputs,
+                f=str(tmp_onnx_path),
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                dynamic_shapes=dynamic_shapes,
+                opset_version=18,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
@@ -323,6 +340,7 @@ class QEFFBaseModel(ABC):
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -350,7 +368,7 @@ class QEFFBaseModel(ABC):
         """
 
         if onnx_path is None and self.onnx_path is None:
-            self.export(use_onnx_subfunctions=use_onnx_subfunctions)
+            self.export(use_onnx_subfunctions=use_onnx_subfunctions, use_dynamo=use_dynamo)
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
