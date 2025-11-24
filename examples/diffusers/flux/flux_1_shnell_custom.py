@@ -35,12 +35,10 @@ from QEfficient import QEFFFluxPipeline
 # Note: Smaller dimensions = faster generation but lower resolution
 
 # Option 1: Basic initialization with custom image dimensions
-# NOTE: use_onnx_function=True enables modular ONNX export optimizations (Experimental so not recommended)
+# NOTE: use_onnx_subfunctions=True enables modular ONNX export optimizations (Experimental so not recommended)
 #       This feature improves export performance by breaking down the model into smaller,
-#       more manageable ONNX functions, which can lead to better compilation and runtime efficiency.
-pipeline = QEFFFluxPipeline.from_pretrained(
-    "black-forest-labs/FLUX.1-schnell", height=256, width=256, use_onnx_function=False
-)
+#       more manageable ONNX functions, which can lead to improve export/compile time.
+pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
 # Option 2: Advanced initialization with custom modules
 # Uncomment and modify to use your own custom components:
@@ -98,14 +96,15 @@ pipeline = QEFFFluxPipeline.from_pretrained(
 # IMAGE GENERATION WITH CUSTOM RUNTIME CONFIGURATION
 # ============================================================================
 # Generate an image using the configured pipeline.
-# - custom_config_path: Path to JSON file with runtime settings (device IDs, etc.)
 #
 # Note: Using custom_config_path provides flexibility to set device_ids for each
-#       module, so you can skip the separate pipeline.compile() step
+#       module, so you can skip the separate pipeline.compile() step.
 
 output = pipeline(
     prompt="A girl laughing",
     custom_config_path="examples/diffusers/flux/flux_config.json",
+    height=256,
+    width=512,
     guidance_scale=0.0,
     num_inference_steps=4,
     max_sequence_length=256,

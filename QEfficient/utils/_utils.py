@@ -532,6 +532,10 @@ def create_model_params(qeff_model, **kwargs) -> Dict:
     """
     model_params = copy.deepcopy(kwargs)
     model_params = {k: v for k, v in model_params.items() if k in KWARGS_INCLUSION_LIST}
+
+    # TODO: Refactor this configuration handling to occur during export phase
+    # This is necessary because diffusion models have a different way to change number of layers
+    # that isn't properly considered in the current implementation
     model_params["config"] = (
         qeff_model.model.config.to_diff_dict()
         if hasattr(qeff_model.model.config, "to_diff_dict")

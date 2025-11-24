@@ -35,7 +35,6 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxAttnProcessor,
     QEffFluxSingleTransformerBlock,
     QEffFluxTransformer2DModel,
-    QEffFluxTransformer2DModelOF,
     QEffFluxTransformerBlock,
 )
 
@@ -76,15 +75,6 @@ class NormalizationTransform(ModuleMappingTransform):
         AdaLayerNormZeroSingle: QEffAdaLayerNormZeroSingle,
         AdaLayerNormContinuous: QEffAdaLayerNormContinuous,
     }
-
-    @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
-        model, transformed = super().apply(model)
-        return model, transformed
-
-
-class OnnxFunctionTransform(ModuleMappingTransform):
-    _module_mapping = {QEffFluxTransformer2DModel, QEffFluxTransformer2DModelOF}
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:

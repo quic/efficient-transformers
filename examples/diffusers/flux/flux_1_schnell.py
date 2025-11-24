@@ -29,8 +29,8 @@ import torch
 from QEfficient import QEFFFluxPipeline
 
 # Initialize the FLUX.1-schnell pipeline from pretrained weights
-# use_onnx_function=True enables ONNX-based optimizations for faster compilation
-pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", use_onnx_function=False)
+# use_onnx_subfunctions=True enables ONNX-based optimizations for faster compilation
+pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", use_onnx_subfunctions=False)
 
 # Generate an image from a text prompt
 output = pipeline(

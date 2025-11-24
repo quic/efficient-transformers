@@ -17,7 +17,10 @@ from QEfficient.diffusers.models.pytorch_transforms import (
     AttentionTransform,
     CustomOpsTransform,
     NormalizationTransform,
-    OnnxFunctionTransform,
+)
+from QEfficient.diffusers.models.transformers.transformer_flux import (
+    QEffFluxSingleTransformerBlock,
+    QEffFluxTransformerBlock,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
@@ -377,28 +380,20 @@ class QEffFluxTransformerModel(QEFFBaseModel):
     _pytorch_transforms = [AttentionTransform, NormalizationTransform, CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, use_onnx_function: bool) -> None:
+    def __init__(self, model: nn.Module, use_onnx_subfunctions: bool) -> None:
         """
         Initialize the Flux transformer wrapper.
 
         Args:
             model (nn.Module): The Flux transformer model to wrap
-            use_onnx_function (bool): Whether to export transformer blocks as ONNX functions
+            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
         """
-
-        # Optionally apply ONNX function transform for modular export
-
-        if use_onnx_function:
-            model, _ = OnnxFunctionTransform.apply(model)
-
         super().__init__(model)
-
-        if use_onnx_function:
-            self._pytorch_transforms.append(OnnxFunctionTransform)
 
         # Ensure model is on CPU to avoid meta device issues
         self.model = model.to("cpu")
+        self.use_onnx_subfunctions = use_onnx_subfunctions
 
     def get_onnx_config(
         self, batch_size: int = 1, seq_length: int = 256, cl: int = 4096
@@ -423,17 +418,12 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         example_inputs = {
             # Latent representation of the image
             "hidden_states": torch.randn(batch_size, cl, self.model.config.in_channels, dtype=torch.float32),
-            # Text embeddings from T5 encoder
             "encoder_hidden_states": torch.randn(
                 batch_size, seq_length, self.model.config.joint_attention_dim, dtype=torch.float32
             ),
-            # Pooled text embeddings from CLIP encoder
             "pooled_projections": torch.randn(batch_size, self.model.config.pooled_projection_dim, dtype=torch.float32),
-            # Diffusion timestep (normalized to [0, 1])
             "timestep": torch.tensor([1.0], dtype=torch.float32),
-            # Position IDs for image patches
             "img_ids": torch.randn(cl, 3, dtype=torch.float32),
-            # Position IDs for text tokens
             "txt_ids": torch.randn(seq_length, 3, dtype=torch.float32),
             # AdaLN embeddings for dual transformer blocks
             # Shape: [num_layers, 12 chunks (6 for norm1 + 6 for norm1_context), hidden_dim]
@@ -490,6 +480,9 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         Returns:
             str: Path to the exported ONNX model
         """
+        if self.use_onnx_subfunctions:
+            export_kwargs = {"export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock}}
+
         return self._export(
             example_inputs=inputs,
             output_names=output_names,
@@ -497,35 +490,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             export_dir=export_dir,
             export_kwargs=export_kwargs,
         )
-
-    def get_specializations(self, batch_size: int, seq_len: int, cl: int) -> List[Dict]:
-        """
-        Generate specialization configuration for compilation.
-
-        Specializations define fixed values for certain dimensions to enable
-        compiler optimizations specific to the target use case.
-
-        Args:
-            batch_size (int): Batch size for inference
-            seq_len (int): Text sequence length
-            cl (int): Compressed latent dimension
-
-        Returns:
-            List[Dict]: Specialization configurations for the compiler
-        """
-        specializations = [
-            {
-                "batch_size": batch_size,
-                "stats-batchsize": batch_size,
-                "num_layers": self.model.config.num_layers,
-                "num_single_layers": self.model.config.num_single_layers,
-                "seq_len": seq_len,
-                "cl": cl,
-                "steps": 1,
-            }
-        ]
-
-        return specializations
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
         """

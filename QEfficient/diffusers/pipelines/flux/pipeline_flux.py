@@ -7,7 +7,7 @@
 
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -24,6 +24,7 @@ from QEfficient.diffusers.pipelines.pipeline_module import (
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
+    calculate_compressed_latent_dimension,
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
@@ -47,21 +48,21 @@ class QEFFFluxPipeline(FluxPipeline):
 
     _hf_auto_class = FluxPipeline
 
-    def __init__(self, model, use_onnx_function: bool, *args, **kwargs):
+    def __init__(self, model, use_onnx_subfunctions: bool, *args, **kwargs):
         """
         Initialize the QEfficient Flux pipeline.
 
         Args:
             model: Pre-loaded FluxPipeline model
-            use_onnx_function (bool): Whether to export transformer blocks as ONNX functions
+            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
             **kwargs: Additional arguments including height and width
         """
+
         # Wrap model components with QEfficient optimized versions
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
-        self.transformer = QEffFluxTransformerModel(model.transformer, use_onnx_function=use_onnx_function)
+        self.transformer = QEffFluxTransformerModel(model.transformer, use_onnx_subfunctions=use_onnx_subfunctions)
         self.vae_decode = QEffVAE(model, "decoder")
-        self.use_onnx_function = use_onnx_function
 
         # Store all modules in a dictionary for easy iteration during export/compile
         self.modules = {
@@ -77,10 +78,6 @@ class QEFFFluxPipeline(FluxPipeline):
         self.text_encoder_2.tokenizer = model.tokenizer_2
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
-
-        # Set default image dimensions
-        self.height = kwargs.get("height", 256)
-        self.width = kwargs.get("width", 256)
 
         # Override VAE forward method to use decode directly
         self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
@@ -102,10 +99,6 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # Calculate latent dimensions based on image size and VAE scale factor
         self.default_sample_size = 128
-        self.latent_height = self.height // self.vae_scale_factor
-        self.latent_width = self.width // self.vae_scale_factor
-        # cl = compressed latent dimension (divided by 4 for Flux's 2x2 packing)
-        self.cl = (self.latent_height * self.latent_width) // 4
 
         # Sync max position embeddings between text encoders
         self.text_encoder_2.model.config.max_position_embeddings = (
@@ -116,9 +109,7 @@ class QEFFFluxPipeline(FluxPipeline):
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
-        use_onnx_function: bool = False,
-        height: Optional[int] = 512,
-        width: Optional[int] = 512,
+        use_onnx_subfunctions: bool = False,
         **kwargs,
     ):
         """
@@ -126,7 +117,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         Args:
             pretrained_model_name_or_path (str or os.PathLike): HuggingFace model ID or local path
-            use_onnx_function (bool): Whether to export transformer blocks as ONNX functions
+            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
             height (int): Target image height (default: 512)
             width (int): Target image width (default: 512)
             **kwargs: Additional arguments passed to FluxPipeline.from_pretrained
@@ -144,10 +135,8 @@ class QEFFFluxPipeline(FluxPipeline):
 
         return cls(
             model=model,
-            use_onnx_function=use_onnx_function,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
-            height=height,
-            width=width,
             **kwargs,
         )
 
@@ -168,20 +157,12 @@ class QEFFFluxPipeline(FluxPipeline):
             # Get ONNX export configuration for this module
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_config()
 
-            export_kwargs = {}
-            # Special handling for transformer: export blocks as functions if enabled
-            if module_name == "transformer" and self.use_onnx_function:
-                export_kwargs = {
-                    "export_modules_as_functions": self.transformer.model._block_classes,
-                }
-
             # Export the module to ONNX
             module_obj.export(
                 inputs=example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 export_dir=export_dir,
-                export_kwargs=export_kwargs,
             )
 
     @staticmethod
@@ -194,7 +175,9 @@ class QEFFFluxPipeline(FluxPipeline):
         """
         return os.path.join(os.path.dirname(__file__), "flux_config.json")
 
-    def compile(self, compile_config: Optional[str] = None, parallel: bool = False) -> None:
+    def compile(
+        self, compile_config: Optional[str] = None, parallel: bool = False, height: int = 512, width: int = 512
+    ) -> None:
         """
         Compile ONNX models for deployment on Qualcomm AI hardware.
 
@@ -204,7 +187,7 @@ class QEFFFluxPipeline(FluxPipeline):
         Args:
             compile_config (str, optional): Path to JSON configuration file.
                                            If None, uses default configuration.
-            parallel (bool): If True, compile modules in parallel using ProcessPoolExecutor.
+            parallel (bool): If True, compile modules in parallel using ThreadPoolExecutor.
                            If False, compile sequentially (default: False).
         """
         # Ensure all modules are exported to ONNX before compilation
@@ -223,12 +206,15 @@ class QEFFFluxPipeline(FluxPipeline):
         if self.custom_config is None:
             config_manager(self, config_source=compile_config)
 
+        # Calculate compressed latent dimension using utility function
+        cl, latent_height, latent_width = calculate_compressed_latent_dimension(height, width, self.vae_scale_factor)
+
         # Prepare dynamic specialization updates based on image dimensions
         specialization_updates = {
-            "transformer": {"cl": self.cl},
+            "transformer": {"cl": cl},
             "vae_decoder": {
-                "latent_height": self.latent_height,
-                "latent_width": self.latent_width,
+                "latent_height": latent_height,
+                "latent_width": latent_width,
             },
         }
 
@@ -448,6 +434,8 @@ class QEFFFluxPipeline(FluxPipeline):
 
     def __call__(
         self,
+        height: int = 512,
+        width: int = 512,
         prompt: Union[str, List[str]] = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         negative_prompt: Union[str, List[str]] = None,
@@ -464,8 +452,6 @@ class QEFFFluxPipeline(FluxPipeline):
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         output_type: Optional[str] = "pil",
-        return_dict: bool = True,
-        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
@@ -513,19 +499,21 @@ class QEFFFluxPipeline(FluxPipeline):
         """
         device = "cpu"
 
+        if height is None or width is None:
+            logger.warning("Height or width is None. Setting default values of 512 for both dimensions.")
+
         # Step 1: Load configuration and compile models if needed
         if custom_config_path is not None:
             config_manager(self, custom_config_path)
             set_module_device_ids(self)
 
-        self.compile(compile_config=custom_config_path, parallel=parallel_compile)
-
+        self.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
         # Validate all inputs
         self.check_inputs(
             prompt,
             prompt_2,
-            self.height,
-            self.width,
+            height,
+            width,
             negative_prompt=negative_prompt,
             negative_prompt_2=negative_prompt_2,
             prompt_embeds=prompt_embeds,
@@ -587,15 +575,18 @@ class QEFFFluxPipeline(FluxPipeline):
         latents, latent_image_ids = self.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
-            self.height,
-            self.width,
+            height,
+            width,
             prompt_embeds.dtype,
             device,
             generator,
             latents,
         )
 
-        # Step 6: Initialize transformer inference session
+        # Step 6: Calculate compressed latent dimension for transformer buffer allocation
+        cl, _, _ = calculate_compressed_latent_dimension(height, width, self.vae_scale_factor)
+
+        # Initialize transformer inference session
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(
                 str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
@@ -603,7 +594,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # Allocate output buffer for transformer
         output_buffer = {
-            "output": np.random.rand(batch_size, self.cl, self.transformer.model.config.in_channels).astype(np.float32),
+            "output": np.random.rand(batch_size, cl, self.transformer.model.config.in_channels).astype(np.float32),
         }
         self.transformer.qpc_session.set_buffers(output_buffer)
 
@@ -693,7 +684,7 @@ class QEFFFluxPipeline(FluxPipeline):
             image = latents
         else:
             # Unpack and denormalize latents
-            latents = self._unpack_latents(latents, self.height, self.width, self.vae_scale_factor)
+            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
             latents = (latents / self.vae_decode.model.scaling_factor) + self.vae_decode.model.shift_factor
 
             # Initialize VAE decoder inference session
@@ -703,7 +694,7 @@ class QEFFFluxPipeline(FluxPipeline):
                 )
 
             # Allocate output buffer for VAE decoder
-            output_buffer = {"sample": np.random.rand(batch_size, 3, self.height, self.width).astype(np.int32)}
+            output_buffer = {"sample": np.random.rand(batch_size, 3, height, width).astype(np.int32)}
             self.vae_decode.qpc_session.set_buffers(output_buffer)
 
             # Run VAE decoder inference and measure time

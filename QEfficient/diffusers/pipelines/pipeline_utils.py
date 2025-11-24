@@ -18,6 +18,24 @@ from QEfficient.utils._utils import load_json
 from QEfficient.utils.logging_utils import logger
 
 
+def calculate_compressed_latent_dimension(height: int, width: int, vae_scale_factor: int) -> int:
+    """
+    Calculate the compressed latent dimension.
+    Args:
+        height (int): Target image height in pixels
+        width (int): Target image width in pixels
+        vae_scale_factor (int): VAE downsampling factor (typically 8 for Flux)
+
+    Returns:
+        int: Compressed latent dimension (cl) for transformer input buffer allocation
+    """
+    latent_height = height // vae_scale_factor
+    latent_width = width // vae_scale_factor
+    # cl = compressed latent dimension (divided by 4 for Flux's 2x2 packing)
+    cl = (latent_height * latent_width) // 4
+    return cl, latent_height, latent_width
+
+
 def config_manager(cls, config_source: Optional[str] = None):
     """
     JSON-based compilation configuration manager for diffusion pipelines.
