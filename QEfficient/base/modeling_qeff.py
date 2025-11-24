@@ -282,6 +282,15 @@ class QEFFBaseModel(ABC):
             export_kwargs = {} if export_kwargs is None else export_kwargs
             export_kwargs["dynamo"] = use_dynamo
 
+            # fx_graph = torch.export.export(
+            #         self.model,
+            #         args=(),
+            #         kwargs=example_inputs, #IMPORTANT CHANGE: passing all inputs in kwargs rather than as a rigid tuple in args
+            #         dynamic_shapes=dynamic_shapes,
+            #         **export_kwargs,
+            #         strict=True,
+            #     )
+            # result = fx_graph.module()(**example_inputs)
             if use_dynamo:
                 dynamic_axes = None
                 export_kwargs["report"] = True
@@ -533,6 +542,7 @@ class QEFFBaseModel(ABC):
             command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
+        print(command)
         logger.info(f"Running compiler: {' '.join(command)}")
 
         try:
