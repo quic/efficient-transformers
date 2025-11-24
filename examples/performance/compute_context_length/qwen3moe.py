@@ -49,6 +49,5 @@ model.compile(
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
 )
-
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 exec_info = model.generate(prompts=Constants.INPUT_STR, tokenizer=tokenizer)
