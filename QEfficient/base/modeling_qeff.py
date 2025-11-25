@@ -341,8 +341,8 @@ class QEFFBaseModel(ABC):
                 InvalidIndexProvider.SUBFUNC_ENABLED = True
                 output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
                 export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
-                self._onnx_transforms.append(RenameFunctionOutputsTransform)
-                self._onnx_transforms.append(CustomOpTransform)
+                self._onnx_transforms.append("RenameFunctionOutputsTransform")
+                self._onnx_transforms.append("CustomOpTransform")
 
             torch.onnx.export(
                 self.model,
@@ -400,8 +400,8 @@ class QEFFBaseModel(ABC):
         if use_onnx_subfunctions:
             undo_torch_patches()
             InvalidIndexProvider.SUBFUNC_ENABLED = False
-            self._onnx_transforms.remove(CustomOpTransform)
-            self._onnx_transforms.remove(RenameFunctionOutputsTransform)
+            self._onnx_transforms.remove("CustomOpTransform")
+            self._onnx_transforms.remove("RenameFunctionOutputsTransform")
 
         self.onnx_path = onnx_path
         return onnx_path

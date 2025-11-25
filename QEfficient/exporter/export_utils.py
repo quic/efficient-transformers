@@ -18,6 +18,7 @@ import torch
 from onnx import external_data_helper
 
 from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransform
+from QEfficient.utils import constants
 
 
 def export_onnx(
