@@ -359,7 +359,7 @@ def test_finetune_functional(
         clean_up(alpaca_json_path)
 
 
-# @pytest.mark.skip()  # remove when it's clear why diff val_step_loss values are observed in diff runs on existing code (even without PR #478 changes)
+@pytest.mark.skip()  # remove when it's clear why diff val_step_loss values are observed in diff runs on existing code (even without PR #478 changes)
 @pytest.mark.cli
 @pytest.mark.on_qaic
 @pytest.mark.finetune
