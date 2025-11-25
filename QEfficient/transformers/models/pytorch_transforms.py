@@ -63,6 +63,7 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
 from transformers.models.granite.modeling_granite import (
     GraniteAttention,
+    GraniteDecoderLayer,
     GraniteForCausalLM,
     GraniteModel,
     GraniteRMSNorm,
@@ -268,6 +269,7 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
 )
 from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteAttention,
+    QEffGraniteDecoderLayer,
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
@@ -533,6 +535,7 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
+        GraniteDecoderLayer: QEffGraniteDecoderLayer,
         # GraniteMoe
         GraniteMoeModel: QEffGraniteMoeModel,
         GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
