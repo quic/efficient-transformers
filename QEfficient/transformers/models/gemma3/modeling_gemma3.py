@@ -788,8 +788,6 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
-            lang[0].pop("vision_size")
-            lang[1].pop("vision_size")
             return lang, compiler_options
 
     def get_onnx_dynamic_axes(

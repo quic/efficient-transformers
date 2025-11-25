@@ -631,10 +631,9 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         return
 
     full_batch_size = 4
-    image = [image] * full_batch_size
     queries = [query] * full_batch_size
 
-    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image, queries)
+    pytorch_hf_tokens = [pytorch_hf_tokens] * 4
 
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
         model_name,
