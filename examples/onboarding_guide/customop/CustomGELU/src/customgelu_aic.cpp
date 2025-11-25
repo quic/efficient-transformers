@@ -1,4 +1,10 @@
-/* Interface version: Major.Minor.Patch */
+//-----------------------------------------------------------------------------
+//
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: BSD-3-Clause
+//
+//-----------------------------------------------------------------------------
+
 #include "CustomOpAICInterface.h"
 #include "stddef.h"
 

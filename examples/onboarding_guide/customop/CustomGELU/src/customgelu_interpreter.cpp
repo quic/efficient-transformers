@@ -1,4 +1,10 @@
-/* Interface version: Major.Minor.Patch */
+//-----------------------------------------------------------------------------
+//
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: BSD-3-Clause
+//
+//-----------------------------------------------------------------------------
+
 /*
 * This file can be compiled separately and can be loaded using dlopen
 * Compilation command: (tried with gcc 5.5)
