@@ -97,7 +97,7 @@ pip install -U pip
 pip install git+https://github.com/quic/efficient-transformers
 
 # Install a specific branch, tag or commit by appending @ref
-# Release branch (e.g., release/1.20):
+# Release branch (e.g., release/v1.20.0):
 pip install "git+https://github.com/quic/efficient-transformers@release/v1.20.0"
 
 # Or build wheel package using the below command.
