@@ -9,8 +9,134 @@
 
 # A dictionary to hold all reference data for all test sets.
 REFERENCE_DATA = {
-    # Scenario 1: Single-device llama 3.2-1B training on Alpaca dataset.
-    "llama_3.2_1B_config_alpaca_single_device": {
+    # Scenario 1: Single-device llama 3.2-1B training on Alpaca dataset (functional).
+    "llama_3.2_1B_config_alpaca_single_device_functional": {
+        "description": "Baseline for Llama on Alpaca single-device",
+        "train_step_losses": [
+            1.5110896825790405,
+            1.2206485271453857,
+            1.9950776100158691,
+            2.091615676879883,
+            0.9182446599006653,
+            1.1993569135665894,
+            0.36413607001304626,
+            1.6241482496261597,
+            0.8270177245140076,
+            0.7749958634376526,
+        ],
+        "eval_step_losses": [
+            1.4607517719268799,
+            0.24302150309085846,
+            1.0471211671829224,
+            1.642044186592102,
+            1.3949533700942993,
+        ],
+        "train_step_metrics": [
+            4.531666278839111,
+            3.389385223388672,
+            7.352773189544678,
+            8.09798812866211,
+            2.504889488220215,
+            3.3179824352264404,
+            1.43927001953125,
+            5.074095249176025,
+            2.286489486694336,
+            2.1705832481384277,
+        ],
+        "eval_step_metrics": [  # steps 0-9
+            4.309197902679443,
+            1.27509605884552,
+            2.8494362831115723,
+            5.1657185554504395,
+            4.034786224365234,
+        ],
+    },
+    # Scenario 2: Single-device llama 3.2-1B training on GSM8k dataset (functional).
+    "llama_3.2_1B_config_gsm8k_single_device_functional": {
+        "description": "Baseline for Llama on GSM8k single-device",
+        "train_step_losses": [
+            2.250361204147339,
+            2.3252110481262207,
+            1.9360781908035278,
+            1.5984115600585938,
+            1.9874038696289062,
+            1.4579044580459595,
+            1.8975679874420166,
+            1.2175723314285278,
+            1.6473736763000488,
+            1.537960410118103,
+        ],
+        "eval_step_losses": [
+            1.707140326499939,
+            1.7226355075836182,
+            1.1531383991241455,
+            2.0035903453826904,
+            1.3362350463867188,
+        ],
+        "train_step_metrics": [
+            9.49116325378418,
+            10.228837966918945,
+            6.93151330947876,
+            4.945170879364014,
+            7.296566009521484,
+            4.296945571899414,
+            6.66965389251709,
+            3.378974676132202,
+            5.193322658538818,
+            4.655086040496826,
+        ],
+        "eval_step_metrics": [  # steps 0-9
+            5.5131731033325195,
+            5.599266052246094,
+            3.1681201457977295,
+            7.415632247924805,
+            3.8046915531158447,
+        ],
+    },
+    # Scenario 3: Single-device google-bert/bert-base-uncased training on IMDB dataset (functional).
+    "bert_base_uncased_config_imdb_single_device_functional": {
+        "description": "Baseline for google-bert/bert-base-uncased on IMDB single-device",
+        "train_step_losses": [
+            0.390625,
+            0.51220703125,
+            0.9208984375,
+            0.4052734375,
+            1.1640625,
+            0.6533203125,
+            0.5087890625,
+            0.76171875,
+            0.63525390625,
+            0.50146484375,
+        ],
+        "eval_step_losses": [
+            0.6044921875,
+            0.798828125,
+            0.9072265625,
+            0.70361328125,
+            0.59912109375,
+        ],
+        "train_step_metrics": [
+            1.0,
+            1.0,
+            0.5,
+            0.49999988079071045,
+            0.49999988079071045,
+            0.5,
+            0.5000002384185791,
+            0.5000002384185791,
+            0.6250002384185791,
+            0.6249998807907104,
+        ],
+        "eval_step_metrics": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ],
+    },
+    # Scenario 4: Single-device llama 3.2-1B training on Alpaca dataset (assert).
+    "llama_3.2_1B_config_alpaca_single_device_assert": {
         "description": "Baseline for Llama on Alpaca single-device",
         "train_step_losses": [
             1.5110896825790405,
@@ -81,8 +207,8 @@ REFERENCE_DATA = {
             1.9303690195083618,
         ],
     },
-    # Scenario 2: Single-device llama 3.2-1B training on GSM8k dataset.
-    "llama_3.2_1B_config_gsm8k_single_device": {
+    # Scenario 5: Single-device llama 3.2-1B training on GSM8k dataset (assert).
+    "llama_3.2_1B_config_gsm8k_single_device_assert": {
         "description": "Baseline for Llama on GSM8k single-device",
         "train_step_losses": [
             2.250361204147339,
@@ -153,8 +279,8 @@ REFERENCE_DATA = {
             3.69649600982666,
         ],
     },
-    # Scenario 3: Single-device google-bert/bert-base-uncased training on IMDB dataset.
-    "bert_base_uncased_config_imdb_single_device": {
+    # Scenario 6: Single-device google-bert/bert-base-uncased training on IMDB dataset (assert).
+    "bert_base_uncased_config_imdb_single_device_assert": {
         "description": "Baseline for google-bert/bert-base-uncased on IMDB single-device",
         "train_step_losses": [
             0.390625,
@@ -214,7 +340,7 @@ REFERENCE_DATA = {
         ],
         "eval_step_metrics": [1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0],
     },
-    # Scenario 4: Distributed google-bert/bert-base-uncased training  (world_size=2)
+    # Scenario 7: Distributed google-bert/bert-base-uncased training  (world_size=2)
     "bert_base_uncased_config_imdb_distributed_ws2": {
         "description": "Baseline for distributed training with 2 devices",
         "world_size": 2,

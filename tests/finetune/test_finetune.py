@@ -91,7 +91,55 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
         print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.6f}")
 
 
-configs = [
+functional_configs = [
+    pytest.param(
+        "meta-llama/Llama-3.2-1B",  # model_name
+        Task_Mode.GENERATION,  # task_mode
+        5,  # max_eval_step
+        10,  # max_train_step
+        "gsm8k_dataset",  # dataset_name
+        None,  # data_path
+        10,  # intermediate_step_save
+        None,  # context_length
+        True,  # run_validation
+        True,  # use_peft
+        Device.QAIC,  # device
+        "llama_3.2_1B_config_gsm8k_single_device_functional",
+        id="llama_config_gsm8k",  # config name
+    ),
+    pytest.param(
+        "meta-llama/Llama-3.2-1B",  # model_name
+        Task_Mode.GENERATION,  # task_mode
+        5,  # max_eval_step
+        10,  # max_train_step
+        "alpaca_dataset",  # dataset_name
+        alpaca_json_path,  # data_path
+        10,  # intermediate_step_save
+        None,  # context_length
+        True,  # run_validation
+        True,  # use_peft
+        Device.QAIC,  # device
+        "llama_3.2_1B_config_alpaca_single_device_functional",
+        id="llama_config_alpaca",  # config name
+    ),
+    pytest.param(
+        "google-bert/bert-base-uncased",  # model_name
+        Task_Mode.SEQ_CLASSIFICATION,  # task_mode
+        5,  # max_eval_step
+        10,  # max_train_step
+        "imdb_dataset",  # dataset_name
+        None,  # data_path
+        10,  # intermediate_step_save
+        None,  # context_length
+        True,  # run_validation
+        False,  # use_peft
+        Device.QAIC,  # device
+        "bert_base_uncased_config_imdb_single_device_functional",
+        id="bert_config_imdb",  # config name
+    ),
+]
+
+assert_configs = [
     pytest.param(
         "meta-llama/Llama-3.2-1B",  # model_name
         Task_Mode.GENERATION,  # task_mode
@@ -104,7 +152,7 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         Device.QAIC,  # device
-        "llama_3.2_1B_config_gsm8k_single_device",
+        "llama_3.2_1B_config_gsm8k_single_device_assert",
         id="llama_config_gsm8k",  # config name
     ),
     pytest.param(
@@ -119,7 +167,7 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         Device.QAIC,  # device
-        "llama_3.2_1B_config_alpaca_single_device",
+        "llama_3.2_1B_config_alpaca_single_device_assert",
         id="llama_config_alpaca",  # config name
     ),
     pytest.param(
@@ -134,7 +182,7 @@ configs = [
         True,  # run_validation
         False,  # use_peft
         Device.QAIC,  # device
-        "bert_base_uncased_config_imdb_single_device",
+        "bert_base_uncased_config_imdb_single_device_assert",
         id="bert_config_imdb",  # config name
     ),
 ]
@@ -233,7 +281,7 @@ def train_function(
 @pytest.mark.finetune
 @pytest.mark.parametrize(
     "model_name,task_mode,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,scenario_key",  # This parameter will be used to look up reference data
-    configs,
+    functional_configs,
 )
 def test_finetune_functional(
     model_name,
@@ -317,7 +365,7 @@ def test_finetune_functional(
 @pytest.mark.finetune
 @pytest.mark.parametrize(
     "model_name,task_mode,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,scenario_key",  # This parameter will be used to look up reference data
-    configs,
+    assert_configs,
 )
 def test_finetune_assert(
     model_name,
