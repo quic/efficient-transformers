@@ -500,6 +500,7 @@ def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100_qnn():
     )
 
 
+@pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -513,6 +514,7 @@ def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
 
 
+@pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_nonBlockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
