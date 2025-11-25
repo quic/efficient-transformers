@@ -8,7 +8,7 @@
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -1081,7 +1081,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 output_names=output_names["lang"],
                 dynamic_axes=dynamic_axes["lang"],
                 continuous_batching=self.continuous_batching,
-                vocab_size=self.config.vocab_size,
+                vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
 

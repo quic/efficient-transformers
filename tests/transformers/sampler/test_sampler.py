@@ -6,10 +6,10 @@
 # -----------------------------------------------------------------------------
 
 from typing import List, Union
-from transformers import AutoConfig, AutoProcessor
 
 import numpy as np
 import pytest
+from transformers import AutoProcessor
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession

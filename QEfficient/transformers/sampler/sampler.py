@@ -105,6 +105,7 @@ def sampler_forward(
     attention_mask: Optional[torch.Tensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
     past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+    comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     inputs_embeds: Optional[torch.FloatTensor] = None,
     labels: Optional[torch.LongTensor] = None,
@@ -181,6 +182,7 @@ def sampler_forward(
             position_ids=position_ids,
             image_idx=image_idx,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
         )
         if batch_index is not None:
             forward_kwargs["batch_index"] = batch_index
@@ -195,6 +197,7 @@ def sampler_forward(
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
