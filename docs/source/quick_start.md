@@ -222,16 +222,17 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 qeff_model.generate(prompts=["My name is"],tokenizer=tokenizer)
 ```
 
-### Complete Example
+### Local Model Execution
 If the model and tokenizer are already downloaded, we can directly load them from local path.
 
 ```python
 from QEfficient import QEFFAutoModelForCausalLM
 from transformers import AutoTokenizer
 
-model = QEFFAutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path="~/.cache/huggingface/hub/models--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e")
+local_model_repo = "~/.cache/huggingface/hub/models--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e"
+model = QEFFAutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=local_model_repo)
 model.compile(num_cores=16)
-tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path="~/.cache/huggingface/hub/models--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e/")
+tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=local_model_repo)
 model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
 
 ```
