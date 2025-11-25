@@ -2496,7 +2496,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         # InternVL causes an error if we pass the n_kv_head_repeat parameter
-        n_kv_head_repeat = kwargs.pop("n_kv_head_repeat", None)
+        n_kv_head_repeat = kwargs.pop("n_kv_head_repeat", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         kwargs.update({"n_kv_head_repeat": n_kv_head_repeat})
         if qaic_config is not None:
