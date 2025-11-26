@@ -221,4 +221,26 @@ Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/s
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 qeff_model.generate(prompts=["My name is"],tokenizer=tokenizer)
 ```
+
+### Local Model Execution
+If the model and tokenizer are already downloaded, we can directly load them from local path.
+
+```python
+from QEfficient import QEFFAutoModelForCausalLM
+from transformers import AutoTokenizer
+
+# Local path to the downloaded model. You can find downloaded HF models in:
+# - Default location: ~/.cache/huggingface/hub/models--{model_name}/snapshots/{snapshot_id}/
+local_model_repo = "~/.cache/huggingface/hub/models--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e"
+
+# Load model from local path
+model = QEFFAutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=local_model_repo)
+
+model.compile(num_cores=16)
+
+# Load tokenizer from the same local path
+tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=local_model_repo)
+
+model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
+```
 End to End demo examples for various models are available in [**notebooks**](https://github.com/quic/efficient-transformers/tree/main/notebooks) directory. Please check them out.
