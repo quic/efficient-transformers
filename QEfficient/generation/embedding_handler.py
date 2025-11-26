@@ -273,7 +273,7 @@ class VisionHandler:
                 if "vision_embeds" in output_name:
                     buffers[output_name] = np.zeros(shape, dtype=np.float16)
                 else:
-                    buffers[output_name] = np.zeros(shape, dtype=np.float32)
+                    buffers[output_name] = np.zeros(shape, dtype=np.float16)
 
             self._vision_session.set_buffers(buffers)
 
@@ -359,7 +359,9 @@ class VisionHandler:
             else:
                 lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
-            lang_inputs["image_idx"] = np.array([[0]])
+            not_mllama = "mllama" != self._qeff_model.model.config.model_type
+            if not_mllama:
+                lang_inputs["image_idx"] = np.array([[0]])
 
             return lang_inputs, vision_outputs, num_chunks
 

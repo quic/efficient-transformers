@@ -652,7 +652,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                     prefill_logit_bs=1,
                 )
 
-                self._session.skip_buffers(vision_outputs.keys())
+                not_mllama = "mllama" != self.qeff_model.model.config.model_type
+                if not_mllama:
+                    self._session.skip_buffers(vision_outputs.keys())
 
                 # Calculate position_ids for decode
                 position_ids_decode = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1

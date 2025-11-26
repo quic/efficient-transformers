@@ -421,6 +421,12 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
                 past_key_value.layers[self.layer_idx].keys,
                 past_key_value.layers[self.layer_idx].values,
             )
+            # if key_states.size(0) != bsz:
+            #     if bsz < key_states.size(0):
+            #         # Slice down
+            #         key_states = key_states[:bsz]
+            #         value_states = value_states[:bsz]
+
         else:
             raise ValueError(
                 "Cross attention layer can't find neither `cross_attn_states` nor cached values for key/values!"
@@ -439,6 +445,7 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
             scaling=self.scaling,
         )
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
+        # breakpoint()
         attn_output = self.o_proj(attn_output)
 
         return attn_output, attn_weights
@@ -674,6 +681,7 @@ class QEffMllamaTextModel(MllamaTextModel):
                 position_ids=position_ids,
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
             )
@@ -793,6 +801,7 @@ class QEffMllamaModel(MllamaModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -840,6 +849,7 @@ class QEffMllamaModel(MllamaModel):
             full_text_row_masked_out_mask=full_text_row_masked_out_mask,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             use_cache=use_cache,
             inputs_embeds=inputs_embeds,
             cache_position=cache_position,
@@ -891,6 +901,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             position_ids=position_ids,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             cache_position=cache_position,
@@ -901,8 +912,9 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         logits = self.lm_head(hidden_states).float()
         return logits, image_idx, outputs.past_key_values, pixel_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False,):
         BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        FBS = constants.ONNX_EXPORT_EXAMPLE_FBS
         SEQ_LEN = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         CTX_LEN = constants.ONNX_EXPORT_CTX_LEN
 
@@ -960,14 +972,17 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                     1, num_key_value_heads, image_tokens_len, head_dim
                 )
             else:
-                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
-                lang_inputs["past_key_values"].layers[i].values = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
+                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim)
+                lang_inputs["past_key_values"].layers[i].values = torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim)
 
         lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
 
         if comp_ctx_lengths is not None:
             lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(BS).view(BS, 1)
 
         inputs = {}
 
@@ -988,6 +1003,9 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         vis_cfg = self.config.vision_config
@@ -1006,47 +1024,67 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             lang = []
 
             for i in range(0, len(comp_ctx_lengths_prefill)):
-                lang.append(
-                    {
-                        "batch_size": batch_size,
-                        "seq_len": prefill_seq_len,
-                        "ctx_len": ctx_len,
-                        "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
-                        "max_num_images": max_num_images,
-                        "img_size": img_size,
-                    }
-                )
+                lang_prefill = {
+                    "batch_size": 1 if continuous_batching else batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
+                    "max_num_images": max_num_images,
+                    "img_size": img_size,
+                }
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
+                lang.append(lang_prefill)
 
             # Remaining elements use comp_ctx_lengths[1:] in a loop
             for i in range(0, len(comp_ctx_lengths_decode)):
-                lang.append(
-                    {
-                        "batch_size": batch_size,
-                        "seq_len": "1",
-                        "ctx_len": ctx_len,
-                        "comp_ctx_lengths": comp_ctx_lengths_decode[i],
-                        "max_num_images": max_num_images,
-                        "img_size": img_size,
-                    }
-                )
-
-        else:
-            lang = [
-                {
-                    "batch_size": batch_size,
-                    "seq_len": prefill_seq_len,
-                    "ctx_len": ctx_len,
-                    "max_num_images": max_num_images,
-                    "img_size": img_size,
-                },
-                {
-                    "batch_size": batch_size,
+                lang_decode = {
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "max_num_images": max_num_images,
                     "img_size": img_size,
-                },
-            ]
+                }
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
+                lang.append(lang_decode)
+
+        else:
+            lang_prefill = {
+                "batch_size": 1 if continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "max_num_images": max_num_images,
+                "img_size": img_size,
+            }
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": "1",
+                "ctx_len": ctx_len,
+                "max_num_images": max_num_images,
+                "img_size": img_size,
+            }
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
+
+            lang = []
+            lang.append(lang_prefill)
+            lang.append(lang_decode)
 
         specializations = {}
 
@@ -1057,7 +1095,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False):
         txt_cfg = self.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         cross_attention_layers = txt_cfg.cross_attention_layers
@@ -1074,13 +1112,16 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             "cross_attention_mask": {0: "batch_size", 1: "seq_len", 2: "max_num_images"},
         }
 
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+
         for i in range(num_hidden_layers):
             if i in cross_attention_layers:
-                lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size"}
-                lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size"}
+                lang_dynamic_axes[f"past_key.{i}"] = {0: "full_batch_size" if continuous_batching else "batch_size"}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: "full_batch_size" if continuous_batching else "batch_size"}
             else:
-                lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-                lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                lang_dynamic_axes[f"past_key.{i}"] = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
 
         if comp_ctx_lengths is not None:
             lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
