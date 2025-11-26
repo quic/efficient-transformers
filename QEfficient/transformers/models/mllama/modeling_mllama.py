@@ -971,10 +971,10 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
                 lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim
+                    FBS if continuous_batching else BS, num_key_value_heads, image_tokens_len, head_dim
                 )
                 lang_inputs["past_key_values"].layers[i].values = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim
+                    FBS if continuous_batching else BS, num_key_value_heads, image_tokens_len, head_dim
                 )
             else:
                 lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
