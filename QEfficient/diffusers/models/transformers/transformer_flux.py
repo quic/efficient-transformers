@@ -9,7 +9,6 @@ from venv import logger
 
 import numpy as np
 import torch
-import torch.nn as nn
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.transformers.transformer_flux import (
@@ -19,11 +18,6 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformer2DModel,
     FluxTransformerBlock,
     _get_qkv_projections,
-)
-
-from QEfficient.diffusers.models.normalization import (
-    QEffAdaLayerNormZero,
-    QEffAdaLayerNormZeroSingle,
 )
 
 
@@ -120,24 +114,6 @@ class QEffFluxAttention(FluxAttention):
 
 
 class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
-    def __init__(self, dim: int, num_attention_heads: int, attention_head_dim: int, mlp_ratio: float = 4.0):
-        super().__init__(dim, num_attention_heads, attention_head_dim, mlp_ratio)
-        self.mlp_hidden_dim = int(dim * mlp_ratio)
-        self.norm = QEffAdaLayerNormZeroSingle(dim)
-        self.proj_mlp = nn.Linear(dim, self.mlp_hidden_dim)
-        self.act_mlp = nn.GELU(approximate="tanh")
-        self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
-        self.attn = QEffFluxAttention(
-            query_dim=dim,
-            dim_head=attention_head_dim,
-            heads=num_attention_heads,
-            out_dim=dim,
-            bias=True,
-            processor=QEffFluxAttnProcessor(),
-            eps=1e-6,
-            pre_only=True,
-        )
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -163,33 +139,12 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
         gate = gate.unsqueeze(1)
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
-        # if hidden_states.dtype == torch.float16:
-        hidden_states = hidden_states.clip(-65504, 65504)
 
         encoder_hidden_states, hidden_states = hidden_states[:, :text_seq_len], hidden_states[:, text_seq_len:]
         return encoder_hidden_states, hidden_states
 
 
 class QEffFluxTransformerBlock(FluxTransformerBlock):
-    def __init__(
-        self, dim: int, num_attention_heads: int, attention_head_dim: int, qk_norm: str = "rms_norm", eps: float = 1e-6
-    ):
-        super().__init__(dim, num_attention_heads, attention_head_dim)
-
-        self.norm1 = QEffAdaLayerNormZero(dim)
-        self.norm1_context = QEffAdaLayerNormZero(dim)
-        self.attn = QEffFluxAttention(
-            query_dim=dim,
-            added_kv_proj_dim=dim,
-            dim_head=attention_head_dim,
-            heads=num_attention_heads,
-            out_dim=dim,
-            context_pre_only=False,
-            bias=True,
-            processor=QEffFluxAttnProcessor(),
-            eps=eps,
-        )
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -395,31 +350,3 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
             return (output,)
 
         return Transformer2DModelOutput(sample=output)
-
-
-class QEffFluxTransformer2DModelOF(QEffFluxTransformer2DModel):
-    def __qeff_init__(self):
-        self.transformer_blocks = nn.ModuleList()
-        self._block_classes = set()
-
-        for _ in range(self.config.num_layers):
-            BlockClass = QEffFluxTransformerBlock
-            block = BlockClass(
-                dim=self.inner_dim,
-                num_attention_heads=self.config.num_attention_heads,
-                attention_head_dim=self.config.attention_head_dim,
-            )
-            self.transformer_blocks.append(block)
-            self._block_classes.add(BlockClass)
-
-        self.single_transformer_blocks = nn.ModuleList()
-
-        for _ in range(self.config.num_single_layers):
-            SingleBlockClass = QEffFluxSingleTransformerBlock
-            single_block = SingleBlockClass(
-                dim=self.inner_dim,
-                num_attention_heads=self.config.num_attention_heads,
-                attention_head_dim=self.config.attention_head_dim,
-            )
-            self.single_transformer_blocks.append(single_block)
-            self._block_classes.add(SingleBlockClass)

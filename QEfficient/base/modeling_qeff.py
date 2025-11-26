@@ -206,7 +206,6 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
-        use_onnx_subfunctions: bool = False,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms

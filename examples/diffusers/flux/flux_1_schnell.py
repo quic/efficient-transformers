@@ -42,7 +42,7 @@ output = pipeline(
     max_sequence_length=256,
     generator=torch.manual_seed(42),
     parallel_compile=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
 )
 
 # Extract the generated image from the output

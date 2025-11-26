@@ -485,12 +485,16 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         if use_onnx_subfunctions:
             export_kwargs = {"export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock}}
 
+        # Sort _use_default_values in config to ensure consistent hash generation during export
+        self.model.config["_use_default_values"].sort()
+
         return self._export(
             example_inputs=inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             export_kwargs=export_kwargs,
+            offload_pt_weights=False,  # As weights are needed with AdaLN changes
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:

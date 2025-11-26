@@ -14,10 +14,7 @@ from QEfficient.utils.constants import HASH_HEXDIGEST_STR_LEN
 
 def json_serializable(obj):
     if isinstance(obj, set):
-        return [cls.__name__ if isinstance(cls, type) else str(cls) for cls in obj]
-    # Handle objects with to_dict() method (e.g., transformers config objects)
-    if hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict")):
-        return obj.to_dict()
+        return sorted([cls.__name__ if isinstance(cls, type) else str(cls) for cls in obj])
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
