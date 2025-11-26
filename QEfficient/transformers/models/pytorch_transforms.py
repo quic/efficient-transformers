@@ -853,7 +853,7 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
     return model_decoder_classes
 
 
-class BlockedKVAttentionTransform:  
+class BlockedKVAttentionTransform:
     _module_mapping = {
         QEffLlamaAttention,
     }
