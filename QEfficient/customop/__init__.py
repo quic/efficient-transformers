@@ -5,8 +5,15 @@
 #
 # -----------------------------------------------------------------------------
 
-from QEfficient.customop.ctx_scatter_gather import CtxGatherFunc, CtxGatherFunc3D, CtxScatterFunc, CtxScatterFunc3D
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc,
+    CtxGatherFunc3D,
+    CtxGatherFuncBlockedKV,
+    CtxScatterFunc,
+    CtxScatterFunc3D,
+)
 from QEfficient.customop.ctx_scatter_gather_cb import (
+    CtxGatherFuncBlockedKVCB,
     CtxGatherFuncCB,
     CtxGatherFuncCB3D,
     CtxScatterFuncCB,
@@ -16,12 +23,14 @@ from QEfficient.customop.rms_norm import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 
 __all__ = [
     "CtxGatherFunc",
+    "CtxGatherFuncBlockedKV",
     "CtxScatterFunc",
     "CtxGatherFunc3D",
     "CtxScatterFunc3D",
     "CustomRMSNormAIC",
     "GemmaCustomRMSNormAIC",
     "CtxGatherFuncCB",
+    "CtxGatherFuncBlockedKVCB",
     "CtxScatterFuncCB",
     "CtxGatherFuncCB3D",
     "CtxScatterFuncCB3D",

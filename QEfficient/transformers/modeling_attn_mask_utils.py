@@ -14,6 +14,7 @@ def _create_causal_mask(
     position_ids,
     target_length,
     sliding_window: Optional[int] = None,
+    start_index: Optional[int] = 0,
 ):
     """
     A utility attention mask class that allows one to:
@@ -40,7 +41,7 @@ def _create_causal_mask(
         attention_mask = attention_mask.unsqueeze(1)
     else:
         query_indices = position_ids.unsqueeze(-1)
-        kv_indices = torch.arange(target_length).view(1, 1, -1)
+        kv_indices = torch.arange(start=start_index, end=target_length).view(1, 1, -1)
         attention_mask = kv_indices > query_indices
         attention_mask = attention_mask.unsqueeze(1)
 
