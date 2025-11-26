@@ -559,7 +559,6 @@ def export_wrapper(func):
 
         # Get arguments as a dictionary
         all_args = bound_args.arguments
-
         export_hash, filtered_hash_params = create_export_hash(
             model_params=self.hash_params,
             output_names=all_args.get("output_names"),
@@ -567,6 +566,7 @@ def export_wrapper(func):
             export_kwargs=all_args.get("export_kwargs", None),
             onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
             use_onnx_subfunctions=all_args.get("use_onnx_subfunctions", False),
+            prefill_only=all_args.get("prefill_only", False),
         )
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
