@@ -93,10 +93,10 @@ python3.10 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
-# Clone and Install the QEfficient Repo (mainline).
+# Clone and Install the QEfficient repository from the mainline branch
 pip install git+https://github.com/quic/efficient-transformers
 
-# Install a specific branch, tag or commit by appending @ref
+# Clone and Install the QEfficient repository from a specific branch, tag or commit by appending @ref
 # Release branch (e.g., release/v1.20.0):
 pip install "git+https://github.com/quic/efficient-transformers@release/v1.20.0"
 
