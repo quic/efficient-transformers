@@ -912,7 +912,12 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         logits = self.lm_head(hidden_states).float()
         return logits, image_idx, outputs.past_key_values, pixel_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False,):
+    def get_dummy_inputs(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+    ):
         BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         FBS = constants.ONNX_EXPORT_EXAMPLE_FBS
         SEQ_LEN = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -972,8 +977,12 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                     1, num_key_value_heads, image_tokens_len, head_dim
                 )
             else:
-                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim)
-                lang_inputs["past_key_values"].layers[i].values = torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim)
+                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
+                    FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim
+                )
+                lang_inputs["past_key_values"].layers[i].values = torch.zeros(
+                    FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim
+                )
 
         lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
@@ -1095,7 +1104,9 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         txt_cfg = self.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         cross_attention_layers = txt_cfg.cross_attention_layers
@@ -1120,8 +1131,14 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                 lang_dynamic_axes[f"past_key.{i}"] = {0: "full_batch_size" if continuous_batching else "batch_size"}
                 lang_dynamic_axes[f"past_value.{i}"] = {0: "full_batch_size" if continuous_batching else "batch_size"}
             else:
-                lang_dynamic_axes[f"past_key.{i}"] = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
-                lang_dynamic_axes[f"past_value.{i}"] = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
+                lang_dynamic_axes[f"past_key.{i}"] = {
+                    0: "full_batch_size" if continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
+                lang_dynamic_axes[f"past_value.{i}"] = {
+                    0: "full_batch_size" if continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
 
         if comp_ctx_lengths is not None:
             lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
