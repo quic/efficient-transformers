@@ -5,12 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List
+from typing import List, Union
 
 import numpy as np
 import pytest
+from transformers import AutoProcessor
 
-from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
@@ -24,6 +25,20 @@ sampler_transform_configs = [
         20,  # generation_len
         2,  # full_batch_size
         1,  # spec_length
+        False,  # is_vlm
+    ),
+    pytest.param(
+        "Qwen/Qwen2.5-VL-3B-Instruct",  # model
+        (
+            ["https://picsum.photos/id/237/536/354"] * 2,
+            ["Can you describe the image in detail."] * 2,
+        ),  # images and prompts
+        128,  # prefill_seq_len
+        4096,  # ctx_len
+        20,  # generation_len
+        2,  # full_batch_size
+        None,  # spec_length
+        True,  # is_vlm
     ),
 ]
 greedy_sampling_configs = [
@@ -35,6 +50,20 @@ greedy_sampling_configs = [
         20,  # generation_len
         4,  # full_batch_size
         1,  # spec_length
+        False,  # is_vlm
+    ),
+    pytest.param(
+        "Qwen/Qwen2.5-VL-3B-Instruct",  # model
+        (
+            ["https://picsum.photos/id/237/536/354"] * 2,
+            ["Can you describe the image in detail."] * 2,
+        ),  # images and prompts
+        128,  # prefill_seq_len
+        4096,  # ctx_len
+        20,  # generation_len
+        2,  # full_batch_size
+        None,  # spec_length
+        True,  # is_vlm
     ),
 ]
 random_sampling_configs = [
@@ -46,23 +75,38 @@ random_sampling_configs = [
         20,  # generation_len
         4,  # full_batch_size
         1,  # spec_length
+        False,  # is_vlm
     ),
+    # pytest.param(
+    #     "Qwen/Qwen2.5-VL-3B-Instruct",  # model
+    #     (
+    #         ["https://picsum.photos/id/237/536/354"] * 2,
+    #         ["Can you describe the image in detail."] * 2,
+    #     ),  # images and prompts
+    #     128,  # prefill_seq_len
+    #     4096,  # ctx_len
+    #     20,  # generation_len
+    #     2,  # full_batch_size
+    #     None,  # spec_length
+    #     True,  # is_vlm
+    # ),
 ]
 
 
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
-    "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
+    "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     sampler_transform_configs,
 )
 def test_sampler_transform(
     model: str,
-    prompts: List[str],
+    prompts: Union[List[str], tuple[List[str], List[str]]],
     prefill_seq_len: int,
     ctx_len: int,
     generation_len: int,
     full_batch_size: int,
     spec_length: int,
+    is_vlm: bool,
 ):
     """
     Test if `SamplerTransform` adds nodes at the output of a `QEffForCausalLM model` to enable the
@@ -70,45 +114,56 @@ def test_sampler_transform(
     next tokens and/or probability distributions.
     """
     # Export and compile QEfficient models
-    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+    additional_configs = {}
+    if is_vlm:
+        additional_configs["kv_offload"] = True
+        qeff_class = QEFFAutoModelForImageTextToText
+    else:
+        additional_configs["num_hidden_layers"] = 2
+        qeff_class = QEFFAutoModelForCausalLM
+        spec_length -= 1
+    model_w_sampler = qeff_class.from_pretrained(
         model,
         continuous_batching=True,
-        num_hidden_layers=2,
         qaic_config={
             "include_sampler": True,
             "return_pdfs": False,
             "max_top_k_ids": 512,
         },
+        **additional_configs,
     )
-    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+    model_wo_sampler = qeff_class.from_pretrained(
         model,
         continuous_batching=True,
-        num_hidden_layers=2,
         qaic_config={
             "include_sampler": False,
             "return_pdfs": False,
         },
+        **additional_configs,
     )
-    model_w_sampler_qpc_path: str = model_w_sampler.compile(
+    model_w_sampler_qpc_path = model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         full_batch_size=full_batch_size,
         num_devices=1,
         num_cores=16,
-        num_speculative_tokens=spec_length - 1,
+        num_speculative_tokens=spec_length,
         mxint8_kv_cache=True,
         mxfp6_matmul=True,
     )
-    model_wo_sampler_qpc_path: str = model_wo_sampler.compile(
+    model_wo_sampler_qpc_path = model_wo_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         full_batch_size=full_batch_size,
         num_devices=1,
         num_cores=16,
-        num_speculative_tokens=spec_length - 1,
+        num_speculative_tokens=spec_length,
         mxint8_kv_cache=True,
         mxfp6_matmul=True,
     )
+    if is_vlm:
+        model_w_sampler_qpc_path = model_w_sampler_qpc_path[1]
+        model_wo_sampler_qpc_path = model_wo_sampler_qpc_path[1]
 
     # Init qaic session
     model_w_sampler_session = QAICInferenceSession(model_w_sampler_qpc_path)
@@ -139,40 +194,54 @@ def test_sampler_transform(
 
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
-    "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
+    "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     greedy_sampling_configs,
 )
 def test_greedy_sampling(
     model: str,
-    prompts: List[str],
+    prompts: Union[List[str], tuple[List[str], List[str]]],
     prefill_seq_len: int,
     ctx_len: int,
     generation_len: int,
     full_batch_size: int,
     spec_length: int,
+    is_vlm: bool,
 ):
     """
     Test greedy sampling with QPC compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
-    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+    additional_configs = {}
+    additional_params = {}
+    if is_vlm:
+        additional_configs["kv_offload"] = True
+        qeff_class = QEFFAutoModelForImageTextToText
+        assert isinstance(prompts, tuple)
+        additional_params["images"] = prompts[0]
+        additional_params["processor"] = AutoProcessor.from_pretrained(model)
+        prompts = prompts[1]
+    else:
+        additional_configs["num_hidden_layers"] = 4
+        qeff_class = QEFFAutoModelForCausalLM
+        spec_length -= 1
+    model_w_sampler = qeff_class.from_pretrained(
         model,
         continuous_batching=True,
-        num_hidden_layers=4,
         qaic_config={
             "include_sampler": True,
             "return_pdfs": False,
             "max_top_k_ids": 512,
         },
+        **additional_configs,
     )
-    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+    model_wo_sampler = qeff_class.from_pretrained(
         model,
         continuous_batching=True,
-        num_hidden_layers=4,
         qaic_config={
             "include_sampler": False,
             "return_pdfs": False,
         },
+        **additional_configs,
     )
     model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
@@ -180,7 +249,7 @@ def test_greedy_sampling(
         full_batch_size=full_batch_size,
         num_devices=1,
         num_cores=16,
-        num_speculative_tokens=spec_length - 1,
+        num_speculative_tokens=spec_length,
         mxint8_kv_cache=True,
         mxfp6_matmul=True,
     )
@@ -190,7 +259,7 @@ def test_greedy_sampling(
         full_batch_size=full_batch_size,
         num_devices=1,
         num_cores=16,
-        num_speculative_tokens=spec_length - 1,
+        num_speculative_tokens=spec_length,
         mxint8_kv_cache=True,
         mxfp6_matmul=True,
     )
@@ -211,8 +280,9 @@ def test_greedy_sampling(
             "top_ks": np.array(512, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
             "top_ps": np.array(1.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "min_ps": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "random_numbers": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "random_numbers": np.zeros((full_batch_size, 512), dtype=np.float32),
         },
+        **additional_params,
     )
     model_wo_sampler_exec_info = model_wo_sampler.generate(
         tokenizer=tokenizer,
@@ -221,6 +291,7 @@ def test_greedy_sampling(
         include_sampler=False,
         return_pdfs=False,
         sampling_params=None,
+        **additional_params,
     )
 
     # Compare generated texts and ids
@@ -233,25 +304,37 @@ def test_greedy_sampling(
 
 
 @pytest.mark.on_qaic
-@pytest.mark.skip
 @pytest.mark.parametrize(
-    "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
+    "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     random_sampling_configs,
 )
 def test_random_sampling(
     model: str,
-    prompts: List[str],
+    prompts: Union[List[str], tuple[List[str], List[str]]],
     prefill_seq_len: int,
     ctx_len: int,
     generation_len: int,
     full_batch_size: int,
     spec_length: int,
+    is_vlm: bool,
 ):
     """
     Test random sampling with QPC compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
-    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+    additional_configs = {}
+    additional_params = {}
+    if is_vlm:
+        additional_configs["kv_offload"] = True
+        qeff_class = QEFFAutoModelForImageTextToText
+        assert isinstance(prompts, tuple)
+        additional_params["images"] = prompts[0]
+        additional_params["processor"] = AutoProcessor.from_pretrained(model)
+        prompts = prompts[1]
+    else:
+        qeff_class = QEFFAutoModelForCausalLM
+        spec_length -= 1
+    model_w_sampler = qeff_class.from_pretrained(
         model,
         continuous_batching=True,
         qaic_config={
@@ -259,14 +342,16 @@ def test_random_sampling(
             "return_pdfs": False,
             "max_top_k_ids": 512,
         },
+        **additional_configs,
     )
-    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+    model_wo_sampler = qeff_class.from_pretrained(
         model,
         continuous_batching=True,
         qaic_config={
             "include_sampler": False,
             "return_pdfs": False,
         },
+        **additional_configs,
     )
     model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
@@ -274,7 +359,7 @@ def test_random_sampling(
         full_batch_size=full_batch_size,
         num_devices=1,
         num_cores=16,
-        num_speculative_tokens=spec_length - 1,
+        num_speculative_tokens=spec_length,
         mxint8_kv_cache=True,
         mxfp6_matmul=True,
     )
@@ -284,13 +369,14 @@ def test_random_sampling(
         full_batch_size=full_batch_size,
         num_devices=1,
         num_cores=16,
-        num_speculative_tokens=spec_length - 1,
+        num_speculative_tokens=spec_length,
         mxint8_kv_cache=True,
         mxfp6_matmul=True,
     )
 
     # Generate texts from prompts
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model)
+    np.random.seed(0)
     model_w_sampler_exec_info = model_w_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
@@ -301,12 +387,15 @@ def test_random_sampling(
             "repetition_penalties": np.array(20.2, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "presence_penalties": np.array(10.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             # "frequency_penalties": np.array(0.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "temperatures": np.array(100.1, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "top_ks": np.array(54720, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
+            "temperatures": np.array(4.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "top_ks": np.array(512, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
             "top_ps": np.array(0.89, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "min_ps": np.array(0.6, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "random_numbers": np.array(0.26, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "random_numbers": np.tile(np.random.uniform(low=0.0, high=1.0, size=512), (full_batch_size, 1)).astype(
+                np.float32
+            ),
         },
+        **additional_params,
     )
     model_wo_sampler_exec_info = model_wo_sampler.generate(
         tokenizer=tokenizer,
@@ -315,36 +404,37 @@ def test_random_sampling(
         include_sampler=False,
         return_pdfs=False,
         sampling_params=None,
+        **additional_params,
     )
 
     # Compare generated texts
     golden_texts = {
-        "w_sampler": "Raymond and my favorite color, alongside reds or purples (I can’t have them both",
+        "w_sampler": "Aiden and I am a freelance writer who loves to explore the world. With over",
         "wo_sampler": "John Smith and I am a software engineer. I have been working in the industry for the past ",
     }
     golden_ids = {
         "w_sampler": [
             [
-                21380,
+                319,
+                3615,
                 322,
-                590,
-                25448,
-                2927,
-                29892,
-                19963,
-                2654,
-                29879,
-                470,
-                3708,
-                2701,
-                313,
-                29902,
-                508,
-                30010,
-                29873,
-                505,
-                963,
-                1716,
+                306,
+                626,
+                263,
+                3005,
+                295,
+                749,
+                9227,
+                1058,
+                12355,
+                267,
+                304,
+                26987,
+                278,
+                3186,
+                29889,
+                2973,
+                975,
             ]
         ],
         "wo_sampler": [
