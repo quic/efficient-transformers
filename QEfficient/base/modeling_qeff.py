@@ -333,6 +333,7 @@ class QEFFBaseModel(ABC):
     def get_onnx_path(
         self,
         prefill_only: Optional[bool] = False,
+        enable_chunking: Optional[bool] = False,
         specializations: Optional[List[Dict[str, int]]] = None,
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
@@ -340,7 +341,13 @@ class QEFFBaseModel(ABC):
         kwargs = {"offload_pt_weights": offload_pt_weights, "use_onnx_subfunctions": use_onnx_subfunctions}
         if prefill_only:
             if self.prefill_onnx_path is None:
-                kwargs.update({"prefill_only": prefill_only, "prefill_seq_len": specializations[0].get("seq_len")})
+                kwargs.update(
+                    {
+                        "prefill_only": prefill_only,
+                        "prefill_seq_len": specializations[0].get("seq_len"),
+                        "enable_chunking": enable_chunking,
+                    }
+                )
                 self.export(**kwargs)
             return self.prefill_onnx_path
         else:
@@ -364,6 +371,7 @@ class QEFFBaseModel(ABC):
         use_onnx_subfunctions: bool = False,
         prefill_only: Optional[str] = None,
         offload_pt_weights: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
@@ -392,7 +400,9 @@ class QEFFBaseModel(ABC):
         onnx_path = Path(
             onnx_path
             if onnx_path
-            else self.get_onnx_path(prefill_only, specializations, offload_pt_weights, use_onnx_subfunctions)
+            else self.get_onnx_path(
+                prefill_only, enable_chunking, specializations, offload_pt_weights, use_onnx_subfunctions
+            )
         )
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -495,6 +505,16 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
+        if use_onnx_subfunctions:
+
+            class FeatureNotAvailableError(Exception):
+                pass
+
+            exec_command = f'QAIC_COMPILER_OPTS_UNSUPPORTED="-loader-inline-all=0" {" ".join(command)}'
+            raise FeatureNotAvailableError(
+                f"ONNX graph is exported with subfunctions, assert version of apps SDK should be used for compiling this model. \
+                                           Run following command manually with assert compiler:\n{exec_command}"
+            )
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:

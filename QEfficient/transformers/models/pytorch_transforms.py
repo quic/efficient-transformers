@@ -265,6 +265,7 @@ from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssForCausalLM,
     QEffGptOssMLP,
     QEffGptOssModel,
+    QEffPrefillOnlyChunkedGptOssAttention,
     QEffPrefillOnlyGptOssAttention,
     QEffPrefillOnlyGptOssMLP,
     QEffPrefillOnlyGptOssModel,
@@ -653,8 +654,18 @@ class PrefillOnlyTransform(ModuleMappingTransform):
     }
 
 
+class PrefillOnlyChunkedTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+    }
+
+
 class RevertPrefillOnlyTransform(ModuleMappingTransform):
-    _module_mapping = {v: k for k, v in PrefillOnlyTransform._module_mapping.items()}
+    _module_mapping = {v: k for k, v in PrefillOnlyTransform._module_mapping.items()}.update(
+        {v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()}
+    )
 
 
 class SpDTransform:

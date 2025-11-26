@@ -685,6 +685,88 @@ def opt_eager_attention_forward_blocked(
     return output, output
 
 
+class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor],
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        sliding_mask=None,
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        hidden_shape = (*input_shape, -1, self.head_dim)
+        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
+            max_seq_len_cached = 32 * 1024
+        cos, sin = self.rotary_emb(value_states, seq_len=max_seq_len_cached)
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+
+        if past_key_value is not None:
+            # sin and cos are specific to RoPE models; cache_position needed for the static cache
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "config": self.config,
+                "is_sliding": self.sliding_window is not None,
+                "sliding_window": self.sliding_window,
+            }
+            if self.sliding_window is not None:
+                key_states, value_states = past_key_value.sliding_window_update_chunked(
+                    key_states, value_states, self.layer_idx, cache_kwargs
+                )
+            else:
+                key_states, value_states = past_key_value.full_cache_update_chunked(
+                    key_states, value_states, self.layer_idx, cache_kwargs
+                )
+
+        if self.sliding_window is not None:
+            attention_mask = sliding_mask
+            # positive_pos_ids = torch.where(position_ids<0, 0, position_ids)
+            ctx_len = position_ids.shape[1] + self.sliding_window
+            ctx_indices = torch.arange(ctx_len)
+            first_pos_idx = position_ids[0][0]
+            add_idx = torch.where(first_pos_idx >= self.sliding_window, first_pos_idx - self.sliding_window, 0)
+            # start_idx = torch.where(first_pos_idx>=self.sliding_window, first_pos_idx-self.sliding_window, 0)
+            # end_idx = torch.where(first_pos_idx >= self.sliding_window, first_pos_idx+position_ids.shape[1], position_ids.shape[1]+self.sliding_window)
+            ctx_indices += add_idx
+            attention_mask = attention_mask[:, :, :, ctx_indices]
+        else:
+            attention_mask = attention_mask
+
+        attention_interface: Callable = eager_attention_forward
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=self.scaling,
+            sliding_window=self.sliding_window,
+            s_aux=self.sinks,  # diff with Llama
+            **kwargs,
+        )
+
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        attn_output = self.o_proj(attn_output)
+        return attn_output, attn_weights, past_key_value
+
+
 class QEffPrefillOnlyGptOssAttention(GptOssAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -935,9 +1017,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
             target_length=past_key_values.max_cache_len,
-            sliding_window=past_key_values.sliding_window_len,
+            sliding_window=self.config.sliding_window,
         )
-
         hidden_states = inputs_embeds
 
         # decoder layers
@@ -1163,12 +1244,13 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
 
     def get_pkv_dynamic_axes(
         self,
+        chunked_prefill: Optional[bool] = False,
     ):
         pkv_dynamic_axes = []
         for layer_type in self.config.layer_types:
-            if layer_type == "sliding_attention":
+            if layer_type == "sliding_attention" and not chunked_prefill:
                 pkv_dynamic_axes.append({0: "batch_size", 2: "sliding_window"})
-            elif layer_type == "full_attention":
+            else:
                 pkv_dynamic_axes.append({0: "batch_size", 2: "ctx_len"})
         return pkv_dynamic_axes
 

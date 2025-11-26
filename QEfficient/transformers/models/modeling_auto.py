@@ -48,6 +48,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
+    PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
     RevertPrefillOnlyTransform,
     SamplerTransform,
@@ -2274,9 +2275,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def prefill(self, enable: Optional[bool] = True):
+    def prefill(self, enable: Optional[bool] = True, enable_chunking: Optional[bool] = False):
         if enable:
-            self.model, tf = PrefillOnlyTransform.apply(self.model)
+            if enable_chunking:
+                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+            else:
+                self.model, tf = PrefillOnlyTransform.apply(self.model)
             self.prefill_enabled = True
         else:
             self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
@@ -2470,7 +2474,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def get_seq_len_and_handle_specialized_prefill_model(self, prefill_seq_len: Optional[int] = None) -> int:
+    def get_seq_len_and_handle_specialized_prefill_model(
+        self, prefill_seq_len: Optional[int] = None, enable_chunking=False
+    ) -> int:
+        self.prefill(enable=True, enable_chunking=enable_chunking)
+        self.hash_params["prefill_only"] = True
+        if enable_chunking:
+            self.hash_params["chunking"] = True
+            return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
         num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
         if num_q_blocks is None:
             block_size = 128
@@ -2497,8 +2509,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "seq_len is not divisible by either num_ffn_blocks or num_q_blocks, try chaning the values."
             )
 
-        self.prefill(True)
-        self.hash_params["prefill_only"] = True
         self.hash_params["NUM_Q_BLOCKS"] = num_q_blocks
         self.hash_params["NUM_FFN_BLOCKS"] = num_ffn_blocks
         self.hash_params["ENABLE_OPT_SWA"] = os.environ.get("ENABLE_OPT_SWA", "0")
@@ -2513,7 +2523,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         export_dir: Optional[str] = None,
         prefill_only: Optional[bool] = False,
         prefill_seq_len: Optional[int] = None,
-        offload_pt_weights: Optional[bool] = True,
         **kwargs,
     ) -> str:
         """
@@ -2538,21 +2547,26 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+        kv_cache_shape = get_padding_shape_from_config(
+            self.model.config, fbs if self.continuous_batching else bs, seq_len
+        )
         if prefill_only:
             assert not self.continuous_batching, "prefill_only=True is not supported with continuous_batching=True"
             seq_len = (
-                self.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len)
+                self.get_seq_len_and_handle_specialized_prefill_model(
+                    prefill_seq_len=prefill_seq_len, enable_chunking=kwargs.get("enable_chunking", False)
+                )
                 if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
                 else seq_len
+            )
+            kv_cache_shape[2] = (
+                seq_len + self.model.config.sliding_window if kwargs.get("enable_chunking", False) else seq_len
             )
         else:
             self.prefill(False)
             self.hash_params.pop("prefill_only", None)
             self.hash_params.pop("num_blocks", None)
 
-        kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
-        )
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
@@ -2601,7 +2615,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             # HACK: create common function for this including above if condition code
             pkv_dynamic_axes = (
-                self.model.get_pkv_dynamic_axes() if hasattr(self.model, "get_pkv_dynamic_axes") else pkv_dynamic_axes
+                self.model.get_pkv_dynamic_axes(chunked_prefill=(prefill_only and kwargs.get("enable_chunking", False)))
+                if hasattr(self.model, "get_pkv_dynamic_axes")
+                else pkv_dynamic_axes
             )
             pkv_dynamic_axes = (
                 [pkv_dynamic_axes] * self.model.config.num_hidden_layers
@@ -2855,6 +2871,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         prefill_only: Optional[bool] = None,
         use_onnx_subfunctions: bool = False,
         offload_pt_weights: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
@@ -3076,6 +3093,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             use_onnx_subfunctions=use_onnx_subfunctions,
             prefill_only=prefill_only,
             offload_pt_weights=offload_pt_weights,
+            enable_chunking=enable_chunking,
             **compiler_options,
         )
 
