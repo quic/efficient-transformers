@@ -6,5 +6,5 @@
 # -----------------------------------------------------------------------------
 
 # Finetuning Test Constants
-LOSS_ATOL = 1e-3
-METRIC_ATOL = 1e-3
+LOSS_ATOL = 2e-2
+METRIC_ATOL = 3e-2

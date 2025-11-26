@@ -91,7 +91,55 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
         print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.6f}")
 
 
-configs = [
+functional_configs = [
+    pytest.param(
+        "meta-llama/Llama-3.2-1B",  # model_name
+        Task_Mode.GENERATION,  # task_mode
+        5,  # max_eval_step
+        10,  # max_train_step
+        "gsm8k_dataset",  # dataset_name
+        None,  # data_path
+        10,  # intermediate_step_save
+        None,  # context_length
+        True,  # run_validation
+        True,  # use_peft
+        Device.QAIC,  # device
+        "llama_3.2_1B_config_gsm8k_single_device_functional",
+        id="llama_config_gsm8k",  # config name
+    ),
+    pytest.param(
+        "meta-llama/Llama-3.2-1B",  # model_name
+        Task_Mode.GENERATION,  # task_mode
+        5,  # max_eval_step
+        10,  # max_train_step
+        "alpaca_dataset",  # dataset_name
+        alpaca_json_path,  # data_path
+        10,  # intermediate_step_save
+        None,  # context_length
+        True,  # run_validation
+        True,  # use_peft
+        Device.QAIC,  # device
+        "llama_3.2_1B_config_alpaca_single_device_functional",
+        id="llama_config_alpaca",  # config name
+    ),
+    pytest.param(
+        "google-bert/bert-base-uncased",  # model_name
+        Task_Mode.SEQ_CLASSIFICATION,  # task_mode
+        5,  # max_eval_step
+        10,  # max_train_step
+        "imdb_dataset",  # dataset_name
+        None,  # data_path
+        10,  # intermediate_step_save
+        None,  # context_length
+        True,  # run_validation
+        False,  # use_peft
+        Device.QAIC,  # device
+        "bert_base_uncased_config_imdb_single_device_functional",
+        id="bert_config_imdb",  # config name
+    ),
+]
+
+assert_configs = [
     pytest.param(
         "meta-llama/Llama-3.2-1B",  # model_name
         Task_Mode.GENERATION,  # task_mode
@@ -104,7 +152,7 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         Device.QAIC,  # device
-        "llama_3.2_1B_config_gsm8k_single_device",
+        "llama_3.2_1B_config_gsm8k_single_device_assert",
         id="llama_config_gsm8k",  # config name
     ),
     pytest.param(
@@ -119,7 +167,7 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         Device.QAIC,  # device
-        "llama_3.2_1B_config_alpaca_single_device",
+        "llama_3.2_1B_config_alpaca_single_device_assert",
         id="llama_config_alpaca",  # config name
     ),
     pytest.param(
@@ -134,21 +182,13 @@ configs = [
         True,  # run_validation
         False,  # use_peft
         Device.QAIC,  # device
-        "bert_base_uncased_config_imdb_single_device",
+        "bert_base_uncased_config_imdb_single_device_assert",
         id="bert_config_imdb",  # config name
     ),
 ]
 
 
-@pytest.mark.skip()  # remove when it's clear why diff val_step_loss values are observed in diff runs on existing code (even without PR #478 changes)
-@pytest.mark.cli
-@pytest.mark.on_qaic
-@pytest.mark.finetune
-@pytest.mark.parametrize(
-    "model_name,task_mode,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,scenario_key",  # This parameter will be used to look up reference data
-    configs,
-)
-def test_finetune(
+def train_function(
     model_name,
     task_mode,
     max_eval_step,
@@ -211,92 +251,190 @@ def test_finetune(
         download_alpaca()
 
     results = finetune(**kwargs)
+    all_ref_metrices = {
+        "ref_train_losses": ref_train_losses,
+        "ref_eval_losses": ref_eval_losses,
+        "ref_train_metrics": ref_train_metrics,
+        "ref_eval_metrics": ref_eval_metrics,
+    }
+
+    all_config_spy = {
+        "train_config_spy": train_config_spy,
+        "generate_dataset_config_spy": generate_dataset_config_spy,
+        "generate_peft_config_spy": generate_peft_config_spy,
+        "get_dataloader_kwargs_spy": get_dataloader_kwargs_spy,
+        "update_config_spy": update_config_spy,
+        "get_custom_data_collator_spy": get_custom_data_collator_spy,
+        "get_preprocessed_dataset_spy": get_preprocessed_dataset_spy,
+        "get_longest_seq_length_spy": get_longest_seq_length_spy,
+        "print_model_size_spy": print_model_size_spy,
+        "train_spy": train_spy,
+        "current_world_size": current_world_size,
+        "current_rank": current_rank,
+    }
+    return results, all_ref_metrices, all_config_spy
+
+
+# @pytest.mark.skip()  # remove when it's clear why diff val_step_loss values are observed in diff runs on existing code (even without PR #478 changes)
+@pytest.mark.cli
+@pytest.mark.on_qaic
+@pytest.mark.finetune
+@pytest.mark.parametrize(
+    "model_name,task_mode,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,scenario_key",  # This parameter will be used to look up reference data
+    functional_configs,
+)
+def test_finetune_functional(
+    model_name,
+    task_mode,
+    max_eval_step,
+    max_train_step,
+    dataset_name,
+    data_path,
+    intermediate_step_save,
+    context_length,
+    run_validation,
+    use_peft,
+    device,
+    scenario_key,
+    mocker,
+):
+    results, all_ref_metrices, all_config_spy = train_function(
+        model_name,
+        task_mode,
+        max_eval_step,
+        max_train_step,
+        dataset_name,
+        data_path,
+        intermediate_step_save,
+        context_length,
+        run_validation,
+        use_peft,
+        device,
+        scenario_key,
+        mocker,
+    )
 
     # Assertions for step-level values using the helper function
-    assert_list_close(
-        ref_train_losses,
-        results["train_step_loss"],
-        constant.LOSS_ATOL,
-        "Train Step Losses",
-        scenario_key,
-        current_world_size,
-        current_rank,
-    )
-    assert_list_close(
-        ref_eval_losses,
-        results["eval_step_loss"],
-        constant.LOSS_ATOL,
-        "Eval Step Losses",
-        scenario_key,
-        current_world_size,
-        current_rank,
-    )
-    assert_list_close(
-        ref_train_metrics,
-        results["train_step_metric"],
-        constant.METRIC_ATOL,
-        "Train Step Metrics",
-        scenario_key,
-        current_world_size,
-        current_rank,
-    )
-    assert_list_close(
-        ref_eval_metrics,
-        results["eval_step_metric"],
-        constant.METRIC_ATOL,
-        "Eval Step Metrics",
-        scenario_key,
-        current_world_size,
-        current_rank,
-    )
-
     assert results["avg_epoch_time"] < 60, "Training should complete within 60 seconds."
-
-    train_config_spy.assert_called_once()
-    generate_dataset_config_spy.assert_called_once()
+    all_config_spy["train_config_spy"].assert_called_once()
+    all_config_spy["generate_dataset_config_spy"].assert_called_once()
     if task_mode == Task_Mode.GENERATION:
-        generate_peft_config_spy.assert_called_once()
-    get_longest_seq_length_spy.assert_called_once()
-    print_model_size_spy.assert_called_once()
-    train_spy.assert_called_once()
-
-    assert update_config_spy.call_count == 1
-    assert get_custom_data_collator_spy.call_count == 2
-    assert get_dataloader_kwargs_spy.call_count == 2
-    assert get_preprocessed_dataset_spy.call_count == 2
-
-    args, kwargs = train_spy.call_args
+        all_config_spy["generate_peft_config_spy"].assert_called_once()
+    all_config_spy["get_longest_seq_length_spy"].assert_called_once()
+    all_config_spy["print_model_size_spy"].assert_called_once()
+    all_config_spy["train_spy"].assert_called_once()
+    assert all_config_spy["update_config_spy"].call_count == 1
+    assert all_config_spy["get_custom_data_collator_spy"].call_count == 2
+    assert all_config_spy["get_dataloader_kwargs_spy"].call_count == 2
+    assert all_config_spy["get_preprocessed_dataset_spy"].call_count == 2
+    args, kwargs = all_config_spy["train_spy"].call_args
     train_dataloader = args[2]
     eval_dataloader = args[3]
     optimizer = args[4]
-
     batch = next(iter(train_dataloader))
     assert "labels" in batch.keys()
     assert "input_ids" in batch.keys()
     assert "attention_mask" in batch.keys()
-
     assert isinstance(optimizer, optim.AdamW)
-
     assert isinstance(train_dataloader, DataLoader)
     if run_validation:
         assert isinstance(eval_dataloader, DataLoader)
     else:
         assert eval_dataloader is None
-
-    args, kwargs = update_config_spy.call_args_list[0]
+    args, kwargs = all_config_spy["update_config_spy"].call_args_list[0]
     train_config = args[0]
     assert max_train_step >= train_config.gradient_accumulation_steps, (
         "Total training step should be more than "
         f"{train_config.gradient_accumulation_steps} which is gradient accumulation steps."
     )
-
     if use_peft:
         saved_file = os.path.join(train_config.output_dir, "complete_epoch_1/adapter_model.safetensors")
     else:
         saved_file = os.path.join(train_config.output_dir, "complete_epoch_1/model.safetensors")
     assert os.path.isfile(saved_file)
-
     clean_up(train_config.output_dir)
+    clean_up("qaic-dumps")
+
+    if dataset_name == "alpaca_dataset":
+        clean_up(alpaca_json_path)
+
+
+@pytest.mark.skip()  # remove when it's clear why diff val_step_loss values are observed in diff runs on existing code (even without PR #478 changes)
+@pytest.mark.cli
+@pytest.mark.on_qaic
+@pytest.mark.finetune
+@pytest.mark.parametrize(
+    "model_name,task_mode,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,scenario_key",  # This parameter will be used to look up reference data
+    assert_configs,
+)
+def test_finetune_assert(
+    model_name,
+    task_mode,
+    max_eval_step,
+    max_train_step,
+    dataset_name,
+    data_path,
+    intermediate_step_save,
+    context_length,
+    run_validation,
+    use_peft,
+    device,
+    scenario_key,
+    mocker,
+):
+    results, all_ref_metrices, all_config_spy = train_function(
+        model_name,
+        task_mode,
+        max_eval_step,
+        max_train_step,
+        dataset_name,
+        data_path,
+        intermediate_step_save,
+        context_length,
+        run_validation,
+        use_peft,
+        device,
+        scenario_key,
+        mocker,
+    )
+
+    # Assertions for step-level values using the helper function
+    assert_list_close(
+        all_ref_metrices["ref_train_losses"],
+        results["train_step_loss"],
+        constant.LOSS_ATOL,
+        "Train Step Losses",
+        scenario_key,
+        all_config_spy["current_world_size"],
+        all_config_spy["current_rank"],
+    )
+    assert_list_close(
+        all_ref_metrices["ref_eval_losses"],
+        results["eval_step_loss"],
+        constant.LOSS_ATOL,
+        "Eval Step Losses",
+        scenario_key,
+        all_config_spy["current_world_size"],
+        all_config_spy["current_rank"],
+    )
+    assert_list_close(
+        all_ref_metrices["ref_train_metrics"],
+        results["train_step_metric"],
+        constant.METRIC_ATOL,
+        "Train Step Metrics",
+        scenario_key,
+        all_config_spy["current_world_size"],
+        all_config_spy["current_rank"],
+    )
+    assert_list_close(
+        all_ref_metrices["ref_eval_metrics"],
+        results["eval_step_metric"],
+        constant.METRIC_ATOL,
+        "Eval Step Metrics",
+        scenario_key,
+        all_config_spy["current_world_size"],
+        all_config_spy["current_rank"],
+    )
     clean_up("qaic-dumps")
 
     if dataset_name == "alpaca_dataset":
