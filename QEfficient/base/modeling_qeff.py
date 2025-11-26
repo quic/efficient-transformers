@@ -8,7 +8,6 @@
 import gc
 import inspect
 import logging
-import re
 import shutil
 import subprocess
 import warnings
@@ -28,19 +27,16 @@ from QEfficient.base.onnx_transforms import (
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.cache_utils import InvalidIndexProvider
-from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils import (
     constants,
     create_json,
     create_model_params,
     dump_qconfig,
-    export_wrapper,
     generate_mdp_partition_config,
     hash_dict_params,
     load_json,
 )
-from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
+from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
 
@@ -275,18 +271,8 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
-            # Initialize the registry with your custom ops
+            # Export to ONNX
             export_kwargs = {} if export_kwargs is None else export_kwargs
-            if use_onnx_subfunctions:
-                warnings.warn(
-                    "The subfunction feature is experimental. Please note that using compile consecutively with and without subfunction may produce inconsistent results."
-                )
-                apply_torch_patches()
-                InvalidIndexProvider.SUBFUNC_ENABLED = True
-                output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
-                export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
-                self._onnx_transforms.append(RenameFunctionOutputsTransform)
-                self._onnx_transforms.append(CustomOpTransform)
 
             torch.onnx.export(
                 self.model,
@@ -330,12 +316,6 @@ class QEFFBaseModel(ABC):
 
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
-
-        if use_onnx_subfunctions:
-            undo_torch_patches()
-            InvalidIndexProvider.SUBFUNC_ENABLED = False
-            self._onnx_transforms.remove(CustomOpTransform)
-            self._onnx_transforms.remove(RenameFunctionOutputsTransform)
 
         self.onnx_path = onnx_path
         return onnx_path

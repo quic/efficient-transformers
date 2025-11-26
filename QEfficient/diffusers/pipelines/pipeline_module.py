@@ -466,6 +466,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         dynamic_axes: Dict,
         export_dir: str = None,
         export_kwargs: Dict = None,
+        use_onnx_subfunctions: bool = False,
     ) -> str:
         """
         Export the Flux transformer model to ONNX format.
@@ -480,7 +481,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         Returns:
             str: Path to the exported ONNX model
         """
-        if self.use_onnx_subfunctions:
+
+        if use_onnx_subfunctions:
             export_kwargs = {"export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock}}
 
         return self._export(

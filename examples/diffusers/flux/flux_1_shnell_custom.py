@@ -26,18 +26,8 @@ from QEfficient import QEFFFluxPipeline
 # ============================================================================
 # PIPELINE INITIALIZATION WITH CUSTOM PARAMETERS
 # ============================================================================
-# Initialize the FLUX pipeline with custom settings.
-#
-# Key parameters:
-# - Base model: "black-forest-labs/FLUX.1-schnell" (optimized for fast inference)
-# - height/width: Output image dimensions (default is 1024x1024, here using 512x512)
-#
-# Note: Smaller dimensions = faster generation but lower resolution
 
 # Option 1: Basic initialization with custom image dimensions
-# NOTE: use_onnx_subfunctions=True enables modular ONNX export optimizations (Experimental so not recommended)
-#       This feature improves export performance by breaking down the model into smaller,
-#       more manageable ONNX functions, which can lead to improve export/compile time.
 pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
 # Option 2: Advanced initialization with custom modules
@@ -45,8 +35,6 @@ pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 #
 # pipeline = QEFFFluxPipeline.from_pretrained(
 #     "black-forest-labs/FLUX.1-schnell",
-#     height=512,
-#     width=512,
 #     text_encoder=custom_text_encoder,      # Your custom CLIP text encoder
 #     transformer=custom_transformer,         # Your custom transformer model
 #     tokenizer=custom_tokenizer,             # Your custom tokenizer
@@ -71,10 +59,10 @@ pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 #
 # original_blocks = pipeline.transformer.model.transformer_blocks
 # org_single_blocks = pipeline.transformer.model.single_transformer_blocks
-# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0]])
-# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_single_blocks[0]])
-# pipeline.transformer.model.config.num_layers = 1
-# pipeline.transformer.model.config.num_single_layers = 1
+# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1]])
+# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_single_blocks[0], org_single_blocks[1]])
+# pipeline.transformer.model.config.num_layers = 2
+# pipeline.transformer.model.config.num_single_layers = 2
 
 # ============================================================================
 # OPTIONAL: COMPILE WITH CUSTOM CONFIGURATION
@@ -85,12 +73,19 @@ pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 # - When you want to compile the model separately before generation
 # - When you need to skip image generation and only prepare the model
 #
-# Note: If compile_config is not specified, the default configuration from
+# NOTE-1: If compile_config is not specified, the default configuration from
 #       QEfficient/diffusers/pipelines/flux/flux_config.json will be used
 #
+# NOTE-2: use_onnx_subfunctions=True enables modular ONNX export optimizations (Experimental so not recommended)
+#       This feature improves export performance by breaking down the model into smaller,
+#       more manageable ONNX functions, which can lead to improve compile time.
 # Uncomment to compile with a custom configuration:
-# pipeline.compile(compile_config="examples/diffusers/flux/flux_config.json")
-
+# pipeline.compile(
+#     compile_config="examples/diffusers/flux/flux_config.json",
+#     height=512,
+#     width=512,
+#     use_onnx_subfunctions=False
+#     )
 
 # ============================================================================
 # IMAGE GENERATION WITH CUSTOM RUNTIME CONFIGURATION
@@ -104,12 +99,13 @@ output = pipeline(
     prompt="A girl laughing",
     custom_config_path="examples/diffusers/flux/flux_config.json",
     height=256,
-    width=512,
+    width=256,
     guidance_scale=0.0,
     num_inference_steps=4,
     max_sequence_length=256,
     generator=torch.manual_seed(42),
     parallel_compile=True,
+    use_onnx_subfunctions=True,
 )
 
 images = output.images[0]

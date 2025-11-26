@@ -29,16 +29,20 @@ import torch
 from QEfficient import QEFFFluxPipeline
 
 # Initialize the FLUX.1-schnell pipeline from pretrained weights
-# use_onnx_subfunctions=True enables ONNX-based optimizations for faster compilation
-pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", use_onnx_subfunctions=False)
+pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
 # Generate an image from a text prompt
+# use_onnx_subfunctions=True enables ONNX-based optimizations for faster compilation
 output = pipeline(
     prompt="A cat holding a sign that says hello world",
+    height=256,
+    width=256,
     guidance_scale=0.0,
     num_inference_steps=4,
     max_sequence_length=256,
     generator=torch.manual_seed(42),
+    parallel_compile=True,
+    use_onnx_subfunctions=True,
 )
 
 # Extract the generated image from the output

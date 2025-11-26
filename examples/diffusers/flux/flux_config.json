@@ -1,6 +1,6 @@
 {
   "description": "Default configuration for Flux pipeline",
-  
+
   "modules": 
   {
     "text_encoder": 
@@ -83,7 +83,8 @@
                                           "mdp_ts_num_devices": 1,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
-                                          "aic_num_cores": 16
+                                          "aic_num_cores": 16,
+                                          "aic-enable-depth-first": true
                                         },
                       "execute":
                                         {

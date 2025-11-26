@@ -211,3 +211,8 @@ class QEffPipelineOutput:
         output_str += "=" * 60 + "\n"
 
         return output_str
+
+
+# List of module name that require special handling during export
+# when use_onnx_subfunctions is enabled
+ONNX_SUBFUNCTION_MODULE = ["transformer"]

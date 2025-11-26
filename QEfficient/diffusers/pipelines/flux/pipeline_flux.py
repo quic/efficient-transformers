@@ -21,6 +21,7 @@ from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffVAE,
 )
 from QEfficient.diffusers.pipelines.pipeline_utils import (
+    ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
     calculate_compressed_latent_dimension,
@@ -124,7 +125,7 @@ class QEFFFluxPipeline:
             **kwargs,
         )
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export all pipeline modules to ONNX format.
 
@@ -137,17 +138,21 @@ class QEFFFluxPipeline:
         Returns:
             str: Path to the export directory
         """
-        for _, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
+        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration for this module
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_config()
 
-            # Export the module to ONNX
-            module_obj.export(
-                inputs=example_inputs,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                export_dir=export_dir,
-            )
+            export_params = {
+                "inputs": example_inputs,
+                "output_names": output_names,
+                "dynamic_axes": dynamic_axes,
+                "export_dir": export_dir,
+            }
+
+            if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
+                export_params["use_onnx_subfunctions"] = True
+
+            module_obj.export(**export_params)
 
     @staticmethod
     def get_default_config_path() -> str:
@@ -160,7 +165,12 @@ class QEFFFluxPipeline:
         return os.path.join(os.path.dirname(__file__), "flux_config.json")
 
     def compile(
-        self, compile_config: Optional[str] = None, parallel: bool = False, height: int = 512, width: int = 512
+        self,
+        compile_config: Optional[str] = None,
+        parallel: bool = False,
+        height: int = 512,
+        width: int = 512,
+        use_onnx_subfunctions: bool = False,
     ) -> None:
         """
         Compile ONNX models for deployment on Qualcomm AI hardware.
@@ -184,7 +194,7 @@ class QEFFFluxPipeline:
                 self.vae_decode.onnx_path,
             ]
         ):
-            self.export()
+            self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Load compilation configuration
         config_manager(self, config_source=compile_config)
@@ -442,6 +452,7 @@ class QEFFFluxPipeline:
         max_sequence_length: int = 512,
         custom_config_path: Optional[str] = None,
         parallel_compile: bool = False,
+        use_onnx_subfunctions: bool = False,
     ):
         """
         Generate images from text prompts using the Flux pipeline.
@@ -487,7 +498,13 @@ class QEFFFluxPipeline:
         if height is None or width is None:
             logger.warning("Height or width is None. Setting default values of 512 for both dimensions.")
 
-        self.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
+        self.compile(
+            compile_config=custom_config_path,
+            parallel=parallel_compile,
+            height=height,
+            width=width,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
 
         # Set device IDs for all modules based on configuration
         set_module_device_ids(self)
