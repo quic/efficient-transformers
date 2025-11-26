@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import CustomOpTransform, OnnxTransform, RenameFunctionOutputsTransform
+from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -51,11 +51,16 @@ class QEFFBaseModel(ABC):
     """
 
     _pytorch_transforms: List[PytorchTransform]
-    _onnx_transforms: List[OnnxTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     @classmethod
     def _transform_names(cls) -> List[str]:
-        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
+        pytorch_names = [x.__name__ for x in cls._pytorch_transforms]
+        onnx_transforms = [
+            transform.__name__ if "AdapterWeightsToInputsTransform" in str(transform) else transform
+            for transform in cls._onnx_transforms
+        ]
+        return pytorch_names + onnx_transforms
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -71,6 +76,8 @@ class QEFFBaseModel(ABC):
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
 
+        self._original_model_name: Optional[str] = None
+
         # Apply the transformations
         any_transformed = False
         for transform in self._pytorch_transforms:
@@ -82,26 +89,102 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _offload_model_weights(self, offload_pt_weights) -> bool:
-        """
-        Clear PyTorch weights after export if offload_pt_weights is set to True
+    def _offload_model_weights(self, offload_pt_weights) -> None:
+        """Clear PyTorch model weights to reduce memory usage after ONNX export."""
 
-        Returns:
-            bool: True if weights were successfully offloaded, False otherwise
-        """
-        # Check if offloading is enabled and weights are not already offloaded
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
-                self.model = self.model.to_empty(device="meta")
-                self._is_weights_offloaded = True
-                logger.info("Model weights offloaded to meta device")
+                if self._original_model_name is None:
+                    self._original_model_name = self.model_name
 
-                gc.collect()
-                logger.info("PyTorch weights cleared after export")
+                cached_methods = {}
+                methods_to_cache = constants.CACHE_MODULES
+                self._is_weights_offloaded = True
+                for method_name in methods_to_cache:
+                    if hasattr(self.model, method_name):
+                        method = getattr(self.model, method_name)
+                        if callable(method):
+                            cached_methods[method_name] = method
+
+                # Clear tensor storage and replace with empty shell
+                for param in self.model.parameters():
+                    if hasattr(param, "data") and hasattr(param.data, "storage"):
+                        param.data.storage().resize_(0)
+
+                for buffer in self.model.buffers():
+                    if hasattr(buffer, "data") and hasattr(buffer.data, "storage"):
+                        buffer.data.storage().resize_(0)
+
+                # Clear module dictionaries and hooks
+                for module in self.model.modules():
+                    if hasattr(module, "_parameters"):
+                        module._parameters.clear()
+                    if hasattr(module, "_buffers"):
+                        module._buffers.clear()
+
+                    # Clear hooks
+                    for hook_dict in [
+                        getattr(module, "_forward_hooks", {}),
+                        getattr(module, "_forward_pre_hooks", {}),
+                        getattr(module, "_backward_hooks", {}),
+                        getattr(module, "_state_dict_hooks", {}),
+                        getattr(module, "_load_state_dict_pre_hooks", {}),
+                    ]:
+                        hook_dict.clear()
+
+                # Replace with minimal shell for compatibility
+                class ModelShell:
+                    def __init__(self, config, original_class_name, cached_methods=None):
+                        self.config = config
+                        self.qaic_config = None
+                        self.device = torch.device("meta")
+                        self._cached_methods = cached_methods or {}
+                        self._original_class_name = original_class_name
+
+                        # Create a mock class with the original name
+                        self._mock_class = type(original_class_name, (), {})
+
+                    @property
+                    def __class__(self):
+                        """Override __class__ to return mock class with original name"""
+                        return self._mock_class
+
+                    def __getattr__(self, name):
+                        if name in self._cached_methods:
+                            return self._cached_methods[name]
+                        raise AttributeError(f"'ModelShell' object has no attribute '{name}'")
+
+                    def parameters(self):
+                        return iter([])
+
+                    def named_parameters(self):
+                        return iter([])
+
+                    def buffers(self):
+                        return iter([])
+
+                    def named_buffers(self):
+                        return iter([])
+
+                    def modules(self):
+                        return iter([self])
+
+                    def state_dict(self):
+                        return {}
+
+                    def to(self, device):
+                        return self
+
+                    def eval(self):
+                        return self
+
+                config = getattr(self.model, "config", None)
+                original_class_name = self.model.__class__.__name__
+                self.model = ModelShell(config, original_class_name, cached_methods)
                 return True
 
             except Exception as e:
-                logger.error(f"Failed to offload model weights: {e}")
+                logger.warning(f"Weight clearing failed, continuing: {e}")
                 return False
         return False
 
@@ -258,8 +341,8 @@ class QEFFBaseModel(ABC):
                 InvalidIndexProvider.SUBFUNC_ENABLED = True
                 output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
                 export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
-                self._onnx_transforms.append(RenameFunctionOutputsTransform)
-                self._onnx_transforms.append(CustomOpTransform)
+                self._onnx_transforms.append("RenameFunctionOutputsTransform")
+                self._onnx_transforms.append("CustomOpTransform")
 
             torch.onnx.export(
                 self.model,
@@ -274,6 +357,13 @@ class QEFFBaseModel(ABC):
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
 
+            # Clear temporary references
+            example_inputs.clear()
+            input_names.clear()
+
+            # Force garbage collection
+            gc.collect()
+
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
@@ -282,8 +372,9 @@ class QEFFBaseModel(ABC):
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
 
-            for transform in self._onnx_transforms:
-                model, transformed = transform.apply(model, **transform_kwargs)
+            transform_kwargs["transforms"] = self._onnx_transforms
+
+            model, transformed = OnnxTransform.apply(model, **transform_kwargs)
 
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
@@ -299,12 +390,18 @@ class QEFFBaseModel(ABC):
 
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
+            # Clear external data from memory and cache after all transforms and saving
+            # Make sure model exists before trying to clean it up
+            if "model" in locals():
+                BaseOnnxTransform._cleanup_external_data_and_cache(model)
+                BaseOnnxTransform._cleanup_memory()
+            logger.info("Cleanup complete.")
 
         if use_onnx_subfunctions:
             undo_torch_patches()
             InvalidIndexProvider.SUBFUNC_ENABLED = False
-            self._onnx_transforms.remove(CustomOpTransform)
-            self._onnx_transforms.remove(RenameFunctionOutputsTransform)
+            self._onnx_transforms.remove("CustomOpTransform")
+            self._onnx_transforms.remove("RenameFunctionOutputsTransform")
 
         self.onnx_path = onnx_path
         return onnx_path
