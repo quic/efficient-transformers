@@ -41,6 +41,8 @@ def CustomOpBluePrint(input: onnxscript.FLOAT):
 
 # Layer 2: PyTorch Autograd Function
 # Connects PyTorch execution to ONNX export
+# Pytorch forward function is called during PyTorch execution (CPU/GPU).
+# When running on ONNX runtime, the CustomOpBluePrint function (Layer 1) is called instead.
 
 
 class CustomOpBluePrintFunc(torch.autograd.Function):
