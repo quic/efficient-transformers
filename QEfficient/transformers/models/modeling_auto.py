@@ -594,6 +594,9 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -735,7 +738,11 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        super().__init__(model, qaic_config=qaic_config, **kwargs)
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
+        super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -2249,6 +2256,7 @@ class QEFFAutoModelForImageTextToText:
         NotImplementedError
             If `continuous_batching` is provided as True.
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
             NotImplementedError("Continuous batching is not supported for kv_offload = False")
@@ -2261,6 +2269,9 @@ class QEFFAutoModelForImageTextToText:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        if enable_proxy and kv_offload:
+            logger.info("Proxy Model Enabled for QEfficient Model")
+            kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(
             model,
             kv_offload=kv_offload,
@@ -2473,10 +2484,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
-        if kwargs.pop("enable_proxy", False):
-            cls._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
+        enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -2497,6 +2505,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
