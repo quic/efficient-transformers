@@ -5,19 +5,20 @@
 #
 # -----------------------------------------------------------------------------
 
+import inspect
 import sys
 from pathlib import Path
 
 import pytest
+import torch.nn as nn
 import torch.optim as optim
 
-from QEfficient import QEFFAutoModelForCausalLM
-from QEfficient.finetune.experimental.core.component_registry import ComponentFactory
+from QEfficient.finetune.experimental.core.optimizer import get_optimizer_cls, register_optimizer
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 OPTIMIZER_CONFIGS = {
     "adam": {
-        "name": "adam",
+        "optimizer_name": "adam",
         "opt_cls": optim.Adam,
         "lr": 1e-4,
         "weight_decay": 0.01,
@@ -26,7 +27,7 @@ OPTIMIZER_CONFIGS = {
         "amsgrad": False,
     },
     "adamw": {
-        "name": "adamw",
+        "optimizer_name": "adamw",
         "opt_cls": optim.AdamW,
         "lr": 1e-4,
         "weight_decay": 0.01,
@@ -35,7 +36,7 @@ OPTIMIZER_CONFIGS = {
         "amsgrad": False,
     },
     "sgd": {
-        "name": "sgd",
+        "optimizer_name": "sgd",
         "opt_cls": optim.SGD,
         "lr": 1e-4,
         "momentum": 0.9,
@@ -47,16 +48,40 @@ OPTIMIZER_CONFIGS = {
 
 
 @pytest.fixture
-def ref_model():
-    return QEFFAutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
+def dummy_model():
+    return nn.Sequential(
+        nn.Linear(10, 5),
+        nn.ReLU(),
+        nn.Linear(5, 1),
+    )
 
 
 @pytest.mark.parametrize("opt_name", OPTIMIZER_CONFIGS.keys())
-def test_optimizers(opt_name, ref_model):
+def test_optimizers(opt_name, dummy_model):
     """Test that all optimizers can be created with their configs."""
-    # Create optimizer using the factory
+    # Register optimizer class
     config = OPTIMIZER_CONFIGS[opt_name]
-    opt_inst = ComponentFactory.create_optimizer(**config, model_params=ref_model.model.parameters())
-    assert opt_inst is not None
+    register_optimizer(config["optimizer_name"], config["opt_cls"])
+    optimizer_class = get_optimizer_cls(config["optimizer_name"])
+    assert optimizer_class is not None
+    assert optimizer_class == config["opt_cls"]
+    valid_params = inspect.signature(optimizer_class).parameters
+    filtered_config = {k: v for k, v in config.items() if k in valid_params}
+    opt_inst = optimizer_class(dummy_model.parameters(), **filtered_config)
     assert isinstance(opt_inst, optim.Optimizer)
     assert len(list(opt_inst.param_groups)) == 1
+    assert opt_inst.param_groups[0]["lr"] == config["lr"]
+    if "weight_decay" in config:
+        assert opt_inst.param_groups[0]["weight_decay"] == config["weight_decay"]
+    if "betas" in config:
+        assert opt_inst.param_groups[0]["betas"] == config["betas"]
+    if "eps" in config:
+        assert opt_inst.param_groups[0]["eps"] == config["eps"]
+    if "momentum" in config:
+        assert opt_inst.param_groups[0]["momentum"] == config["momentum"]
+    if "dampening" in config:
+        assert opt_inst.param_groups[0]["dampening"] == config["dampening"]
+    if "nesterov" in config:
+        assert opt_inst.param_groups[0]["nesterov"] == config["nesterov"]
+    if "amsgrad" in config:
+        assert opt_inst.param_groups[0]["amsgrad"] == config["amsgrad"]

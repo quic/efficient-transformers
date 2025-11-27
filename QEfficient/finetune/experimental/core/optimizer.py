@@ -16,9 +16,15 @@ from torch.optim import Optimizer
 
 from QEfficient.finetune.experimental.core.component_registry import registry
 
-registry.optimizer("adam")(optim.Adam)
-registry.optimizer("adamw")(optim.AdamW)
-registry.optimizer("sgd")(optim.SGD)
+
+def register_optimizer(optimizer_name: str, cls: Type[Optimizer]) -> None:
+    """Register a new optimizer class."""
+    registry.optimizer(optimizer_name)(cls)
+
+
+register_optimizer("adam", optim.Adam)
+register_optimizer("adamw", optim.AdamW)
+register_optimizer("sgd", optim.SGD)
 
 
 def get_optimizer_cls(optimizer_name: str) -> Type[Optimizer]:
