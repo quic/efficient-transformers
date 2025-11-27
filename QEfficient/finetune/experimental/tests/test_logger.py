@@ -89,7 +89,7 @@ class TestLogger:
         """Test exception logging with raising"""
         logger = Logger("exception_test_logger")
 
-        with pytest.raises(ValueError) as exc_info, caplog.at_level(logging.ERROR):
+        with pytest.raises(ValueError), caplog.at_level(logging.ERROR):
             logger.log_exception("Custom error", ValueError("Test exception"), raise_exception=True)
 
         # The actual logged message is "Custom error: Test exception"
