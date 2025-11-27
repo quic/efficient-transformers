@@ -40,6 +40,8 @@ class TestComponentRegistry:
 
         # Verify registration
         retrieved = getattr(self.registry, get_method)(object_name)
+        if register_method == "trainer_module":
+            retrieved = retrieved["trainer_cls"]
         assert retrieved == MockObject
 
     @pytest.mark.parametrize(
