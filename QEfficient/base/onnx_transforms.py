@@ -17,7 +17,26 @@ import numpy as np
 import torch
 from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
-from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxGatherFunc, CtxScatter, CtxScatterFunc
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGather,
+    CtxGather3D,
+    CtxGatherFunc,
+    CtxGatherFunc3D,
+    CtxScatter,
+    CtxScatter3D,
+    CtxScatterFunc,
+    CtxScatterFunc3D,
+)
+from QEfficient.customop.ctx_scatter_gather_cb import (
+    CtxGatherCB,
+    CtxGatherCB3D,
+    CtxGatherFuncCB,
+    CtxGatherFuncCB3D,
+    CtxScatterCB,
+    CtxScatterCB3D,
+    CtxScatterFuncCB,
+    CtxScatterFuncCB3D,
+)
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils.constants import ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL
 
@@ -110,7 +129,13 @@ class OnnxTransform(BaseOnnxTransform):
     CUSTOM_OPS = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
+        "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
         "CtxGatherFunc": (CtxGatherFunc, CtxGather),
+        "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
+        "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
+        "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
+        "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
+        "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
     }
 
     @classmethod
