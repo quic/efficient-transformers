@@ -58,13 +58,6 @@ python -m build --wheel --outdir dist
 pip install dist/qefficient-0.0.1.dev0-py3-none-any.whl
 ```
 
-### Install Diffusers Dependencies
-
-```bash
-# Install diffusers optional dependencies
-pip install "QEfficient[diffusers]"
-```
-
 ---
 
 ## 🎯 Supported Models
@@ -83,13 +76,7 @@ Check out our comprehensive examples in the [`examples/diffusers/`](../../exampl
 
 We welcome contributions! Please see our [Contributing Guide](../../CONTRIBUTING.md) for details.
 
-### Development Setup
 
-```bash
-git clone https://github.com/quic/efficient-transformers.git
-cd efficient-transformers
-pip install -e ".[diffusers,test]"
-```
 
 ---
 
