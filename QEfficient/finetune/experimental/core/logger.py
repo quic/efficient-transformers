@@ -12,7 +12,21 @@ from pathlib import Path
 from typing import Optional
 from transformers.utils.logging import get_logger as hf_get_logger
 
-from .utils.dist_utils import get_rank
+from .utils.dist_utils import get_local_rank
+
+
+# -----------------------------------------------------------------------------
+# Logger usage:
+# Initialize logger:
+#   logger = Logger("my_logger", log_file="logs/output.log", level=logging.DEBUG)
+# Log messages:
+#   logger.info("This is an info message")
+#   logger.error("This is an error message")
+#   logger.log_rank_zero("This message is logged only on rank 0")
+#   logger.log_exception("An error occurred", exception, raise_exception=False)
+# Attach file handler later if needed:
+#   logger.prepare_for_logs(output_dir="logs", log_level="DEBUG")
+# -----------------------------------------------------------------------------
 
 
 class Logger:
@@ -86,7 +100,7 @@ class Logger:
             message: Message to log
             level: Logging level
         """
-        if get_rank() == 0:
+        if get_local_rank() == 0:
             self.logger.log(level, message)
 
     def log_exception(self, message: str, exception: Exception, raise_exception: bool = True) -> None:
@@ -104,13 +118,13 @@ class Logger:
         if raise_exception:
             raise exception
 
-    def prepare_for_logs(self, output_dir: str, save_metrics: bool = True, log_level: str = "INFO") -> None:
+    def prepare_for_logs(self, output_dir: Optional[str] = None, log_level: str = "INFO") -> None:
         """
-        Prepare logger for training logs.
+        Prepare existing logger to log to both console and file with specified
+        output directory and log level.
 
         Args:
             output_dir: Output directory for logs
-            save_metrics: Whether to save metrics to file
             log_level: Logging level as string
         """
         # Convert string log level to logging constant
@@ -122,7 +136,7 @@ class Logger:
             handler.setLevel(level)
 
         # Add file handler if saving metrics
-        if save_metrics:
+        if output_dir:
             log_file = Path(output_dir) / "training.log"
             log_file.parent.mkdir(parents=True, exist_ok=True)
 

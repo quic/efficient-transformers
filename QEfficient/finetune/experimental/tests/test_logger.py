@@ -63,10 +63,10 @@ class TestLogger:
             assert "Error message" in caplog.text
             assert "Critical message" in caplog.text
 
-    @patch("QEfficient.finetune.experimental.core.logger.get_rank")
-    def test_log_rank_zero(self, mock_get_rank, caplog):
+    @patch("QEfficient.finetune.experimental.core.logger.get_local_rank")
+    def test_log_rank_zero_positive_case(self, mock_get_local_rank, caplog):
         """Test rank zero logging functionality"""
-        mock_get_rank.return_value = 0
+        mock_get_local_rank.return_value = 0
         logger = Logger("rank_test_logger")
 
         with caplog.at_level(logging.INFO):
@@ -74,10 +74,10 @@ class TestLogger:
 
             assert "Rank zero message" in caplog.text
 
-    @patch("QEfficient.finetune.experimental.core.logger.get_rank")
-    def test_log_rank_zero_not_zero(self, mock_get_rank, caplog):
-        """Test that non-rank zero messages are not logged"""
-        mock_get_rank.return_value = 1
+    @patch("QEfficient.finetune.experimental.core.logger.get_local_rank")
+    def test_log_rank_zero_negative_case(self, mock_get_local_rank, caplog):
+        """Test to verify that only rank‑zero messages are logged"""
+        mock_get_local_rank.return_value = 1
         logger = Logger("rank_test_logger")
 
         with caplog.at_level(logging.INFO):
@@ -112,7 +112,7 @@ class TestLogger:
         logger = Logger("prepare_test_logger")
 
         # Prepare for logs
-        logger.prepare_for_logs(str(output_dir), save_metrics=True, log_level="DEBUG")
+        logger.prepare_for_logs(str(output_dir), log_level="DEBUG")
 
         # Check file handler was added
         file_handlers = [h for h in logger.logger.handlers if isinstance(h, logging.FileHandler)]
@@ -125,13 +125,12 @@ class TestLogger:
         # Check log level was updated
         assert logger.logger.level == logging.DEBUG
 
-    def test_prepare_for_logs_no_metrics(self, tmp_path):
-        """Test preparing logger without saving metrics"""
-        output_dir = tmp_path / "output"
+    def test_prepare_for_logs_no_file_handler(self):
+        """Test preparing logger without saving to file"""
         logger = Logger("prepare_test_logger")
 
         # Prepare for logs without saving metrics
-        logger.prepare_for_logs(str(output_dir), save_metrics=False, log_level="INFO")
+        logger.prepare_for_logs(log_level="INFO")
 
         # Check no file handler was added
         file_handlers = [h for h in logger.logger.handlers if isinstance(h, logging.FileHandler)]
@@ -149,7 +148,7 @@ class TestLogger:
         logger.logger.addHandler(file_handler)
 
         # Prepare for logs again
-        logger.prepare_for_logs(str(output_dir), save_metrics=True, log_level="INFO")
+        logger.prepare_for_logs(str(output_dir), log_level="INFO")
 
         # Should still have only one file handler
         file_handlers = [h for h in logger.logger.handlers if isinstance(h, logging.FileHandler)]
@@ -204,7 +203,7 @@ class TestLoggerIntegration:
             logger.log_exception("Caught exception", e, raise_exception=False)
 
         # Test rank zero logging
-        with patch("QEfficient.finetune.experimental.core.logger.get_rank") as mock_rank:
+        with patch("QEfficient.finetune.experimental.core.logger.get_local_rank") as mock_rank:
             mock_rank.return_value = 0
             logger.log_rank_zero("Rank zero test")
 

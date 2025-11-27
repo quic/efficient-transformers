@@ -14,10 +14,17 @@ def is_dist_available_and_initialized() -> bool:
 
 
 def get_rank() -> int:
-    """Get the rank of the current process in distributed training."""
+    """Return the global rank of the current process, else 0."""
     if not is_dist_available_and_initialized():
         return 0
     return dist.get_rank()
+
+
+def get_local_rank() -> int:
+    """Return the local rank of the current process on its node, else 0."""
+    if not is_dist_available_and_initialized():
+        return 0
+    return dist.get_node_local_rank()
 
 
 def get_world_size() -> int:
