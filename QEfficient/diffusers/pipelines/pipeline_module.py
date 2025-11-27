@@ -380,7 +380,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
     _pytorch_transforms = [AttentionTransform, NormalizationTransform, CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, use_onnx_subfunctions: bool) -> None:
+    def __init__(self, model: nn.Module) -> None:
         """
         Initialize the Flux transformer wrapper.
 
@@ -390,10 +390,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
                                      for better modularity and potential optimization
         """
         super().__init__(model)
-
-        # Ensure model is on CPU to avoid meta device issues
-        self.model = model.to("cpu")
-        self.use_onnx_subfunctions = use_onnx_subfunctions
 
     def get_onnx_config(
         self, batch_size: int = 1, seq_length: int = 256, cl: int = 4096
@@ -428,7 +424,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             # AdaLN embeddings for dual transformer blocks
             # Shape: [num_layers, 12 chunks (6 for norm1 + 6 for norm1_context), hidden_dim]
             "adaln_emb": torch.randn(
-                self.model.config.num_layers,
+                self.model.config["num_layers"],
                 12,  # 6 chunks for norm1 + 6 chunks for norm1_context
                 3072,  # AdaLN hidden dimension
                 dtype=torch.float32,
@@ -436,7 +432,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             # AdaLN embeddings for single transformer blocks
             # Shape: [num_single_layers, 3 chunks, hidden_dim]
             "adaln_single_emb": torch.randn(
-                self.model.config.num_single_layers,
+                self.model.config["num_single_layers"],
                 3,  # 3 chunks for single block norm
                 3072,  # AdaLN hidden dimension
                 dtype=torch.float32,

@@ -27,7 +27,7 @@ from QEfficient import QEFFFluxPipeline
 # PIPELINE INITIALIZATION WITH CUSTOM PARAMETERS
 # ============================================================================
 
-# Option 1: Basic initialization with custom image dimensions
+# Option 1: Basic initialization with default parameters
 pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
 # Option 2: Advanced initialization with custom modules
@@ -59,10 +59,10 @@ pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 #
 # original_blocks = pipeline.transformer.model.transformer_blocks
 # org_single_blocks = pipeline.transformer.model.single_transformer_blocks
-# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1]])
-# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_single_blocks[0], org_single_blocks[1]])
-# pipeline.transformer.model.config.num_layers = 2
-# pipeline.transformer.model.config.num_single_layers = 2
+# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0]])
+# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_single_blocks[0]])
+# pipeline.transformer.model.config['num_layers'] = 1
+# pipeline.transformer.model.config['num_single_layers'] = 1
 
 # ============================================================================
 # OPTIONAL: COMPILE WITH CUSTOM CONFIGURATION

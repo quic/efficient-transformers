@@ -5,14 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-"""
-Export utilities for ONNX model export.
-
-This module provides:
-- export_wrapper: Decorator for managing export lifecycle
-- Helper functions for directory setup, hashing, and ONNX subfunctions
-"""
-
 import inspect
 import re
 import warnings

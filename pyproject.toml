@@ -53,6 +53,7 @@ dependencies = [
 test = ["pytest","pytest-mock"]
 docs = ["Sphinx==7.1.2","sphinx-rtd-theme==2.0.0","myst-parser==3.0.1","sphinx-multiversion"]
 quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
+
 [build-system]
 requires = ["setuptools>=62.0.0"]
 build-backend = "setuptools.build_meta"

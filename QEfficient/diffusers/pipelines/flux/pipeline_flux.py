@@ -36,25 +36,54 @@ from QEfficient.utils.logging_utils import logger
 
 class QEFFFluxPipeline:
     """
-    QEfficient-optimized Flux pipeline for text-to-image generation on Qualcomm AI hardware.
+    QEfficient-optimized Flux pipeline for high-performance text-to-image generation on Qualcomm AI hardware.
+
+    This pipeline provides an optimized implementation of the Flux diffusion model specifically designed
+    for deployment on Qualcomm AI Cloud (QAIC) devices. It wraps the original HuggingFace Flux model
+    components with QEfficient-optimized versions that can be exported to ONNX format and compiled
+    into Qualcomm Program Container (QPC) files for efficient inference.
+
+    The pipeline supports the complete Flux workflow including:
+    - Dual text encoding with CLIP and T5 encoders
+    - Transformer-based denoising with adaptive layer normalization
+    - VAE decoding for final image generation
+    - Performance monitoring and optimization
 
     Attributes:
-        text_encoder (QEffTextEncoder): Optimized CLIP text encoder
-        text_encoder_2 (QEffTextEncoder): Optimized T5 text encoder
-        transformer (QEffFluxTransformerModel): Optimized Flux transformer
-        vae_decode (QEffVAE): Optimized VAE decoder
-        modules (Dict): Dictionary of all pipeline modules for iteration
+        text_encoder (QEffTextEncoder): Optimized CLIP text encoder for pooled embeddings
+        text_encoder_2 (QEffTextEncoder): Optimized T5 text encoder for sequence embeddings
+        transformer (QEffFluxTransformerModel): Optimized Flux transformer for denoising
+        vae_decode (QEffVAE): Optimized VAE decoder for latent-to-image conversion
+        modules (Dict[str, Any]): Dictionary of all pipeline modules for batch operations
+        model (FluxPipeline): Original HuggingFace Flux model reference
+        tokenizer: CLIP tokenizer for text preprocessing
+        scheduler: Diffusion scheduler for timestep management
+
+    Example:
+        >>> from QEfficient.diffusers.pipelines.flux import QEFFFluxPipeline
+        >>> pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+        >>> images = pipeline(
+        ...     prompt="A beautiful sunset over mountains",
+        ...     height=512,
+        ...     width=512,
+        ...     num_inference_steps=28
+        ... )
+        >>> images.images[0].save("generated_image.png")
     """
 
     _hf_auto_class = FluxPipeline
 
-    def __init__(self, model, use_onnx_subfunctions: bool, *args, **kwargs):
+    def __init__(self, model, *args, **kwargs):
         """
         Initialize the QEfficient Flux pipeline.
 
+        This pipeline provides an optimized implementation of the Flux text-to-image model
+        for deployment on Qualcomm AI hardware. It wraps the original HuggingFace Flux model
+        components with QEfficient-optimized versions that can be exported to ONNX and compiled
+        for QAIC devices.
+
         Args:
             model: Pre-loaded FluxPipeline model
-            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
             **kwargs: Additional arguments including height and width
         """
 
@@ -62,7 +91,7 @@ class QEFFFluxPipeline:
         self.model = model
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
-        self.transformer = QEffFluxTransformerModel(model.transformer, use_onnx_subfunctions=use_onnx_subfunctions)
+        self.transformer = QEffFluxTransformerModel(model.transformer)
         self.vae_decode = QEffVAE(model, "decoder")
 
         # Store all modules in a dictionary for easy iteration during export/compile
@@ -94,21 +123,41 @@ class QEFFFluxPipeline:
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
-        use_onnx_subfunctions: bool = False,
         **kwargs,
     ):
         """
-        Load a pretrained Flux model and wrap it with QEfficient optimizations.
+        Load a pretrained Flux model from HuggingFace Hub or local path and wrap it with QEfficient optimizations.
+
+        This class method provides a convenient way to instantiate a QEFFFluxPipeline from a pretrained
+        Flux model. It automatically loads the base FluxPipeline model in float32 precision on CPU
+        and wraps all components with QEfficient-optimized versions for QAIC deployment.
 
         Args:
-            pretrained_model_name_or_path (str or os.PathLike): HuggingFace model ID or local path
-            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
-            height (int): Target image height (default: 512)
-            width (int): Target image width (default: 512)
-            **kwargs: Additional arguments passed to FluxPipeline.from_pretrained
+            pretrained_model_name_or_path (str or os.PathLike): Either a HuggingFace model identifier
+                (e.g., "black-forest-labs/FLUX.1-schnell") or a local path to a saved model directory.
+            **kwargs: Additional keyword arguments passed to FluxPipeline.from_pretrained().
 
         Returns:
-            QEFFFluxPipeline: Initialized pipeline instance
+            QEFFFluxPipeline: A fully initialized pipeline instance with QEfficient-optimized components
+                ready for export, compilation, and inference on QAIC devices.
+
+        Raises:
+            ValueError: If the model path is invalid or model cannot be loaded
+            OSError: If there are issues accessing the model files
+            RuntimeError: If model initialization fails
+
+        Example:
+            >>> # Load from HuggingFace Hub
+            >>> pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>>
+            >>> # Load from local path
+            >>> pipeline = QEFFFluxPipeline.from_pretrained("/path/to/local/flux/model")
+            >>>
+            >>> # Load with custom cache directory
+            >>> pipeline = QEFFFluxPipeline.from_pretrained(
+            ...     "black-forest-labs/FLUX.1-dev",
+            ...     cache_dir="/custom/cache/dir"
+            ... )
         """
         # Load the base Flux model in float32 on CPU
         model = cls._hf_auto_class.from_pretrained(
@@ -120,23 +169,52 @@ class QEFFFluxPipeline:
 
         return cls(
             model=model,
-            use_onnx_subfunctions=use_onnx_subfunctions,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
 
     def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
-        Export all pipeline modules to ONNX format.
+        Export all pipeline modules to ONNX format for deployment preparation.
 
-        This method iterates through all modules (text encoders, transformer, VAE decoder)
-        and exports each to ONNX using their respective configurations.
+        This method systematically exports each pipeline component (CLIP text encoder, T5 text encoder,
+        Flux transformer, and VAE decoder) to ONNX format. Each module is exported with its specific
+        configuration including dynamic axes, input/output specifications, and optimization settings.
+
+        The export process prepares the models for subsequent compilation to QPC format, enabling
+        efficient inference on QAIC hardware. ONNX subfunctions can be used for certain modules
+        to optimize memory usage and performance.
 
         Args:
-            export_dir (str, optional): Directory to save ONNX models. If None, uses default.
+            export_dir (str, optional): Target directory for saving ONNX model files. If None,
+                uses the default export directory structure based on model name and configuration.
+                The directory will be created if it doesn't exist.
+            use_onnx_subfunctions (bool, default=False): Whether to enable ONNX subfunction
+                optimization for supported modules. This can optimize thegraph and
+                improve compilation efficiency for models like the transformer.
 
         Returns:
-            str: Path to the export directory
+            str: Absolute path to the export directory containing all ONNX model files.
+                Each module will have its own subdirectory with the exported ONNX file.
+
+        Raises:
+            RuntimeError: If ONNX export fails for any module
+            OSError: If there are issues creating the export directory or writing files
+            ValueError: If module configurations are invalid
+
+        Note:
+            - All models are exported in float32 precision for maximum compatibility
+            - Dynamic axes are configured to support variable batch sizes and sequence lengths
+            - The export process may take several minutes depending on model size
+            - Exported ONNX files can be large (several GB for complete pipeline)
+
+        Example:
+            >>> pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> export_path = pipeline.export(
+            ...     export_dir="/path/to/export",
+            ...     use_onnx_subfunctions=True
+            ... )
+            >>> print(f"Models exported to: {export_path}")
         """
         for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration for this module
@@ -157,10 +235,11 @@ class QEFFFluxPipeline:
     @staticmethod
     def get_default_config_path() -> str:
         """
-        Get the path to the default Flux pipeline configuration file.
+        Get the absolute path to the default Flux pipeline configuration file.
 
         Returns:
-            str: Absolute path to flux_config.json
+            str: Absolute path to the flux_config.json file containing default pipeline
+                configuration settings for compilation and device allocation.
         """
         return os.path.join(os.path.dirname(__file__), "flux_config.json")
 
@@ -173,16 +252,38 @@ class QEFFFluxPipeline:
         use_onnx_subfunctions: bool = False,
     ) -> None:
         """
-        Compile ONNX models for deployment on Qualcomm AI hardware.
-
-        This method compiles all pipeline modules (text encoders, transformer, VAE decoder)
-        into optimized QPC (Qualcomm Program Container) format for inference on QAIC devices.
+        Compile ONNX models into optimized QPC format for deployment on Qualcomm AI hardware.
 
         Args:
-            compile_config (str, optional): Path to JSON configuration file.
-                                           If None, uses default configuration.
-            parallel (bool): If True, compile modules in parallel using ThreadPoolExecutor.
-                           If False, compile sequentially (default: False).
+            compile_config (str, optional): Path to a JSON configuration file containing
+                compilation settings, device mappings, and optimization parameters. If None,
+                uses the default configuration from get_default_config_path().
+            parallel (bool, default=False): Compilation mode selection:
+                - True: Compile modules in parallel using ThreadPoolExecutor for faster processing
+                - False: Compile modules sequentially for lower resource usage
+            height (int, default=512): Target image height in pixels.
+            width (int, default=512): Target image width in pixels.
+            use_onnx_subfunctions (bool, default=False): Whether to export models with ONNX
+                subfunctions before compilation.
+
+        Raises:
+            RuntimeError: If compilation fails for any module or if QAIC compiler is not available
+            FileNotFoundError: If ONNX models haven't been exported or config file is missing
+            ValueError: If configuration parameters are invalid
+            OSError: If there are issues with file I/O during compilation
+
+        Example:
+            >>> pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> # Sequential compilation with default config
+            >>> pipeline.compile(height=1024, width=1024)
+            >>>
+            >>> # Parallel compilation with custom config
+            >>> pipeline.compile(
+            ...     compile_config="/path/to/custom_config.json",
+            ...     parallel=True,
+            ...     height=512,
+            ...     width=512
+            ... )
         """
         # Ensure all modules are exported to ONNX before compilation
         if any(
@@ -227,7 +328,10 @@ class QEFFFluxPipeline:
         device_ids: Optional[List[int]] = None,
     ):
         """
-        Encode prompts using the T5 text encoder.
+        Encode text prompts using the T5 text encoder for detailed semantic understanding.
+
+        T5 provides rich sequence embeddings that capture fine-grained text details,
+        complementing CLIP's global representation in Flux's dual encoder setup.
 
         Args:
             prompt (str or List[str]): Input prompt(s) to encode
@@ -302,7 +406,10 @@ class QEFFFluxPipeline:
         device_ids: Optional[List[int]] = None,
     ):
         """
-        Encode prompts using the CLIP text encoder.
+        Encode text prompts using the CLIP text encoder for global semantic representation.
+
+        CLIP provides pooled embeddings that capture high-level semantic meaning,
+        working alongside T5's detailed sequence embeddings in Flux's dual encoder setup.
 
         Args:
             prompt (str or List[str]): Input prompt(s) to encode
@@ -379,14 +486,14 @@ class QEFFFluxPipeline:
         max_sequence_length: int = 512,
     ):
         """
-        Encode prompts using both CLIP and T5 text encoders.
+        Encode text prompts using Flux's dual text encoder architecture.
 
-        Flux uses a dual text encoder setup:
-        - CLIP provides pooled embeddings for global conditioning
-        - T5 provides sequence embeddings for detailed text understanding
+        Flux employs both CLIP and T5 encoders for comprehensive text understanding:
+        - CLIP provides pooled embeddings for global semantic conditioning
+        - T5 provides detailed sequence embeddings for fine-grained text control
 
         Args:
-            prompt (str or List[str]): Primary prompt(s)
+            prompt (str or List[str]): Primary prompt(s) for both encoders
             prompt_2 (str or List[str], optional): Secondary prompt(s) for T5. If None, uses primary prompt
             num_images_per_prompt (int): Number of images to generate per prompt
             prompt_embeds (torch.FloatTensor, optional): Pre-computed T5 embeddings
@@ -395,10 +502,10 @@ class QEFFFluxPipeline:
 
         Returns:
             tuple: (prompt_embeds, pooled_prompt_embeds, text_ids, encoder_perf_times)
-                - prompt_embeds: T5 sequence embeddings
-                - pooled_prompt_embeds: CLIP pooled embeddings
-                - text_ids: Position IDs for text tokens
-                - encoder_perf_times: List of [CLIP_time, T5_time]
+                - prompt_embeds (torch.Tensor): T5 sequence embeddings [batch*num_images, seq_len, 4096]
+                - pooled_prompt_embeds (torch.Tensor): CLIP pooled embeddings [batch*num_images, 768]
+                - text_ids (torch.Tensor): Position IDs for text tokens [seq_len, 3]
+                - encoder_perf_times (List[float]): Performance times [CLIP_time, T5_time]
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
 
