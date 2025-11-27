@@ -22,6 +22,7 @@ def get_object(obj_dict: Dict, name: str, object_type: str, list_fn: Callable) -
         raise ValueError(f"Unknown {object_type}: {name}. Available: {list_fn()}")
     return obj
 
+
 class ComponentRegistry:
     """Registry for managing different training components."""
 
@@ -39,25 +40,25 @@ class ComponentRegistry:
 
     def trainer_module(self, name: str, args_cls=None, required_kwargs=None):
         """
-        Decorator to register a trainer module with its configuration. 
+        Decorator to register a trainer module with its configuration.
         Each trainer module has to be binded to its args class and required kwargs.
-        
+
         Args:
             name: Name of the trainer type
             args_cls: The arguments class for this trainer
             required_kwargs: Dictionary of required keyword arguments and their default values
         """
         required_kwargs = required_kwargs or {}
-        
+
         def decorator(trainer_cls):
             self._trainer_modules[name] = {
-                'trainer_cls': trainer_cls,
-                'args_cls': args_cls,
-                'required_kwargs': required_kwargs
+                "trainer_cls": trainer_cls,
+                "args_cls": args_cls,
+                "required_kwargs": required_kwargs,
             }
             logger.info(f"Registered trainer module: {name}")
             return self._trainer_modules[name]
-            
+
         return decorator
 
     def optimizer(self, name: str):
@@ -133,7 +134,7 @@ class ComponentRegistry:
     def get_trainer_module(self, name: str) -> Optional[Type]:
         """Get trainer module class by name."""
         return get_object(self._trainer_modules, name, "trainer module", self.list_trainer_modules)
-    
+
     def get_optimizer(self, name: str) -> Optional[Type]:
         """Get optimizer class by name."""
         return get_object(self._optimizers, name, "optimizer", self.list_optimizers)
