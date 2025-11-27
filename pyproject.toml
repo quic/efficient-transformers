@@ -51,6 +51,10 @@ infer = [
     "torch@https://download.pytorch.org/whl/cpu/torch-2.7.0%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
 ]
 ft = [
+    "torch_qaic @ file:///opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
+    "torch_qaic @ file:///opt/qti-aic/integrations/torch_qaic/py311/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl ; python_version=='3.11' and platform_machine=='x86_64'",
+    "accelerate @ file:///opt/qti-aic/integrations/accelerate/py310/accelerate-1.10.1-py3-none-any.whl ; python_version=='3.10' and platform_machine=='x86_64'",
+    "accelerate @ file:///opt/qti-aic/integrations/accelerate/py311/accelerate-1.10.1-py3-none-any.whl ; python_version=='3.11' and platform_machine=='x86_64'",
     "tensorboard ; python_version>='3.10' and python_version<'3.12' and platform_machine=='x86_64'",
     "transformers==4.55.0 ; python_version>='3.10' and python_version<'3.12' and platform_machine=='x86_64'",
     "torch@https://download.pytorch.org/whl/cpu/torch-2.9.0%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
