@@ -21,7 +21,7 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatterFunc,
 )
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
-from QEfficient.utils.constants import ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL
+from QEfficient.utils.constants import ONNX_EXPORT_OPSET, ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         onnx_base_dir: Optional[str] = None,
         file_chunk_size: int = 10 * 2**30,
         size_threshold: int = 1024,
-        opset_version: int = 17,
+        opset_version: int = ONNX_EXPORT_OPSET,
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
         if not transforms:
@@ -127,19 +127,18 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         try:
             cls._load_external_data(model, onnx_base_dir)
 
-            tensors = external_data_helper._get_all_tensors(model)
+            # tensors = external_data_helper._get_all_tensors(model)
 
-            requested = set(transforms)
+            requested = transforms
             applied = {t: False for t in requested}
             do_fp16 = FP16ClipTransform in requested
             do_split = SplitTensorsTransform in requested
             fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
             file_num_tracker = {"num": 0, "size": 0}
-
             # fp_16
             if do_fp16 or do_split:
-                for idx, tensor in enumerate(tensors):
-                    if do_fp16 and cls._clip_tensor(tensor, fp16_min, fp16_max):
+                for idx, tensor in enumerate(external_data_helper._get_all_tensors(model)):
+                    if do_fp16 and cls._clip_tensor(tensor, fp16_min, fp16_max, onnx_base_dir):
                         applied[FP16ClipTransform] = True
 
                     # Split Tensor
@@ -171,7 +170,6 @@ class OnnxTransformPipeline(BaseOnnxTransform):
             return model, any(applied.values())
 
         finally:
-            # pass
             cls._cleanup_memory()
 
     @classmethod
@@ -218,10 +216,10 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         return renamed
 
     @staticmethod
-    def _clip_tensor(tensor, fp16_min, fp16_max) -> bool:
+    def _clip_tensor(tensor, fp16_min, fp16_max, onnx_base_dir) -> bool:
         if tensor.data_type != TensorProto.FLOAT:
             return False
-        arr = numpy_helper.to_array(tensor)
+        arr = numpy_helper.to_array(tensor, onnx_base_dir)
         if not (np.any(arr > fp16_max) or np.any(arr < fp16_min)):
             return False
         negmask = np.isinf(arr) & (arr < 0)

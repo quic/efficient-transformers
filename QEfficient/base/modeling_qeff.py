@@ -357,14 +357,13 @@ class QEFFBaseModel(ABC):
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
 
+            model = onnx.load(tmp_onnx_path, load_external_data=False)
             # Clear temporary references
             example_inputs.clear()
             input_names.clear()
 
             # Force garbage collection
             gc.collect()
-
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
