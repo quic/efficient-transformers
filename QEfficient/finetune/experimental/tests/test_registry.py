@@ -7,7 +7,7 @@
 
 import pytest
 
-from QEfficient.finetune.experimental.core.component_registry import ComponentRegistry, registry, get_object
+from QEfficient.finetune.experimental.core.component_registry import ComponentRegistry, get_object, registry
 
 
 class TestComponentRegistry:
