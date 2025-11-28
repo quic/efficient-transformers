@@ -32,3 +32,11 @@ def get_optimizer_cls(optimizer_name: str) -> Type[Optimizer]:
     if optimizer_cls is None:
         raise ValueError(f"Unknown optimizer: {optimizer_name}")
     return optimizer_cls
+
+
+def get_optimizer(opt_config):
+    opt_name = opt_config.pop("optimizer_name")
+    opt_cls = get_optimizer_cls(opt_name)
+    opt_config["lr"] = float(opt_config["lr"])
+    optimizer_cls_and_kwargs = (opt_cls, opt_config)
+    return optimizer_cls_and_kwargs
