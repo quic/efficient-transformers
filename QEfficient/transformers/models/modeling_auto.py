@@ -27,10 +27,7 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import (
-    FP16ClipTransform,
-    SplitTensorsTransform,
-)
+from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
@@ -2307,10 +2304,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [
-        FP16ClipTransform,
-        SplitTensorsTransform,
-    ]
+
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
         self,
@@ -3207,6 +3202,21 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         super().__init__(model, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    @property
+    def model_name(self) -> str:
+        """
+        Get the name of the underlying speech-to-text model.
+
+        Returns
+        -------
+        str
+            The model's class name, with "QEff" or "QEFF" prefix removed if present.
+        """
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname
 
     @property
     def get_model_config(self) -> dict:
