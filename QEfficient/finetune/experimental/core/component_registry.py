@@ -7,7 +7,7 @@
 
 
 import logging
-from typing import Tuple, Dict, Optional, Type, List, Callable
+from typing import Callable, Dict, Optional, Type
 
 # from QEfficient.finetune.experimental.core.logger import get_logger
 
