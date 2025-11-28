@@ -17,7 +17,7 @@ import onnxruntime
 import torch
 from onnx import external_data_helper
 
-from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransform
+from QEfficient.base.onnx_transforms import BaseOnnxTransform, FP16ClipTransform, OnnxTransformPipeline
 from QEfficient.utils import constants
 
 
@@ -223,8 +223,8 @@ def fix_onnx_fp16(
         BaseOnnxTransform._cleanup_external_data_and_cache(gen_models_path)
         BaseOnnxTransform._cleanup_memory()
 
-    model, fp16_fix = OnnxTransform.apply(
-        model, model_name="", onnx_base_dir=gen_models_path, transforms=["FP16ClipTransform"]
+    model, fp16_fix = OnnxTransformPipeline.apply(
+        model, model_name="", onnx_base_dir=gen_models_path, transforms=[FP16ClipTransform]
     )
 
     if fp16_fix:

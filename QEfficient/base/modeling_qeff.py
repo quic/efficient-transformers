@@ -19,7 +19,12 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransform
+from QEfficient.base.onnx_transforms import (
+    BaseOnnxTransform,
+    CustomOpTransform,
+    OnnxTransformPipeline,
+    RenameFunctionOutputsTransform,
+)
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -55,12 +60,7 @@ class QEFFBaseModel(ABC):
 
     @classmethod
     def _transform_names(cls) -> List[str]:
-        pytorch_names = [x.__name__ for x in cls._pytorch_transforms]
-        onnx_transforms = [
-            transform.__name__ if "AdapterWeightsToInputsTransform" in str(transform) else transform
-            for transform in cls._onnx_transforms
-        ]
-        return pytorch_names + onnx_transforms
+        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -341,8 +341,8 @@ class QEFFBaseModel(ABC):
                 InvalidIndexProvider.SUBFUNC_ENABLED = True
                 output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
                 export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
-                self._onnx_transforms.append("RenameFunctionOutputsTransform")
-                self._onnx_transforms.append("CustomOpTransform")
+                self._onnx_transforms.append(RenameFunctionOutputsTransform)
+                self._onnx_transforms.append(CustomOpTransform)
 
             torch.onnx.export(
                 self.model,
@@ -374,7 +374,7 @@ class QEFFBaseModel(ABC):
 
             transform_kwargs["transforms"] = self._onnx_transforms
 
-            model, transformed = OnnxTransform.apply(model, **transform_kwargs)
+            model, transformed = OnnxTransformPipeline.apply(model, **transform_kwargs)
 
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
@@ -400,8 +400,8 @@ class QEFFBaseModel(ABC):
         if use_onnx_subfunctions:
             undo_torch_patches()
             InvalidIndexProvider.SUBFUNC_ENABLED = False
-            self._onnx_transforms.remove("CustomOpTransform")
-            self._onnx_transforms.remove("RenameFunctionOutputsTransform")
+            self._onnx_transforms.remove(CustomOpTransform)
+            self._onnx_transforms.remove(RenameFunctionOutputsTransform)
 
         self.onnx_path = onnx_path
         return onnx_path

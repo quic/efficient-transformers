@@ -18,7 +18,7 @@ from transformers import GenerationConfig, StoppingCriteria, StoppingCriteriaLis
 from transformers.generation.streamers import BaseStreamer
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import BaseOnnxTransform
+from QEfficient.base.onnx_transforms import BaseOnnxTransform, FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
@@ -67,8 +67,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     _pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
     _onnx_transforms: List[BaseOnnxTransform] = [
-        "FP16ClipTransform",
-        "SplitTensorsTransform",
+        FP16ClipTransform,
+        SplitTensorsTransform,
         AdapterWeightsToInputsTransform,
     ]
     _hf_auto_class = AutoPeftModelForCausalLM

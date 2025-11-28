@@ -7,11 +7,8 @@
 
 import gc
 import logging
-import os
 import warnings
-from collections import namedtuple
-from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Type
 
 import numpy as np
 import torch
@@ -19,23 +16,9 @@ from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGather,
-    CtxGather3D,
     CtxGatherFunc,
-    CtxGatherFunc3D,
     CtxScatter,
-    CtxScatter3D,
     CtxScatterFunc,
-    CtxScatterFunc3D,
-)
-from QEfficient.customop.ctx_scatter_gather_cb import (
-    CtxGatherCB,
-    CtxGatherCB3D,
-    CtxGatherFuncCB,
-    CtxGatherFuncCB3D,
-    CtxScatterCB,
-    CtxScatterCB3D,
-    CtxScatterFuncCB,
-    CtxScatterFuncCB3D,
 )
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils.constants import ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL
@@ -44,35 +27,19 @@ logger = logging.getLogger(__name__)
 
 
 class BaseOnnxTransform:
-    """
-    OnnxTransform is the base class for graph modifications on exported onnx.
-    """
+    """Base class for ONNX graph modifications. Should NOT be instantiated."""
 
-    _external_data_loaded_cache = {}  # Dict[int, bool]
+    _external_data_loaded_cache = {}
 
     def __init__(self):
         raise TypeError("Transform classes are not to be instantiated. Use the `apply` method directly.")
 
     @classmethod
     def apply(cls, model: ModelProto, **kwargs) -> Tuple[ModelProto, bool]:
-        """
-        Override this class to apply a transformation.
-        :param model: The model's ONNX graph to transform
-        :param kwargs: Parameters needed for specific transforms. All transforms should take **kwargs to ignore unneeded kwargs.
-
-        :returns: ONNX graph after applying the transform
-        :returns: Boolean indicating whether transform was applied
-        """
         raise NotImplementedError("Use subclasses for ONNX transform")
 
     @classmethod
     def _check_external_data_loaded(cls, model: ModelProto) -> bool:
-        """
-        Check if external data is already loaded in the model.
-
-        :param model: The ONNX model to check
-        :returns: True if external data is already loaded, False otherwise
-        """
         model_id = id(model)
         if model_id in cls._external_data_loaded_cache:
             return cls._external_data_loaded_cache[model_id]
@@ -81,16 +48,11 @@ class BaseOnnxTransform:
             if len(tensor.external_data) > 0 and not tensor.HasField("raw_data"):
                 cls._external_data_loaded_cache[model_id] = False
                 return False
-
         cls._external_data_loaded_cache[model_id] = True
         return True
 
     @classmethod
     def _load_external_data(cls, model: ModelProto, onnx_base_dir: Optional[str] = None):
-        """
-        Performs a bulk load of external data if it's not already loaded.
-        Updates the cache upon successful load.
-        """
         model_id = id(model)
         if not cls._check_external_data_loaded(model):
             logger.info("External data not loaded. Performing bulk load.")
@@ -101,41 +63,48 @@ class BaseOnnxTransform:
 
     @classmethod
     def _cleanup_memory(cls):
-        """
-        Force garbage collection to free up memory after tensor processing.
-        """
         gc.collect()
 
     @classmethod
     def _cleanup_external_data_and_cache(cls, model: ModelProto):
-        """
-        Combines clearing external data from the model and its cache entry.
-        """
-        # Remove the loaded raw data from tensors
         for tensor in external_data_helper._get_all_tensors(model):
             if tensor.HasField("raw_data"):
                 tensor.ClearField("raw_data")
-
-        # Clear the cache entry for this model using its ID
         model_id = id(model)
         if model_id in cls._external_data_loaded_cache:
             del cls._external_data_loaded_cache[model_id]
-
         logger.info("External data and cache cleaned up.")
 
 
-class OnnxTransform(BaseOnnxTransform):
-    # Custom Ops Registry
+class FP16ClipTransform(BaseOnnxTransform):
+    @classmethod
+    def apply(cls, model, **kwargs):
+        pass
+
+
+class SplitTensorsTransform(BaseOnnxTransform):
+    @classmethod
+    def apply(cls, model, **kwargs):
+        pass
+
+
+class CustomOpTransform(BaseOnnxTransform):
+    @classmethod
+    def apply(cls, model, **kwargs):
+        pass
+
+
+class RenameFunctionOutputsTransform(BaseOnnxTransform):
+    @classmethod
+    def apply(cls, model, **kwargs):
+        pass
+
+
+class OnnxTransformPipeline(BaseOnnxTransform):
     CUSTOM_OPS = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
-        "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
         "CtxGatherFunc": (CtxGatherFunc, CtxGather),
-        "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
-        "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
-        "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
-        "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
-        "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
     }
 
     @classmethod
@@ -143,7 +112,7 @@ class OnnxTransform(BaseOnnxTransform):
         cls,
         model: ModelProto,
         *,
-        transforms: List[str],
+        transforms: List[Type[BaseOnnxTransform]],
         model_name: str = "",
         onnx_base_dir: Optional[str] = None,
         file_chunk_size: int = 10 * 2**30,
@@ -151,71 +120,58 @@ class OnnxTransform(BaseOnnxTransform):
         opset_version: int = 17,
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
-        if len(transforms) == 0:
+        if not transforms:
             warnings.warn("Transform list is empty. Skipping transformation.")
             return model, False
 
         try:
             cls._load_external_data(model, onnx_base_dir)
+
             tensors = external_data_helper._get_all_tensors(model)
 
-            TensorInfo = namedtuple("TensorInfo", ["tensor", "tsize"])
-            tensor_infos = [
-                TensorInfo(tensor, len(tensor.raw_data) if tensor.HasField("raw_data") else 0) for tensor in tensors
-            ]
-
+            requested = set(transforms)
+            applied = {t: False for t in requested}
+            do_fp16 = FP16ClipTransform in requested
+            do_split = SplitTensorsTransform in requested
             fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
             file_num_tracker = {"num": 0, "size": 0}
 
-            requested_transforms = set(transforms)
-            applied_transforms = {name: False for name in requested_transforms}
+            # fp_16
+            if do_fp16 or do_split:
+                for idx, tensor in enumerate(tensors):
+                    if do_fp16 and cls._clip_tensor(tensor, fp16_min, fp16_max):
+                        applied[FP16ClipTransform] = True
 
-            def process_tensor(index_info: Tuple[int, TensorInfo]) -> List[str]:
-                idx, info = index_info
-                tensor, tsize = info
-                local_applied = []
+                    # Split Tensor
+                    if do_split and tensor.HasField("raw_data"):
+                        tsize = len(tensor.raw_data)
+                        if tsize > size_threshold:
+                            if file_num_tracker["size"] + tsize > file_chunk_size:
+                                file_num_tracker["num"] += 1
+                                file_num_tracker["size"] = tsize
+                            else:
+                                file_num_tracker["size"] += tsize
 
-                if "FP16ClipTransform" in requested_transforms:
-                    if cls._clip_tensor(tensor, fp16_min, fp16_max):
-                        local_applied.append("FP16ClipTransform")
+                            cls._split_tensor(tensor, model_name, file_num_tracker["num"])
+                            applied[SplitTensorsTransform] = True
 
-                if "SplitTensorsTransform" in requested_transforms and tsize > size_threshold:
-                    if file_num_tracker["size"] + tsize > file_chunk_size:
-                        file_num_tracker["num"] += 1
-                        file_num_tracker["size"] = tsize
-                    else:
-                        file_num_tracker["size"] += tsize
+                    if (idx + 1) % ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL == 0:
+                        cls._cleanup_memory()
 
-                    cls._split_tensor(tensor, model_name, file_num_tracker["num"])
-                    local_applied.append("SplitTensorsTransform")
+            if CustomOpTransform in requested:
+                applied[CustomOpTransform] = cls._custom_op_transform(model, opset_version)
 
-                if (idx + 1) % ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL == 0:
-                    cls._cleanup_memory()
+            if RenameFunctionOutputsTransform in requested:
+                applied[RenameFunctionOutputsTransform] = cls._rename_function_outputs(model)
 
-                return local_applied
+            # Logging
+            for t, done in applied.items():
+                logger.info(f"Transform '{t.__name__}' applied={done}")
 
-            with ThreadPoolExecutor(max_workers=os.cpu_count() * 4) as executor:
-                results = list(executor.map(process_tensor, enumerate(tensor_infos)))
-
-            for result in results:
-                for transform_name in result:
-                    applied_transforms[transform_name] = True
-
-            if "CustomOpTransform" in requested_transforms:
-                applied_transforms["CustomOpTransform"] = cls._custom_op_transform(model, opset_version)
-
-            if "RenameFunctionOutputsTransform" in requested_transforms:
-                applied_transforms["RenameFunctionOutputsTransform"] = cls._rename_function_outputs(model)
-
-            for name in requested_transforms:
-                if applied_transforms[name]:
-                    logger.info(f"Transform '{name}' was applied.")
-                else:
-                    logger.warning(f"Transform '{name}' was requested but not applied.")
-
-            return model, any(applied_transforms.values())
+            return model, any(applied.values())
 
         finally:
+            # pass
             cls._cleanup_memory()
 
     @classmethod
@@ -224,64 +180,57 @@ class OnnxTransform(BaseOnnxTransform):
         for op_name, (func_class, _) in cls.CUSTOM_OPS.items():
             if hasattr(func_class, "symbolic"):
                 torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, opset_version)
-
-        existing_names = {func.name for func in model.functions}
+        existing = {f.name for f in model.functions}
         for _, onnxscript_func in cls.CUSTOM_OPS.values():
             proto = onnxscript_func.to_function_proto()
-            if proto.name not in existing_names:
+            if proto.name not in existing:
                 model.functions.append(proto)
                 op_applied = True
-
         return op_applied
 
     @classmethod
     def _rename_function_outputs(cls, model: ModelProto) -> bool:
         graph = model.graph
-        op_type_to_func = {func.name: func for func in model.functions}
+        op_type_to_func = {f.name: f for f in model.functions}
         decoder_patterns = ["DecoderLayer", "Block", "Layer"]
         renamed = False
-
-        model_graph_outputs_map = {val.name: idx for idx, val in enumerate(model.graph.output)}
-
-        layer_index = 0
+        model_out_map = {v.name: i for i, v in enumerate(graph.output)}
+        layer_idx = 0
         for node in graph.node:
             if any(p in node.name or p in node.op_type for p in decoder_patterns):
                 func = op_type_to_func.get(node.op_type)
                 if func is None:
                     continue
-
                 for i, out_name in enumerate(func.output):
                     if "_InternalRetainedState" in out_name:
                         renamed = True
-                        original = node.output[i]
+                        orig = node.output[i]
                         if "key" in out_name:
-                            new = f"past_key.{layer_index}_RetainedState"
+                            new = f"past_key.{layer_idx}_RetainedState"
                         elif "value" in out_name:
-                            new = f"past_value.{layer_index}_RetainedState"
+                            new = f"past_value.{layer_idx}_RetainedState"
                         else:
                             continue
                         node.output[i] = new
-                        if original in model_graph_outputs_map:
-                            idx = model_graph_outputs_map[original]
-                            model.graph.output[idx].name = new
-                layer_index += 1
-
+                        if orig in model_out_map:
+                            graph.output[model_out_map[orig]].name = new
+                layer_idx += 1
         return renamed
 
     @staticmethod
     def _clip_tensor(tensor, fp16_min, fp16_max) -> bool:
         if tensor.data_type != TensorProto.FLOAT:
             return False
-        nptensor = numpy_helper.to_array(tensor)
-        if np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min):
-            neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
-            clipped = np.clip(nptensor, fp16_min, fp16_max)
-            if neg_inf_mask.any():
-                clipped = np.where(neg_inf_mask, np.float32("-inf"), clipped)
-            new_tensor = numpy_helper.from_array(clipped, tensor.name)
-            tensor.CopyFrom(new_tensor)
-            return True
-        return False
+        arr = numpy_helper.to_array(tensor)
+        if not (np.any(arr > fp16_max) or np.any(arr < fp16_min)):
+            return False
+        negmask = np.isinf(arr) & (arr < 0)
+        clipped = np.clip(arr, fp16_min, fp16_max)
+        if negmask.any():
+            clipped = np.where(negmask, np.float32("-inf"), clipped)
+        new_tensor = numpy_helper.from_array(clipped, tensor.name)
+        tensor.CopyFrom(new_tensor)
+        return True
 
     @staticmethod
     def _split_tensor(tensor, model_name: str, file_num: int) -> None:
