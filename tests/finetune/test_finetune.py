@@ -21,7 +21,7 @@ from QEfficient.finetune.utils.helper import Device, Task_Mode, get_rank, get_wo
 from tests.finetune import constants as constant
 from tests.finetune import reference_data as ref_data
 
-alpaca_json_path = os.path.join(os.getcwd(), "alpaca_data.json")
+alpaca_json_path = os.path.join(os.getcwd(), "./dataset/alpaca_data.json")
 
 
 def clean_up(path):
@@ -34,7 +34,8 @@ def clean_up(path):
 def download_alpaca():
     alpaca_url = "https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/refs/heads/main/alpaca_data.json"
     response = requests.get(alpaca_url)
-
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(alpaca_json_path), exist_ok=True)
     with open(alpaca_json_path, "wb") as f:
         f.write(response.content)
 
