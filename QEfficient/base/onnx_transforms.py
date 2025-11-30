@@ -8,7 +8,7 @@
 import gc
 import logging
 import warnings
-from typing import List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import torch
@@ -16,9 +16,23 @@ from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGather,
+    CtxGather3D,
     CtxGatherFunc,
+    CtxGatherFunc3D,
     CtxScatter,
+    CtxScatter3D,
     CtxScatterFunc,
+    CtxScatterFunc3D,
+)
+from QEfficient.customop.ctx_scatter_gather_cb import (
+    CtxGatherCB,
+    CtxGatherCB3D,
+    CtxGatherFuncCB,
+    CtxGatherFuncCB3D,
+    CtxScatterCB,
+    CtxScatterCB3D,
+    CtxScatterFuncCB,
+    CtxScatterFuncCB3D,
 )
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils.constants import ONNX_EXPORT_OPSET, ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL
@@ -101,10 +115,16 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
 
 
 class OnnxTransformPipeline(BaseOnnxTransform):
-    CUSTOM_OPS = {
+    _custom_ops: Dict[str, Tuple[Any, Any]] = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
+        "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
         "CtxGatherFunc": (CtxGatherFunc, CtxGather),
+        "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
+        "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
+        "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
+        "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
+        "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
     }
 
     @classmethod
@@ -127,21 +147,23 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         try:
             cls._load_external_data(model, onnx_base_dir)
 
-            # tensors = external_data_helper._get_all_tensors(model)
-
-            requested = transforms
+            mapping: Dict[str, Tuple[TensorProto, str]] = {}
+            requested = set(transforms)
             applied = {t: False for t in requested}
+
             do_fp16 = FP16ClipTransform in requested
             do_split = SplitTensorsTransform in requested
             fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
             file_num_tracker = {"num": 0, "size": 0}
-            # fp_16
+
             if do_fp16 or do_split:
-                for idx, tensor in enumerate(external_data_helper._get_all_tensors(model)):
+                tensors = external_data_helper._get_all_tensors(model)
+                for idx, tensor in enumerate(tensors):
+                    # FP16 clipping
                     if do_fp16 and cls._clip_tensor(tensor, fp16_min, fp16_max, onnx_base_dir):
                         applied[FP16ClipTransform] = True
 
-                    # Split Tensor
+                    # Tensor splitting
                     if do_split and tensor.HasField("raw_data"):
                         tsize = len(tensor.raw_data)
                         if tsize > size_threshold:
@@ -151,19 +173,26 @@ class OnnxTransformPipeline(BaseOnnxTransform):
                             else:
                                 file_num_tracker["size"] += tsize
 
-                            cls._split_tensor(tensor, model_name, file_num_tracker["num"])
+                            cls._split_tensor(tensor, model_name, file_num_tracker["num"], mapping)
                             applied[SplitTensorsTransform] = True
 
+                    # Periodic cleanup
                     if (idx + 1) % ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL == 0:
                         cls._cleanup_memory()
 
+            # Apply external data mapping
+            for _, (tensor, file_name) in mapping.items():
+                external_data_helper.set_external_data(tensor, file_name)
+
+            # Custom ops
             if CustomOpTransform in requested:
                 applied[CustomOpTransform] = cls._custom_op_transform(model, opset_version)
 
+            # Rename outputs
             if RenameFunctionOutputsTransform in requested:
                 applied[RenameFunctionOutputsTransform] = cls._rename_function_outputs(model)
 
-            # Logging
+            # Log applied transforms
             for t, done in applied.items():
                 logger.info(f"Transform '{t.__name__}' applied={done}")
 
@@ -173,13 +202,14 @@ class OnnxTransformPipeline(BaseOnnxTransform):
             cls._cleanup_memory()
 
     @classmethod
-    def _custom_op_transform(cls, model: ModelProto, opset_version) -> bool:
+    def _custom_op_transform(cls, model: ModelProto, opset_version: int) -> bool:
         op_applied = False
-        for op_name, (func_class, _) in cls.CUSTOM_OPS.items():
+        for op_name, (func_class, _) in cls._custom_ops.items():
             if hasattr(func_class, "symbolic"):
                 torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, opset_version)
+
         existing = {f.name for f in model.functions}
-        for _, onnxscript_func in cls.CUSTOM_OPS.values():
+        for _, onnxscript_func in cls._custom_ops.values():
             proto = onnxscript_func.to_function_proto()
             if proto.name not in existing:
                 model.functions.append(proto)
@@ -194,21 +224,23 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         renamed = False
         model_out_map = {v.name: i for i, v in enumerate(graph.output)}
         layer_idx = 0
+
         for node in graph.node:
             if any(p in node.name or p in node.op_type for p in decoder_patterns):
                 func = op_type_to_func.get(node.op_type)
-                if func is None:
+                if not func:
                     continue
                 for i, out_name in enumerate(func.output):
                     if "_InternalRetainedState" in out_name:
                         renamed = True
                         orig = node.output[i]
-                        if "key" in out_name:
-                            new = f"past_key.{layer_idx}_RetainedState"
-                        elif "value" in out_name:
-                            new = f"past_value.{layer_idx}_RetainedState"
-                        else:
-                            continue
+                        new = (
+                            f"past_key.{layer_idx}_RetainedState"
+                            if "key" in out_name
+                            else f"past_value.{layer_idx}_RetainedState"
+                            if "value" in out_name
+                            else orig
+                        )
                         node.output[i] = new
                         if orig in model_out_map:
                             graph.output[model_out_map[orig]].name = new
@@ -216,20 +248,22 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         return renamed
 
     @staticmethod
-    def _clip_tensor(tensor, fp16_min, fp16_max, onnx_base_dir) -> bool:
-        if tensor.data_type != TensorProto.FLOAT:
-            return False
-        arr = numpy_helper.to_array(tensor, onnx_base_dir)
-        if not (np.any(arr > fp16_max) or np.any(arr < fp16_min)):
-            return False
-        negmask = np.isinf(arr) & (arr < 0)
-        clipped = np.clip(arr, fp16_min, fp16_max)
-        if negmask.any():
-            clipped = np.where(negmask, np.float32("-inf"), clipped)
-        new_tensor = numpy_helper.from_array(clipped, tensor.name)
-        tensor.CopyFrom(new_tensor)
-        return True
+    def _clip_tensor(tensor: TensorProto, fp16_min: float, fp16_max: float, onnx_base_dir: Optional[str]) -> bool:
+        nptensor = numpy_helper.to_array(tensor, onnx_base_dir)
+        if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
+            neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
+            clipped_tensor = np.clip(nptensor, fp16_min, fp16_max)
+
+            if neg_inf_mask.any():
+                clipped_tensor = np.where(neg_inf_mask, np.float32("-inf"), clipped_tensor)
+
+            tensor.CopyFrom(numpy_helper.from_array(clipped_tensor, tensor.name))
+            return True
+        return False
 
     @staticmethod
-    def _split_tensor(tensor, model_name: str, file_num: int) -> None:
-        external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
+    def _split_tensor(
+        tensor: TensorProto, model_name: str, file_num: int, mapping: Dict[str, Tuple[TensorProto, str]]
+    ) -> None:
+        file_name = f"{model_name}_{file_num}.onnx.data"
+        mapping[tensor.name] = (tensor, file_name)
