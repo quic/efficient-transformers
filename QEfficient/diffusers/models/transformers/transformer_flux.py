@@ -139,6 +139,8 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
         gate = gate.unsqueeze(1)
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
+        # if hidden_states.dtype == torch.float16:
+        hidden_states = hidden_states.clip(-65504, 65504)
 
         encoder_hidden_states, hidden_states = hidden_states[:, :text_seq_len], hidden_states[:, text_seq_len:]
         return encoder_hidden_states, hidden_states
@@ -158,7 +160,9 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
         norm_hidden_states = self.norm1(hidden_states, shift_msa=temb1[0], scale_msa=temb1[1])
         gate_msa, shift_mlp, scale_mlp, gate_mlp = temb1[-4:]
 
-        norm_encoder_hidden_states = self.norm1_context(encoder_hidden_states, shift_msa=temb2[0], scale_msa=temb2[1])
+        norm_encoder_hidden_states = self.norm1_context(
+            encoder_hidden_states, shift_msa=temb2[0], scale_msa=temb2[1]
+        )
 
         c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = temb2[-4:]
 
@@ -200,6 +204,8 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
 
         context_ff_output = self.ff_context(norm_encoder_hidden_states)
         encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+        # if encoder_hidden_states.dtype == torch.float16:
+        encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
 
         return encoder_hidden_states, hidden_states
 

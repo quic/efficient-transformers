@@ -21,19 +21,19 @@ Use this example to learn how to fine-tune FLUX.1 for your specific needs.
 
 import torch
 
-from QEfficient import QEFFFluxPipeline
+from QEfficient import QEffFluxPipeline
 
 # ============================================================================
 # PIPELINE INITIALIZATION WITH CUSTOM PARAMETERS
 # ============================================================================
 
 # Option 1: Basic initialization with default parameters
-pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
 # Option 2: Advanced initialization with custom modules
 # Uncomment and modify to use your own custom components:
 #
-# pipeline = QEFFFluxPipeline.from_pretrained(
+# pipeline = QEffFluxPipeline.from_pretrained(
 #     "black-forest-labs/FLUX.1-schnell",
 #     text_encoder=custom_text_encoder,      # Your custom CLIP text encoder
 #     transformer=custom_transformer,         # Your custom transformer model
@@ -92,7 +92,7 @@ pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 # ============================================================================
 # Generate an image using the configured pipeline.
 #
-# Note: Using custom_config_path provides flexibility to set device_ids for each
+# Note: Use of custom_config_path provides flexibility to set device_ids for each
 #       module, so you can skip the separate pipeline.compile() step.
 
 output = pipeline(

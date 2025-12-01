@@ -53,7 +53,7 @@ class QEffTextEncoder(QEFFBaseModel):
             model (nn.Module): The text encoder model to wrap (CLIP or T5)
         """
         super().__init__(model)
-        self.model = copy.deepcopy(model)
+        self.model = model
 
     def get_onnx_config(self) -> Tuple[Dict, Dict, List[str]]:
         """
@@ -220,9 +220,11 @@ class QEffVAE(QEFFBaseModel):
             model (nn.Module): The pipeline model containing the VAE
             type (str): VAE operation type ("encoder" or "decoder")
         """
-        super().__init__(model.vae)
-        self.model = copy.deepcopy(model.vae)
-        self.type = type
+        super().__init__(model)
+        self.model = model
+        
+        # To have different hashing for encoder/decoder
+        self.model.config['type'] = type
 
     def get_onnx_config(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
         """
