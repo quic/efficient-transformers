@@ -34,7 +34,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.logging_utils import logger
 
 
-class QEFFFluxPipeline:
+class QEffFluxPipeline:
     """
     QEfficient-optimized Flux pipeline for high-performance text-to-image generation on Qualcomm AI hardware.
 
@@ -60,8 +60,8 @@ class QEFFFluxPipeline:
         scheduler: Diffusion scheduler for timestep management
 
     Example:
-        >>> from QEfficient.diffusers.pipelines.flux import QEFFFluxPipeline
-        >>> pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+        >>> from QEfficient.diffusers.pipelines.flux import QEffFluxPipeline
+        >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
         >>> images = pipeline(
         ...     prompt="A beautiful sunset over mountains",
         ...     height=512,
@@ -92,7 +92,7 @@ class QEFFFluxPipeline:
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
         self.transformer = QEffFluxTransformerModel(model.transformer)
-        self.vae_decode = QEffVAE(model, "decoder")
+        self.vae_decode = QEffVAE(model.vae, "decoder")
 
         # Store all modules in a dictionary for easy iteration during export/compile
         self.modules = {
@@ -128,7 +128,7 @@ class QEFFFluxPipeline:
         """
         Load a pretrained Flux model from HuggingFace Hub or local path and wrap it with QEfficient optimizations.
 
-        This class method provides a convenient way to instantiate a QEFFFluxPipeline from a pretrained
+        This class method provides a convenient way to instantiate a QEffFluxPipeline from a pretrained
         Flux model. It automatically loads the base FluxPipeline model in float32 precision on CPU
         and wraps all components with QEfficient-optimized versions for QAIC deployment.
 
@@ -138,7 +138,7 @@ class QEFFFluxPipeline:
             **kwargs: Additional keyword arguments passed to FluxPipeline.from_pretrained().
 
         Returns:
-            QEFFFluxPipeline: A fully initialized pipeline instance with QEfficient-optimized components
+            QEffFluxPipeline: A fully initialized pipeline instance with QEfficient-optimized components
                 ready for export, compilation, and inference on QAIC devices.
 
         Raises:
@@ -148,13 +148,13 @@ class QEFFFluxPipeline:
 
         Example:
             >>> # Load from HuggingFace Hub
-            >>> pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
             >>>
             >>> # Load from local path
-            >>> pipeline = QEFFFluxPipeline.from_pretrained("/path/to/local/flux/model")
+            >>> pipeline = QEffFluxPipeline.from_pretrained("/path/to/local/flux/model")
             >>>
             >>> # Load with custom cache directory
-            >>> pipeline = QEFFFluxPipeline.from_pretrained(
+            >>> pipeline = QEffFluxPipeline.from_pretrained(
             ...     "black-forest-labs/FLUX.1-dev",
             ...     cache_dir="/custom/cache/dir"
             ... )
@@ -209,7 +209,7 @@ class QEFFFluxPipeline:
             - Exported ONNX files can be large (several GB for complete pipeline)
 
         Example:
-            >>> pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
             >>> export_path = pipeline.export(
             ...     export_dir="/path/to/export",
             ...     use_onnx_subfunctions=True
@@ -273,7 +273,7 @@ class QEFFFluxPipeline:
             OSError: If there are issues with file I/O during compilation
 
         Example:
-            >>> pipeline = QEFFFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
             >>> # Sequential compilation with default config
             >>> pipeline.compile(height=1024, width=1024)
             >>>
