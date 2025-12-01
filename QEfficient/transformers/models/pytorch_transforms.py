@@ -266,6 +266,7 @@ from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssMLP,
     QEffGptOssModel,
     QEffPrefillOnlyChunkedGptOssAttention,
+    QEffPrefillOnlyChunkedGptOssMLP,
     QEffPrefillOnlyGptOssAttention,
     QEffPrefillOnlyGptOssMLP,
     QEffPrefillOnlyGptOssModel,
@@ -658,7 +659,7 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
     _module_mapping = {
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
     }
 
 

@@ -3037,6 +3037,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         batch_size=batch_size,
                         kv_cache_batch_size=kv_cache_batch_size,
                         full_batch_size=full_batch_size,
+                        prefill_only=prefill_only,
+                        enable_chunking=enable_chunking,
                     )
                 )
 
