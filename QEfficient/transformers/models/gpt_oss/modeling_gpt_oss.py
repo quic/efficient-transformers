@@ -45,6 +45,61 @@ class QEffGptOssExperts(GptOssExperts):
         self.up_proj_bias = nn.Parameter(torch.empty(self.num_experts, self.expert_dim))
 
 
+class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
+    def forward(self, hidden: torch.Tensor):
+        B, S, H = hidden.shape
+        T = B * S
+        hidden = hidden.view(T, H)
+
+        # Router computation
+        router_logits = F.linear(hidden, self.router.weight, self.router.bias)
+
+        # Top-k selection
+        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
+        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
+
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, top_i, top_w)
+
+        # Routing weights for each expert [T, E]
+        routing_weights = masked_logits
+
+        # ────────────────── allocate the output tensor ─────
+        expert_out = hidden.new_zeros((T, H))  # accumulation buffer
+
+        # ───────────────────────── Expert computation loop ─────────────────────────────
+        for e in range(self.experts.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+
+            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]  # [H, I], [H, I]
+            b_g, b_u = self.experts.gate_proj_bias[e], self.experts.up_proj_bias[e]  # [I], [I]
+            W_d = self.experts.down_proj[e]  # [I, H]
+            b_d = self.experts.down_proj_bias[e]  # [H]
+
+            # Gate and Up projections
+            gate = (hidden @ W_g) + b_g  # [T, I]
+            up = (hidden @ W_u) + b_u  # [T, I]
+
+            # Apply GptOss activation with clamping
+            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+
+            # GLU activation
+            glu = gate * torch.sigmoid(gate * self.experts.alpha)
+            intermediate = (up + 1) * glu  # [T, I]
+
+            # Down projection
+            down_out = (intermediate @ W_d) + b_d  # [T, H]
+
+            # Apply routing weights and accumulate
+            masked_down = torch.where(routing_weight > 0, down_out * routing_weight, torch.zeros_like(expert_out))
+            expert_out += masked_down
+
+        # original shape [B, S, H]
+        return expert_out.view(B, S, H), router_logits
+
+
+
 class QEffPrefillOnlyGptOssMLP(GptOssMLP):
     def forward(self, hidden: torch.Tensor):
         if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
@@ -152,7 +207,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                 up = (tgb @ W_u) + b_u  # [T, I]
 
                 # Apply GptOss activation with clamping
-                gate = gate.clamp(min=None, max=self.experts.limit)
+                gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
                 up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
                 # GLU activation
@@ -234,7 +289,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                         cur_gate = (tgb @ W_g[:, i * 128 : (i + 1) * 128]) + b_g[i * 128 : (i + 1) * 128]
                         cur_up = (tgb @ W_u[:, i * 128 : (i + 1) * 128]) + b_u[i * 128 : (i + 1) * 128]
 
-                    cur_gate = cur_gate.clamp(min=None, max=self.experts.limit)
+                    cur_gate = cur_gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
                     cur_up = cur_up.clamp(min=-self.experts.limit, max=self.experts.limit)
                     cur_glu = cur_gate * torch.sigmoid(cur_gate * self.experts.alpha)
                     cur_intermediate = (cur_up + 1) * cur_glu
@@ -339,7 +394,7 @@ class QEffGptOssMLP(GptOssMLP):
         up = torch.bmm(expert_in, up_proj) + up_proj_bias.unsqueeze(1)
 
         # Apply activation with clamping
-        gate = gate.clamp(min=None, max=self.experts.limit)
+        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
         up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
         # GLU activation
@@ -1262,13 +1317,11 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
         **kwargs,
     ):
         batch_size = batch_size if batch_size else 1
-        prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.PROMPT_LEN
-        if kwargs.get("prefill_only") and ctx_len != prefill_seq_len:
+        if kwargs.get("prefill_only") and not kwargs.get("enable_chunking") and ctx_len != prefill_seq_len:
             ctx_len = prefill_seq_len
             logger.warning(
                 f"overriding ctx_len={prefill_seq_len}, currently we don't support ctx_len different than prefill_seq_len for prefill_only model"
             )
-        ctx_len = ctx_len if ctx_len else constants.CTX_LEN
 
         specializations = [
             {
