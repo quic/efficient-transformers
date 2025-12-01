@@ -87,6 +87,7 @@ class QEffDynamicLayer(DynamicLayer):
             v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        return k_out, v_out
 
     def read_only_blockedKV(self, start_index, end_index, cache_kwargs):
         """
