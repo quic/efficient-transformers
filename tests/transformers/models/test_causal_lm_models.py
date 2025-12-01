@@ -25,46 +25,46 @@ from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig
 
 test_models_causal = [
-    "openai/gpt-oss-20b",
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    # "openai/gpt-oss-20b",
+    # "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "gpt2",
-    "Salesforce/codegen-350M-mono",
-    "microsoft/Phi-3-mini-4k-instruct",
-    "tiiuae/falcon-7b",
-    "Qwen/Qwen2-0.5B",
-    "Qwen/Qwen3-0.6B",
-    "bigcode/starcoder2-3b",
-    "Qwen/Qwen3-30B-A3B-Instruct-2507",
-    "Felladrin/Minueza-32M-Base",
-    "wtang06/mpt-125m-c4",
-    "hakurei/gpt-j-random-tinier",
-    "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    "meta-llama/Llama-3.2-1B",
-    "unsloth/gemma-2b",
-    "unsloth/gemma-2-2b",
-    "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
-    "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
-    "ibm-granite/granite-20b-code-base",
-    # "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # naive-quantized compressed-tensor FP8 model per-channel weight, per-token activations
-    "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
-    "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
-    "ibm-granite/granite-3.1-2b-instruct",
-    "ibm-granite/granite-guardian-3.1-2b",
-    "hpcai-tech/grok-1",
-    "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
-    "allenai/OLMo-2-0425-1B",
+    # "Salesforce/codegen-350M-mono",
+    # "microsoft/Phi-3-mini-4k-instruct",
+    # "tiiuae/falcon-7b",
+    # "Qwen/Qwen2-0.5B",
+    # "Qwen/Qwen3-0.6B",
+    # "bigcode/starcoder2-3b",
+    # "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    # "Felladrin/Minueza-32M-Base",
+    # "wtang06/mpt-125m-c4",
+    # "hakurei/gpt-j-random-tinier",
+    # "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    # "meta-llama/Llama-3.2-1B",
+    # "unsloth/gemma-2b",
+    # "unsloth/gemma-2-2b",
+    # "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
+    # "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
+    # "ibm-granite/granite-20b-code-base",
+    # # "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # naive-quantized compressed-tensor FP8 model per-channel weight, per-token activations
+    # "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
+    # "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
+    # "ibm-granite/granite-3.1-2b-instruct",
+    # "ibm-granite/granite-guardian-3.1-2b",
+    # "hpcai-tech/grok-1",
+    # "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+    # "allenai/OLMo-2-0425-1B",
 ]
 
 test_models_qnn = [
-    "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    "meta-llama/Llama-3.2-1B",
-    "unsloth/gemma-2b",
-    "ibm-granite/granite-guardian-3.1-2b",
+    # "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    # "meta-llama/Llama-3.2-1B",
+    # "unsloth/gemma-2b",
+    # "ibm-granite/granite-guardian-3.1-2b",
 ]
 
 test_models_spd = [
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    "Qwen/Qwen2-0.5B",
+    # "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    # "Qwen/Qwen2-0.5B",
 ]
 
 

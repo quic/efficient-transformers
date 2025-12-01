@@ -76,8 +76,6 @@ class QEFFBaseModel(ABC):
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
 
-        self._original_model_name: Optional[str] = None
-
         # Apply the transformations
         any_transformed = False
         for transform in self._pytorch_transforms:
@@ -89,100 +87,16 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _offload_model_weights(self, offload_pt_weights) -> None:
+    def _offload_model_weights(self, offload_pt_weights) -> bool:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
 
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
-                if self._original_model_name is None:
-                    self._original_model_name = self.model_name
-
-                cached_methods = {}
-                methods_to_cache = constants.CACHE_MODULES
-                self._is_weights_offloaded = True
-                for method_name in methods_to_cache:
-                    if hasattr(self.model, method_name):
-                        method = getattr(self.model, method_name)
-                        if callable(method):
-                            cached_methods[method_name] = method
-
-                # Clear tensor storage and replace with empty shell
-                for param in self.model.parameters():
-                    if hasattr(param, "data") and hasattr(param.data, "storage"):
-                        param.data.storage().resize_(0)
-
-                for buffer in self.model.buffers():
-                    if hasattr(buffer, "data") and hasattr(buffer.data, "storage"):
-                        buffer.data.storage().resize_(0)
-
-                # Clear module dictionaries and hooks
-                for module in self.model.modules():
-                    if hasattr(module, "_parameters"):
-                        module._parameters.clear()
-                    if hasattr(module, "_buffers"):
-                        module._buffers.clear()
-
-                    # Clear hooks
-                    for hook_dict in [
-                        getattr(module, "_forward_hooks", {}),
-                        getattr(module, "_forward_pre_hooks", {}),
-                        getattr(module, "_backward_hooks", {}),
-                        getattr(module, "_state_dict_hooks", {}),
-                        getattr(module, "_load_state_dict_pre_hooks", {}),
-                    ]:
-                        hook_dict.clear()
-
-                # Replace with minimal shell for compatibility
-                class ModelShell:
-                    def __init__(self, config, original_class_name, cached_methods=None):
-                        self.config = config
-                        self.qaic_config = None
-                        self.device = torch.device("meta")
-                        self._cached_methods = cached_methods or {}
-                        self._original_class_name = original_class_name
-
-                        # Create a mock class with the original name
-                        self._mock_class = type(original_class_name, (), {})
-
-                    @property
-                    def __class__(self):
-                        """Override __class__ to return mock class with original name"""
-                        return self._mock_class
-
-                    def __getattr__(self, name):
-                        if name in self._cached_methods:
-                            return self._cached_methods[name]
-                        raise AttributeError(f"'ModelShell' object has no attribute '{name}'")
-
-                    def parameters(self):
-                        return iter([])
-
-                    def named_parameters(self):
-                        return iter([])
-
-                    def buffers(self):
-                        return iter([])
-
-                    def named_buffers(self):
-                        return iter([])
-
-                    def modules(self):
-                        return iter([self])
-
-                    def state_dict(self):
-                        return {}
-
-                    def to(self, device):
-                        return self
-
-                    def eval(self):
-                        return self
-
-                config = getattr(self.model, "config", None)
-                original_class_name = self.model.__class__.__name__
-                self.model = ModelShell(config, original_class_name, cached_methods)
+                meta_model = self.model.to("meta")
+                del self.model
+                gc.collect()
+                self.model = meta_model
                 return True
-
             except Exception as e:
                 logger.warning(f"Weight clearing failed, continuing: {e}")
                 return False
@@ -359,11 +273,6 @@ class QEFFBaseModel(ABC):
 
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             # Clear temporary references
-            example_inputs.clear()
-            input_names.clear()
-
-            # Force garbage collection
-            gc.collect()
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
@@ -381,6 +290,8 @@ class QEFFBaseModel(ABC):
             logger.info("ONNX transforms applied")
 
             onnx.save(model, onnx_path)
+            del model
+            gc.collect()
             logger.info("Transformed ONNX saved")
 
         except Exception as e:
@@ -389,12 +300,6 @@ class QEFFBaseModel(ABC):
 
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
-            # Clear external data from memory and cache after all transforms and saving
-            # Make sure model exists before trying to clean it up
-            if "model" in locals():
-                BaseOnnxTransform._cleanup_external_data_and_cache(model)
-                BaseOnnxTransform._cleanup_memory()
-            logger.info("Cleanup complete.")
 
         if use_onnx_subfunctions:
             undo_torch_patches()

@@ -5,9 +5,10 @@
 #
 # ----------------------------------------------------------------------------
 
-import gc
 import logging
+import os
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import numpy as np
@@ -35,15 +36,13 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB3D,
 )
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
-from QEfficient.utils.constants import ONNX_EXPORT_OPSET, ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL
+from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, ONNX_EXPORT_OPSET, SIZE_THRESHOLD_DEFAULT
 
 logger = logging.getLogger(__name__)
 
 
 class BaseOnnxTransform:
     """Base class for ONNX graph modifications. Should NOT be instantiated."""
-
-    _external_data_loaded_cache = {}
 
     def __init__(self):
         raise TypeError("Transform classes are not to be instantiated. Use the `apply` method directly.")
@@ -52,69 +51,39 @@ class BaseOnnxTransform:
     def apply(cls, model: ModelProto, **kwargs) -> Tuple[ModelProto, bool]:
         raise NotImplementedError("Use subclasses for ONNX transform")
 
-    @classmethod
-    def _check_external_data_loaded(cls, model: ModelProto) -> bool:
-        model_id = id(model)
-        if model_id in cls._external_data_loaded_cache:
-            return cls._external_data_loaded_cache[model_id]
-
-        for tensor in external_data_helper._get_all_tensors(model):
-            if len(tensor.external_data) > 0 and not tensor.HasField("raw_data"):
-                cls._external_data_loaded_cache[model_id] = False
-                return False
-        cls._external_data_loaded_cache[model_id] = True
-        return True
-
-    @classmethod
-    def _load_external_data(cls, model: ModelProto, onnx_base_dir: Optional[str] = None):
-        model_id = id(model)
-        if not cls._check_external_data_loaded(model):
-            logger.info("External data not loaded. Performing bulk load.")
-            external_data_helper.load_external_data_for_model(model, onnx_base_dir)
-            cls._external_data_loaded_cache[model_id] = True
-        else:
-            logger.info("External data already loaded (or cached). Skipping bulk load.")
-
-    @classmethod
-    def _cleanup_memory(cls):
-        gc.collect()
-
-    @classmethod
-    def _cleanup_external_data_and_cache(cls, model: ModelProto):
-        for tensor in external_data_helper._get_all_tensors(model):
-            if tensor.HasField("raw_data"):
-                tensor.ClearField("raw_data")
-        model_id = id(model)
-        if model_id in cls._external_data_loaded_cache:
-            del cls._external_data_loaded_cache[model_id]
-        logger.info("External data and cache cleaned up.")
-
 
 class FP16ClipTransform(BaseOnnxTransform):
+    """Clip FP32 tensors to FP16 range to avoid overflow during conversion."""
+
     @classmethod
-    def apply(cls, model, **kwargs):
-        pass
+    def apply(cls, tensor: TensorProto, onnx_base_dir: str, fp16_max: float, fp16_min: float) -> bool:
+        nptensor = numpy_helper.to_array(tensor, onnx_base_dir)
+        if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
+            neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
+            clipped_tensor = np.clip(nptensor, fp16_min, fp16_max)
+
+            if neg_inf_mask.any():
+                clipped_tensor = np.where(neg_inf_mask, np.float32("-inf"), clipped_tensor)
+
+            tensor.CopyFrom(numpy_helper.from_array(clipped_tensor, tensor.name))
+            return True
+        return False
 
 
 class SplitTensorsTransform(BaseOnnxTransform):
+    """Split large tensors into external data files for efficient storage."""
+
     @classmethod
-    def apply(cls, model, **kwargs):
-        pass
+    def apply(
+        cls, tensor: TensorProto, model_name: str, file_num: int, mapping: Dict[str, Tuple[TensorProto, str]]
+    ) -> None:
+        file_name = f"{model_name}_{file_num}.onnx.data"
+        mapping[tensor.name] = (tensor, file_name)
 
 
 class CustomOpTransform(BaseOnnxTransform):
-    @classmethod
-    def apply(cls, model, **kwargs):
-        pass
+    """Register custom ONNX ops and append their function prototypes to the model."""
 
-
-class RenameFunctionOutputsTransform(BaseOnnxTransform):
-    @classmethod
-    def apply(cls, model, **kwargs):
-        pass
-
-
-class OnnxTransformPipeline(BaseOnnxTransform):
     _custom_ops: Dict[str, Tuple[Any, Any]] = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
@@ -128,85 +97,11 @@ class OnnxTransformPipeline(BaseOnnxTransform):
     }
 
     @classmethod
-    def apply(
-        cls,
-        model: ModelProto,
-        *,
-        transforms: List[Type[BaseOnnxTransform]],
-        model_name: str = "",
-        onnx_base_dir: Optional[str] = None,
-        file_chunk_size: int = 10 * 2**30,
-        size_threshold: int = 1024,
-        opset_version: int = ONNX_EXPORT_OPSET,
-        **kwargs,
-    ) -> Tuple[ModelProto, bool]:
-        if not transforms:
-            warnings.warn("Transform list is empty. Skipping transformation.")
-            return model, False
-
-        try:
-            cls._load_external_data(model, onnx_base_dir)
-
-            mapping: Dict[str, Tuple[TensorProto, str]] = {}
-            requested = set(transforms)
-            applied = {t: False for t in requested}
-
-            do_fp16 = FP16ClipTransform in requested
-            do_split = SplitTensorsTransform in requested
-            fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
-            file_num_tracker = {"num": 0, "size": 0}
-
-            if do_fp16 or do_split:
-                tensors = external_data_helper._get_all_tensors(model)
-                for idx, tensor in enumerate(tensors):
-                    # FP16 clipping
-                    if do_fp16 and cls._clip_tensor(tensor, fp16_min, fp16_max, onnx_base_dir):
-                        applied[FP16ClipTransform] = True
-
-                    # Tensor splitting
-                    if do_split and tensor.HasField("raw_data"):
-                        tsize = len(tensor.raw_data)
-                        if tsize > size_threshold:
-                            if file_num_tracker["size"] + tsize > file_chunk_size:
-                                file_num_tracker["num"] += 1
-                                file_num_tracker["size"] = tsize
-                            else:
-                                file_num_tracker["size"] += tsize
-
-                            cls._split_tensor(tensor, model_name, file_num_tracker["num"], mapping)
-                            applied[SplitTensorsTransform] = True
-
-                    # Periodic cleanup
-                    if (idx + 1) % ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL == 0:
-                        cls._cleanup_memory()
-
-            # Apply external data mapping
-            for _, (tensor, file_name) in mapping.items():
-                external_data_helper.set_external_data(tensor, file_name)
-
-            # Custom ops
-            if CustomOpTransform in requested:
-                applied[CustomOpTransform] = cls._custom_op_transform(model, opset_version)
-
-            # Rename outputs
-            if RenameFunctionOutputsTransform in requested:
-                applied[RenameFunctionOutputsTransform] = cls._rename_function_outputs(model)
-
-            # Log applied transforms
-            for t, done in applied.items():
-                logger.info(f"Transform '{t.__name__}' applied={done}")
-
-            return model, any(applied.values())
-
-        finally:
-            cls._cleanup_memory()
-
-    @classmethod
-    def _custom_op_transform(cls, model: ModelProto, opset_version: int) -> bool:
+    def apply(cls, model: ModelProto) -> bool:
         op_applied = False
         for op_name, (func_class, _) in cls._custom_ops.items():
             if hasattr(func_class, "symbolic"):
-                torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, opset_version)
+                torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, ONNX_EXPORT_OPSET)
 
         existing = {f.name for f in model.functions}
         for _, onnxscript_func in cls._custom_ops.values():
@@ -216,8 +111,12 @@ class OnnxTransformPipeline(BaseOnnxTransform):
                 op_applied = True
         return op_applied
 
+
+class RenameFunctionOutputsTransform(BaseOnnxTransform):
+    """Rename outputs of decoder-related functions for better clarity."""
+
     @classmethod
-    def _rename_function_outputs(cls, model: ModelProto) -> bool:
+    def apply(cls, model: ModelProto) -> bool:
         graph = model.graph
         op_type_to_func = {f.name: f for f in model.functions}
         decoder_patterns = ["DecoderLayer", "Block", "Layer"]
@@ -247,23 +146,76 @@ class OnnxTransformPipeline(BaseOnnxTransform):
                 layer_idx += 1
         return renamed
 
-    @staticmethod
-    def _clip_tensor(tensor: TensorProto, fp16_min: float, fp16_max: float, onnx_base_dir: Optional[str]) -> bool:
-        nptensor = numpy_helper.to_array(tensor, onnx_base_dir)
-        if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
-            neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
-            clipped_tensor = np.clip(nptensor, fp16_min, fp16_max)
 
-            if neg_inf_mask.any():
-                clipped_tensor = np.where(neg_inf_mask, np.float32("-inf"), clipped_tensor)
+class OnnxTransformPipeline(BaseOnnxTransform):
+    """Pipeline to apply multiple ONNX transformations in sequence."""
 
-            tensor.CopyFrom(numpy_helper.from_array(clipped_tensor, tensor.name))
-            return True
-        return False
+    @classmethod
+    def apply(
+        cls,
+        model: ModelProto,
+        *,
+        transforms: List[Type[BaseOnnxTransform]],
+        model_name: str = "",
+        onnx_base_dir: Optional[str] = None,
+        file_chunk_size: int = FILE_CHUNK_SIZE_DEFAULT,
+        size_threshold: int = SIZE_THRESHOLD_DEFAULT,
+        **kwargs,
+    ) -> Tuple[ModelProto, bool]:
+        if not transforms:
+            warnings.warn("Transform list is empty. Skipping transformation.")
+            return model, False
 
-    @staticmethod
-    def _split_tensor(
-        tensor: TensorProto, model_name: str, file_num: int, mapping: Dict[str, Tuple[TensorProto, str]]
-    ) -> None:
-        file_name = f"{model_name}_{file_num}.onnx.data"
-        mapping[tensor.name] = (tensor, file_name)
+        ############### Looping transform ######################
+        mapping: Dict[str, Tuple[TensorProto, str]] = {}
+        requested = set(transforms)
+        applied = {t: False for t in requested}
+
+        do_fp16 = FP16ClipTransform in requested
+        do_split = SplitTensorsTransform in requested
+        fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
+        file_num_tracker = {"num": 0, "size": 0}
+
+        if do_fp16 or do_split:
+            tensors = external_data_helper._get_all_tensors(model)
+            for idx, tensor in enumerate(tensors):
+                if do_fp16:
+                    applied[FP16ClipTransform] = FP16ClipTransform.apply(tensor, onnx_base_dir, fp16_max, fp16_min)
+
+                if do_split and tensor.HasField("raw_data"):
+                    tsize = len(tensor.raw_data)
+                    if tsize > size_threshold:
+                        if file_num_tracker["size"] + tsize > file_chunk_size:
+                            file_num_tracker["num"] += 1
+                            file_num_tracker["size"] = tsize
+                        else:
+                            file_num_tracker["size"] += tsize
+                        applied[SplitTensorsTransform] = True
+                        SplitTensorsTransform.apply(tensor, model_name, file_num_tracker["num"], mapping)
+
+        def _set_external_data(tensor, file_name):
+            external_data_helper.set_external_data(tensor, file_name)
+
+        max_workers = min(32, (os.cpu_count() or 1) * 4)
+        logger.info(f"Applying external data mapping with {max_workers} threads")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_set_external_data, tensor, file_name) for tensor, file_name in mapping.values()]
+
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Failed to set external data: {e}")
+
+        ############### NON Looping transform ######################
+        if CustomOpTransform in requested:
+            applied[CustomOpTransform] = CustomOpTransform.apply(model)
+
+        if RenameFunctionOutputsTransform in requested:
+            applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(model)
+
+        for t, done in applied.items():
+            logger.info(f"Transform '{t.__name__}' applied={done}")
+
+        return model, any(applied.values())
