@@ -2800,6 +2800,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
         num_speculative_tokens: Optional[int] = None,
+        **kwargs,
     ):
         """
         Builds a dictionary representing a compilation specialization for the decode phase.
