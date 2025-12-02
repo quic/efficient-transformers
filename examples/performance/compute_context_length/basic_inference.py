@@ -117,7 +117,9 @@ def main():
     model = QEFFAutoModelForCausalLM.from_pretrained(
         args.model_name,
         continuous_batching=args.continuous_batching,
-        ccl_enabled=args.ccl_enabled,
+        qaic_config={
+            "ccl_enabled":args.ccl_enabled,
+        },
     )
 
     # Compile the model

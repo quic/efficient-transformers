@@ -188,7 +188,9 @@ def run_intern_on_aic(
         model_name,
         kv_offload=kv_offload,
         trust_remote_code=True,
-        ccl_enabled=ccl_enabled,
+        qaic_config={
+            "ccl_enabled":ccl_enabled,
+        },
     )
 
     ## STEP 2 -- EXPORT & COMPILE THE MODEL

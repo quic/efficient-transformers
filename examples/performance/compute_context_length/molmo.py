@@ -15,7 +15,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 model_id = "allenai/Molmo-7B-D-0924"
 config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-
+# For Testing Purpose Only
 # config.num_hidden_layers = 2
 
 ## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
@@ -33,10 +33,12 @@ comp_ctx_lengths_decode = [4096, 8192]  # None #
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_id,
-    kv_offload=True,
+    kv_offload=False,
     trust_remote_code=True,
     config=config,
-    ccl_enabled=True,
+    qaic_config={
+        "ccl_enabled":True,
+    },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)

@@ -41,7 +41,9 @@ def run_model(
         model_name,
         token=token,
         kv_offload=kv_offload,
-        ccl_enabled=ccl_enabled,
+        qaic_config={
+            "ccl_enabled":ccl_enabled,
+        },
     )
 
     ## STEP - 2 Export & Compile the Model

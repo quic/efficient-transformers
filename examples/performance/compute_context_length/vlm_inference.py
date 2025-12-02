@@ -77,7 +77,9 @@ def run_model(
         token=hf_token,
         attn_implementation="eager",
         kv_offload=kv_offload,
-        ccl_enabled=ccl_enabled,
+        qaic_config={
+            "ccl_enabled":ccl_enabled,
+        },
     )
 
     ## STEP 2: Export & Compile the Model
@@ -202,7 +204,7 @@ def main():
     parser.add_argument(
         "--img-size",
         type=int,
-        default=336,
+        default=560,
         help="Image size for processing",
     )
     parser.add_argument(

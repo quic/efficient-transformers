@@ -16,6 +16,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 ## For AWQ model update pytorch version to 2.8.*
 model_id = "Qwen/Qwen2.5-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
+# For Testing Purpose Only
 config.text_config.num_hidden_layers = 4
 
 ## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
@@ -36,7 +37,9 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     kv_offload=True,
     config=config,
     continuous_batching=True,
-    ccl_enabled=True,
+    qaic_config={
+        "ccl_enabled":True,
+    },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)

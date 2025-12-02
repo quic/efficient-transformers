@@ -27,14 +27,14 @@ model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 ctx_len = 1024
 prefill_seq_len = 1
 # In moe models when compiling with prefill_seq_len=1 and non-continuous-batching mode, prefill and decode will share the same ccl specializations.
-comp_ctx_lengths_prefill = [256, 512, ctx_len]
-comp_ctx_lengths_decode = [256, 512, ctx_len]
+comp_ctx_lengths_prefill = comp_ctx_lengths_decode = [256, 512, ctx_len]
 
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
     continuous_batching=False,
-    ccl_enabled=True,
-    num_hidden_layers=4,
+    qaic_config={
+        "ccl_enabled":True,
+    },
 )
 
 model.compile(

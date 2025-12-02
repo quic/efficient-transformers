@@ -914,7 +914,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self,
         model: nn.Module,
         continuous_batching: bool = False,
-        ccl_enabled: bool = False,
+        qaic_config: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -940,7 +940,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
         self.continuous_batching = continuous_batching
-        self.ccl_enabled = ccl_enabled
+        self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
 
@@ -960,7 +960,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         return mname
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
         """
         Load a QEfficient multimodal model for dual QPC from a pretrained HuggingFace model or local path.
 
@@ -985,13 +985,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        ccl_enabled = kwargs.pop("ccl_enabled", None)
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
-            ccl_enabled=ccl_enabled,
+            qaic_config=qaic_config,
             **kwargs,
         )
 
@@ -1195,8 +1194,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # For supporting VLLM and Disaggregated with CCL
         if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
-            self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
-            self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
+            )
 
         specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
@@ -1619,7 +1619,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def __init__(
         self,
         model: nn.Module,
-        ccl_enabled: bool = False,
+        qaic_config: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -1661,7 +1661,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             else:
                 self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        self.ccl_enabled = ccl_enabled
+        self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
@@ -1671,6 +1671,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def from_pretrained(
         cls,
         pretrained_model_name_or_path,
+        qaic_config: Optional[dict] = None,
         *args,
         **kwargs,
     ):
@@ -1701,7 +1702,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        ccl_enabled = kwargs.pop("ccl_enabled", None)
 
         from transformers import AutoConfig
 
@@ -1713,7 +1713,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         return cls(
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
-            ccl_enabled=ccl_enabled,
+            qaic_config=qaic_config,
             **kwargs,
         )
 
@@ -1840,8 +1840,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         # For supporting VLLM and Disaggregated with CCL
         if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
-            self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
-            self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
+            )
 
         # Get specializations from modelling file
         # TODO: expose this via the auto class as well
@@ -2224,7 +2225,7 @@ class QEFFAutoModelForImageTextToText:
         model: nn.Module,
         kv_offload: Optional[bool] = True,
         continuous_batching: bool = False,
-        ccl_enabled: bool = False,
+        qaic_config: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -2248,10 +2249,10 @@ class QEFFAutoModelForImageTextToText:
         """
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(
-                model, continuous_batching, ccl_enabled=ccl_enabled, **kwargs
+                model, continuous_batching, qaic_config=qaic_config, **kwargs
             )
         else:
-            return _QEFFAutoModelForImageTextToTextSingleQPC(model, ccl_enabled=ccl_enabled, **kwargs)
+            return _QEFFAutoModelForImageTextToTextSingleQPC(model, qaic_config=qaic_config, **kwargs)
 
     @classmethod
     @with_replaced_quantizers
@@ -2301,7 +2302,6 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        ccl_enabled = kwargs.pop("ccl_enabled", None)
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(
@@ -2309,7 +2309,7 @@ class QEFFAutoModelForImageTextToText:
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
-            ccl_enabled=ccl_enabled,
+            qaic_config=qaic_config,
             **kwargs,
         )
 
@@ -2360,7 +2360,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
-        ccl_enabled: bool = False,
         **kwargs,
     ):
         """
@@ -2416,7 +2415,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.is_tlm = transformed
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        self.ccl_enabled = ccl_enabled
+        self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
         # ---Sampling---
@@ -2513,7 +2512,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kv_offload = kwargs.pop("kv_offload", None)
-        ccl_enabled = kwargs.pop("ccl_enabled", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
@@ -2527,7 +2525,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 model,
                 kv_offload=kv_offload,
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
-                ccl_enabled=ccl_enabled,
+                qaic_config=qaic_config,
                 **kwargs,
             )
         return cls(
@@ -2535,7 +2533,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             continuous_batching=continuous_batching,
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
-            ccl_enabled=ccl_enabled,
             **kwargs,
         )
 
@@ -2983,6 +2980,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
                 self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
 
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+                self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len, prefill_seq_len
+            )
         # --- Validation ---
         if prefill_only is not None and not isinstance(prefill_only, bool):
             raise TypeError("`prefill_only` must be a boolean.")

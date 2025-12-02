@@ -41,7 +41,9 @@ if continious_batching:
         kv_offload=True,
         config=config,
         continuous_batching=True,
-        ccl_enabled=True,
+        qaic_config={
+            "ccl_enabled":True,
+        },
     )
 
     qeff_model.compile(
@@ -66,7 +68,9 @@ else:
         attn_implementation="eager",
         kv_offload=True,
         config=config,
-        ccl_enabled=True,
+        qaic_config={
+            "ccl_enabled":True,
+        },
     )
 
     qeff_model.compile(
