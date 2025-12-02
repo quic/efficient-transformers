@@ -37,9 +37,6 @@ def test_fp16clip_transform():
     }
     """)
     onnx.checker.check_model(test_onnx, True, True, True)
-    if "model" in locals():
-        BaseOnnxTransform._cleanup_external_data_and_cache(test_onnx)
-        BaseOnnxTransform._cleanup_memory()
     transformed_onnx, transformed = OnnxTransformPipeline.apply(
         test_onnx, model_name="", transforms=[FP16ClipTransform]
     )
@@ -73,10 +70,6 @@ def test_fp16clip_transform_external(tmp_path):
     np.array(-1e10, dtype="float32").tofile(tmp_path / external_tensors_file)
     onnx.checker.check_model(onnx_path, True, True, True)
 
-    if "model" in locals():
-        BaseOnnxTransform._cleanup_external_data_and_cache(test_onnx)
-        BaseOnnxTransform._cleanup_memory()
-
     transformed_onnx, transformed = OnnxTransformPipeline.apply(
         test_onnx, model_name="", onnx_base_dir=str(tmp_path), transforms=[FP16ClipTransform]
     )
@@ -107,10 +100,6 @@ def test_split_tensors_transform(tmp_path):
     tensors = np.random.rand(32 + 32 + 16).astype("float32")
     tensors.tofile(tmp_path / external_tensors_file)
     onnx.checker.check_model(onnx_path, True, True, True)
-
-    if "model" in locals():
-        OnnxTransformPipeline._cleanup_external_data_and_cache(test_onnx)
-        OnnxTransformPipeline._cleanup_memory()
 
     trans_onnx, transformed = OnnxTransformPipeline.apply(
         test_onnx,

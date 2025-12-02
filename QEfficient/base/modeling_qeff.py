@@ -93,6 +93,7 @@ class QEFFBaseModel(ABC):
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
                 meta_model = self.model.to("meta")
+                self._is_weights_offloaded = True
                 del self.model
                 gc.collect()
                 self.model = meta_model

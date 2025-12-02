@@ -219,10 +219,6 @@ def fix_onnx_fp16(
         :str: Updated base name of exported ONNX model.
     """
     model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-    if "model" in locals():
-        BaseOnnxTransform._cleanup_external_data_and_cache(gen_models_path)
-        BaseOnnxTransform._cleanup_memory()
-
     model, fp16_fix = OnnxTransformPipeline.apply(
         model, model_name="", onnx_base_dir=gen_models_path, transforms=[FP16ClipTransform]
     )
