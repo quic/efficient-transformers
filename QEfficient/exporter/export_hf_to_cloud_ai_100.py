@@ -202,7 +202,7 @@ def export_kvstyle_transformed_model_to_onnx(
         batch_size=len(Constants.INPUT_STR),
         tokenizer=tokenizer,
         config=transformed_model.config,
-        prompt=Constants.INPUT_STR,
+        prompt=Constants.INPUT_STR * (full_batch_size if full_batch_size else 1),
         prompt_len=Constants.PROMPT_LEN,
         ctx_len=seq_len,
         full_batch_size=full_batch_size,
