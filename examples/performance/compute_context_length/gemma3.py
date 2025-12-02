@@ -38,7 +38,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id,
     config=config,
     attn_implementation="eager",
-    kv_offload=False,
+    kv_offload=True,
     qaic_config={
         "ccl_enabled":True,
     },
