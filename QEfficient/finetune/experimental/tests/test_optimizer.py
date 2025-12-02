@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from QEfficient.finetune.experimental.core.component_registry import registry
-from QEfficient.finetune.experimental.core.optimizer import get_optimizer, get_optimizer_cls
+from QEfficient.finetune.experimental.core.optimizer import get_optimizer
 
 OPTIMIZER_CONFIGS = {
     "Adam": {
@@ -88,6 +88,6 @@ def test_optimizers(opt_name, dummy_model):
 def test_registered_optimizer(opt_name, opt_cls):
     """Test that the optimizer registerd correctly."""
     registry.optimizer(opt_name)(opt_cls)
-    optimizer_class = get_optimizer_cls(opt_name)
+    optimizer_class = registry.get_optimizer(opt_name)
     assert optimizer_class is not None
     assert optimizer_class == opt_cls
