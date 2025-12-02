@@ -12,7 +12,7 @@ from QEfficient.utils.constants import Constants
 
 model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 """
-# For CB inference, set continuous_batching to True and add full_batch_size,mxfp6,mint8 argument in compile function
+# For CB inference, set continuous_batching to True and add full_batch_size,mxfp6,mxint8 argument in compile function
 # We will use prompt_len=1 for compilation for both cb and non-cb inference
 """
 
@@ -27,8 +27,8 @@ model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 ctx_len = 1024
 prefill_seq_len = 1
 # In moe models when compiling with prefill_seq_len=1 and non-continuous-batching mode, prefill and decode will share the same ccl specializations.
-comp_ctx_lengths_prefill = [256, 512, ctx_len]  # None #
-comp_ctx_lengths_decode = [256, 512, ctx_len]  # None #
+comp_ctx_lengths_prefill = [256, 512, ctx_len]
+comp_ctx_lengths_decode = [256, 512, ctx_len]
 
 model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
@@ -49,6 +49,6 @@ model.compile(
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
 )
-# mos=1,
+
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 exec_info = model.generate(prompts=Constants.INPUT_STR, tokenizer=tokenizer)

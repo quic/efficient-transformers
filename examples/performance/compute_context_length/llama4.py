@@ -51,7 +51,7 @@ if skip_vision:
         ctx_len=ctx_len,
         img_size=336,
         num_cores=16,
-        num_devices=4,
+        num_devices=8,
         max_num_tiles=17,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
@@ -83,7 +83,7 @@ if skip_vision:
     )
 
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3], generation_len=100)
+    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
@@ -95,7 +95,7 @@ else:
         ctx_len=ctx_len,
         img_size=336,
         num_cores=16,
-        num_devices=4,
+        num_devices=8,
         max_num_tiles=17,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
@@ -129,7 +129,7 @@ else:
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[8, 9, 10, 11], generation_len=100)
+    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)

@@ -29,8 +29,8 @@ processor = AutoProcessor.from_pretrained(model_id)
 ##           -- It starts from the correct value in the list and increases the context length dynamically when the cache index exceeds the current threshold.
 
 ctx_len = 8192
-comp_ctx_lengths_prefill = [3072]  # None #
-comp_ctx_lengths_decode = [4096, ctx_len]  # None #
+comp_ctx_lengths_prefill = [3072]
+comp_ctx_lengths_decode = [4096, ctx_len] 
 
 # pass HF_TOKEN if gated model
 # For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
