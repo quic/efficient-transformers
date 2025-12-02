@@ -9,7 +9,6 @@ import numpy as np
 import onnx
 
 from QEfficient.base.onnx_transforms import (
-    BaseOnnxTransform,
     FP16ClipTransform,
     OnnxTransformPipeline,
     SplitTensorsTransform,
