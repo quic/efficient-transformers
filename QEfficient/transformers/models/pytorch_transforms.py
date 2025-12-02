@@ -664,9 +664,10 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
 
 
 class RevertPrefillOnlyTransform(ModuleMappingTransform):
-    _module_mapping = {v: k for k, v in PrefillOnlyTransform._module_mapping.items()}.update(
-        {v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()}
-    )
+    _module_mapping = {
+        **{v: k for k, v in PrefillOnlyTransform._module_mapping.items()},
+        **{v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()},
+    }
 
 
 class SpDTransform:
