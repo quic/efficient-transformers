@@ -33,6 +33,7 @@ configs = [
     ("starcoder2", 256, 2, 4, 128, 512, 127, {}),
     ("granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("olmo2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("gpt_oss", 256, 3, 4, 128, 512, 127, {"num_key_value_heads": 2}),
 ]
 
 configs = [
@@ -177,12 +178,23 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
             0: "full_batch_size" if qeff_model.continuous_batching else "batch_size",
             2: "ctx_len",
         }
+    pkv_dynamic_axes = (
+        qeff_model.model.get_pkv_dynamic_axes()
+        if hasattr(qeff_model.model, "get_pkv_dynamic_axes")
+        else pkv_dynamic_axes
+    )
+    pkv_dynamic_axes = (
+        [pkv_dynamic_axes] * qeff_model.model.config.num_hidden_layers
+        if isinstance(pkv_dynamic_axes, dict)
+        else pkv_dynamic_axes
+    )
     output_names = []
     output_names.append("logits")
 
     for i in range(qeff_model.num_layers):
+        pkv_dynamic_axes[i][0] = "full_batch_size" if qeff_model.continuous_batching else "batch_size"
         for kv in ["key", "value"]:
-            dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+            dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
             output_names.append(f"past_{kv}.{i}_RetainedState")
 
     if qeff_model.continuous_batching:

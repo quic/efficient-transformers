@@ -25,7 +25,6 @@ pipeline {
                    pip install junitparser pytest-xdist &&
                    pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 && #packages to load VLMs
-                   pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl && # For finetuning tests
                    rm -rf QEfficient"
                '''
            }
@@ -90,8 +89,8 @@ pipeline {
                        timeout(time: 60, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
-                    	   source /qnn_sdk/bin/envsetup.sh &&
-                      	   source /qnn_sdk/bin/envcheck -c &&
+                    	   #source /qnn_sdk/bin/envsetup.sh &&
+                      	   #source /qnn_sdk/bin/envcheck -c &&
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/cli &&
@@ -168,6 +167,7 @@ pipeline {
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
+                    pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
                     mkdir -p $PWD/cli_qaic_finetuning &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli_qaic_finetuning &&
@@ -181,15 +181,15 @@ pipeline {
     }
 
    post {
-        success {
-            // Trigger downstream job only if this pipeline succeeds
-            build job: 'qefficient_vllm_upstream',
-                parameters: [
-                    string(name: 'NAME', value: "${BUILD_TAG}"),
-                    string(name: 'QEFF_WORKSPACE', value: "${env.WORKSPACE}")
-                ],
-                wait: false
-        }
+        // success {
+        //     // Trigger downstream job only if this pipeline succeeds
+        //     build job: 'qefficient_vllm_upstream',
+        //         parameters: [
+        //             string(name: 'NAME', value: "${BUILD_TAG}"),
+        //             string(name: 'QEFF_WORKSPACE', value: "${env.WORKSPACE}")
+        //         ],
+        //         wait: false
+        // }
         always {
             script {
                 try {
@@ -201,8 +201,7 @@ pipeline {
                 }
             }
             junit testResults: 'tests/tests_log.xml'
-        }
-        unsuccessful {
+
             script {
                 try {
                     sh '''
@@ -215,5 +214,18 @@ pipeline {
             echo 'Cleaning Workspace'
             deleteDir()
         }
+        // unsuccessful {
+        //     script {
+        //         try {
+        //             sh '''
+        //             sudo docker rm -f ${BUILD_TAG}
+        //             '''
+        //         } catch (error) {
+        //             echo "Failed to delete container ${BUILD_TAG}: ${error}"
+        //         }
+        //     }
+        //     echo 'Cleaning Workspace'
+        //     deleteDir()
+        // }
     }
 }

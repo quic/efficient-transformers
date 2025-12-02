@@ -123,10 +123,19 @@ def train(
             break
 
         if train_config.use_peft and train_config.from_peft_checkpoint:
-            intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
-            intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
+            path = train_config.from_peft_checkpoint.rstrip("/")
+            try:
+                intermediate_epoch = int(path.split("/")[-2].split("_")[-1]) - 1
+                intermediate_step = int(path.split("/")[-1].split("_")[-1])
+            except (IndexError, ValueError):
+                intermediate_epoch = int(path.split("/")[-1].split("_")[-1]) - 1
+                intermediate_step = 0
+
             if epoch < intermediate_epoch:
                 logger.log_rank_zero(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
+                continue
+            if intermediate_step == 0 and epoch == intermediate_epoch:
+                logger.log_rank_zero(f"Skipping epoch {epoch + 1}, since fine tuning has already completed for it.")
                 continue
 
         logger.log_rank_zero(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
@@ -154,6 +163,7 @@ def train(
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
             if train_config.use_peft and train_config.from_peft_checkpoint:
                 # to bring the count of train_step in sync with where it left off
+
                 if epoch == intermediate_epoch and step == 0:
                     logger.log_rank_zero(
                         f"Skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for it."
@@ -365,7 +375,7 @@ def train(
                 eval_step_metric,
                 eval_metric,
             )
-    avg_epoch_time = sum(epoch_times) / len(epoch_times)
+    avg_epoch_time = sum(epoch_times) / len(epoch_times) if len(epoch_times) > 0 else 0
     avg_checkpoint_time = sum(checkpoint_times) / len(checkpoint_times) if len(checkpoint_times) > 0 else 0
 
     results["last_epoch_train_loss"] = train_epoch_loss.cpu()

@@ -50,6 +50,7 @@ test_intern_config = {model["model_name"]: model for model in intern_models}
 model_config_dict = {**test_mm_models_config, **test_intern_config}
 
 
+
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
         repo_id=model_config._name_or_path,
@@ -186,6 +187,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
     inputs = processor(images=image, text=prompt, return_tensors="pt")
+    if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
+        inputs = qeff_model.model.prepare_inputs_for_generation(
+            inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
+        )
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     print("QPC Outputs (QAIC):")

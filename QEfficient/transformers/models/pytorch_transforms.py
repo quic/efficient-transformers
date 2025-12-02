@@ -51,9 +51,19 @@ from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeForCausalLM,
     GPTBigCodeModel,
 )
+from transformers.models.gpt_oss.modeling_gpt_oss import (
+    GptOssAttention,
+    GptOssDecoderLayer,
+    GptOssExperts,
+    GptOssForCausalLM,
+    GptOssMLP,
+    GptOssModel,
+    GptOssRMSNorm,
+)
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
 from transformers.models.granite.modeling_granite import (
     GraniteAttention,
+    GraniteDecoderLayer,
     GraniteForCausalLM,
     GraniteModel,
     GraniteRMSNorm,
@@ -243,6 +253,14 @@ from QEfficient.transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     QEffGPTBigCodeForCausalLM,
     QEffGPTBigCodeModel,
 )
+from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
+    QEffGptOssAttention,
+    QEffGptOssDecoderLayer,
+    QEffGptOssExperts,
+    QEffGptOssForCausalLM,
+    QEffGptOssMLP,
+    QEffGptOssModel,
+)
 from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJAttention,
     QEffGPTJBlock,
@@ -251,6 +269,7 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
 )
 from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteAttention,
+    QEffGraniteDecoderLayer,
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
@@ -417,6 +436,7 @@ class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
         Gemma2RMSNorm: GemmaCustomRMSNormAIC,
+        GptOssRMSNorm: CustomRMSNormAIC,
         LlamaRMSNorm: CustomRMSNormAIC,
         Llama4TextRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
@@ -502,10 +522,18 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma3TextModel: QEffGemma3TextModel,
         Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
         Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
+        # GPT_OSS
+        GptOssAttention: QEffGptOssAttention,
+        GptOssDecoderLayer: QEffGptOssDecoderLayer,
+        GptOssModel: QEffGptOssModel,
+        GptOssForCausalLM: QEffGptOssForCausalLM,
+        GptOssMLP: QEffGptOssMLP,
+        GptOssExperts: QEffGptOssExperts,
         # Granite
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
+        GraniteDecoderLayer: QEffGraniteDecoderLayer,
         # GraniteMoe
         GraniteMoeModel: QEffGraniteMoeModel,
         GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
@@ -676,8 +704,16 @@ class SamplerTransform:
 
     # supported architectures
     _module_mapping = {
-        # Llama
+        QEffFalconForCausalLM,
+        QEffGemmaForCausalLM,
+        QEffGPT2LMHeadModel,
+        QEffGPTJForCausalLM,
+        QEffGraniteForCausalLM,
+        QEffGraniteMoeForCausalLM,
         QEffLlamaForCausalLM,
+        QEffMptForCausalLM,
+        QEffPhi3ForCausalLM,
+        QEffQwen2ForCausalLM,
     }
 
     @classmethod
@@ -788,3 +824,29 @@ class PoolingTransform:
         model = PooledModel(model, pooling_method)
         warnings.warn("Pooling is applied to the model.")
         return model, transformed
+
+
+def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
+    """
+    Dynamically determine which DecoderLayer classes should be exported as functions
+    based on the model's architecture using the existing KVCacheTransform mapping.
+    """
+    # Define patterns that identify decoder layer classes
+    DECODER_LAYER_PATTERNS = ["DecoderLayer", "Block", "Layer"]
+
+    # Get all QEff classes that are decoder layers from the existing mapping
+    decoder_layer_classes = set()
+
+    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
+        # Check if the QEff class name contains decoder layer patterns
+        qeff_class_name = qeff_class.__name__
+        if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
+            decoder_layer_classes.add(qeff_class)
+
+    # Filter to only include classes that are actually used in the current model
+    model_decoder_classes = set()
+    for module in model.modules():
+        if module.__class__ in decoder_layer_classes:
+            model_decoder_classes.add(module.__class__)
+
+    return model_decoder_classes

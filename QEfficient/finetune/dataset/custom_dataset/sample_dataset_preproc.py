@@ -61,17 +61,22 @@ def get_preprocessed_disc(dataset_config, tokenizer, split, context_length=None)
     dataset = dataset.map(apply_prompt_template, remove_columns=list(dataset.features))
 
     def tokenize_add_label(sample):
+        if context_length is not None:
+            padding_type = "max_length"
+        else:
+            padding_type = True
+
         input = tokenizer.encode(
             tokenizer.bos_token + sample["input"],
             add_special_tokens=False,
             max_length=context_length,
-            pad_to_max_length=True,
+            padding=padding_type,
         )
         label = tokenizer.encode(
             sample["label"] + tokenizer.pad_token + tokenizer.eos_token,
             add_special_tokens=False,
             max_length=context_length,
-            pad_to_max_length=True,
+            padding=padding_type,
         )
 
         sample = {
