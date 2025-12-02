@@ -84,11 +84,7 @@ output = qeff_model.generate(
     processor=processor,
     images=image_urls,
     generation_len=100,
-<<<<<<< HEAD
     device_ids=[0, 1, 2, 3],
-=======
-    device_ids=[28, 29, 30, 31],
->>>>>>> da18659 (Adding ccl_enabled flag during model loading and passing CCL lists during compilation process)
 )
 print(output.generated_ids)
 print(tokenizer.batch_decode(output.generated_ids))
