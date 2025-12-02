@@ -87,16 +87,23 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _offload_model_weights(self, offload_pt_weights) -> bool:
+    def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
-
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
+                for param in self.model.parameters():
+                    if param.storage():
+                        param.storage().resize_(0)
+                for buffer in self.model.buffers():
+                    if buffer.storage():
+                        buffer.storage().resize_(0)
+
                 meta_model = self.model.to("meta")
-                self._is_weights_offloaded = True
                 del self.model
                 gc.collect()
+
                 self.model = meta_model
+                self._is_weights_offloaded = True
                 return True
             except Exception as e:
                 logger.warning(f"Weight clearing failed, continuing: {e}")
@@ -271,8 +278,8 @@ class QEFFBaseModel(ABC):
             )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
-
             model = onnx.load(tmp_onnx_path, load_external_data=False)
+
             # Clear temporary references
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
@@ -282,9 +289,9 @@ class QEFFBaseModel(ABC):
                 transform_kwargs.update(onnx_transform_kwargs)
 
             transform_kwargs["transforms"] = self._onnx_transforms
-
             model, transformed = OnnxTransformPipeline.apply(model, **transform_kwargs)
 
+            # Add metadata to the model
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
