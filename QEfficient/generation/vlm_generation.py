@@ -109,6 +109,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             enable_debug_logs: Enable debug logging
             write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
+            image_height: Desired image height for resizing
+            image_width: Desired image width for resizing
             is_tlm: Target language model flag
             include_sampler: Enable on-device sampling (new feature)
             return_pdfs: Return probability distributions

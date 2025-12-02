@@ -515,19 +515,24 @@ class ApiRunnerInternVL(ApiRunnerVlm):
 
         for idx, (image, query) in enumerate(zip(images, queries)):
             num_patches_list = []
+            pixel_values = []
+            questions = []
 
             pixel_value = self.processor.load_image(image, max_num=12)
             num_patches_list.append(pixel_value.shape[0])
             question = "<image>\n" + query
 
+            pixel_values.append(pixel_value)
+            pixel_values = torch.cat(pixel_values, dim=0)
+            questions.append(question)
+
             # Chat Template information for prompt preprocessing
             messages: List[List[str]] = []
             roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
-            prompt = self.processor(pixel_value, question, messages, roles, num_patches_list=num_patches_list)
+            prompt = self.processor(pixel_values, questions, messages, roles, num_patches_list=num_patches_list)
 
             inputs = self.processor.tokenizer(prompt, return_tensors="pt")
-            batch_size, prompt_len = inputs["input_ids"].shape
-            inputs["pixel_values"] = pixel_value.clone()
+            inputs["pixel_values"] = pixel_values.clone()
 
             generation_config = dict(max_new_tokens=self.gen_len, do_sample=False)
             generation_config["eos_token_id"] = self.processor.tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
@@ -537,7 +542,7 @@ class ApiRunnerInternVL(ApiRunnerVlm):
             offset_output = outputs[0].detach().numpy()
 
             py_output = self.processor.tokenizer.decode(offset_output, skip_special_tokens=True).strip()
-            print("Original HF Model Outputs (Torch CPU):")
+            print(f"Original HF Model Outputs (Torch CPU) for prompt {idx}:")
             print("Completion:", repr(py_output))
             generated_ids.append(offset_output)
 
