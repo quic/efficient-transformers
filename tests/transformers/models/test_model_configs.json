@@ -358,8 +358,7 @@
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
       "text_prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
       "num_layers": 1,
-      "additional_params": {
-      }
+      "additional_params": {}
     },
     {
       "model_name": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
@@ -371,8 +370,7 @@
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
       "text_prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
       "num_layers": 4,
-      "additional_params": {
-      }
+      "additional_params": {}
     },
     {
       "model_name": "google/gemma-3-4b-it",
@@ -384,8 +382,7 @@
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
-      "additional_params": {
-      }
+      "additional_params": {}
     },
     {
       "model_name": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
@@ -397,22 +394,31 @@
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
-      "additional_params": {
-      }
-    }
-
-  ],
-  "intern_models": [
+      "additional_params": {}
+    },
+        {
+      "model_name": "allenai/Molmo-7B-D-0924",
+      "model_type": "molmo",
+      "batch_size": 1,
+      "prompt_len": 128,
+      "ctx_len": 4096,
+      "img_size": null,
+      "img_url": "https://picsum.photos/id/237/536/354",
+      "text_prompt": "Can you describe the image in detail.",
+      "num_layers": 2,
+      "additional_params": {}
+    },
     {
       "model_name": "OpenGVLab/InternVL2_5-1B",
+      "model_type": null,
       "batch_size": 1,
       "prompt_len": 384,
       "ctx_len": 512,
+      "img_size": null,
       "img_url": "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
       "text_prompt": "Please describe the image in detail.",
       "num_layers": 2,
-      "additional_params": {
-      }
+      "additional_params": {}
     }
   ],
   "speech_seq2seq_models": [
