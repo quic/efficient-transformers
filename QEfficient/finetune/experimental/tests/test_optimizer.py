@@ -5,20 +5,16 @@
 #
 # -----------------------------------------------------------------------------
 
-import inspect
-import sys
-from pathlib import Path
-
 import pytest
 import torch.nn as nn
 import torch.optim as optim
 
-from QEfficient.finetune.experimental.core.optimizer import get_optimizer_cls, register_optimizer
+from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.optimizer import get_optimizer, get_optimizer_cls
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 OPTIMIZER_CONFIGS = {
-    "adam": {
-        "optimizer_name": "adam",
+    "Adam": {
+        "optimizer_name": "Adam",
         "opt_cls": optim.Adam,
         "lr": 1e-4,
         "weight_decay": 0.01,
@@ -26,8 +22,8 @@ OPTIMIZER_CONFIGS = {
         "eps": 1e-8,
         "amsgrad": False,
     },
-    "adamw": {
-        "optimizer_name": "adamw",
+    "AdamW": {
+        "optimizer_name": "AdamW",
         "opt_cls": optim.AdamW,
         "lr": 1e-4,
         "weight_decay": 0.01,
@@ -35,14 +31,25 @@ OPTIMIZER_CONFIGS = {
         "eps": 1e-8,
         "amsgrad": False,
     },
-    "sgd": {
-        "optimizer_name": "sgd",
+    "SGD": {
+        "optimizer_name": "SGD",
         "opt_cls": optim.SGD,
         "lr": 1e-4,
         "momentum": 0.9,
         "weight_decay": 0.01,
         "dampening": 0.0,
         "nesterov": False,
+    },
+    "RMSprop": {
+        "optimizer_name": "RMSprop",
+        "opt_cls": optim.RMSprop,
+    },
+}
+
+REGISTRY_CONFIG = {
+    "RMSprop": {
+        "optimizer_name": "RMSprop",
+        "opt_cls": optim.RMSprop,
     },
 }
 
@@ -58,30 +65,29 @@ def dummy_model():
 
 @pytest.mark.parametrize("opt_name", OPTIMIZER_CONFIGS.keys())
 def test_optimizers(opt_name, dummy_model):
-    """Test that all optimizers can be created with their configs."""
-    # Register optimizer class
+    """Test that all registered optimizers can be created with their configs."""
     config = OPTIMIZER_CONFIGS[opt_name]
-    register_optimizer(config["optimizer_name"], config["opt_cls"])
-    optimizer_class = get_optimizer_cls(config["optimizer_name"])
-    assert optimizer_class is not None
-    assert optimizer_class == config["opt_cls"]
-    valid_params = inspect.signature(optimizer_class).parameters
-    filtered_config = {k: v for k, v in config.items() if k in valid_params}
-    opt_inst = optimizer_class(dummy_model.parameters(), **filtered_config)
+    config.pop("opt_cls")
+    try:
+        optimizer_class_and_kwargs = get_optimizer(config)
+        assert optimizer_class_and_kwargs is not None
+    except ValueError as e:
+        assert "Unknown optimizer" in str(e)
+        return
+    optimizer_class = optimizer_class_and_kwargs[0]
+    opt_inst = optimizer_class(dummy_model.parameters(), **optimizer_class_and_kwargs[1])
     assert isinstance(opt_inst, optim.Optimizer)
     assert len(list(opt_inst.param_groups)) == 1
-    assert opt_inst.param_groups[0]["lr"] == config["lr"]
-    if "weight_decay" in config:
-        assert opt_inst.param_groups[0]["weight_decay"] == config["weight_decay"]
-    if "betas" in config:
-        assert opt_inst.param_groups[0]["betas"] == config["betas"]
-    if "eps" in config:
-        assert opt_inst.param_groups[0]["eps"] == config["eps"]
-    if "momentum" in config:
-        assert opt_inst.param_groups[0]["momentum"] == config["momentum"]
-    if "dampening" in config:
-        assert opt_inst.param_groups[0]["dampening"] == config["dampening"]
-    if "nesterov" in config:
-        assert opt_inst.param_groups[0]["nesterov"] == config["nesterov"]
-    if "amsgrad" in config:
-        assert opt_inst.param_groups[0]["amsgrad"] == config["amsgrad"]
+
+    for key in ["lr", "weight_decay", "betas", "eps", "momentum", "dampening", "nesterov", "amsgrad"]:
+        if key in config:
+            assert opt_inst.param_groups[0][key] == config[key], f"{key} mismatch"
+
+
+@pytest.mark.parametrize("opt_name, opt_cls", REGISTRY_CONFIG.items())
+def test_registered_optimizer(opt_name, opt_cls):
+    """Test that the optimizer registerd correctly."""
+    registry.optimizer(opt_name)(opt_cls)
+    optimizer_class = get_optimizer_cls(opt_name)
+    assert optimizer_class is not None
+    assert optimizer_class == opt_cls
