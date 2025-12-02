@@ -24,9 +24,9 @@ pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 # Generate an image from a text prompt
 # use_onnx_subfunctions=True enables ONNX-based optimizations for faster compilation
 output = pipeline(
-    prompt="A cat holding a sign that says hello world",
-    height=256,
-    width=256,
+    prompt="A laughing girl",
+    height=1024,
+    width=1024,
     guidance_scale=0.0,
     num_inference_steps=4,
     max_sequence_length=256,
@@ -39,7 +39,7 @@ output = pipeline(
 image = output.images[0]
 
 # Save the generated image to disk
-image.save("cat_with_sign.png")
+image.save("girl_laughing.png")
 
 # Print the output object (contains perf info)
 print(output)

@@ -128,6 +128,14 @@ WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16
 QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
 
+# Flux Transformer Constants
+FLUX_ONNX_EXPORT_SEQ_LENGTH = 256
+FLUX_ONNX_EXPORT_COMPRESSED_LATENT_DIM = 4096
+FLUX_ADALN_HIDDEN_DIM = 3072
+FLUX_ADALN_DUAL_BLOCK_CHUNKS = 12  # 6 chunks for norm1 + 6 chunks for norm1_context
+FLUX_ADALN_SINGLE_BLOCK_CHUNKS = 3
+FLUX_ADALN_OUTPUT_DIM = 6144  # 2 * FLUX_ADALN_HIDDEN_DIM
+
 
 class Constants:
     # Export Constants.

@@ -393,7 +393,10 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         super().__init__(model)
 
     def get_onnx_config(
-        self, batch_size: int = 1, seq_length: int = 256, cl: int = 4096
+        self,
+        batch_size: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+        seq_length: int = constants.FLUX_ONNX_EXPORT_SEQ_LENGTH,
+        cl: int = constants.FLUX_ONNX_EXPORT_COMPRESSED_LATENT_DIM,
     ) -> Tuple[Dict, Dict, List[str]]:
         """
         Generate ONNX export configuration for the Flux transformer.
@@ -402,9 +405,9 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         text embeddings, timestep conditioning, and AdaLN embeddings.
 
         Args:
-            batch_size (int): Batch size for example inputs (default: 1)
-            seq_length (int): Text sequence length (default: 256)
-            cl (int): Compressed latent dimension (default: 4096)
+            batch_size (int): Batch size for example inputs (default: FLUX_ONNX_EXPORT_BATCH_SIZE)
+            seq_length (int): Text sequence length (default: FLUX_ONNX_EXPORT_SEQ_LENGTH)
+            cl (int): Compressed latent dimension (default: FLUX_ONNX_EXPORT_COMPRESSED_LATENT_DIM)
 
         Returns:
             Tuple containing:
@@ -423,24 +426,24 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             "img_ids": torch.randn(cl, 3, dtype=torch.float32),
             "txt_ids": torch.randn(seq_length, 3, dtype=torch.float32),
             # AdaLN embeddings for dual transformer blocks
-            # Shape: [num_layers, 12 chunks (6 for norm1 + 6 for norm1_context), hidden_dim]
+            # Shape: [num_layers, FLUX_ADALN_DUAL_BLOCK_CHUNKS, FLUX_ADALN_HIDDEN_DIM]
             "adaln_emb": torch.randn(
                 self.model.config["num_layers"],
-                12,  # 6 chunks for norm1 + 6 chunks for norm1_context
-                3072,  # AdaLN hidden dimension
+                constants.FLUX_ADALN_DUAL_BLOCK_CHUNKS,
+                constants.FLUX_ADALN_HIDDEN_DIM,
                 dtype=torch.float32,
             ),
             # AdaLN embeddings for single transformer blocks
-            # Shape: [num_single_layers, 3 chunks, hidden_dim]
+            # Shape: [num_single_layers, FLUX_ADALN_SINGLE_BLOCK_CHUNKS, FLUX_ADALN_HIDDEN_DIM]
             "adaln_single_emb": torch.randn(
                 self.model.config["num_single_layers"],
-                3,  # 3 chunks for single block norm
-                3072,  # AdaLN hidden dimension
+                constants.FLUX_ADALN_SINGLE_BLOCK_CHUNKS,
+                constants.FLUX_ADALN_HIDDEN_DIM,
                 dtype=torch.float32,
             ),
             # Output AdaLN embedding
-            # Shape: [batch_size, 2 * hidden_dim] for final projection
-            "adaln_out": torch.randn(batch_size, 6144, dtype=torch.float32),  # 2 * 3072
+            # Shape: [batch_size, FLUX_ADALN_OUTPUT_DIM] for final projection
+            "adaln_out": torch.randn(batch_size, constants.FLUX_ADALN_OUTPUT_DIM, dtype=torch.float32),
         }
 
         output_names = ["output"]

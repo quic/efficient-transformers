@@ -98,8 +98,8 @@ pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 output = pipeline(
     prompt="A girl laughing",
     custom_config_path="examples/diffusers/flux/flux_config.json",
-    height=256,
-    width=256,
+    height=1024,
+    width=1024,
     guidance_scale=0.0,
     num_inference_steps=4,
     max_sequence_length=256,
@@ -108,7 +108,7 @@ output = pipeline(
     use_onnx_subfunctions=False,
 )
 
-images = output.images[0]
+image = output.images[0]
 # Save the generated image to disk
-images.save("girl_laughing.png")
+image.save("girl_laughing.png")
 print(output)
