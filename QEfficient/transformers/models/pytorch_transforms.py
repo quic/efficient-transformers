@@ -802,7 +802,7 @@ class ReplicateKVHeadTransform:
         """
         n_repeat = kwargs.pop("n_kv_head_repeat", 1)
         transformed = False
-        if n_repeat > 1:
+        if n_repeat is not None and n_repeat > 1:
             if (model.__class__ in cls._module_mapping) or (model.__class__.__name__ in cls._module_string_mapping):
                 text_model = cls._get_text_model(model)
 
