@@ -68,7 +68,8 @@ class InputHandler:
         batch_size, input_len = input_ids.shape
         inputs.pop("attention_mask")
         inputs.pop("token_type_ids", None)
-        position_ids = torch.arange(input_len).view(1, -1)
+        usable_bs = self.full_batch_size if self.full_batch_size else 1
+        position_ids = torch.arange(input_len).view(1, input_len).repeat(usable_bs, 1)
         inputs["input_ids"] = torch.concat(
             [
                 input_ids,
