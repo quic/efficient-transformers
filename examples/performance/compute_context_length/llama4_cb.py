@@ -41,13 +41,9 @@ if continious_batching:
         kv_offload=True,
         config=config,
         continuous_batching=True,
-<<<<<<< HEAD
         qaic_config={
             "ccl_enabled": True,
         },
-=======
-        ccl_enabled=True,
->>>>>>> d58736d (Adding ccl_enabled flag during model loading and passing CCL lists during compilation process)
     )
 
     qeff_model.compile(
@@ -72,13 +68,9 @@ else:
         attn_implementation="eager",
         kv_offload=True,
         config=config,
-<<<<<<< HEAD
         qaic_config={
             "ccl_enabled": True,
         },
-=======
-        ccl_enabled=True,
->>>>>>> d58736d (Adding ccl_enabled flag during model loading and passing CCL lists during compilation process)
     )
 
     qeff_model.compile(
