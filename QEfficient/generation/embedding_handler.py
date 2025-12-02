@@ -51,6 +51,8 @@ class VisionHandler:
             vision_session: QAICInferenceSession for vision model
             processor: AutoImageProcessor for image preprocessing
             tokenizer: AutoTokenizer for text tokenization
+            image_height: Desired image height for resizing
+            image_width: Desired image width for resizing
             config: Configuration dictionary with vision model parameters
             lang_session: Optional language session for coordination (to avoid resource conflicts)
         """
@@ -78,18 +80,16 @@ class VisionHandler:
         """
         return self._vision_session is not None and self._processor is not None
 
-    def prepare_internVL_inputs(self, img_url: str, query: str) -> Dict[str, np.ndarray]:
+    def prepare_internVL_inputs(self, img_url: str, prompt: str) -> Dict[str, np.ndarray]:
         """
         Prepare inputs for InternVL model
 
         Args:
             image_url: URL or path to image
-            query: Text query to process with image
-        prompt = [query]
+            prompt: Text query to process with image
         """
         if not self._tokenizer:
             raise ValueError("Tokenizer is required for InternVL input preparation")
-        prompt = query
         pixel_values = []
         num_patches_list = []
         questions = []
@@ -205,6 +205,7 @@ class VisionHandler:
         Args:
             image_url: URL or path to image
             query: Text query to process with image
+            prefill_seq_len: Padded sequence length for language model
 
         Returns:
             Dictionary of vision model inputs
