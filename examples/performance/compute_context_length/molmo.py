@@ -33,7 +33,7 @@ comp_ctx_lengths_decode = [4096, 8192]  # None #
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_id,
-    kv_offload=False,
+    kv_offload=True,
     trust_remote_code=True,
     config=config,
     qaic_config={
