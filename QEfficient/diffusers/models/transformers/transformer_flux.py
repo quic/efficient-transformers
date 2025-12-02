@@ -124,10 +124,9 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         text_seq_len = encoder_hidden_states.shape[1]
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
-        temb = tuple(torch.split(temb, 1))
-        gate = temb[2]
+        shift_msa, scale_msa, gate = torch.split(temb, 1)
         residual = hidden_states
-        norm_hidden_states = self.norm(hidden_states, scale_msa=temb[1], shift_msa=temb[0])
+        norm_hidden_states = self.norm(hidden_states, scale_msa, shift_msa)
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
         joint_attention_kwargs = joint_attention_kwargs or {}
         attn_output = self.attn(
@@ -160,9 +159,7 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
         norm_hidden_states = self.norm1(hidden_states, shift_msa=temb1[0], scale_msa=temb1[1])
         gate_msa, shift_mlp, scale_mlp, gate_mlp = temb1[-4:]
 
-        norm_encoder_hidden_states = self.norm1_context(
-            encoder_hidden_states, shift_msa=temb2[0], scale_msa=temb2[1]
-        )
+        norm_encoder_hidden_states = self.norm1_context(encoder_hidden_states, shift_msa=temb2[0], scale_msa=temb2[1])
 
         c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = temb2[-4:]
 

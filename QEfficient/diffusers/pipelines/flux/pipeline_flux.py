@@ -163,9 +163,9 @@ class QEffFluxPipeline:
         model = cls._hf_auto_class.from_pretrained(
             pretrained_model_name_or_path,
             torch_dtype=torch.float32,
+            device_map="cpu",
             **kwargs,
         )
-        model.to("cpu")
 
         return cls(
             model=model,
@@ -346,7 +346,6 @@ class QEffFluxPipeline:
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
-        embed_dim = 4096  # T5 embedding dimension
 
         # Tokenize prompts with padding and truncation
         text_inputs = self.text_encoder_2.tokenizer(
@@ -379,7 +378,9 @@ class QEffFluxPipeline:
 
         # Allocate output buffers for QAIC inference
         text_encoder_2_output = {
-            "last_hidden_state": np.random.rand(batch_size, max_sequence_length, embed_dim).astype(np.float32),
+            "last_hidden_state": np.random.rand(
+                batch_size, max_sequence_length, self.text_encoder_2.model.config.d_model
+            ).astype(np.float32),
         }
         self.text_encoder_2.qpc_session.set_buffers(text_encoder_2_output)
 
@@ -387,9 +388,9 @@ class QEffFluxPipeline:
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
 
         # Run T5 encoder inference and measure time
-        start_t5_time = time.time()
+        start_t5_time = time.perf_counter()
         prompt_embeds = torch.tensor(self.text_encoder_2.qpc_session.run(aic_text_input)["last_hidden_state"])
-        end_t5_time = time.time()
+        end_t5_time = time.perf_counter()
         text_encoder_2_perf = end_t5_time - start_t5_time
 
         # Duplicate embeddings for multiple images per prompt
@@ -453,8 +454,10 @@ class QEffFluxPipeline:
 
         # Allocate output buffers for QAIC inference
         text_encoder_output = {
-            "last_hidden_state": np.random.rand(batch_size, self.tokenizer_max_length, embed_dim).astype(np.float32),
-            "pooler_output": np.random.rand(batch_size, embed_dim).astype(np.float32),
+            "last_hidden_state": np.random.rand(
+                batch_size, self.tokenizer_max_length, self.text_encoder.model.config.hidden_size
+            ).astype(np.float32),
+            "pooler_output": np.random.rand(batch_size, self.text_encoder.model.config.hidden_size).astype(np.float32),
         }
         self.text_encoder.qpc_session.set_buffers(text_encoder_output)
 
@@ -462,11 +465,10 @@ class QEffFluxPipeline:
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
 
         # Run CLIP encoder inference and measure time
-        start_text_encoder_time = time.time()
+        start_text_encoder_time = time.perf_counter()
         aic_embeddings = self.text_encoder.qpc_session.run(aic_text_input)
-        end_text_encoder_time = time.time()
+        end_text_encoder_time = time.perf_counter()
         text_encoder_perf = end_text_encoder_time - start_text_encoder_time
-
         # Extract pooled output (used for conditioning in Flux)
         prompt_embeds = torch.tensor(aic_embeddings["pooler_output"])
 
@@ -755,9 +757,9 @@ class QEffFluxPipeline:
                 }
 
                 # Run transformer inference and measure time
-                start_transformer_step_time = time.time()
+                start_transformer_step_time = time.perf_counter()
                 outputs = self.transformer.qpc_session.run(inputs_aic)
-                end_transformer_step_time = time.time()
+                end_transformer_step_time = time.perf_counter()
                 transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
 
                 noise_pred = torch.from_numpy(outputs["output"])
@@ -804,9 +806,9 @@ class QEffFluxPipeline:
 
             # Run VAE decoder inference and measure time
             inputs = {"latent_sample": latents.numpy()}
-            start_decode_time = time.time()
+            start_decode_time = time.perf_counter()
             image = self.vae_decode.qpc_session.run(inputs)
-            end_decode_time = time.time()
+            end_decode_time = time.perf_counter()
             vae_decode_perf = end_decode_time - start_decode_time
 
             # Post-process image
