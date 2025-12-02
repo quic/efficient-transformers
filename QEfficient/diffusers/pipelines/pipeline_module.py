@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import copy
 from typing import Dict, List, Tuple
 
 import torch
@@ -222,9 +221,9 @@ class QEffVAE(QEFFBaseModel):
         """
         super().__init__(model)
         self.model = model
-        
+
         # To have different hashing for encoder/decoder
-        self.model.config['type'] = type
+        self.model.config["type"] = type
 
     def get_onnx_config(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
         """

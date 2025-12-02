@@ -6,8 +6,6 @@
 # -----------------------------------------------------------------------------
 from typing import Tuple
 
-from diffusers.models.attention import JointTransformerBlock
-from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero, AdaLayerNormZeroSingle, RMSNorm
 from diffusers.models.transformers.transformer_flux import (
     FluxAttention,
@@ -20,11 +18,6 @@ from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
-from QEfficient.diffusers.models.attention import QEffJointTransformerBlock
-from QEfficient.diffusers.models.attention_processor import (
-    QEffAttention,
-    QEffJointAttnProcessor2_0,
-)
 from QEfficient.diffusers.models.normalization import (
     QEffAdaLayerNormContinuous,
     QEffAdaLayerNormZero,
@@ -53,9 +46,6 @@ class CustomOpsTransform(ModuleMappingTransform):
 
 class AttentionTransform(ModuleMappingTransform):
     _module_mapping = {
-        Attention: QEffAttention,
-        JointAttnProcessor2_0: QEffJointAttnProcessor2_0,
-        JointTransformerBlock: QEffJointTransformerBlock,
         FluxSingleTransformerBlock: QEffFluxSingleTransformerBlock,
         FluxTransformerBlock: QEffFluxTransformerBlock,
         FluxTransformer2DModel: QEffFluxTransformer2DModel,
