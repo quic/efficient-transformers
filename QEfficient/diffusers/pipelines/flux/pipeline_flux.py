@@ -424,7 +424,6 @@ class QEffFluxPipeline:
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
-        embed_dim = 768  # CLIP embedding dimension
 
         # Tokenize prompts
         text_inputs = self.tokenizer(
@@ -564,45 +563,64 @@ class QEffFluxPipeline:
         use_onnx_subfunctions: bool = False,
     ):
         """
-        Generate images from text prompts using the Flux pipeline.
+        Generate images from text prompts using the QEfficient-optimized Flux pipeline on QAIC hardware.
 
-        This is the main entry point for image generation. It orchestrates the entire pipeline:
-        1. Validates inputs and loads configuration
-        2. Encodes prompts using CLIP and T5
-        3. Prepares latents and timesteps
-        4. Runs denoising loop with transformer
-        5. Decodes latents to images with VAE
+        This is the main entry point for text-to-image generation. It orchestrates the complete Flux
+        diffusion pipeline optimized for Qualcomm AI Cloud devices.
 
         Args:
-            prompt (str or List[str]): Text prompt(s) for image generation
-            prompt_2 (str or List[str], optional): Secondary prompt for T5 encoder
-            negative_prompt (str or List[str], optional): Negative prompt for classifier-free guidance
-            negative_prompt_2 (str or List[str], optional): Secondary negative prompt
-            true_cfg_scale (float): True CFG scale (default: 1.0, disabled)
-            num_inference_steps (int): Number of denoising steps (default: 28)
-            timesteps (List[int], optional): Custom timestep schedule
-            guidance_scale (float): Guidance scale for generation (default: 3.5)
-            num_images_per_prompt (int): Number of images per prompt (default: 1)
-            generator (torch.Generator, optional): Random generator for reproducibility
-            latents (torch.FloatTensor, optional): Pre-generated latents
-            prompt_embeds (torch.FloatTensor, optional): Pre-computed prompt embeddings
-            pooled_prompt_embeds (torch.FloatTensor, optional): Pre-computed pooled embeddings
-            negative_prompt_embeds (torch.FloatTensor, optional): Pre-computed negative embeddings
-            negative_pooled_prompt_embeds (torch.FloatTensor, optional): Pre-computed negative pooled embeddings
-            output_type (str): Output format - "pil", "np", or "latent" (default: "pil")
-            return_dict (bool): Whether to return QEffPipelineOutput object (default: True)
-            joint_attention_kwargs (dict, optional): Additional attention processor kwargs
-            callback_on_step_end (Callable, optional): Callback function after each step
-            callback_on_step_end_tensor_inputs (List[str]): Tensors to pass to callback
-            max_sequence_length (int): Maximum sequence length for T5 (default: 512)
-            custom_config_path (str, optional): Path to custom compilation config
-            parallel_compile (bool): If True, compile modules in parallel for faster compilation.
-                                    If False, compile sequentially (default: False).
+            height (int, optional): Target image height in pixels. Must be divisible by 8. Default: 512.
+            width (int, optional): Target image width in pixels. Must be divisible by 8. Default: 512.
+            prompt (str or List[str]): Primary text prompt(s) describing the desired image(s).
+                Required unless `prompt_embeds` is provided.
+            prompt_2 (str or List[str], optional): Secondary prompt for T5 encoder. If None, uses `prompt`.
+            negative_prompt (str or List[str], optional): Negative prompt(s) describing what to avoid.
+                Only used when `true_cfg_scale > 1.0`.
+            negative_prompt_2 (str or List[str], optional): Secondary negative prompt for T5. If None, uses `negative_prompt`.
+            true_cfg_scale (float, optional): True classifier-free guidance scale. Values > 1.0 enable
+                negative prompting. Default: 1.0 (disabled).
+            num_inference_steps (int, optional): Number of denoising steps. Default: 28.
+            timesteps (List[int], optional): Custom timestep schedule. If provided, overrides `num_inference_steps`.
+            guidance_scale (float, optional): Guidance scale for classifier-free guidance. Default: 3.5.
+            num_images_per_prompt (int, optional): Number of images to generate per prompt. Default: 1.
+            generator (torch.Generator or List[torch.Generator], optional): Random generator for reproducibility.
+            latents (torch.FloatTensor, optional): Pre-generated latent tensors. If None, random latents are generated.
+            prompt_embeds (torch.FloatTensor, optional): Pre-computed T5 text embeddings. Shape: [batch, seq_len, 4096].
+            pooled_prompt_embeds (torch.FloatTensor, optional): Pre-computed CLIP pooled embeddings. Shape: [batch, 768].
+            negative_prompt_embeds (torch.FloatTensor, optional): Pre-computed negative T5 embeddings.
+            negative_pooled_prompt_embeds (torch.FloatTensor, optional): Pre-computed negative CLIP embeddings.
+            output_type (str, optional): Output format. Options: "pil" (default), "np", or "latent".
+            callback_on_step_end (Callable, optional): Callback function executed after each denoising step.
+            callback_on_step_end_tensor_inputs (List[str], optional): Tensor names to pass to callback. Default: ["latents"].
+            max_sequence_length (int, optional): Maximum token sequence length for T5 encoder. Default: 512.
+            custom_config_path (str, optional): Path to custom JSON configuration file for compilation settings.
+            parallel_compile (bool, optional): Whether to compile modules in parallel. Default: False.
+            use_onnx_subfunctions (bool, optional): Whether to export transformer blocks as ONNX subfunctions. Default: False.
 
         Returns:
-            QEffPipelineOutput or tuple: Generated images and performance metrics
+            QEffPipelineOutput: A dataclass containing:
+                - images: Generated image(s) in the format specified by `output_type`
+                - pipeline_module: Performance metrics for each pipeline component (text encoders, transformer, VAE)
+
+        Raises:
+            ValueError: If input validation fails or parameters are incompatible.
+            RuntimeError: If compilation fails or QAIC devices are unavailable.
+            FileNotFoundError: If custom config file is specified but not found.
+
+        Example:
+            >>> from QEfficient.diffusers.pipelines.flux import QEffFluxPipeline
+            >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> result = pipeline(
+            ...     prompt="A serene mountain landscape at sunset",
+            ...     height=1024,
+            ...     width=1024,
+            ...     num_inference_steps=28,
+            ...     guidance_scale=7.5
+            ... )
+            >>> result.images[0].save("mountain_sunset.png")
+            >>> print(f"Transformer inference time: {sum(result.pipeline_module[2].perf):.2f}s")
         """
-        device = "cpu"
+        device = self.model._execution_device
 
         if height is None or width is None:
             logger.warning("Height or width is None. Setting default values of 512 for both dimensions.")
