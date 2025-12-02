@@ -99,7 +99,6 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         return expert_out.view(B, S, H), router_logits
 
 
-
 class QEffPrefillOnlyGptOssMLP(GptOssMLP):
     def forward(self, hidden: torch.Tensor):
         if os.environ.get("NUM_FFN_BLOCKS", None) is not None:

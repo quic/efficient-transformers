@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
+model_id = "openai/gpt-oss-120b"  # weights are not required to convert to fp32
 
 prompt = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
@@ -26,8 +26,8 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 all_outputs = []
 # Run prefill
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-PREFILL_SEQ_LEN = 256
-CTX_LEN = 256
+PREFILL_SEQ_LEN = 128
+CTX_LEN = 2 * 128
 inputs = tokenizer(prompt, return_tensors="np", padding=True)
 position_ids = inputs["attention_mask"].sum(1, keepdims=True)
 padded_len = inputs["input_ids"].shape[1]
@@ -40,7 +40,23 @@ max_gen_len = CTX_LEN - position_ids.max()
 generation_len = max_gen_len
 
 
+# qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+
+
+decode_qpc_path = qeff_model.compile(
+    prefill_seq_len=1,
+    ctx_len=CTX_LEN,
+    num_cores=16,
+    mxfp6_matmul=True,
+    mxint8_kv_cache=True,
+    num_devices=1,
+    mos=1,
+    aic_enable_depth_first=True,
+    num_speculative_tokens=None,
+    offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
+)
+
 config = qeff_model.model.config
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
 inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -56,19 +72,6 @@ for i in range(config.num_hidden_layers):
     past_key_values.append(pkv)
 inputs["past_key_values"] = past_key_values
 
-
-decode_qpc_path = qeff_model.compile(
-    prefill_seq_len=1,
-    ctx_len=CTX_LEN,
-    num_cores=16,
-    mxfp6_matmul=True,
-    mxint8_kv_cache=True,
-    num_devices=1,
-    mos=1,
-    aic_enable_depth_first=True,
-    num_speculative_tokens=None,
-    offload_pt_weights=False,
-)
 prefill_qpc_path = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
@@ -80,17 +83,31 @@ prefill_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
     prefill_only=True,
+    enable_chunking=True,
     use_onnx_subfunctions=True,
+    offload_pt_weights=False,
 )
-
-prefill_session = QAICInferenceSession(prefill_qpc_path)
-
+print("loading qpc")
+st = time.time()
+prefill_session = QAICInferenceSession(prefill_qpc_path, device_ids=[i for i in range(32, 48)])
+print(f"time for loading session = {time.time() - st}")
+print("done")
+prefill_session.skip_buffers(
+    [x for x in prefill_session.input_names + prefill_session.output_names if x.startswith("past_")]
+)
 logits_out_placeholder = np.zeros((1, 1, 201088), dtype=np.float32)
 prefill_session.set_buffers({"logits": logits_out_placeholder})
 inputs.pop("past_key_values")
 inputs = {k: v.detach().numpy() for k, v in inputs.items()}
 st = time.time()
-qpc_out = prefill_session.run(inputs)
+
+for i in range(num_chunks):
+    chunk_inputs = inputs.copy()
+    chunk_inputs["input_ids"] = inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["position_ids"] = inputs["position_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    ins = time.time()
+    qpc_out = prefill_session.run(chunk_inputs)
+    print(f"time for this run={time.time() - ins}")
 print(f"time for prefill_run={time.time() - st} sec\n")
 
 decode_session = QAICInferenceSession(decode_qpc_path)
@@ -105,8 +122,10 @@ print("pos_id for decodee", decode_inputs["position_ids"])
 all_outputs.append(decode_inputs["input_ids"][0][0])
 for i in range(config.num_hidden_layers):
     if i % 2 == 0 and decode_inputs["position_ids"] >= config.sliding_window:
-        k = qpc_out[f"past_key.{i}_RetainedState"]
-        v = qpc_out[f"past_value.{i}_RetainedState"]
+        last_valid_pos_idx = decode_inputs["position_ids"][0][0]
+        first_valid_pos_idx = last_valid_pos_idx - config.sliding_window
+        k = qpc_out[f"past_key.{i}_RetainedState"][:, :, first_valid_pos_idx:last_valid_pos_idx, :]
+        v = qpc_out[f"past_value.{i}_RetainedState"][:, :, first_valid_pos_idx:last_valid_pos_idx, :]
         mod_pos_id = config.sliding_window - decode_inputs["position_ids"][0][0] % config.sliding_window
         decode_inputs[f"past_key.{i}"] = np.concatenate((k[:, :, mod_pos_id:, :], k[:, :, :mod_pos_id, :]), axis=-2)
         decode_inputs[f"past_value.{i}"] = np.concatenate((v[:, :, mod_pos_id:, :], v[:, :, :mod_pos_id, :]), axis=-2)
