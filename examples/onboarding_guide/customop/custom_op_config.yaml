@@ -1,0 +1,27 @@
+---
+version: Major.Minor.Patch
+CustomOps:
+# CustomGELU
+  - type: CustomGELU
+    package: com.qti.aisw.onnx
+    inputs:
+      - name: in1
+        maxDims: 5
+    parameters: []
+    outputs:
+      - name: out1
+        maxDims: 5
+    functionsLibrary: ./CustomGELU/src/customgelu_lib.so
+    implementations:
+      - backend: Interpreter
+        type: CustomGELUInterpreter
+        impl: ./CustomGELU/src/customgelu_lib.so
+      - backend: AIC
+        type: CustomGELUAIC
+        impl: ./CustomGELU/src/customgelu_aic.cpp
+        memoryConfig:
+            DDR:
+            CacheableDDR:
+            VTCM: [in1, out1]
+            requiredFor:
+...
