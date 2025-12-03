@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import copy
+
 import pytest
 import torch.nn as nn
 import torch.optim as optim
@@ -66,7 +68,8 @@ def dummy_model():
 @pytest.mark.parametrize("opt_name", OPTIMIZER_CONFIGS.keys())
 def test_optimizers(opt_name, dummy_model):
     """Test that all registered optimizers can be created with their configs."""
-    config = OPTIMIZER_CONFIGS[opt_name]
+    config = copy.deepcopy(OPTIMIZER_CONFIGS[opt_name])
+
     config.pop("opt_cls")
     try:
         optimizer_class_and_kwargs = prepare_optimizer(config)
