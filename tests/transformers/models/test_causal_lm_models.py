@@ -25,7 +25,6 @@ from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig
 
-
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "test_model_configs.json")
 
 with open(CONFIG_PATH, "r") as f:
@@ -60,7 +59,6 @@ def get_hf_config_from_custom_config(model_name):
         **custom_config.get("additional_params", {}),
     )
     return hf_config
-
 
 
 def get_custom_n_layers(model_name):
