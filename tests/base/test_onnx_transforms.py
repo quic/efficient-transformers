@@ -102,7 +102,6 @@ def test_split_tensors_transform(tmp_path):
     onnx_transforms = OnnxTransformPipeline(transforms=[SplitTensorsTransform])
     trans_onnx, transformed = onnx_transforms.apply(
         test_onnx,
-        test_onnx,
         model_name="test_split",
         onnx_base_dir=str(tmp_path),
         file_chunk_size=32 * 4,
