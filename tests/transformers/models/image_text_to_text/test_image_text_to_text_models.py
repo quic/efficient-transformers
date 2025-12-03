@@ -343,7 +343,8 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
     """
     if model_name in ["meta-llama/Llama-4-Scout-17B-16E-Instruct", "allenai/Molmo-7B-D-0924", "meta-llama/Llama-3.2-11B-Vision-Instruct"]:
         pytest.skip("Test skipped for this model due to some issues.")
-    
+    if model_name in ["OpenGVLab/InternVL2_5-1B", "OpenGVLab/InternVL3_5-1B","Qwen/Qwen2.5-VL-3B-Instruct"] and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
     # Get img_size for standard models, None for InternVL and Molmo
     img_size = model_config_dict[model_name].get("img_size")
     
