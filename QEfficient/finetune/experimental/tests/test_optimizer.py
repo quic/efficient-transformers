@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from QEfficient.finetune.experimental.core.component_registry import registry
-from QEfficient.finetune.experimental.core.optimizer import get_optimizer
+from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
 
 OPTIMIZER_CONFIGS = {
     "Adam": {
@@ -69,7 +69,7 @@ def test_optimizers(opt_name, dummy_model):
     config = OPTIMIZER_CONFIGS[opt_name]
     config.pop("opt_cls")
     try:
-        optimizer_class_and_kwargs = get_optimizer(config)
+        optimizer_class_and_kwargs = prepare_optimizer(config)
         assert optimizer_class_and_kwargs is not None
     except ValueError as e:
         assert "Unknown optimizer" in str(e)
