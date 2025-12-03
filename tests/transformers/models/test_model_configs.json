@@ -422,7 +422,19 @@
     },
     {
       "model_name": "OpenGVLab/InternVL2_5-1B",
-      "model_type": null,
+      "model_type": "internvl_chat",
+      "batch_size": 1,
+      "prompt_len": 384,
+      "ctx_len": 512,
+      "img_size": null,
+      "img_url": "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
+      "text_prompt": "Please describe the image in detail.",
+      "num_layers": 2,
+      "additional_params": {}
+    },
+    {
+      "model_name": "OpenGVLab/InternVL3_5-1B",
+      "model_type": "internvl_chat",
       "batch_size": 1,
       "prompt_len": 384,
       "ctx_len": 512,
