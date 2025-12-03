@@ -86,23 +86,16 @@ class SFTDataset(BaseDataset):
         self.completion_template = kwargs.get("completion_template", None)
         self.prompt_func_path = kwargs.get("prompt_func", None)
         self.completion_func_path = kwargs.get("completion_func", None)
-        self.remove_samples_with_empty_columns = kwargs.get(
-            "remove_samples_with_empty_columns", True
-        )
+        self.remove_samples_with_empty_columns = kwargs.get("remove_samples_with_empty_columns", True)
 
         if (self.prompt_template is None and self.prompt_func_path is None) or (
             self.prompt_template is not None and self.prompt_func_path is not None
         ):
-            raise RuntimeError(
-                "Either provide prompt_template or prompt_func in the config."
-            )
+            raise RuntimeError("Either provide prompt_template or prompt_func in the config.")
         if (self.completion_template is None and self.completion_func_path is None) or (
-            self.completion_template is not None
-            and self.completion_func_path is not None
+            self.completion_template is not None and self.completion_func_path is not None
         ):
-            raise RuntimeError(
-                "Either provide completion_template or completion_func in the config."
-            )
+            raise RuntimeError("Either provide completion_template or completion_func in the config.")
 
         # Call parent class __init__ which will call _initialize_dataset
         super().__init__(dataset_name, split, seed, **kwargs)
@@ -111,9 +104,7 @@ class SFTDataset(BaseDataset):
         """
         Apply train/test split to the dataset based on split_ratio.
         """
-        splitted_dataset = self.dataset.train_test_split(
-            test_size=(1 - self.split_ratio), seed=self.seed
-        )
+        splitted_dataset = self.dataset.train_test_split(test_size=(1 - self.split_ratio), seed=self.seed)
         if self.split == "test":
             self.dataset = splitted_dataset["test"]
         else:
@@ -128,9 +119,7 @@ class SFTDataset(BaseDataset):
         """
         if self.json_file_path:
             # Load dataset from JSON file
-            self.dataset = load_dataset(
-                "json", data_files=self.json_file_path, split="train"
-            )
+            self.dataset = load_dataset("json", data_files=self.json_file_path, split="train")
 
             # Apply train/test split if needed
             if self.split in ["train", "test"]:
@@ -143,9 +132,7 @@ class SFTDataset(BaseDataset):
                 available_splits = list(db.info.splits.keys())
 
             if self.split not in available_splits:
-                raise ValueError(
-                    f"Split {self.split} is not available for dataset {self.dataset_name}."
-                )
+                raise ValueError(f"Split {self.split} is not available for dataset {self.dataset_name}.")
 
             # FIXME: Add streaming support for larger datasets.
             self.dataset = load_dataset(self.dataset_name, split=self.split)
@@ -190,16 +177,12 @@ class SFTDataset(BaseDataset):
         relevant_columns = list(set(prompt_variables + completion_variables))
         if self.remove_samples_with_empty_columns:
             self.dataset = self.dataset.filter(
-                lambda example: self._filter_empty_or_none_samples(
-                    example, relevant_columns
-                )
+                lambda example: self._filter_empty_or_none_samples(example, relevant_columns)
             )
 
     def import_func(self, func_path: str) -> Callable:
         if ":" not in func_path:
-            raise ValueError(
-                "func_path must be in the format 'module_file_path:function_name'."
-            )
+            raise ValueError("func_path must be in the format 'module_file_path:function_name'.")
         module_file_path, function_name = func_path.split(":")
 
         try:
@@ -207,14 +190,10 @@ class SFTDataset(BaseDataset):
         except Exception:
             raise RuntimeError(f"Unable to import module : {module_file_path}.")
         if not hasattr(module, function_name):
-            raise ValueError(
-                f"Function {function_name} not found in module {module_file_path}."
-            )
+            raise ValueError(f"Function {function_name} not found in module {module_file_path}.")
         return getattr(module, function_name)
 
-    def _filter_empty_or_none_samples(
-        self, example: Dict[str, Any], relevant_columns: list
-    ) -> bool:
+    def _filter_empty_or_none_samples(self, example: Dict[str, Any], relevant_columns: list) -> bool:
         """
         Filters out samples where any of the relevant columns are None or contain only whitespace.
 
@@ -242,9 +221,7 @@ class SFTDataset(BaseDataset):
             Dict[str, str]: A dictionary containing the 'prompt' and 'completion' strings.
         """
         prompt_text = (
-            self.prompt_func(example)
-            if self.prompt_func is not None
-            else self.prompt_template.format(**example)
+            self.prompt_func(example) if self.prompt_func is not None else self.prompt_template.format(**example)
         )
         completion_text = (
             self.completion_func(example)

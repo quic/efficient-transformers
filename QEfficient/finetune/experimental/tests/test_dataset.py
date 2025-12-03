@@ -64,9 +64,7 @@ class TestSFTDataset(unittest.TestCase):
 
     @patch("QEfficient.finetune.experimental.core.dataset.load_dataset")
     @patch("QEfficient.finetune.experimental.core.dataset.load_dataset_builder")
-    def test_sft_dataset_with_huggingface_dataset_and_templates(
-        self, mock_builder, mock_load
-    ):
+    def test_sft_dataset_with_huggingface_dataset_and_templates(self, mock_builder, mock_load):
         """Test loading from HuggingFace dataset with templates using mocked data."""
         # Create mock dataset with dummy data
         mock_dataset = MagicMock()
@@ -259,9 +257,7 @@ def custom_completion(example):
                 completion_template="A: {answer}",
             )
 
-        self.assertIn(
-            "Either provide prompt_template or prompt_func", str(context.exception)
-        )
+        self.assertIn("Either provide prompt_template or prompt_func", str(context.exception))
 
     def test_sft_dataset_both_prompt_template_and_func(self):
         """Test error when both prompt_template and prompt_func are provided."""
@@ -275,9 +271,7 @@ def custom_completion(example):
                 completion_template="A: {answer}",
             )
 
-        self.assertIn(
-            "Either provide prompt_template or prompt_func", str(context.exception)
-        )
+        self.assertIn("Either provide prompt_template or prompt_func", str(context.exception))
 
     def test_sft_dataset_no_completion_template_or_func(self):
         """Test error when neither completion_template nor completion_func is provided."""
@@ -382,12 +376,8 @@ def custom_completion(example):
             question = sample["prompt"].replace("Q: ", "").strip()
             answer = sample["completion"].replace("A: ", "").strip()
             # Verify neither is empty
-            self.assertTrue(
-                len(question) > 0, f"Question should not be empty: {sample['prompt']}"
-            )
-            self.assertTrue(
-                len(answer) > 0, f"Answer should not be empty: {sample['completion']}"
-            )
+            self.assertTrue(len(question) > 0, f"Question should not be empty: {sample['prompt']}")
+            self.assertTrue(len(answer) > 0, f"Answer should not be empty: {sample['completion']}")
 
     def test_sft_dataset_getitem_returns_correct_format(self):
         """Test that __getitem__ returns the correct format."""
