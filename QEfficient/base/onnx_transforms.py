@@ -195,25 +195,27 @@ class AdapterWeightsToInputsTransform(BaseOnnxTransform):
 class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
-    @classmethod
+    def __init__(self, transforms: List[Type[BaseOnnxTransform]]):
+        if not transforms:
+            warnings.warn("Transform list is empty. No transformations will be applied.")
+        self.transforms = transforms
+
     def apply(
-        cls,
+        self,
         model: ModelProto,
         *,
-        transforms: List[Type[BaseOnnxTransform]],
         model_name: str = "",
         onnx_base_dir: Optional[str] = None,
         file_chunk_size: int = FILE_CHUNK_SIZE_DEFAULT,
         size_threshold: int = SIZE_THRESHOLD_DEFAULT,
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
-        if not transforms:
-            warnings.warn("Transform list is empty. Skipping transformation.")
+        if not self.transforms:
             return model, False
 
-        ############### Looping transform ######################
+        # Same logic as before, but replace `transforms` with `self.transforms`
         mapping: Dict[str, Tuple[TensorProto, str]] = {}
-        requested = set(transforms)
+        requested = set(self.transforms)
         applied = {t: False for t in requested}
         f16_applied = False
         do_fp16 = FP16ClipTransform in requested
@@ -247,14 +249,13 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(_set_external_data, tensor, file_name) for tensor, file_name in mapping.values()]
-
             for future in as_completed(futures):
                 try:
                     future.result()
                 except Exception as e:
                     logger.error(f"Failed to set external data: {e}")
 
-        ############### NON Looping transform ######################
+        # Non-looping transforms
         if CustomOpTransform in requested:
             applied[CustomOpTransform] = CustomOpTransform.apply(model)
 

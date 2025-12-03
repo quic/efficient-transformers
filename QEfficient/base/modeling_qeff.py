@@ -288,8 +288,8 @@ class QEFFBaseModel(ABC):
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
 
-            transform_kwargs["transforms"] = self._onnx_transforms
-            model, transformed = OnnxTransformPipeline.apply(model, **transform_kwargs)
+            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+            model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
             # Add metadata to the model
             model.metadata_props.append(

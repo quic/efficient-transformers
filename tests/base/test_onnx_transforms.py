@@ -36,9 +36,9 @@ def test_fp16clip_transform():
     }
     """)
     onnx.checker.check_model(test_onnx, True, True, True)
-    transformed_onnx, transformed = OnnxTransformPipeline.apply(
-        test_onnx, model_name="", transforms=[FP16ClipTransform]
-    )
+
+    onnx_transforms = OnnxTransformPipeline(transforms=[FP16ClipTransform])
+    transformed_onnx, transformed = onnx_transforms.apply(test_onnx, model_name="")
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == 65504.0
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[1]) == 2147483647
@@ -69,9 +69,8 @@ def test_fp16clip_transform_external(tmp_path):
     np.array(-1e10, dtype="float32").tofile(tmp_path / external_tensors_file)
     onnx.checker.check_model(onnx_path, True, True, True)
 
-    transformed_onnx, transformed = OnnxTransformPipeline.apply(
-        test_onnx, model_name="", onnx_base_dir=str(tmp_path), transforms=[FP16ClipTransform]
-    )
+    onnx_transforms = OnnxTransformPipeline(transforms=[FP16ClipTransform])
+    transformed_onnx, transformed = onnx_transforms.apply(test_onnx, model_name="", onnx_base_dir=str(tmp_path))
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == -65504.0
 
@@ -100,13 +99,14 @@ def test_split_tensors_transform(tmp_path):
     tensors.tofile(tmp_path / external_tensors_file)
     onnx.checker.check_model(onnx_path, True, True, True)
 
-    trans_onnx, transformed = OnnxTransformPipeline.apply(
+    onnx_transforms = OnnxTransformPipeline(transforms=[SplitTensorsTransform])
+    trans_onnx, transformed = onnx_transforms.apply(
+        test_onnx,
         test_onnx,
         model_name="test_split",
         onnx_base_dir=str(tmp_path),
         file_chunk_size=32 * 4,
         size_threshold=16 * 4,
-        transforms=[SplitTensorsTransform],
     )
 
     tensor0_ext_data = onnx.external_data_helper.ExternalDataInfo(trans_onnx.graph.initializer[0])
