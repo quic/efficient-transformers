@@ -126,7 +126,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     """
     Unified function to test PyTorch model, PyTorch KV model, ONNX model, and Cloud AI 100 model.
     Handles standard VLM models, InternVL models, and Molmo models.
-    
+
     Args:
         model_name: Hugging Face model identifier
         img_url: URL to image for testing
@@ -143,16 +143,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         config: Pre-configured model config (optional)
         img_size: Image size for standard models (optional)
     """
-    
+
     is_intern_model = model_name == "OpenGVLab/InternVL2_5-1B" or model_name == "OpenGVLab/InternVL3_5-1B"
     is_molmo_model = model_name == "allenai/Molmo-7B-D-0924"
-    
+
     # ========== Config and Model Loading ==========
     if config is None:
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, padding=not is_molmo_model)
         config._attn_implementation = "eager" if (is_intern_model or is_molmo_model) else None
         config = set_num_layers(config, n_layer=n_layer)
-    
+
     if is_intern_model:
         model_hf = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -175,7 +175,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         processor = InternProcessor(model_hf, tokenizer)
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-    
+
     if is_intern_model:
         prompt = [query]
         img_url_list = [img_url]
@@ -201,7 +201,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             image = Image.open(requests.get(img_url, stream=True).raw)
             if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
                 image = image.resize((1540, 1540))
-    
+
     # ========== Prepare Inputs and Get PyTorch HF Tokens ==========
     if is_intern_model:
         messages: List[List[str]] = []
@@ -273,14 +273,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
-    
+
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
     # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
     #     "Tokens don't match for pytorch HF output and pytorch KV output"
     # )
 
     streamer = TextStreamer(processor.tokenizer)
-    
+
     # ========== Export and Compile Model ==========
     if is_intern_model or is_molmo_model:
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -290,13 +290,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         )
     else:
         qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=kv_offload)
-    
+
     qeff_model.export()
 
     # onnx_model_path = qeff_model.export()
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
-    
+
     compile_kwargs = {
         "num_devices": num_devices,
         "prefill_seq_len": prompt_len,
@@ -305,16 +305,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "enable_qnn": enable_qnn,
         "qnn_config": qnn_config,
     }
-    
+
     if is_intern_model:
         compile_kwargs["num_patches"] = 1
     elif not is_molmo_model and img_size is not None:
         compile_kwargs["img_size"] = img_size
-    
+
     qeff_model.compile(**compile_kwargs)
-    
+
     # ========== Generate and Verify Output ==========
-    
+
     if not is_intern_model and not is_molmo_model:
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
@@ -323,7 +323,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             )
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-    
+
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
@@ -341,13 +341,20 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-    if model_name in ["meta-llama/Llama-4-Scout-17B-16E-Instruct", "allenai/Molmo-7B-D-0924", "meta-llama/Llama-3.2-11B-Vision-Instruct"]:
+    if model_name in [
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "allenai/Molmo-7B-D-0924",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    ]:
         pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ["OpenGVLab/InternVL2_5-1B", "OpenGVLab/InternVL3_5-1B","Qwen/Qwen2.5-VL-3B-Instruct"] and not kv_offload:
+    if (
+        model_name in ["OpenGVLab/InternVL2_5-1B", "OpenGVLab/InternVL3_5-1B", "Qwen/Qwen2.5-VL-3B-Instruct"]
+        and not kv_offload
+    ):
         pytest.skip("These models require kv_offload=True for testing.")
     # Get img_size for standard models, None for InternVL and Molmo
     img_size = model_config_dict[model_name].get("img_size")
-    
+
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         prompt_len=model_config_dict[model_name]["prompt_len"],
