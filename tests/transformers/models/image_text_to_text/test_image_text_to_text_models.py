@@ -144,7 +144,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         img_size: Image size for standard models (optional)
     """
     
-    is_intern_model = model_name == "OpenGVLab/InternVL2_5-1B"
+    is_intern_model = model_name == "OpenGVLab/InternVL2_5-1B" or model_name == "OpenGVLab/InternVL3_5-1B"
     is_molmo_model = model_name == "allenai/Molmo-7B-D-0924"
     
     # ========== Config and Model Loading ==========
