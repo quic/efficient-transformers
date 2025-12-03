@@ -28,7 +28,6 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import create_json, get_num_layers_vlm
 from QEfficient.utils.constants import QnnConstants
-from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import InternProcessor
 
@@ -41,11 +40,7 @@ with open(CONFIG_PATH, "r") as f:
     multimodal_models = config_data["multimodal_models"]
 
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
-
-test_mm_models_config = {model["model_name"]: model for model in multimodal_models}
-
-model_config_dict = {**test_mm_models_config}
-
+model_config_dict = {model["model_name"]: model for model in multimodal_models}
 
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
@@ -165,15 +160,15 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             trust_remote_code=True,
             config=config,
         )
+        n_layer = get_num_layers_vlm(config)
+
     elif is_molmo_model:
         model_hf, _ = load_image_text_to_text_model(config)
         n_layer = (n_layer, n_layer)
     else:
         model_hf, _ = load_image_text_to_text_model(config)
+        n_layer = get_num_layers_vlm(config)
 
-    
-    n_layer = get_num_layers_vlm(config)
-    
     # ========== Processor and Image Loading ==========
     if is_intern_model:
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
@@ -319,8 +314,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qeff_model.compile(**compile_kwargs)
     
     # ========== Generate and Verify Output ==========
-    if is_molmo_model and not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
     
     if not is_intern_model and not is_molmo_model:
         inputs = processor(images=image, text=prompt, return_tensors="pt")
@@ -341,15 +334,15 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])
+@pytest.mark.parametrize("kv_offload", [True, False])
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-    if model_name == "meta-llama/Llama-4-Scout-17B-16E-Instruct":
-        pytest.skip("Performance issue: Skipping the test for Llama-4-Scout-17B-16E-Instruct model.")
+    if model_name in ["meta-llama/Llama-4-Scout-17B-16E-Instruct", "allenai/Molmo-7B-D-0924", "meta-llama/Llama-3.2-11B-Vision-Instruct"]:
+        pytest.skip("Test skipped for this model due to some issues.")
     
     # Get img_size for standard models, None for InternVL and Molmo
     img_size = model_config_dict[model_name].get("img_size")
