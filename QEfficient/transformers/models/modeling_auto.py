@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import os
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -40,12 +41,18 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
-from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
+from QEfficient.transformers.modeling_utils import (
+    DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
+    SPECIALIZED_PREFILL_ONLY_MODEL_ARCH,
+)
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
+    PrefillOnlyChunkedTransform,
+    PrefillOnlyTransform,
+    RevertPrefillOnlyTransform,
     SamplerTransform,
     SpDTransform,
     VlmKVOffloadTransform,
@@ -318,7 +325,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -355,7 +362,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
 
     def compile(
@@ -605,15 +612,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    def export(
-        self,
-        inputs,
-        output_names,
-        dynamic_axes,
-        export_dir=None,
-        offload_pt_weights=True,
-        use_onnx_subfunctions: bool = False,
-    ):
+    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
         """
         Exports the vision encoder component to ONNX format.
 
@@ -643,7 +642,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
 
     def compile(
@@ -766,15 +765,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_language_decoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    def export(
-        self,
-        inputs,
-        output_names,
-        dynamic_axes,
-        export_dir=None,
-        offload_pt_weights=True,
-        use_onnx_subfunctions: bool = False,
-    ):
+    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
         """
         Exports the language decoder component to ONNX format.
 
@@ -804,7 +795,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
 
     def compile(
@@ -2312,11 +2303,23 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitTensorsTransform,
     ]
 
+    def prefill(self, enable: Optional[bool] = True, enable_chunking: Optional[bool] = False):
+        if enable:
+            if enable_chunking:
+                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+            else:
+                self.model, tf = PrefillOnlyTransform.apply(self.model)
+            self.prefill_enabled = True
+        else:
+            self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+            self.prefill_enabled = False
+
     def __init__(
         self,
         model: nn.Module,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
+        max_seq_len_cached: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -2365,6 +2368,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
 
+        setattr(model.config, "max_seq_len_cached", max_seq_len_cached)
         super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
@@ -2373,6 +2377,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.is_tlm = transformed
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
@@ -2409,6 +2414,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         pretrained_model_name_or_path,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
+        max_seq_len_cached: Optional[int] = None,
         *args,
         **kwargs,
     ):
@@ -2486,6 +2492,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             continuous_batching=continuous_batching,
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
+            max_seq_len_cached=max_seq_len_cached,
             **kwargs,
         )
 
@@ -2501,7 +2508,57 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False, **kwargs) -> str:
+    def get_seq_len_and_handle_specialized_prefill_model(
+        self, prefill_seq_len: Optional[int] = None, enable_chunking=False
+    ) -> int:
+        self.prefill(enable=True, enable_chunking=enable_chunking)
+        self.hash_params["prefill_only"] = True
+        if enable_chunking:
+            self.hash_params["chunking"] = True
+            return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+        num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
+        if num_q_blocks is None:
+            block_size = 128
+            if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
+                raise ValueError(
+                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
+                    f"Or set `NUM_Q_BLOCKS` ENV variable"
+                    f"Received: prefill_seq_len={prefill_seq_len}"
+                )
+
+            num_q_blocks = prefill_seq_len // block_size
+            logger.warning(
+                f"Setting NUM_Q_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_Q_BLOCKS` to override"
+            )
+            os.environ["NUM_Q_BLOCKS"] = str(num_q_blocks)
+        num_q_blocks = int(num_q_blocks)
+
+        num_ffn_blocks = os.environ.get("NUM_FFN_BLOCKS", None)
+        num_ffn_blocks = int(num_ffn_blocks) if num_ffn_blocks else num_ffn_blocks
+        min_seq_len = max(num_q_blocks, num_ffn_blocks) if num_ffn_blocks else num_q_blocks
+        if (num_ffn_blocks and min_seq_len % num_ffn_blocks != 0) or min_seq_len % num_q_blocks != 0:
+            raise ValueError(
+                f"Got NUM_FFN_BLOCKS={num_ffn_blocks} and NUM_Q_BLOCKS={num_q_blocks}, tried to set seq_len={min_seq_len} for export but,"
+                "seq_len is not divisible by either num_ffn_blocks or num_q_blocks, try chaning the values."
+            )
+
+        self.hash_params["NUM_Q_BLOCKS"] = num_q_blocks
+        self.hash_params["NUM_FFN_BLOCKS"] = num_ffn_blocks
+        self.hash_params["ENABLE_OPT_SWA"] = os.environ.get("ENABLE_OPT_SWA", "0")
+        return (
+            min_seq_len
+            if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+            else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        )
+
+    def export(
+        self,
+        export_dir: Optional[str] = None,
+        prefill_only: Optional[bool] = False,
+        prefill_seq_len: Optional[int] = None,
+        **kwargs,
+    ) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -2527,6 +2584,23 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
+        if prefill_only:
+            assert not self.continuous_batching, "prefill_only=True is not supported with continuous_batching=True"
+            seq_len = (
+                self.get_seq_len_and_handle_specialized_prefill_model(
+                    prefill_seq_len=prefill_seq_len, enable_chunking=kwargs.get("enable_chunking", False)
+                )
+                if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
+                else seq_len
+            )
+            kv_cache_shape[2] = (
+                seq_len + self.model.config.sliding_window if kwargs.get("enable_chunking", False) else seq_len
+            )
+        else:
+            self.prefill(False)
+            self.hash_params.pop("prefill_only", None)
+            self.hash_params.pop("num_blocks", None)
+
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
@@ -2575,7 +2649,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             # HACK: create common function for this including above if condition code
             pkv_dynamic_axes = (
-                self.model.get_pkv_dynamic_axes() if hasattr(self.model, "get_pkv_dynamic_axes") else pkv_dynamic_axes
+                self.model.get_pkv_dynamic_axes(chunked_prefill=(prefill_only and kwargs.get("enable_chunking", False)))
+                if hasattr(self.model, "get_pkv_dynamic_axes")
+                else pkv_dynamic_axes
             )
             pkv_dynamic_axes = (
                 [pkv_dynamic_axes] * self.model.config.num_hidden_layers
@@ -2605,14 +2681,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
             )
-
         return self._export(
             example_inputs,
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
             offload_pt_weights=kwargs.get("offload_pt_weights", True),
+            prefill_only=prefill_only,
         )
 
     def get_sampling_inputs_and_outputs(
@@ -2702,6 +2778,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         batch_size: int = 1,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
+        **kwargs,
     ):
         """
         Builds a dictionary representing a compilation specialization for the prefill phase.
@@ -2729,6 +2806,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 batch_size=1 if self.continuous_batching else batch_size,
                 prefill_seq_len=prefill_seq_len,
                 ctx_len=ctx_len,
+                **kwargs,
             )[0]
         else:
             spec = {
@@ -2756,6 +2834,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
         num_speculative_tokens: Optional[int] = None,
+        **kwargs,
     ):
         """
         Builds a dictionary representing a compilation specialization for the decode phase.
@@ -2824,6 +2903,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         num_speculative_tokens: Optional[int] = None,
         prefill_only: Optional[bool] = None,
         use_onnx_subfunctions: bool = False,
+        offload_pt_weights: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
@@ -2947,6 +3028,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         ):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
 
+        if kv_cache_batch_size and prefill_only is not None and prefill_only:
+            logger.warning("kv_cache_batch_size will be ignored as prefill_only is set to True")
+
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
@@ -2975,6 +3059,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         batch_size=batch_size,
                         kv_cache_batch_size=kv_cache_batch_size,
                         full_batch_size=full_batch_size,
+                        prefill_only=prefill_only,
+                        enable_chunking=enable_chunking,
                     )
                 )
 
@@ -3002,6 +3088,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     kv_cache_batch_size=kv_cache_batch_size,
                     full_batch_size=full_batch_size,
                     num_speculative_tokens=num_speculative_tokens,
+                    prefill_only=prefill_only,
                 )
                 if decode_spec:
                     specializations.append(decode_spec)
@@ -3014,7 +3101,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
-
         qpc_path = self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -3029,6 +3115,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            prefill_only=prefill_only,
+            offload_pt_weights=offload_pt_weights,
+            enable_chunking=enable_chunking,
             **compiler_options,
         )
 
@@ -3220,7 +3309,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -3248,7 +3337,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
 
     def compile(
@@ -3596,7 +3685,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     def get_model_config(self) -> dict:
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
@@ -3624,7 +3713,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
 
     def compile(
