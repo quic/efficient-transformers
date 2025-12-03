@@ -127,12 +127,6 @@ The profiler generates a comprehensive 4-panel visualization:
 3. **Disk I/O**: Read/write activity per operation phase
 4. **Phase Duration**: Timing analysis with duration labels
 
-#### Sample Output
-
-![Sample Memory Profile](memory_profile_llama3.2.png)
-
-*Example memory profiling output showing QEfficient workflow phases including model loading, ONNX transforms, compilation, and generation phases with detailed memory, CPU, and disk I/O metrics.*
-
 ## Advanced Usage
 
 

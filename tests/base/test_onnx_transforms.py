@@ -109,9 +109,6 @@ def test_split_tensors_transform(tmp_path):
         transforms=[SplitTensorsTransform],
     )
 
-    import pdb
-
-    pdb.set_trace()
     tensor0_ext_data = onnx.external_data_helper.ExternalDataInfo(trans_onnx.graph.initializer[0])
     assert tensor0_ext_data.location == "test_split_0.onnx.data"
 

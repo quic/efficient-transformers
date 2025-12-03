@@ -109,7 +109,6 @@ def test_causal_lm_export_and_hash(config, cb, tmp_path):
 
     # Check if there is no re-export
     start = perf_counter()
-    # import pdb; pdb.set_trace()
     model_0_0.export(tmp_path)
     end = perf_counter()
     export_time = end - start

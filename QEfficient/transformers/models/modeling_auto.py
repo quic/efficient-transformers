@@ -3204,21 +3204,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     @property
-    def model_name(self) -> str:
-        """
-        Get the name of the underlying speech-to-text model.
-
-        Returns
-        -------
-        str
-            The model's class name, with "QEff" or "QEFF" prefix removed if present.
-        """
-        mname = self.model.__class__.__name__
-        if mname.startswith("QEff") or mname.startswith("QEFF"):
-            mname = mname[4:]
-        return mname
-
-    @property
     def get_model_config(self) -> dict:
         """
         Get the configuration dictionary of the underlying HuggingFace model.
