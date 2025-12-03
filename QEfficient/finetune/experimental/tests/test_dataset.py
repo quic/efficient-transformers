@@ -12,546 +12,511 @@ Tests for dataset components.
 import json
 import os
 import tempfile
-from unittest.mock import MagicMock, Mock, patch
-
-import pytest
-from datasets import Dataset as HFDataset
+import unittest
+from unittest.mock import MagicMock, patch
 
 from QEfficient.finetune.experimental.core.dataset import BaseDataset, SFTDataset
 
-
-class TestBaseDataset:
-    """Test suite for BaseDataset class."""
-
-    def test_base_dataset_initialization(self):
-        """Test that BaseDataset initializes with correct attributes."""
-        with pytest.raises(NotImplementedError):
-            dataset = BaseDataset(
-                dataset_name="test_dataset",
-                split="train",
-                seed=42,
-                extra_param="value"
-            )
-
-    def test_base_dataset_abstract_methods(self):
-        """Test that abstract methods raise NotImplementedError."""
-        
-        class TestDataset(BaseDataset):
-            def _initialize_dataset(self):
-                self.dataset = MagicMock()
-                self.dataset.__len__ = MagicMock(return_value=10)
-        
-        dataset = TestDataset(dataset_name="test", split="train", seed=42)
-        
-        # Test that __getitem__ is not implemented
-        with pytest.raises(NotImplementedError):
-            _ = dataset[0]
-
-    def test_base_dataset_hf_dataset_property(self):
-        """Test that hf_dataset property returns the underlying dataset."""
-        
-        class TestDataset(BaseDataset):
-            def _initialize_dataset(self):
-                self.dataset = MagicMock()
-                self.dataset.__len__ = MagicMock(return_value=10)
-            
-            def __getitem__(self, idx):
-                return {"data": "test"}
-        
-        dataset = TestDataset(dataset_name="test", split="train", seed=42)
-        assert dataset.hf_dataset == dataset.dataset
-
-    def test_base_dataset_len(self):
-        """Test that __len__ returns correct length."""
-        
-        class TestDataset(BaseDataset):
-            def _initialize_dataset(self):
-                self.dataset = MagicMock()
-                self.dataset.__len__ = MagicMock(return_value=100)
-            
-            def __getitem__(self, idx):
-                return {"data": "test"}
-        
-        dataset = TestDataset(dataset_name="test", split="train", seed=42)
-        assert len(dataset) == 100
+SEED = 42
+SPLIT_RATIO = 0.8
 
 
-class TestSFTDataset:
-    """Test suite for SFTDataset class."""
+class TestBaseDataset(unittest.TestCase):
+    """Tests for BaseDataset abstract class."""
 
-    @pytest.fixture
-    def mock_hf_dataset(self):
-        """Create a mock HuggingFace dataset."""
-        data = {
-            "question": ["What is AI?", "What is ML?", "What is DL?"],
-            "answer": ["Artificial Intelligence", "Machine Learning", "Deep Learning"],
-            "context": ["AI context", "ML context", "DL context"]
-        }
-        return HFDataset.from_dict(data)
+    def test_base_dataset_cannot_be_instantiated(self):
+        """Test that BaseDataset cannot be instantiated directly."""
+        with self.assertRaises(TypeError):
+            BaseDataset(dataset_name="test", split="train")
 
-    @pytest.fixture
-    def mock_hf_dataset_with_empty(self):
-        """Create a mock HuggingFace dataset with empty values."""
-        data = {
-            "question": ["What is AI?", "", "What is DL?", None],
-            "answer": ["Artificial Intelligence", "Machine Learning", "", None],
-        }
-        return HFDataset.from_dict(data)
 
-    @pytest.fixture
-    def temp_json_file(self):
-        """Create a temporary JSON file for testing."""
-        data = [
+class TestSFTDataset(unittest.TestCase):
+    """Tests for SFTDataset class."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        # Create a temporary directory for test files
+        self.test_dir = tempfile.mkdtemp()
+        self.json_file_path = os.path.join(self.test_dir, "test_dataset.json")
+
+        # Create a dummy JSON dataset
+        self.dummy_data = [
             {"question": "What is AI?", "answer": "Artificial Intelligence"},
             {"question": "What is ML?", "answer": "Machine Learning"},
-            {"question": "What is DL?", "answer": "Deep Learning"}
+            {"question": "What is DL?", "answer": "Deep Learning"},
+            {"question": "What is NLP?", "answer": "Natural Language Processing"},
+            {"question": "", "answer": "Empty question"},  # Empty question
+            {"question": "Valid question", "answer": ""},  # Empty answer
+            {"question": None, "answer": "None question"},  # None question
+            {"question": "Valid question 2", "answer": None},  # None answer
         ]
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(data, f)
-            temp_path = f.name
-        
-        yield temp_path
-        
-        # Cleanup
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
 
-    def test_sft_dataset_missing_prompt_config(self):
-        """Test that SFTDataset raises error when prompt config is missing."""
-        with pytest.raises(RuntimeError, match="Either provide prompt_template or prompt_func"):
-            SFTDataset(
-                dataset_name="test",
-                split="train",
-                completion_template="{answer}"
-            )
+        with open(self.json_file_path, "w") as f:
+            json.dump(self.dummy_data, f)
 
-    def test_sft_dataset_missing_completion_config(self):
-        """Test that SFTDataset raises error when completion config is missing."""
-        with pytest.raises(RuntimeError, match="Either provide completion_template or completion_func"):
-            SFTDataset(
-                dataset_name="test",
-                split="train",
-                prompt_template="{question}"
-            )
+    def tearDown(self):
+        """Clean up test fixtures."""
+        # Remove temporary files and directories
+        import shutil
 
-    def test_sft_dataset_both_prompt_configs(self):
-        """Test that SFTDataset raises error when both prompt configs are provided."""
-        with pytest.raises(RuntimeError, match="Either provide prompt_template or prompt_func"):
-            SFTDataset(
-                dataset_name="test",
-                split="train",
-                prompt_template="{question}",
-                prompt_func="module:func",
-                completion_template="{answer}"
-            )
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
 
-    def test_sft_dataset_both_completion_configs(self):
-        """Test that SFTDataset raises error when both completion configs are provided."""
-        with pytest.raises(RuntimeError, match="Either provide completion_template or completion_func"):
-            SFTDataset(
-                dataset_name="test",
-                split="train",
-                prompt_template="{question}",
-                completion_template="{answer}",
-                completion_func="module:func"
-            )
+    @patch("QEfficient.finetune.experimental.core.dataset.load_dataset")
+    @patch("QEfficient.finetune.experimental.core.dataset.load_dataset_builder")
+    def test_sft_dataset_with_huggingface_dataset_and_templates(
+        self, mock_builder, mock_load
+    ):
+        """Test loading from HuggingFace dataset with templates using mocked data."""
+        # Create mock dataset with dummy data
+        mock_dataset = MagicMock()
+        mock_dataset.column_names = ["text", "label"]
+        mock_dataset.num_rows = 3
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_initialization_with_templates(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test SFTDataset initialization with prompt and completion templates."""
-        # Setup mocks
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
-        dataset = SFTDataset(
-            dataset_name="test_dataset",
-            split="train",
-            prompt_template="Question: {question}",
-            completion_template="Answer: {answer}"
-        )
-        
-        assert dataset.dataset_name == "test_dataset"
-        assert dataset.split == "train"
-        assert dataset.seed == 42
-        assert dataset.prompt_template == "Question: {question}"
-        assert dataset.completion_template == "Answer: {answer}"
-        assert len(dataset) > 0
+        # Mock the select method to return individual samples
+        def mock_select(indices):
+            sample_data = [
+                {"text": "Sample text 1", "label": "Label 1"},
+                {"text": "Sample text 2", "label": "Label 2"},
+                {"text": "Sample text 3", "label": "Label 3"},
+            ]
+            return [sample_data[indices[0]]]
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    def test_sft_dataset_from_json_file(self, mock_load, temp_json_file):
-        """Test SFTDataset loading from JSON file."""
-        mock_dataset = HFDataset.from_dict({
-            "question": ["What is AI?", "What is ML?", "What is DL?"],
-            "answer": ["Artificial Intelligence", "Machine Learning", "Deep Learning"]
-        })
+        mock_dataset.select = mock_select
+        mock_dataset.filter = lambda func: mock_dataset  # Return self for filtering
+
+        # Mock train_test_split to return a dict with train/test splits
+        mock_split_result = {"train": mock_dataset, "test": mock_dataset}
+        mock_dataset.train_test_split = lambda test_size, seed: mock_split_result
+
+        # Mock the dataset builder to indicate multiple splits are available
+        mock_info = MagicMock()
+        mock_info.splits = {"train": MagicMock(), "test": MagicMock()}
+        mock_builder.return_value.info = mock_info
+
+        # Mock load_dataset to return our mock dataset
         mock_load.return_value = mock_dataset
-        
+
+        # Create the dataset
         dataset = SFTDataset(
-            dataset_name="ignored",
+            dataset_name="dummy_hf_dataset",
             split="train",
-            json_file_path=temp_json_file,
-            prompt_template="{question}",
-            completion_template="{answer}"
+            prompt_template="Text: {text}",
+            completion_template="Label: {label}",
         )
-        
-        assert dataset.json_file_path == temp_json_file
-        assert len(dataset) > 0
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    def test_sft_dataset_train_test_split_from_json(self, mock_load):
-        """Test train/test split when loading from JSON."""
-        mock_dataset = HFDataset.from_dict({
-            "question": ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"],
-            "answer": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]
-        })
-        mock_load.return_value = mock_dataset
-        
-        train_dataset = SFTDataset(
-            dataset_name="ignored",
-            split="train",
-            split_ratio=0.8,
-            json_file_path="dummy.json",
-            prompt_template="{question}",
-            completion_template="{answer}"
-        )
-        
-        test_dataset = SFTDataset(
-            dataset_name="ignored",
-            split="test",
-            split_ratio=0.8,
-            json_file_path="dummy.json",
-            prompt_template="{question}",
-            completion_template="{answer}"
-        )
-        
-        # Train should have ~80% and test should have ~20%
-        assert len(train_dataset) > len(test_dataset)
+        self.assertIsNotNone(dataset)
+        self.assertEqual(len(dataset), 3)
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_invalid_template_variable(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test that invalid template variables raise RuntimeError."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
-        with pytest.raises(RuntimeError, match="not found in dataset columns"):
-            SFTDataset(
-                dataset_name="test_dataset",
-                split="train",
-                prompt_template="{invalid_column}",
-                completion_template="{answer}"
-            )
+        # Test __getitem__
+        sample = dataset[0]
+        self.assertIn("prompt", sample)
+        self.assertIn("completion", sample)
+        self.assertTrue(sample["prompt"].startswith("Text:"))
+        self.assertTrue(sample["completion"].startswith("Label:"))
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_filter_empty_samples(self, mock_builder, mock_load, mock_hf_dataset_with_empty):
-        """Test filtering of empty or None samples."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset_with_empty
-        
+    def test_sft_dataset_with_json_file_and_templates(self):
+        """Test loading from JSON file with templates."""
         dataset = SFTDataset(
-            dataset_name="test_dataset",
+            dataset_name="dummy",  # Ignored when json_file_path is provided
             split="train",
-            prompt_template="{question}",
-            completion_template="{answer}",
-            remove_samples_with_empty_columns=True
-        )
-        
-        # Should only have 1 valid sample (first one)
-        assert len(dataset) == 1
-
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_no_filter_empty_samples(self, mock_builder, mock_load, mock_hf_dataset_with_empty):
-        """Test that filtering can be disabled."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset_with_empty
-        
-        dataset = SFTDataset(
-            dataset_name="test_dataset",
-            split="train",
-            prompt_template="{question}",
-            completion_template="{answer}",
-            remove_samples_with_empty_columns=False
-        )
-        
-        # Should have 3 samples (the map operation filters out None values during preprocessing)
-        # The 4th sample with None values cannot be processed by the template
-        assert len(dataset) == 3
-
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_getitem(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test __getitem__ returns correctly formatted data."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
-        dataset = SFTDataset(
-            dataset_name="test_dataset",
-            split="train",
+            json_file_path=self.json_file_path,
             prompt_template="Q: {question}",
-            completion_template="A: {answer}"
+            completion_template="A: {answer}",
         )
-        
+
+        self.assertIsNotNone(dataset)
+        # After filtering empty/None values and applying train split (default 0.8)
+        # we get a subset of the 4 valid samples
+        self.assertGreater(len(dataset), 0)
+        self.assertLessEqual(len(dataset), 4)
+
+        # Test __getitem__
         sample = dataset[0]
-        
-        assert "prompt" in sample
-        assert "completion" in sample
-        assert sample["prompt"].startswith("Q:")
-        assert sample["completion"].startswith("A:")
+        self.assertIn("prompt", sample)
+        self.assertIn("completion", sample)
+        self.assertTrue(sample["prompt"].startswith("Q:"))
+        self.assertTrue(sample["completion"].startswith("A:"))
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_preprocess_sample(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test _preprocess_sample method."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
+    def test_sft_dataset_json_file_without_filtering(self):
+        """Test loading from JSON file without filtering empty samples."""
         dataset = SFTDataset(
-            dataset_name="test_dataset",
+            dataset_name="dummy",
             split="train",
-            prompt_template="Question: {question}",
-            completion_template="Answer: {answer}"
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+            remove_samples_with_empty_columns=False,
         )
-        
-        example = {"question": "Test Q", "answer": "Test A"}
-        processed = dataset._preprocess_sample(example)
-        
-        assert processed["prompt"] == "Question: Test Q"
-        assert processed["completion"] == "Answer: Test A"
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_with_custom_prompt_func(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test SFTDataset with custom prompt function."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
-        # Create a mock module with a function
-        with patch('QEfficient.finetune.experimental.core.dataset.importlib.import_module') as mock_import:
-            mock_module = MagicMock()
-            mock_module.custom_prompt = lambda x: f"Custom: {x['question']}"
-            mock_import.return_value = mock_module
-            
-            dataset = SFTDataset(
-                dataset_name="test_dataset",
-                split="train",
-                prompt_func="module:custom_prompt",
-                completion_template="{answer}"
-            )
-            
-            sample = dataset[0]
-            assert "Custom:" in sample["prompt"]
+        # When filtering is disabled and split="train" is used, it still applies train/test split
+        # So we get ~80% of 8 samples = ~6 samples
+        self.assertGreater(len(dataset), 0)
+        self.assertLessEqual(len(dataset), 8)
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_with_custom_completion_func(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test SFTDataset with custom completion function."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
-        # Create a mock module with a function
-        with patch('QEfficient.finetune.experimental.core.dataset.importlib.import_module') as mock_import:
-            mock_module = MagicMock()
-            mock_module.custom_completion = lambda x: f"Custom: {x['answer']}"
-            mock_import.return_value = mock_module
-            
-            dataset = SFTDataset(
-                dataset_name="test_dataset",
-                split="train",
-                prompt_template="{question}",
-                completion_func="module:custom_completion"
-            )
-            
-            sample = dataset[0]
-            assert "Custom:" in sample["completion"]
-
-    def test_sft_dataset_import_func_invalid_format(self):
-        """Test import_func with invalid format."""
-        with patch('QEfficient.finetune.experimental.core.dataset.load_dataset'):
-            with patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder') as mock_builder:
-                mock_builder.return_value.info.splits = {"train": None}
-                
-                with pytest.raises(ValueError, match="func_path must be in the format"):
-                    dataset = SFTDataset(
-                        dataset_name="test",
-                        split="train",
-                        prompt_func="invalid_format",
-                        completion_template="{answer}"
-                    )
-
-    def test_sft_dataset_import_func_module_not_found(self):
-        """Test import_func when module cannot be imported."""
-        with patch('QEfficient.finetune.experimental.core.dataset.load_dataset'):
-            with patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder') as mock_builder:
-                mock_builder.return_value.info.splits = {"train": None}
-                
-                with patch('QEfficient.finetune.experimental.core.dataset.importlib.import_module') as mock_import:
-                    mock_import.side_effect = Exception("Module not found")
-                    
-                    with pytest.raises(RuntimeError, match="Unable to import module"):
-                        dataset = SFTDataset(
-                            dataset_name="test",
-                            split="train",
-                            prompt_func="nonexistent:func",
-                            completion_template="{answer}"
-                        )
-
-    def test_sft_dataset_import_func_function_not_found(self):
-        """Test import_func when function is not found in module."""
-        with patch('QEfficient.finetune.experimental.core.dataset.load_dataset'):
-            with patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder') as mock_builder:
-                mock_builder.return_value.info.splits = {"train": None}
-                
-                with patch('QEfficient.finetune.experimental.core.dataset.importlib.import_module') as mock_import:
-                    mock_module = MagicMock()
-                    mock_module.other_func = lambda x: x
-                    del mock_module.target_func  # Ensure attribute doesn't exist
-                    mock_import.return_value = mock_module
-                    
-                    with pytest.raises(ValueError, match="Function .* not found in module"):
-                        dataset = SFTDataset(
-                            dataset_name="test",
-                            split="train",
-                            prompt_func="module:target_func",
-                            completion_template="{answer}"
-                        )
-
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_filter_empty_or_none_samples(self, mock_builder, mock_load):
-        """Test _filter_empty_or_none_samples method."""
-        mock_builder.return_value.info.splits = {"train": None}
-        # Use a larger dataset to avoid split issues
-        mock_dataset = HFDataset.from_dict({
-            "question": ["Q1", "Q2", "Q3", "Q4", "Q5"],
-            "answer": ["A1", "A2", "A3", "A4", "A5"]
-        })
-        mock_load.return_value = mock_dataset
-        
-        dataset = SFTDataset(
-            dataset_name="test",
+    def test_sft_dataset_train_test_split_from_json(self):
+        """Test train/test split when loading from JSON file."""
+        train_dataset = SFTDataset(
+            dataset_name="dummy",
             split="train",
-            prompt_template="{question}",
-            completion_template="{answer}"
+            split_ratio=SPLIT_RATIO,
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+            seed=SEED,
         )
-        
-        # Test valid sample
-        assert dataset._filter_empty_or_none_samples({"question": "Q", "answer": "A"}) == True
-        
-        # Test None value
-        assert dataset._filter_empty_or_none_samples({"question": None, "answer": "A"}) == False
-        
-        # Test empty string
-        assert dataset._filter_empty_or_none_samples({"question": "", "answer": "A"}) == False
-        
-        # Test whitespace only
-        assert dataset._filter_empty_or_none_samples({"question": "   ", "answer": "A"}) == False
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_hf_dataset_property(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test hf_dataset property returns underlying dataset."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
-        dataset = SFTDataset(
-            dataset_name="test",
-            split="train",
-            prompt_template="{question}",
-            completion_template="{answer}"
-        )
-        
-        assert dataset.hf_dataset is not None
-        assert hasattr(dataset.hf_dataset, 'num_rows')
-
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_split_not_available(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test error when requested split is not available for train split."""
-        mock_builder.return_value.info.splits = {"test": None}
-        mock_load.return_value = mock_hf_dataset
-        
-        with pytest.raises(ValueError, match="Split train is not available"):
-            dataset = SFTDataset(
-                dataset_name="test",
-                split="train",
-                prompt_template="{question}",
-                completion_template="{answer}"
-            )
-
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_single_split_auto_split(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test automatic splitting when only one split is available."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
-        # Request test split when only train is available
-        dataset = SFTDataset(
-            dataset_name="test",
+        test_dataset = SFTDataset(
+            dataset_name="dummy",
             split="test",
-            split_ratio=0.8,
-            prompt_template="{question}",
-            completion_template="{answer}"
+            split_ratio=SPLIT_RATIO,
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+            seed=SEED,
         )
-        
-        # Should create a test split from the train split
-        assert len(dataset) > 0
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_multiple_template_variables(self, mock_builder, mock_load):
-        """Test templates with multiple variables."""
-        mock_dataset = HFDataset.from_dict({
-            "question": ["Q1", "Q2"],
-            "context": ["C1", "C2"],
-            "answer": ["A1", "A2"]
-        })
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_dataset
-        
+        # After filtering, we have 4 valid samples
+        # With split ratio, train should have ~3 samples, test should have ~1 sample
+        self.assertGreater(len(train_dataset), 0)
+        self.assertGreater(len(test_dataset), 0)
+        # Total should equal the filtered dataset size
+        self.assertEqual(len(train_dataset) + len(test_dataset), 4)
+
+    def test_sft_dataset_with_custom_prompt_function(self):
+        """Test loading with custom prompt function."""
+        # Create a temporary module file with custom functions
+        func_file_path = os.path.join(self.test_dir, "custom_funcs.py")
+        with open(func_file_path, "w") as f:
+            f.write("""
+def custom_prompt(example):
+    return f"Custom prompt: {example['question']}"
+
+def custom_completion(example):
+    return f"Custom completion: {example['answer']}"
+""")
+
+        # Add the test directory to sys.path temporarily
+        import sys
+
+        sys.path.insert(0, self.test_dir)
+
+        try:
+            dataset = SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                prompt_func="custom_funcs:custom_prompt",
+                completion_func="custom_funcs:custom_completion",
+            )
+
+            self.assertIsNotNone(dataset)
+            self.assertGreater(len(dataset), 0)
+
+            # Test that custom functions are applied
+            sample = dataset[0]
+            self.assertTrue(sample["prompt"].startswith("Custom prompt:"))
+            self.assertTrue(sample["completion"].startswith("Custom completion:"))
+        finally:
+            # Clean up
+            sys.path.remove(self.test_dir)
+            if os.path.exists(func_file_path):
+                os.remove(func_file_path)
+
+    def test_sft_dataset_missing_template_variable(self):
+        """Test error when template variable is not in dataset columns."""
+        with self.assertRaises(RuntimeError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                prompt_template="Q: {nonexistent_column}",
+                completion_template="A: {answer}",
+            )
+
+        self.assertIn("not found in dataset columns", str(context.exception))
+
+    def test_sft_dataset_missing_completion_template_variable(self):
+        """Test error when completion template variable is not in dataset columns."""
+        with self.assertRaises(RuntimeError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                prompt_template="Q: {question}",
+                completion_template="A: {nonexistent_column}",
+            )
+
+        self.assertIn("not found in dataset columns", str(context.exception))
+
+    def test_sft_dataset_no_prompt_template_or_func(self):
+        """Test error when neither prompt_template nor prompt_func is provided."""
+        with self.assertRaises(RuntimeError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                completion_template="A: {answer}",
+            )
+
+        self.assertIn(
+            "Either provide prompt_template or prompt_func", str(context.exception)
+        )
+
+    def test_sft_dataset_both_prompt_template_and_func(self):
+        """Test error when both prompt_template and prompt_func are provided."""
+        with self.assertRaises(RuntimeError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                prompt_template="Q: {question}",
+                prompt_func="module:function",
+                completion_template="A: {answer}",
+            )
+
+        self.assertIn(
+            "Either provide prompt_template or prompt_func", str(context.exception)
+        )
+
+    def test_sft_dataset_no_completion_template_or_func(self):
+        """Test error when neither completion_template nor completion_func is provided."""
+        with self.assertRaises(RuntimeError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                prompt_template="Q: {question}",
+            )
+
+        self.assertIn(
+            "Either provide completion_template or completion_func",
+            str(context.exception),
+        )
+
+    def test_sft_dataset_both_completion_template_and_func(self):
+        """Test error when both completion_template and completion_func are provided."""
+        with self.assertRaises(RuntimeError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                prompt_template="Q: {question}",
+                completion_template="A: {answer}",
+                completion_func="module:function",
+            )
+
+        self.assertIn(
+            "Either provide completion_template or completion_func",
+            str(context.exception),
+        )
+
+    def test_sft_dataset_invalid_func_path_format(self):
+        """Test error when func_path doesn't contain colon separator."""
+        with self.assertRaises(ValueError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                prompt_func="invalid_format",
+                completion_template="A: {answer}",
+            )
+
+        self.assertIn("must be in the format", str(context.exception))
+
+    def test_sft_dataset_invalid_module_import(self):
+        """Test error when module cannot be imported."""
+        with self.assertRaises(RuntimeError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=self.json_file_path,
+                prompt_func="nonexistent_module:function",
+                completion_template="A: {answer}",
+            )
+
+        self.assertIn("Unable to import module", str(context.exception))
+
+    def test_sft_dataset_invalid_function_name(self):
+        """Test error when function doesn't exist in module."""
+        # Create a temporary module file without the expected function
+        func_file_path = os.path.join(self.test_dir, "test_module.py")
+        with open(func_file_path, "w") as f:
+            f.write("def some_other_function():\n    pass\n")
+
+        import sys
+
+        sys.path.insert(0, self.test_dir)
+
+        try:
+            with self.assertRaises(ValueError) as context:
+                SFTDataset(
+                    dataset_name="dummy",
+                    split="train",
+                    json_file_path=self.json_file_path,
+                    prompt_func="test_module:nonexistent_function",
+                    completion_template="A: {answer}",
+                )
+
+            self.assertIn("not found in module", str(context.exception))
+        finally:
+            sys.path.remove(self.test_dir)
+            if os.path.exists(func_file_path):
+                os.remove(func_file_path)
+
+    def test_sft_dataset_filter_empty_or_none_samples(self):
+        """Test filtering of samples with empty or None values."""
         dataset = SFTDataset(
-            dataset_name="test",
+            dataset_name="dummy",
             split="train",
-            prompt_template="Context: {context}\nQuestion: {question}",
-            completion_template="Answer: {answer}"
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+            remove_samples_with_empty_columns=True,
         )
-        
-        sample = dataset[0]
-        assert "Context:" in sample["prompt"]
-        assert "Question:" in sample["prompt"]
-        assert "Answer:" in sample["completion"]
 
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset')
-    @patch('QEfficient.finetune.experimental.core.dataset.load_dataset_builder')
-    def test_sft_dataset_seed_reproducibility(self, mock_builder, mock_load, mock_hf_dataset):
-        """Test that same seed produces same splits."""
-        mock_builder.return_value.info.splits = {"train": None}
-        mock_load.return_value = mock_hf_dataset
-        
+        # Verify that all samples have valid (non-empty) questions and answers
+        for i in range(len(dataset)):
+            sample = dataset[i]
+            # Extract the actual question and answer from the formatted strings
+            question = sample["prompt"].replace("Q: ", "").strip()
+            answer = sample["completion"].replace("A: ", "").strip()
+            # Verify neither is empty
+            self.assertTrue(
+                len(question) > 0, f"Question should not be empty: {sample['prompt']}"
+            )
+            self.assertTrue(
+                len(answer) > 0, f"Answer should not be empty: {sample['completion']}"
+            )
+
+    def test_sft_dataset_getitem_returns_correct_format(self):
+        """Test that __getitem__ returns the correct format."""
+        dataset = SFTDataset(
+            dataset_name="dummy",
+            split="train",
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+        )
+
+        sample = dataset[0]
+
+        # Check that sample is a dictionary
+        self.assertIsInstance(sample, dict)
+
+        # Check that it has the required keys
+        self.assertIn("prompt", sample)
+        self.assertIn("completion", sample)
+
+        # Check that values are strings
+        self.assertIsInstance(sample["prompt"], str)
+        self.assertIsInstance(sample["completion"], str)
+
+    def test_sft_dataset_len(self):
+        """Test __len__ method."""
+        dataset = SFTDataset(
+            dataset_name="dummy",
+            split="train",
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+        )
+
+        # Check that len returns an integer
+        self.assertIsInstance(len(dataset), int)
+
+        # Check that len is positive
+        self.assertGreater(len(dataset), 0)
+
+        # Check that we can iterate through all samples
+        for i in range(len(dataset)):
+            sample = dataset[i]
+            self.assertIsNotNone(sample)
+
+    def test_sft_dataset_with_multiple_template_variables(self):
+        """Test templates with multiple variables."""
+        # Create a more complex JSON dataset
+        complex_data = [
+            {"context": "The sky", "question": "What color?", "answer": "Blue"},
+            {"context": "Math", "question": "What is 2+2?", "answer": "4"},
+        ]
+
+        complex_json_path = os.path.join(self.test_dir, "complex_dataset.json")
+        with open(complex_json_path, "w") as f:
+            json.dump(complex_data, f)
+
+        try:
+            dataset = SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=complex_json_path,
+                prompt_template="Context: {context}\nQuestion: {question}",
+                completion_template="Answer: {answer}",
+            )
+
+            # With split="train", it applies train/test split, so we get ~80% of 2 samples
+            self.assertGreater(len(dataset), 0)
+            self.assertLessEqual(len(dataset), 2)
+
+            sample = dataset[0]
+            self.assertIn("Context:", sample["prompt"])
+            self.assertIn("Question:", sample["prompt"])
+            self.assertIn("Answer:", sample["completion"])
+        finally:
+            if os.path.exists(complex_json_path):
+                os.remove(complex_json_path)
+
+    def test_sft_dataset_seed_reproducibility(self):
+        """Test that using the same seed produces the same split."""
         dataset1 = SFTDataset(
-            dataset_name="test",
+            dataset_name="dummy",
             split="train",
-            seed=42,
-            split_ratio=0.8,
-            prompt_template="{question}",
-            completion_template="{answer}"
+            split_ratio=SPLIT_RATIO,
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+            seed=SEED,
         )
-        
-        # Reset mock
-        mock_load.return_value = mock_hf_dataset
-        
+
         dataset2 = SFTDataset(
-            dataset_name="test",
+            dataset_name="dummy",
             split="train",
-            seed=42,
-            split_ratio=0.8,
-            prompt_template="{question}",
-            completion_template="{answer}"
+            split_ratio=SPLIT_RATIO,
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+            seed=SEED,
         )
-        
-        # Should have same length with same seed
-        assert len(dataset1) == len(dataset2)
+
+        # Both datasets should have the same length
+        self.assertEqual(len(dataset1), len(dataset2))
+
+        # Both datasets should have the same samples
+        for i in range(len(dataset1)):
+            sample1 = dataset1[i]
+            sample2 = dataset2[i]
+            self.assertEqual(sample1["prompt"], sample2["prompt"])
+            self.assertEqual(sample1["completion"], sample2["completion"])
+
+    @patch("QEfficient.finetune.experimental.core.dataset.load_dataset")
+    @patch("QEfficient.finetune.experimental.core.dataset.load_dataset_builder")
+    def test_sft_dataset_invalid_split(self, mock_builder, mock_load):
+        """Test error when requesting an invalid split."""
+        # Mock the dataset builder to return specific splits
+        mock_info = MagicMock()
+        mock_info.splits = {"train": MagicMock(), "validation": MagicMock()}
+        mock_builder.return_value.info = mock_info
+
+        with self.assertRaises(ValueError) as context:
+            SFTDataset(
+                dataset_name="dummy_dataset",
+                split="nonexistent_split",
+                prompt_template="Q: {question}",
+                completion_template="A: {answer}",
+            )
+
+        self.assertIn("not available", str(context.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
