@@ -18,7 +18,7 @@ registry.optimizer("AdamW")(optim.AdamW)
 registry.optimizer("SGD")(optim.SGD)
 
 
-def get_optimizer(opt_config):
+def prepare_optimizer(opt_config):
     """
     Create optimizer from config.
     Args: opt_config: Dictionary containing optimizer configuration.
