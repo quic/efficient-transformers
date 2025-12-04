@@ -54,7 +54,7 @@ class QEffTextEncoder(QEFFBaseModel):
         super().__init__(model)
         self.model = model
 
-    def get_onnx_config(self) -> Tuple[Dict, Dict, List[str]]:
+    def get_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
         """
         Generate ONNX export configuration for the text encoder.
 
@@ -225,7 +225,7 @@ class QEffVAE(QEFFBaseModel):
         # To have different hashing for encoder/decoder
         self.model.config["type"] = type
 
-    def get_onnx_config(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
+    def get_onnx_params(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
         """
         Generate ONNX export configuration for the VAE decoder.
 
@@ -296,73 +296,6 @@ class QEffVAE(QEFFBaseModel):
         self._compile(specializations=specializations, **compiler_options)
 
 
-class QEffSafetyChecker(QEFFBaseModel):
-    """
-    Wrapper for safety checker models with ONNX export and QAIC compilation capabilities.
-
-    This class handles safety checker models with specific transformations and optimizations
-    for efficient inference on Qualcomm AI hardware. Safety checkers are used in diffusion
-    pipelines to filter out potentially harmful or inappropriate generated content.
-
-    Attributes:
-        model (nn.Module): The wrapped safety checker model
-        _pytorch_transforms (List): PyTorch transformations applied before ONNX export
-        _onnx_transforms (List): ONNX transformations applied after export
-    """
-
-    _pytorch_transforms = [CustomOpsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-
-    def __init__(self, model: nn.Module) -> None:
-        """
-        Initialize the safety checker wrapper.
-
-        Args:
-            model (nn.Module): The pipeline model containing the safety checker
-        """
-        super().__init__(model.safety_checker)
-        self.model = model.safety_checker
-
-    def export(
-        self,
-        inputs: Dict,
-        output_names: List[str],
-        dynamic_axes: Dict,
-        export_dir: str = None,
-        export_kwargs: Dict = None,
-    ) -> str:
-        """
-        Export the safety checker model to ONNX format.
-
-        Args:
-            inputs (Dict): Example inputs for ONNX export
-            output_names (List[str]): Names of model outputs
-            dynamic_axes (Dict): Specification of dynamic dimensions
-            export_dir (str, optional): Directory to save ONNX model
-            export_kwargs (Dict, optional): Additional export arguments
-
-        Returns:
-            str: Path to the exported ONNX model
-        """
-        return self._export(
-            example_inputs=inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            export_kwargs=export_kwargs,
-        )
-
-    def compile(self, specializations: List[Dict], **compiler_options) -> None:
-        """
-        Compile the ONNX model for Qualcomm AI hardware.
-
-        Args:
-            specializations (List[Dict]): Model specialization configurations
-            **compiler_options: Additional compiler options
-        """
-        self._compile(specializations=specializations, **compiler_options)
-
-
 class QEffFluxTransformerModel(QEFFBaseModel):
     """
     Wrapper for Flux Transformer2D models with ONNX export and QAIC compilation capabilities.
@@ -392,7 +325,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         """
         super().__init__(model)
 
-    def get_onnx_config(
+    def get_onnx_params(
         self,
         batch_size: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
         seq_length: int = constants.FLUX_ONNX_EXPORT_SEQ_LENGTH,

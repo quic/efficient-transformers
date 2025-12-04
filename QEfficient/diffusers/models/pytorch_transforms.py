@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-from typing import Tuple
 
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero, AdaLayerNormZeroSingle, RMSNorm
 from diffusers.models.transformers.transformer_flux import (
@@ -38,11 +37,6 @@ class CustomOpsTransform(ModuleMappingTransform):
         nn.RMSNorm: CustomRMSNormAIC,  #  for torch.nn.RMSNorm
     }
 
-    @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
-        model, transformed = super().apply(model)
-        return model, transformed
-
 
 class AttentionTransform(ModuleMappingTransform):
     _module_mapping = {
@@ -53,11 +47,6 @@ class AttentionTransform(ModuleMappingTransform):
         FluxAttnProcessor: QEffFluxAttnProcessor,
     }
 
-    @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
-        model, transformed = super().apply(model)
-        return model, transformed
-
 
 class NormalizationTransform(ModuleMappingTransform):
     _module_mapping = {
@@ -65,8 +54,3 @@ class NormalizationTransform(ModuleMappingTransform):
         AdaLayerNormZeroSingle: QEffAdaLayerNormZeroSingle,
         AdaLayerNormContinuous: QEffAdaLayerNormContinuous,
     }
-
-    @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
-        model, transformed = super().apply(model)
-        return model, transformed

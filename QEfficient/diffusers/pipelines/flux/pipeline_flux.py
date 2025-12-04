@@ -5,6 +5,13 @@
 #
 # ----------------------------------------------------------------------------
 
+# TODO: Pipeline Architecture Improvements
+# 1. Introduce QEffDiffusionPipeline base class to provide unified export, compile,
+#    and inference APIs across all diffusion pipelines, promoting code reusability
+#    and consistent interface design.
+# 2. Implement persistent QPC session management strategy to retain/drop compiled model
+#    sessions in memory across all pipeline modules.
+
 import os
 import time
 from typing import Callable, Dict, List, Optional, Union
@@ -218,7 +225,7 @@ class QEffFluxPipeline:
         """
         for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration for this module
-            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_config()
+            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
 
             export_params = {
                 "inputs": example_inputs,
@@ -241,7 +248,7 @@ class QEffFluxPipeline:
             str: Absolute path to the flux_config.json file containing default pipeline
                 configuration settings for compilation and device allocation.
         """
-        return os.path.join(os.path.dirname(__file__), "flux_config.json")
+        return "QEfficient/diffusers/pipelines/configs/flux_config.json"
 
     def compile(
         self,
@@ -380,7 +387,7 @@ class QEffFluxPipeline:
         text_encoder_2_output = {
             "last_hidden_state": np.random.rand(
                 batch_size, max_sequence_length, self.text_encoder_2.model.config.d_model
-            ).astype(np.float32),
+            ).astype(np.int32),
         }
         self.text_encoder_2.qpc_session.set_buffers(text_encoder_2_output)
 
@@ -456,7 +463,7 @@ class QEffFluxPipeline:
             "last_hidden_state": np.random.rand(
                 batch_size, self.tokenizer_max_length, self.text_encoder.model.config.hidden_size
             ).astype(np.float32),
-            "pooler_output": np.random.rand(batch_size, self.text_encoder.model.config.hidden_size).astype(np.float32),
+            "pooler_output": np.random.rand(batch_size, self.text_encoder.model.config.hidden_size).astype(np.int32),
         }
         self.text_encoder.qpc_session.set_buffers(text_encoder_output)
 

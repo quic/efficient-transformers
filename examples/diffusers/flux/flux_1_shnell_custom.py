@@ -29,7 +29,6 @@ from QEfficient import QEffFluxPipeline
 
 # Option 1: Basic initialization with default parameters
 pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
-
 # Option 2: Advanced initialization with custom modules
 # Uncomment and modify to use your own custom components:
 #
@@ -96,7 +95,7 @@ pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 #       module, so you can skip the separate pipeline.compile() step.
 
 output = pipeline(
-    prompt="A girl laughing",
+    prompt="A laughing girl",
     custom_config_path="examples/diffusers/flux/flux_config.json",
     height=1024,
     width=1024,
@@ -110,5 +109,5 @@ output = pipeline(
 
 image = output.images[0]
 # Save the generated image to disk
-image.save("girl_laughing.png")
+image.save("laughing_girl.png")
 print(output)
