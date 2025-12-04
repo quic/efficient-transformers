@@ -297,9 +297,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             else:
                 lang_decode["batch_size"] = kv_cache_batch_size
 
-            lang = []
-            lang.append(lang_prefill)
-            lang.append(lang_decode)
+            lang = [lang_prefill, lang_decode]
 
         specializations = {}
 

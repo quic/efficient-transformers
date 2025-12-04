@@ -825,9 +825,7 @@ class QEffMolmoModel(nn.Module):
                     lang_prefill[key] = value
                     lang_decode[key] = value
 
-            lang = []
-            lang.append(lang_prefill)
-            lang.append(lang_decode)
+            lang = [lang_prefill, lang_decode]
 
         specializations = {}
 

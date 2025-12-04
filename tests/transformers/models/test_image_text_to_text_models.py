@@ -341,59 +341,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
-
-    # testing for CB models
-    if not kv_offload:  # CB not yet enabled for Single QPC
-        return
-    full_batch_size = 4
-    images = [image] * full_batch_size
-    queries = [query] * full_batch_size
-
-    streamer = TextStreamer(processor.tokenizer)
-    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries)
-
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-        model_config["model_name"],
-        kv_offload=kv_offload,
-        config=config,
-        continuous_batching=True,
-    )
-
-    qeff_model.export()
-
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
-
-    qeff_model.compile(
-        img_size=model_config["img_size"],
-        num_cores=16,
-        num_devices=num_devices,
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        batch_size=batch_size,
-        full_batch_size=full_batch_size,
-        mxfp6_matmul=False,
-        enable_qnn=enable_qnn,
-        qnn_config=qnn_config,
-    )
-
-    print("QPC Outputs (QAIC):")
-    exec_info = qeff_model.generate(
-        tokenizer=processor.tokenizer,
-        processor=processor,
-        images=[img_url] * full_batch_size,
-        prompts=queries,
-        generation_len=max_gen_len,
-    )
-
-    qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
-    print("QPC Outputs (QAIC) for Continuous Batching:")
-    print(exec_info.generated_texts)
-
-    for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output"
-        )
     return
 
 
@@ -420,7 +367,6 @@ def check_molmo_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     n_layer = (n_layer, n_layer)
 
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     img = requests.get(img_url, stream=True)
     image = Image.open(BytesIO(img.content)).convert("RGB")
     image = image.resize((536, 354))
@@ -466,56 +412,6 @@ def check_molmo_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
-
-    # testing for CB models
-    if not kv_offload:  # CB not yet enabled for Single QPC
-        return
-    full_batch_size = 4
-    images = [image] * full_batch_size
-    queries = [query] * full_batch_size
-
-    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries)
-
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_name,
-        trust_remote_code=True,
-        attn_implementation="eager",
-        kv_offload=True,
-        config=config,
-        continuous_batching=True,
-    )
-
-    qeff_model.export()
-
-    qeff_model.compile(
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        num_devices=4,
-        batch_size=1,
-        full_batch_size=4,
-        mxfp6_matmul=False,
-        mxint8_kv_cache=True,
-        aic_enable_depth_first=True,
-        mos=1,
-    )
-
-    exec_info = qeff_model.generate(
-        tokenizer=tokenizer,
-        processor=processor,
-        images=[img_url] * full_batch_size,
-        prompts=queries,
-        generation_len=max_gen_len,
-    )
-
-    qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
-    print("QPC Outputs (QAIC) for Continuous Batching:")
-    print(exec_info.generated_texts)
-
-    for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output"
-        )
-
     return
 
 
@@ -625,64 +521,13 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
-
-    # testing for CB models
-    if not kv_offload:  # CB not yet enabled for Single QPC
-        return
-
-    full_batch_size = 4
-    queries = [query] * full_batch_size
-
-    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, [image] * full_batch_size, queries)
-
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_name,
-        trust_remote_code=True,
-        attn_implementation="eager",
-        kv_offload=True,
-        config=config,
-        continuous_batching=True,
-    )
-
-    qeff_model.export()
-
-    qeff_model.compile(
-        num_patches=1,
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        num_devices=4,
-        batch_size=1,
-        full_batch_size=full_batch_size,
-        mxfp6_matmul=False,
-    )
-
-    exec_info = qeff_model.generate(
-        tokenizer=tokenizer,
-        processor=processor,
-        images=img_url * full_batch_size,
-        prompts=queries,
-        generation_len=max_gen_len,
-        image_height=448,
-        image_width=448,
-    )
-
-    qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
-    print("QPC Outputs (QAIC) for Continuous Batching:")
-    print(exec_info.generated_texts)
-
-    for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output"
-        )
-
     return
 
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer",
-    test_models_config,
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
 )
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
@@ -709,7 +554,6 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.multimodal
-@pytest.mark.skip(reason="Issues with QNN")
 @pytest.mark.parametrize(
     "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
 )
@@ -746,8 +590,7 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer",
-    molmo_model_config,
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", molmo_model_config
 )
 def test_image_text_to_text_molmo_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
@@ -789,7 +632,6 @@ def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.multimodal
-@pytest.mark.skip(reason="Issues with QNN")
 @pytest.mark.parametrize(
     "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
 )

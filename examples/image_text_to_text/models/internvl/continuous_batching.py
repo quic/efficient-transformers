@@ -16,6 +16,8 @@ config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
 config.llm_config.num_hidden_layers = 2
 config.vision_config.num_hidden_layers = 2
 
+# The original Intern-VL model, despite being multimodal, is loaded using `AutoModelForCausalLM` in Huggingface.
+# To maintain compatibility, we load this model using `QEFFAutoModelForCausalLM`.
 model_hf = AutoModelForCausalLM.from_pretrained(
     model_id,
     low_cpu_mem_usage=False,

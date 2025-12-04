@@ -590,3 +590,34 @@ class ApiRunnerMolmo(ApiRunnerVlm):
         print("Original HF Model Outputs (Torch CPU):")
         print("Completion:", repr(py_output))
         return generated_ids
+
+    @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch_CB(self, model, images, queries, generation_config):
+        """
+        Function responsible for running HuggingFace ``PyTorch`` model for continuous batching
+        and return the output tokens for each prompt/image pair.
+
+        ``Mandatory`` Args:
+            :model (torch.nn.module): Original ``PyTorch`` model
+            :images (List[PIL.Image]): List of input images
+            :queries (List[str]): List of input queries
+            :generation_config (dict): Generation configuration parameters
+
+        Return:
+            :List[numpy.ndarray]: List of generated output tokens for each prompt
+        """
+        generated_ids = []
+        for idx, (image, query) in enumerate(zip(images, queries)):
+            inputs = self.processor.process(images=[image], text=query)
+            inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
+            outputs = model.generate_from_batch(
+                inputs, generation_config, tokenizer=self.processor.tokenizer, do_sample=False
+            )
+
+            offset_output = outputs[0, inputs["input_ids"].size(1) :]
+
+            py_output = self.processor.tokenizer.decode(offset_output, skip_special_tokens=True).strip()
+            print(f"Original HF Model Outputs (Torch CPU) for prompt {idx}:")
+            print("Completion:", repr(py_output))
+            generated_ids.append(offset_output)
+        return generated_ids

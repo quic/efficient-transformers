@@ -22,6 +22,7 @@ from PIL import Image
 from transformers import AutoImageProcessor, AutoTokenizer
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -100,7 +101,7 @@ class VisionHandler:
             image = image.resize((self._image_height, self._image_width))
         else:
             logger.warning("Height and Width not specified. Using default image size for num_patches = 13.")
-            image = image.resize((1000, 747))
+            image = image.resize((constants.INTERN_IMAGE_HEIGHT, constants.INTERN_IMAGE_WIDTH))
 
         # preprocess the resized image
         pixel_value = self._processor.load_image(image, max_num=12)
@@ -164,7 +165,7 @@ class VisionHandler:
                 image = Image.open(requests.get(image_url, stream=True).raw)
             else:
                 image = Image.open(image_url)
-            image = image.resize((536, 354))
+            image = image.resize((constants.MOLMO_IMAGE_HEIGHT, constants.MOLMO_IMAGE_WIDTH))
             inputs = self._processor.process(images=[image], text=query)
             inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
             inputs["attention_mask"] = torch.ones((inputs["input_ids"].shape), dtype=torch.int64)
@@ -225,7 +226,7 @@ class VisionHandler:
                 image = Image.open(image_url)
 
             if "mistral3" in self._qeff_model.model.config.model_type:
-                image = image.resize((1540, 1540))
+                image = image.resize((constants.MISTRAL3_IMAGE_HEIGHT, constants.MISTRAL3_IMAGE_WIDTH))
 
             # Prepare conversation format
             conversation = [
