@@ -47,7 +47,7 @@ def run_model(
         kv_offload=kv_offload,
         config=config,
         qaic_config={
-            "ccl_enabled":ccl_enabled,
+            "ccl_enabled": ccl_enabled,
         },
     )
 

@@ -78,7 +78,7 @@ def run_model(
         attn_implementation="eager",
         kv_offload=kv_offload,
         qaic_config={
-            "ccl_enabled":ccl_enabled,
+            "ccl_enabled": ccl_enabled,
         },
     )
 

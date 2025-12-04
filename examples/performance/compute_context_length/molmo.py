@@ -37,7 +37,7 @@ qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     trust_remote_code=True,
     config=config,
     qaic_config={
-        "ccl_enabled":True,
+        "ccl_enabled": True,
     },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)

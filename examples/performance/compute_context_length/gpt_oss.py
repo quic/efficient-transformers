@@ -27,7 +27,7 @@ comp_ctx_lengths_prefill = comp_ctx_lengths_decode = [1024, ctx_len]
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_id,
     qaic_config={
-        "ccl_enabled":True,
+        "ccl_enabled": True,
     },
 )
 tokenizer = AutoTokenizer.from_pretrained(model_id)

@@ -42,7 +42,7 @@ if continious_batching:
         config=config,
         continuous_batching=True,
         qaic_config={
-            "ccl_enabled":True,
+            "ccl_enabled": True,
         },
     )
 
@@ -69,7 +69,7 @@ else:
         kv_offload=True,
         config=config,
         qaic_config={
-            "ccl_enabled":True,
+            "ccl_enabled": True,
         },
     )
 

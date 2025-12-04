@@ -37,7 +37,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     kv_offload=True,
     config=config,
     qaic_config={
-        "ccl_enabled":True,
+        "ccl_enabled": True,
     },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)

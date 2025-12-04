@@ -189,7 +189,7 @@ def run_intern_on_aic(
         kv_offload=kv_offload,
         trust_remote_code=True,
         qaic_config={
-            "ccl_enabled":ccl_enabled,
+            "ccl_enabled": ccl_enabled,
         },
     )
 

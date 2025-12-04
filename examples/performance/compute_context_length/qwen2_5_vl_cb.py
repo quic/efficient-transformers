@@ -38,7 +38,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     config=config,
     continuous_batching=True,
     qaic_config={
-        "ccl_enabled":True,
+        "ccl_enabled": True,
     },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
@@ -84,7 +84,7 @@ output = qeff_model.generate(
     processor=processor,
     images=image_urls,
     generation_len=100,
-    device_ids=[0,1,2,3],
+    device_ids=[0, 1, 2, 3],
 )
 print(output.generated_ids)
 print(tokenizer.batch_decode(output.generated_ids))

@@ -118,7 +118,7 @@ def main():
         args.model_name,
         continuous_batching=args.continuous_batching,
         qaic_config={
-            "ccl_enabled":args.ccl_enabled,
+            "ccl_enabled": args.ccl_enabled,
         },
     )
 

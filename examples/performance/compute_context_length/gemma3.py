@@ -30,7 +30,7 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 ctx_len = 8192
 comp_ctx_lengths_prefill = [3072]
-comp_ctx_lengths_decode = [4096, ctx_len] 
+comp_ctx_lengths_decode = [4096, ctx_len]
 
 # pass HF_TOKEN if gated model
 # For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
@@ -40,7 +40,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     attn_implementation="eager",
     kv_offload=True,
     qaic_config={
-        "ccl_enabled":True,
+        "ccl_enabled": True,
     },
 )
 

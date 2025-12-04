@@ -33,7 +33,7 @@ model = QEFFAutoModelForCausalLM.from_pretrained(
     model_name,
     continuous_batching=False,
     qaic_config={
-        "ccl_enabled":True,
+        "ccl_enabled": True,
     },
 )
 
