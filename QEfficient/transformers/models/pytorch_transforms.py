@@ -823,11 +823,6 @@ class T5ModelTransform(ModuleMappingTransform):
         T5LayerNorm: QEffT5LayerNorm,
     }
 
-    @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
-        model, transformed = super().apply(model)
-        return model, transformed
-
 
 class PoolingTransform:
     """

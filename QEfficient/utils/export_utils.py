@@ -55,19 +55,17 @@ def export_wrapper(func):
         if use_subfunctions:
             _setup_onnx_subfunctions(self, kwargs)
 
-        try:
-            # 4. Execute the actual export
-            onnx_path = func(self, *args, **kwargs)
+        # 4. Execute the actual export
+        onnx_path = func(self, *args, **kwargs)
 
-            # 5. Save export metadata
-            _save_export_metadata(export_dir, filtered_hash_params)
+        # 5. Save export metadata
+        _save_export_metadata(export_dir, filtered_hash_params)
 
-            return onnx_path
+        # 6. Always cleanup subfunctions if they were setup
+        if use_subfunctions:
+            _cleanup_onnx_subfunctions(self)
 
-        finally:
-            # 6. Always cleanup subfunctions if they were setup
-            if use_subfunctions:
-                _cleanup_onnx_subfunctions(self)
+        return onnx_path
 
     return wrapper
 
@@ -115,6 +113,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     all_args = bound_args.arguments
 
     # Use the model's current configuration for hashing to ensure any post-load modifications are captured
+    # TODO: Replace with get_model_config property of modeling classes
     qeff_model.hash_params = {
         "model_config": (
             qeff_model.model.config.to_diff_dict()

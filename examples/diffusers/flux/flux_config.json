@@ -16,7 +16,8 @@
                                           "mdp_ts_num_devices": 1,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
-                                          "aic_num_cores": 16
+                                          "aic_num_cores": 16,
+                                          "compile_only":true
                                         },
                       "execute":
                                         {
@@ -38,7 +39,8 @@
                                           "mdp_ts_num_devices": 1,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
-                                          "aic_num_cores": 16
+                                          "aic_num_cores": 16,
+                                          "compile_only": true
                                         },
                       "execute":
                                         {
@@ -62,7 +64,8 @@
                                           "convert_to_fp16": true,
                                           "aic_num_cores": 16,
                                           "mos": 1,
-                                          "mdts-mos": 1
+                                          "mdts-mos": 1,
+                                          "compile_only":true
                                         },
                       "execute":
                                         {
@@ -84,7 +87,8 @@
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
                                           "aic_num_cores": 16,
-                                          "aic-enable-depth-first": true
+                                          "aic-enable-depth-first": true,
+                                          "compile_only":true
                                         },
                       "execute":
                                         {

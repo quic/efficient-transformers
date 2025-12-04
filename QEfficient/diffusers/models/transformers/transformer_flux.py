@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 from typing import Any, Dict, Optional, Tuple, Union
-from venv import logger
 
 import numpy as np
 import torch
@@ -19,6 +18,8 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformerBlock,
     _get_qkv_projections,
 )
+
+from QEfficient.utils.logging_utils import logger
 
 
 def qeff_apply_rotary_emb(
@@ -139,7 +140,7 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
         # if hidden_states.dtype == torch.float16:
-        hidden_states = hidden_states.clip(-65504, 65504)
+        hidden_states = hidden_states.clip(torch.finfo(torch.float32).min, torch.finfo(torch.float32).max)
 
         encoder_hidden_states, hidden_states = hidden_states[:, :text_seq_len], hidden_states[:, text_seq_len:]
         return encoder_hidden_states, hidden_states
