@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import platform
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from warnings import warn
@@ -13,32 +15,29 @@ import numpy as np
 
 try:
     import qaicrt
-except ImportError:
-    import platform
-    import sys
 
-    sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
-    import qaicrt
+    is_qaicrt_imported = True
+except ImportError:
+    try:
+        sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
+        import qaicrt
+
+        is_qaicrt_imported = True
+    except ImportError:
+        is_qaicrt_imported = False
 
 try:
     import QAicApi_pb2 as aicapi
+
+    is_aicapi_imported = True
 except ImportError:
-    import sys
+    try:
+        sys.path.append("/opt/qti-aic/dev/python")
+        import QAicApi_pb2 as aicapi
 
-    sys.path.append("/opt/qti-aic/dev/python")
-    import QAicApi_pb2 as aicapi
-
-aic_to_np_dtype_mapping = {
-    aicapi.FLOAT_TYPE: np.dtype(np.float32),
-    aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
-    aicapi.INT8_Q_TYPE: np.dtype(np.int8),
-    aicapi.UINT8_Q_TYPE: np.dtype(np.uint8),
-    aicapi.INT16_Q_TYPE: np.dtype(np.int16),
-    aicapi.INT32_Q_TYPE: np.dtype(np.int32),
-    aicapi.INT32_I_TYPE: np.dtype(np.int32),
-    aicapi.INT64_I_TYPE: np.dtype(np.int64),
-    aicapi.INT8_TYPE: np.dtype(np.int8),
-}
+        is_aicapi_imported = True
+    except ImportError:
+        is_qaicrt_imported = False
 
 
 class QAICInferenceSession:
@@ -58,6 +57,25 @@ class QAICInferenceSession:
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
         """
+        if not (is_qaicrt_imported and is_aicapi_imported):
+            raise ImportError(
+                "Unable to import `qaicrt` and/or `QAicApi_pb2` libraries required for executing QPC files on the CLOUD AI platform.\n"
+                "Please ensure that the QAIC platform SDK and apps SDK are installed correctly."
+            )
+
+        # Build dtype mapping once (depends on aicapi constants)
+        self.aic_to_np_dtype_mapping = {
+            aicapi.FLOAT_TYPE: np.dtype(np.float32),
+            aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
+            aicapi.INT8_Q_TYPE: np.dtype(np.int8),
+            aicapi.UINT8_Q_TYPE: np.dtype(np.uint8),
+            aicapi.INT16_Q_TYPE: np.dtype(np.int16),
+            aicapi.INT32_Q_TYPE: np.dtype(np.int32),
+            aicapi.INT32_I_TYPE: np.dtype(np.int32),
+            aicapi.INT64_I_TYPE: np.dtype(np.int64),
+            aicapi.INT8_TYPE: np.dtype(np.int8),
+        }
+
         # Load QPC
         if device_ids is not None:
             devices = qaicrt.QIDList(device_ids)
@@ -77,7 +95,7 @@ class QAICInferenceSession:
             raise RuntimeError("Failed to getIoDescriptor")
         iodesc.ParseFromString(bytes(iodesc_data))
         self.allowed_shapes = [
-            [(aic_to_np_dtype_mapping[x.type].itemsize, list(x.dims)) for x in allowed_shape.shapes]
+            [(self.aic_to_np_dtype_mapping[x.type].itemsize, list(x.dims)) for x in allowed_shape.shapes]
             for allowed_shape in iodesc.allowed_shapes
         ]
         self.bindings = iodesc.selected_set.bindings
@@ -97,7 +115,7 @@ class QAICInferenceSession:
         # Create input qbuffers and buf_dims
         self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
         self.buf_dims = qaicrt.BufferDimensionsVecRef(
-            [(aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
+            [(self.aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
         )
 
     @property
@@ -205,6 +223,6 @@ class QAICInferenceSession:
                 continue
             outputs[output_name] = np.frombuffer(
                 bytes(output_qbuffers[buffer_index]),
-                aic_to_np_dtype_mapping[self.bindings[buffer_index].type],
+                self.aic_to_np_dtype_mapping[self.bindings[buffer_index].type],
             ).reshape(self.buf_dims[buffer_index][1])
         return outputs
