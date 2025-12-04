@@ -9,10 +9,10 @@ from typing import Tuple
 
 import onnx
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import BaseOnnxTransform
 
 
-class AdapterWeightsToInputsTransform(OnnxTransform):
+class AdapterWeightsToInputsTransform(BaseOnnxTransform):
     @classmethod
     def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> Tuple[onnx.ModelProto, bool]:
         transformed = False
