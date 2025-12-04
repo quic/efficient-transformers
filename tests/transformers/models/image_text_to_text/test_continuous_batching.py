@@ -304,8 +304,8 @@ def check_image_text_to_text_pytorch_vs_ai100_continuous_batching(
 
     n_layer = get_num_layers_vlm(config)
 
-    image_height=None
-    image_width=None
+    image_height = None
+    image_width = None
 
     images = []
     for img_url in image_urls:

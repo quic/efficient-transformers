@@ -232,7 +232,9 @@ class VisionHandler:
                 if "mistral3" in self._qeff_model.model.config.model_type:
                     image = image.resize((constants.MISTRAL3_IMAGE_HEIGHT, constants.MISTRAL3_IMAGE_WIDTH))
                 if "llava_next" in self._qeff_model.model.config.model_type:
-                    image = image.resize((constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH))
+                    image = image.resize(
+                        (constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH)
+                    )
 
             # Prepare conversation format
             conversation = [
