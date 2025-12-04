@@ -868,4 +868,6 @@ class BlockedKVAttentionTransform:
                 module.__class__ = repl_module
                 module.forward = MethodType(partial(repl_module.forward, num_kv_blocks=num_kv_blocks), module)
                 transformed = True  # Set to True if at least one transformation occurs
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
+                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
         return model, transformed
