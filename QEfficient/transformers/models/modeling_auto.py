@@ -940,7 +940,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
         self.continuous_batching = continuous_batching
-        self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+        self.ccl_enabled = False
+        if qaic_config:
+            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
 
@@ -1661,7 +1663,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             else:
                 self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+        self.ccl_enabled = False
+        if qaic_config:
+            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
@@ -2415,7 +2419,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.is_tlm = transformed
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+        self.ccl_enabled = False
+        if qaic_config:
+            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
         # ---Sampling---
