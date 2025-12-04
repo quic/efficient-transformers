@@ -84,9 +84,13 @@ ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
 ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
 ONNX_EXPORT_OPSET = 17
+FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
+SIZE_THRESHOLD_DEFAULT = 1024
+
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw"]
 DEFAULT_AIC_HW_VERSION = "ai100"
+ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
 # InternVL constants
 # Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B
@@ -127,6 +131,9 @@ WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16
 # Qwen2_5_vl Constants
 QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
+
+# Modules to cache while clearing the pytorch weights
+CACHE_MODULES = ["get_output_names", "get_dummy_inputs", "get_onnx_dynamic_axes", "get_specializations"]
 
 
 class Constants:
