@@ -366,7 +366,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 lang.append(lang_decode)
         else:
             lang_prefill = {
-                "batch_size": batch_size,
+                "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "image_size_height": image_size_height,
@@ -385,7 +385,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 lang_prefill["full_batch_exec_size"] = full_batch_size
 
             lang_decode = {
-                "batch_size": batch_size,
+                "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": "1",
                 "ctx_len": ctx_len,
                 "image_size_height": image_size_height,

@@ -304,11 +304,16 @@ def check_image_text_to_text_pytorch_vs_ai100_continuous_batching(
 
     n_layer = get_num_layers_vlm(config)
 
+    image_height=None
+    image_width=None
+
     images = []
     for img_url in image_urls:
         image = Image.open(requests.get(img_url, stream=True).raw)
         if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
-            image = image.resize((1540, 1540))
+            image_height = 1540
+            image_width = 1540
+            image = image.resize((image_height, image_width))
         images.append(image)
 
     conversation = [
@@ -370,6 +375,8 @@ def check_image_text_to_text_pytorch_vs_ai100_continuous_batching(
         images=[image_urls[0]] * full_batch_size,
         prompts=prompt_list,
         generation_len=max_gen_len,
+        image_height=image_height,
+        image_width=image_width,
     )
 
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
@@ -391,6 +398,8 @@ def check_image_text_to_text_pytorch_vs_ai100_continuous_batching(
         images=image_urls,
         prompts=queries,
         generation_len=max_gen_len,
+        image_height=image_height,
+        image_width=image_width,
     )
 
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
