@@ -28,6 +28,7 @@ def main(args, **kwargs):
         if include_sampler is not None:
             return_pdfs = args.override_qaic_config.get("aic_return_pdfs", None) == "true"
             max_top_k_ids = int(args.override_qaic_config.get("max_top_k_ids", 512))
+            np.random.seed(int(args.random_number))
             sampling_params = {
                 "repetition_penalties": np.array(args.repetition_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
                 "presence_penalties": np.array(args.presence_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
@@ -36,7 +37,9 @@ def main(args, **kwargs):
                 "top_ks": np.array(args.top_k, dtype=np.int32).repeat(bs).reshape(-1, 1),
                 "top_ps": np.array(args.top_p, dtype=np.float32).repeat(bs).reshape(-1, 1),
                 "min_ps": np.array(args.min_p, dtype=np.float32).repeat(bs).reshape(-1, 1),
-                "random_numbers": np.array(args.random_number, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                "random_numbers": np.tile(np.random.uniform(low=0.0, high=1.0, size=max_top_k_ids), (bs, 1)).astype(
+                    np.float32
+                ),
             }
     qaic_config = {
         k: v
@@ -110,10 +113,10 @@ if __name__ == "__main__":
             --repetition-penalty 1.9 \
             --presence-penalty 0.8 \
             --temperature 0.67 \
-            --top-k 54720 \
+            --top-k 54 \
             --top-p 0.89 \
             --min-p 0.6 \
-            --random-number 0.26
+            --random-number 26
 
     2. For non-continuous batching:
         python3.10 examples/on_device_sampling.py \
@@ -130,10 +133,10 @@ if __name__ == "__main__":
             --repetition-penalty 1.9 \
             --presence-penalty 0.8 \
             --temperature 0.67 \
-            --top-k 54720 \
+            --top-k 54 \
             --top-p 0.89 \
             --min-p 0.6 \
-            --random-number 0.26
+            --random-number 26
     """
 
     parser = argparse.ArgumentParser(description="Run QEfficient model with On Device Sampling")
