@@ -43,6 +43,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
+    ReplicateKVHeadTransform,
     SamplerTransform,
     SpDTransform,
     VlmKVOffloadTransform,
@@ -933,6 +934,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
+        self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
+        # Since both modules use the entire config for hash creation, we're updating the params for consistency.
+        if replicate_kv_transformed:
+            self.lang_model.hash_params["config"] = model.config.to_diff_dict()
+            self.vision_model.hash_params["config"] = model.config.to_diff_dict()
         self.continuous_batching = continuous_batching
         self.input_shapes, self.output_names = None, None
 
@@ -1631,6 +1637,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 self.model.config.text_config.use_cache = True
             else:
                 self.model.config.use_cache = True
+        self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
+        if replicate_kv_transformed:
+            self.hash_params["config"] = model.config.to_diff_dict()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     @classmethod
@@ -2254,8 +2263,10 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        n_kv_head_repeat = kwargs.pop("n_kv_head_repeat", 1)
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        kwargs.update({"n_kv_head_repeat": n_kv_head_repeat})
         return cls(
             model,
             kv_offload=kv_offload,
@@ -2361,6 +2372,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
 
         super().__init__(model, qaic_config=qaic_config, **kwargs)
+        self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
+        if replicate_kv_transformed:
+            self.hash_params["config"] = model.config.to_diff_dict()
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
@@ -2462,7 +2476,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_offload = kwargs.pop("kv_offload", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        # InternVL causes an error if we pass the n_kv_head_repeat parameter
+        n_kv_head_repeat = kwargs.pop("n_kv_head_repeat", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        kwargs.update({"n_kv_head_repeat": n_kv_head_repeat})
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
