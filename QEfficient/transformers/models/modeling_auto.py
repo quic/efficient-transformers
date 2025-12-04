@@ -752,7 +752,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model, **kwargs):
+    def __init__(self, model, qaic_config, **kwargs):
         """
         Initializes the language decoder component for multimodal models.
 
@@ -760,12 +760,19 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         ----------
         model : nn.Module
             The full HuggingFace multimodal model from which the language decoder is extracted.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations. Supported keys include:
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
+        self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     def export(
         self,
@@ -936,7 +943,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
-        self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
+        self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
         self.continuous_batching = continuous_batching
         self.input_shapes, self.output_names = None, None
 
@@ -1611,6 +1618,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         ----------
         model : nn.Module
             The full HuggingFace multimodal model.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations. Supported keys include:
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments. `full_batch_size` is not supported here.
 
@@ -1624,6 +1634,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         super().__init__(model, **kwargs)
 
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
+        self.model.qaic_config = qaic_config
 
         # to handle internvl models
         if hasattr(self.model.config, "llm_config") and hasattr(self.model.config, "vision_config"):
@@ -1636,6 +1647,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             else:
                 self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     @classmethod
     def from_pretrained(
@@ -2387,7 +2401,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.qaic_config["return_pdfs"] = True
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            BlockedKVAttentionTransform.apply(model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     @property
     def model_name(self) -> str:
