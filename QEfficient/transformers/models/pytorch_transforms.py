@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import warnings
+from functools import partial
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
@@ -850,3 +851,23 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
             model_decoder_classes.add(module.__class__)
 
     return model_decoder_classes
+
+
+class BlockedKVAttentionTransform:
+    _module_mapping = {
+        QEffLlamaAttention,
+        QEffQwen2_5_VLAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, num_kv_blocks) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in model.modules():
+            if type(module) in cls._module_mapping:
+                repl_module = type(module)
+                module.__class__ = repl_module
+                module.forward = MethodType(partial(repl_module.forward, num_kv_blocks=num_kv_blocks), module)
+                transformed = True  # Set to True if at least one transformation occurs
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
+                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
+        return model, transformed
