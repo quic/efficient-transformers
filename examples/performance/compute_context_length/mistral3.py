@@ -19,6 +19,7 @@ def run_model(
     kv_offload=False,
     prefill_seq_len=128,
     ctx_len=4096,
+    ccl_enabled=False,
     comp_ctx_lengths_prefill=None,
     comp_ctx_lengths_decode=None,
     generation_len=128,
@@ -37,15 +38,16 @@ def run_model(
 
     config = AutoConfig.from_pretrained(model_name)
     config.vision_config._attn_implementation = "eager"
+    # For Testing Purpose Only
+    config.text_config.num_hidden_layers = 4
+    config.vision_config.num_hidden_layers = 2
 
     model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_name,
         kv_offload=kv_offload,
         config=config,
         qaic_config={
-            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
-            "ctx_len": ctx_len,
+            "ccl_enabled": ccl_enabled,
         },
     )
 
@@ -58,6 +60,8 @@ def run_model(
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     ## STEP - 3 Load and process the inputs for Inference
@@ -96,6 +100,7 @@ if __name__ == "__main__":
     generation_len = 128
     num_cores = 16
     num_devices = 4
+    ccl_enabled = True
     comp_ctx_lengths_prefill = [4096]
     comp_ctx_lengths_decode = [6144, ctx_len]
 
@@ -106,6 +111,7 @@ if __name__ == "__main__":
         image_url=image_url,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
+        ccl_enabled=ccl_enabled,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         generation_len=generation_len,

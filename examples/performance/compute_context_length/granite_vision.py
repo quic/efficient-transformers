@@ -20,6 +20,7 @@ def run_model(
     kv_offload=False,
     prefill_seq_len=5500,
     ctx_len=6000,
+    ccl_enabled=False,
     comp_ctx_lengths_prefill=None,
     comp_ctx_lengths_decode=None,
     generation_len=128,
@@ -41,9 +42,7 @@ def run_model(
         token=token,
         kv_offload=kv_offload,
         qaic_config={
-            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
-            "ctx_len": ctx_len,
+            "ccl_enabled": ccl_enabled,
         },
     )
 
@@ -56,6 +55,8 @@ def run_model(
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     ## STEP - 3 Load and process the inputs for Inference
@@ -96,6 +97,7 @@ if __name__ == "__main__":
     num_cores = 16
     num_devices = 4
     ctx_len = 8192
+    ccl_enabled = True
     comp_ctx_lengths_prefill = [5500]
     comp_ctx_lengths_decode = [6144, ctx_len]
 
@@ -106,6 +108,7 @@ if __name__ == "__main__":
         image_url=image_url,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
+        ccl_enabled=ccl_enabled,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         generation_len=generation_len,
