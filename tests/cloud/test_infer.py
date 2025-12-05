@@ -24,7 +24,7 @@ def check_infer(
         num_cores=16,
         prompt=prompt,
         local_model_dir=None,
-        prompts_txt_file_path="examples/prompts.txt",
+        prompts_txt_file_path="examples/sample_prompts/prompts.txt",
         aic_enable_depth_first=True,
         mos=1,
         hf_token=None,

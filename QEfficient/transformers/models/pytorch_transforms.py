@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import warnings
+from functools import partial
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
@@ -73,6 +74,7 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
 from transformers.models.granite.modeling_granite import (
     GraniteAttention,
+    GraniteDecoderLayer,
     GraniteForCausalLM,
     GraniteModel,
     GraniteRMSNorm,
@@ -287,6 +289,7 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
 )
 from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteAttention,
+    QEffGraniteDecoderLayer,
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
@@ -551,6 +554,7 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
+        GraniteDecoderLayer: QEffGraniteDecoderLayer,
         # GraniteMoe
         GraniteMoeModel: QEffGraniteMoeModel,
         GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
@@ -848,4 +852,50 @@ class PoolingTransform:
         )
         model = PooledModel(model, pooling_method)
         warnings.warn("Pooling is applied to the model.")
+        return model, transformed
+
+
+def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
+    """
+    Dynamically determine which DecoderLayer classes should be exported as functions
+    based on the model's architecture using the existing KVCacheTransform mapping.
+    """
+    # Define patterns that identify decoder layer classes
+    DECODER_LAYER_PATTERNS = ["DecoderLayer", "Block", "Layer"]
+
+    # Get all QEff classes that are decoder layers from the existing mapping
+    decoder_layer_classes = set()
+
+    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
+        # Check if the QEff class name contains decoder layer patterns
+        qeff_class_name = qeff_class.__name__
+        if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
+            decoder_layer_classes.add(qeff_class)
+
+    # Filter to only include classes that are actually used in the current model
+    model_decoder_classes = set()
+    for module in model.modules():
+        if module.__class__ in decoder_layer_classes:
+            model_decoder_classes.add(module.__class__)
+
+    return model_decoder_classes
+
+
+class BlockedKVAttentionTransform:
+    _module_mapping = {
+        QEffLlamaAttention,
+        QEffQwen2_5_VLAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, num_kv_blocks) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in model.modules():
+            if type(module) in cls._module_mapping:
+                repl_module = type(module)
+                module.__class__ = repl_module
+                module.forward = MethodType(partial(repl_module.forward, num_kv_blocks=num_kv_blocks), module)
+                transformed = True  # Set to True if at least one transformation occurs
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
+                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
         return model, transformed

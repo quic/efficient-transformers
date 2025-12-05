@@ -39,6 +39,7 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
+    BlockedKVAttentionTransform,
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
@@ -315,7 +316,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -327,6 +328,8 @@ class QEFFAutoModel(QEFFTransformersBase):
         export_dir : str, optional
             Directory path where the exported ONNX graph will be saved. If not provided,
             the default export directory is used.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -350,6 +353,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -362,6 +366,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -388,6 +393,8 @@ class QEFFAutoModel(QEFFTransformersBase):
             Number of cores to use for compilation.
         mxfp6_matmul : bool, optional
             Use MXFP6 compression for weights. Default is False.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers. These are passed directly
             to the underlying compilation command.
@@ -431,6 +438,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -595,7 +603,15 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        offload_pt_weights=True,
+        use_onnx_subfunctions: bool = False,
+    ):
         """
         Exports the vision encoder component to ONNX format.
 
@@ -611,6 +627,8 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Directory path where the exported ONNX graph will be saved. Default is None.
         offload_pt_weights : bool, optional
             If True, PyTorch weights will be offloaded after export. Default is True.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -618,7 +636,12 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Path to the generated ONNX graph file for the vision encoder.
         """
         return self._export(
-            inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=offload_pt_weights,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -631,6 +654,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mdp_ts_num_devices,
         aic_num_cores,
         custom_io,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -654,6 +678,8 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             Number of cores to use for compilation.
         custom_io : Dict[str, str]
             Custom I/O configurations for the compiler.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options :
             Additional compiler options passed to the underlying compilation command.
 
@@ -671,6 +697,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             mdp_ts_num_devices=mdp_ts_num_devices,
             aic_num_cores=aic_num_cores,
             custom_io=custom_io,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -722,7 +749,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model, **kwargs):
+    def __init__(self, model, qaic_config, **kwargs):
         """
         Initializes the language decoder component for multimodal models.
 
@@ -730,14 +757,29 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         ----------
         model : nn.Module
             The full HuggingFace multimodal model from which the language decoder is extracted.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations. Supported keys include:
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
+        self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
+        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        export_dir=None,
+        offload_pt_weights=True,
+        use_onnx_subfunctions: bool = False,
+    ):
         """
         Exports the language decoder component to ONNX format.
 
@@ -753,6 +795,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Directory path where the exported ONNX graph will be saved. Default is None.
         offload_pt_weights : bool, optional
             If True, PyTorch weights will be offloaded after export. Default is True.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -760,7 +804,12 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Path to the generated ONNX graph file for the language decoder.
         """
         return self._export(
-            inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=offload_pt_weights,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -773,6 +822,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mdp_ts_num_devices,
         aic_num_cores,
         custom_io,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -796,6 +846,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Number of cores to use for compilation.
         custom_io : Dict[str, str]
             Custom I/O configurations for the compiler.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options :
             Additional compiler options passed to the underlying compilation command.
 
@@ -813,6 +865,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             mdp_ts_num_devices=mdp_ts_num_devices,
             aic_num_cores=aic_num_cores,
             custom_io=custom_io,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -887,7 +940,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
-        self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
+        self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
         self.continuous_batching = continuous_batching
         self.input_shapes, self.output_names = None, None
 
@@ -973,6 +1026,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def export(
         self,
         export_dir: Optional[str] = None,
+        use_onnx_subfunctions: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -985,6 +1039,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ----------
         export_dir : str, optional
             Directory path where the exported ONNX graphs will be saved. Default is None.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **kwargs :
             Additional keyword arguments.
 
@@ -1018,9 +1074,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             dynamic_axes["vision"],
             export_dir=export_dir,
             offload_pt_weights=False,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
         self.lang_model.export(
-            inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir=export_dir, offload_pt_weights=True
+            inputs["lang"],
+            output_names["lang"],
+            dynamic_axes["lang"],
+            export_dir=export_dir,
+            offload_pt_weights=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
         return self.onnx_path
@@ -1043,6 +1105,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         mxint8_kv_cache: bool = False,
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1082,6 +1145,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If True, skips compilation of the vision encoder. Default is False.
         skip_lang : bool, optional
             If True, skips compilation of the language decoder. Default is False.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1154,7 +1219,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if (self.vision_model.onnx_path is None and vision_onnx_path is None) or (
             self.lang_model.onnx_path is None and lang_onnx_path is None
         ):
-            self.export()
+            self.export(
+                use_onnx_subfunctions=use_onnx_subfunctions,
+            )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
@@ -1172,6 +1239,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 aic_num_cores=num_cores,
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
+                use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
 
@@ -1200,6 +1268,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 aic_num_cores=num_cores,
                 custom_io=custom_io_lang,
                 mxint8_kv_cache=mxint8_kv_cache,
+                use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
         return self.qpc_path
@@ -1546,6 +1615,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         ----------
         model : nn.Module
             The full HuggingFace multimodal model.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations. Supported keys include:
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments. `full_batch_size` is not supported here.
 
@@ -1559,6 +1631,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         super().__init__(model, **kwargs)
 
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
+        self.model.qaic_config = qaic_config
 
         # to handle internvl models
         if hasattr(self.model.config, "llm_config") and hasattr(self.model.config, "vision_config"):
@@ -1571,6 +1644,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             else:
                 self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     @classmethod
     def from_pretrained(
@@ -1624,6 +1700,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def export(
         self,
         export_dir: Optional[str] = None,
+        use_onnx_subfunctions: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -1644,7 +1721,13 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         output_names = self.model.get_output_names()
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        return self._export(
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
 
     def compile(
         self,
@@ -1662,6 +1745,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1697,6 +1781,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             Use MXINT8 compression for KV cache. Default is False.
         num_speculative_tokens : int, optional
             Not supported for this model; must be None.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1769,6 +1855,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
         return self.qpc_path
@@ -2232,6 +2319,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
+
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
@@ -2258,6 +2346,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             - **return_pdfs** (bool): If True, returns probability distributions along with sampled tokens.
               For Speculative Decoding Target Language Models, this is always True.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
 
@@ -2305,6 +2394,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
+
+        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     @property
     def model_name(self) -> str:
@@ -2423,7 +2515,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -2436,7 +2528,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         export_dir : str, optional
             Directory path where the exported ONNX graph will be saved.
             If not provided, the default export directory is used.
-
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         Returns
         -------
         str
@@ -2532,6 +2625,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            offload_pt_weights=kwargs.get("offload_pt_weights", True),
         )
 
     def get_sampling_inputs_and_outputs(
@@ -2742,6 +2837,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
         prefill_only: Optional[bool] = None,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -2783,6 +2879,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         prefill_only : bool, optional
             If True, compiles only for the prefill stage. If False, compiles only for
             the decode stage. If None, compiles for both stages. Default is None.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -2944,6 +3042,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             num_speculative_tokens=num_speculative_tokens,
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -3135,7 +3234,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -3147,6 +3246,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         export_dir : str, optional
             Directory path where the exported ONNX graph will be saved.
             If not provided, the default export directory is used.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns
         -------
@@ -3156,7 +3257,13 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        return self._export(
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
 
     def compile(
         self,
@@ -3174,6 +3281,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -3215,6 +3323,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             Not yet supported for this model.
         num_speculative_tokens : int, optional
             Not yet supported for this model.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC.
 
@@ -3282,6 +3392,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             custom_io=custom_io,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 
@@ -3499,12 +3610,14 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     def get_model_config(self) -> dict:
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
         ``Optional`` Args:
            :export_dir (str, optional): The directory path to store ONNX-graph.
+           :use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
@@ -3525,6 +3638,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -3537,6 +3651,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -3552,6 +3667,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
             :compiler_options (dict, optional): Additional compiler options.
 
                 For QAIC Compiler: Extra arguments for qaic-exec can be passed.
@@ -3584,6 +3700,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 

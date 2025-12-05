@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import re
 import shutil
 import subprocess
 import warnings
@@ -18,10 +19,17 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import (
+    BaseOnnxTransform,
+    CustomOpTransform,
+    OnnxTransformPipeline,
+    RenameFunctionOutputsTransform,
+)
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.cache_utils import InvalidIndexProvider
+from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils import (
     constants,
     create_json,
@@ -32,6 +40,7 @@ from QEfficient.utils import (
     hash_dict_params,
     load_json,
 )
+from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +56,7 @@ class QEFFBaseModel(ABC):
     """
 
     _pytorch_transforms: List[PytorchTransform]
-    _onnx_transforms: List[OnnxTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     @classmethod
     def _transform_names(cls) -> List[str]:
@@ -78,26 +87,26 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _offload_model_weights(self, offload_pt_weights) -> bool:
-        """
-        Clear PyTorch weights after export if offload_pt_weights is set to True
-
-        Returns:
-            bool: True if weights were successfully offloaded, False otherwise
-        """
-        # Check if offloading is enabled and weights are not already offloaded
+    def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
+        """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
-                self.model = self.model.to_empty(device="meta")
-                self._is_weights_offloaded = True
-                logger.info("Model weights offloaded to meta device")
+                for param in self.model.parameters():
+                    if param.storage():
+                        param.storage().resize_(0)
+                for buffer in self.model.buffers():
+                    if buffer.storage():
+                        buffer.storage().resize_(0)
 
+                meta_model = self.model.to("meta")
+                del self.model
                 gc.collect()
-                logger.info("PyTorch weights cleared after export")
-                return True
 
+                self.model = meta_model
+                self._is_weights_offloaded = True
+                return True
             except Exception as e:
-                logger.error(f"Failed to offload model weights: {e}")
+                logger.warning(f"Weight clearing failed, continuing: {e}")
                 return False
         return False
 
@@ -179,6 +188,7 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
+        use_onnx_subfunctions: bool = False,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
@@ -243,7 +253,19 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
+            # Initialize the registry with your custom ops
             export_kwargs = {} if export_kwargs is None else export_kwargs
+            if use_onnx_subfunctions:
+                warnings.warn(
+                    "The subfunction feature is experimental. Please note that using compile consecutively with and without subfunction may produce inconsistent results."
+                )
+                apply_torch_patches()
+                InvalidIndexProvider.SUBFUNC_ENABLED = True
+                output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
+                export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
+                self._onnx_transforms.append(RenameFunctionOutputsTransform)
+                self._onnx_transforms.append(CustomOpTransform)
+
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -255,10 +277,10 @@ class QEFFBaseModel(ABC):
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
-
             _ = self._offload_model_weights(offload_pt_weights)
-
             model = onnx.load(tmp_onnx_path, load_external_data=False)
+
+            # Clear temporary references
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
@@ -266,15 +288,18 @@ class QEFFBaseModel(ABC):
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
 
-            for transform in self._onnx_transforms:
-                model, transformed = transform.apply(model, **transform_kwargs)
+            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+            model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
+            # Add metadata to the model
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
 
             onnx.save(model, onnx_path)
+            del model
+            gc.collect()
             logger.info("Transformed ONNX saved")
 
         except Exception as e:
@@ -283,6 +308,12 @@ class QEFFBaseModel(ABC):
 
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
+
+        if use_onnx_subfunctions:
+            undo_torch_patches()
+            InvalidIndexProvider.SUBFUNC_ENABLED = False
+            self._onnx_transforms.remove(CustomOpTransform)
+            self._onnx_transforms.remove(RenameFunctionOutputsTransform)
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -300,6 +331,7 @@ class QEFFBaseModel(ABC):
         num_speculative_tokens: Optional[int] = None,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -325,8 +357,9 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
+
         if onnx_path is None and self.onnx_path is None:
-            self.export()
+            self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)

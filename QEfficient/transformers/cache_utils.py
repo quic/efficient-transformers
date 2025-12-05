@@ -15,6 +15,8 @@ from transformers.cache_utils import DynamicCache, DynamicLayer, EncoderDecoderC
 from QEfficient.customop import (
     CtxGatherFunc,
     CtxGatherFunc3D,
+    CtxGatherFuncBlockedKV,
+    CtxGatherFuncBlockedKVCB,
     CtxGatherFuncCB,
     CtxGatherFuncCB3D,
     CtxScatterFunc,
@@ -22,6 +24,33 @@ from QEfficient.customop import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
+
+
+class InvalidIndexProvider:
+    SUBFUNC_ENABLED = False
+
+    @classmethod
+    def enable_subfunc(cls):
+        cls.SUBFUNC_ENABLED = True
+
+    @classmethod
+    def _get_invalid_idx_value(cls):
+        """
+        Get the appropriate invalid index value for CtxGather operations.
+
+        For ONNX export with functions, we use 0 to avoid INT32_MAX constants
+        that cause issues when functions are inlined at runtime.
+
+        Returns:
+            int: Invalid index value (0 for ONNX functions, INT32_MAX otherwise)
+        """
+        if torch.onnx.is_in_onnx_export():
+            if cls.SUBFUNC_ENABLED:
+                return 0
+            else:
+                return torch.iinfo(torch.int32).max
+        else:
+            return 0
 
 
 class QEffDynamicLayer(DynamicLayer):
@@ -46,10 +75,7 @@ class QEffDynamicLayer(DynamicLayer):
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
 
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
@@ -59,6 +85,50 @@ class QEffDynamicLayer(DynamicLayer):
         else:
             k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
             v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
+
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        return k_out, v_out
+
+    def read_only_blockedKV(self, start_index, end_index, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer for each KV block.
+
+        Parameters:
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+            start_index (`int`):
+                Start index of the K/V block to read
+
+            end_index (`int`):
+                End index of the K/V block to read
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        # Gather
+        k_out, v_out = self.keys, self.values
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)
+        batch, num_kv_heads, _, _ = k_out.shape
+        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        if batch_index is not None:
+            k_out = CtxGatherFuncBlockedKVCB.apply(k_out, batch_index, ctx_indices)
+            v_out = CtxGatherFuncBlockedKVCB.apply(v_out, batch_index, ctx_indices)
+        else:
+            ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+            k_out = CtxGatherFuncBlockedKV.apply(k_out, ctx_indices)
+            v_out = CtxGatherFuncBlockedKV.apply(v_out, ctx_indices)
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
@@ -143,10 +213,7 @@ class QEffDynamicLayer(DynamicLayer):
             gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
 
-            if torch.onnx.is_in_onnx_export():
-                invalid_idx_value = torch.iinfo(torch.int32).max
-            else:
-                invalid_idx_value = 0
+            invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
             if batch_index is not None:
@@ -262,6 +329,25 @@ class QEffDynamicCache(DynamicCache):
             A tuple containing the updated key and value states.
         """
         return self.layers[layer_idx].read_only(cache_kwargs)
+
+    def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            start_index (`int`):
+                Start index of the K/V block to read
+            end_index (`int`):
+                End index of the K/V block to read
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        return self.layers[layer_idx].read_only_blockedKV(start_index, end_index, cache_kwargs)
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
@@ -419,10 +505,7 @@ class QEffHybridCache(HybridCache):
             ctx_indices = torch.arange(ctx_len)[None, None, ...]
             gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
-            if torch.onnx.is_in_onnx_export():
-                invalid_idx_value = torch.iinfo(torch.int32).max
-            else:
-                invalid_idx_value = 0
+            invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
             all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
