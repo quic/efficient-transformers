@@ -260,8 +260,13 @@ class QEFFBaseModel(ABC):
                     "The subfunction feature is experimental. Please note that using compile consecutively with and without subfunction may produce inconsistent results."
                 )
                 apply_torch_patches()
-                InvalidIndexProvider.SUBFUNC_ENABLED = True
-                output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
+                InvalidIndexProvider.SUBFUNC_ENABLED = True       
+                output_names = [
+                    re.sub("_RetainedState", "_InternalRetainedState", name)
+                    if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+                    else name
+                    for name in output_names
+                ]
                 export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
                 self._onnx_transforms.append(RenameFunctionOutputsTransform)
                 self._onnx_transforms.append(CustomOpTransform)

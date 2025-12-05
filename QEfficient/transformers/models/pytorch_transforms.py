@@ -832,23 +832,28 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
     Dynamically determine which DecoderLayer classes should be exported as functions
     based on the model's architecture using the existing KVCacheTransform mapping.
     """
-    # Define patterns that identify decoder layer classes
-    DECODER_LAYER_PATTERNS = ["DecoderLayer", "Block", "Layer"]
 
-    # Get all QEff classes that are decoder layers from the existing mapping
+    DECODER_LAYER_PATTERNS = ["DecoderLayer", "Block", "Layer"]
     decoder_layer_classes = set()
 
     for original_class, qeff_class in KVCacheTransform._module_mapping.items():
-        # Check if the QEff class name contains decoder layer patterns
         qeff_class_name = qeff_class.__name__
         if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
             decoder_layer_classes.add(qeff_class)
 
-    # Filter to only include classes that are actually used in the current model
     model_decoder_classes = set()
-    for module in model.modules():
-        if module.__class__ in decoder_layer_classes:
-            model_decoder_classes.add(module.__class__)
+    model_class_name = model.__class__.__name__
+    if "EncoderWrapper" in model_class_name:
+        model_decoder_classes.update(
+            module.__class__ for module in model.modules()
+            if "Qwen2_5_VLVisionBlock" in module.__class__.__name__
+        )
+        return model_decoder_classes
+
+    model_decoder_classes.update(
+        module.__class__ for module in model.modules()
+        if module.__class__ in decoder_layer_classes
+    )
 
     return model_decoder_classes
 

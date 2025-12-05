@@ -10,6 +10,7 @@
 import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
+import warnings
 
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
@@ -37,9 +38,15 @@ def _setup_trace_module_map_patched(
             if hasattr(module, attr_name):
                 onnx_attrs = getattr(module, attr_name)
                 delattr(module, attr_name)
+            
             # FIX: use empty dict to avoid type mismatch
-            onnx_attrs = {}
-            _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
+            # onnx_attrs = {}
+            try:
+                _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
+            except Exception as e:
+                warnings.warn(
+                    f"Failed to track ONNX scope attributes: {e}. Skipping this step."
+                )
 
         for m in model.modules():
             m.register_forward_hook(_track_module_attributes_forward_hook)

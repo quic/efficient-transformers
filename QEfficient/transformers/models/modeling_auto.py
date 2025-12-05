@@ -1067,7 +1067,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
             )
         output_names = self.model.get_output_names(kv_offload=True)
-
         self.vision_model.export(
             inputs["vision"],
             output_names["vision"],
