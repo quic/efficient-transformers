@@ -568,6 +568,7 @@ def export_wrapper(func):
             onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
             use_onnx_subfunctions=all_args.get("use_onnx_subfunctions", False),
         )
+
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
         self.export_hash = export_hash
