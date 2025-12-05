@@ -1646,7 +1646,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         super().__init__(model, **kwargs)
 
-        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
         self.model.qaic_config = qaic_config
 
         # to handle internvl models
