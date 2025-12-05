@@ -27,10 +27,7 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import (
-    FP16ClipTransform,
-    SplitTensorsTransform,
-)
+from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
@@ -42,6 +39,7 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
+    BlockedKVAttentionTransform,
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
@@ -761,7 +759,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         model : nn.Module
             The full HuggingFace multimodal model from which the language decoder is extracted.
         qaic_config : dict, optional
-            A dictionary for QAIC-specific configurations.
+            A dictionary for QAIC-specific configurations. Supported keys include:
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
@@ -769,6 +768,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     def export(
         self,
@@ -1634,6 +1636,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         ----------
         model : nn.Module
             The full HuggingFace multimodal model.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations. Supported keys include:
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments. `full_batch_size` is not supported here.
 
@@ -1652,6 +1657,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         super().__init__(model, **kwargs)
 
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
+        self.model.qaic_config = qaic_config
 
         # to handle internvl models
         if hasattr(self.model.config, "llm_config") and hasattr(self.model.config, "vision_config"):
@@ -1664,6 +1670,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             else:
                 self.model.config.use_cache = True
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     @classmethod
     def from_pretrained(
@@ -2337,10 +2346,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [
-        FP16ClipTransform,
-        SplitTensorsTransform,
-    ]
+
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
         self,
@@ -2368,6 +2375,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
             - **include_guided_decoding** (bool): If True, enables guided token-level filtering
               during decoding. Only works when include_sampler=True.
+            - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
 
@@ -2415,6 +2423,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
+
+        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     @property
     def model_name(self) -> str:
