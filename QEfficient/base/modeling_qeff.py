@@ -260,7 +260,7 @@ class QEFFBaseModel(ABC):
                     "The subfunction feature is experimental. Please note that using compile consecutively with and without subfunction may produce inconsistent results."
                 )
                 apply_torch_patches()
-                InvalidIndexProvider.SUBFUNC_ENABLED = True       
+                InvalidIndexProvider.SUBFUNC_ENABLED = True
                 output_names = [
                     re.sub("_RetainedState", "_InternalRetainedState", name)
                     if name.endswith("_RetainedState") and ("key" in name or "value" in name)

@@ -75,12 +75,13 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     """
     cos = cos[position_ids]
     sin = sin[position_ids]
-    cos = torch.cat([cos[0,..., 0:32],cos[0,..., 32:80], cos[0,..., 80:128]], dim=-1).unsqueeze(0)
-    sin = torch.cat([sin[0,..., 0:32],sin[0,..., 32:80], sin[0,..., 80:128]], dim=-1).unsqueeze(0)    
+    cos = torch.cat([cos[0, ..., 0:32], cos[0, ..., 32:80], cos[0, ..., 80:128]], dim=-1).unsqueeze(0)
+    sin = torch.cat([sin[0, ..., 0:32], sin[0, ..., 32:80], sin[0, ..., 80:128]], dim=-1).unsqueeze(0)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
-    
+
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
+
 
 class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
     def __init__(self, dim: int, num_heads: int = 16) -> None:
