@@ -88,6 +88,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         full_batch_size: Optional[int] = None,
+        image_height: Optional[int] = None,
+        image_width: Optional[int] = None,
         is_tlm: bool = False,
         include_sampler: bool = False,
         return_pdfs: bool = False,
@@ -107,6 +109,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             enable_debug_logs: Enable debug logging
             write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
+            image_height: Desired image height for resizing
+            image_width: Desired image width for resizing
             is_tlm: Target language model flag
             include_sampler: Enable on-device sampling (new feature)
             return_pdfs: Return probability distributions
@@ -143,6 +147,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
         self.qeff_model = qeff_model
         self.processor = processor
+        self.tokenizer = tokenizer
+        self.image_height = image_height
+        self.image_width = image_width
         self._vision_qpc_path = vision_qpc_path
         self.device_id = device_id  # Store device_id for vision components
         self.enable_debug_logs = enable_debug_logs  # Store for vision components
@@ -173,6 +180,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             qeff_model=self.qeff_model,
             vision_session=self._vision_session,
             processor=self.processor,
+            tokenizer=self.tokenizer,
+            image_height=self.image_height,
+            image_width=self.image_width,
             config=vision_config,
             lang_session=self._session,  # Pass language session for coordination
         )

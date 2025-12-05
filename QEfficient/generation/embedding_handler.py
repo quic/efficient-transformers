@@ -12,15 +12,17 @@ This module provides the VisionHandler class that encapsulates all vision model
 operations, separating them from the main text generation logic.
 """
 
-from typing import Any, Dict, Optional, Tuple
+from io import BytesIO
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import requests
 import torch
 from PIL import Image
-from transformers import AutoImageProcessor
+from transformers import AutoImageProcessor, AutoTokenizer
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -37,6 +39,9 @@ class VisionHandler:
         qeff_model: Optional[QAICInferenceSession],
         vision_session: Optional[QAICInferenceSession],
         processor: Optional[AutoImageProcessor],
+        tokenizer: Optional[AutoTokenizer],
+        image_height: Optional[int] = None,
+        image_width: Optional[int] = None,
         config: Optional[Dict[str, Any]] = None,
         lang_session: Optional[QAICInferenceSession] = None,
     ):
@@ -46,12 +51,18 @@ class VisionHandler:
         Args:
             vision_session: QAICInferenceSession for vision model
             processor: AutoImageProcessor for image preprocessing
+            tokenizer: AutoTokenizer for text tokenization
+            image_height: Desired image height for resizing
+            image_width: Desired image width for resizing
             config: Configuration dictionary with vision model parameters
             lang_session: Optional language session for coordination (to avoid resource conflicts)
         """
         self._qeff_model = qeff_model
         self._vision_session = vision_session
         self._processor = processor
+        self._tokenizer = tokenizer
+        self._image_height = image_height
+        self._image_width = image_width
         self._config = config or {}
         self._lang_session = lang_session  # Store language session for coordination
 
@@ -70,6 +81,124 @@ class VisionHandler:
         """
         return self._vision_session is not None and self._processor is not None
 
+    def prepare_internVL_inputs(self, img_url: str, prompt: str) -> Dict[str, np.ndarray]:
+        """
+        Prepare inputs for InternVL model
+
+        Args:
+            image_url: URL or path to image
+            prompt: Text query to process with image
+        """
+        if not self._tokenizer:
+            raise ValueError("Tokenizer is required for InternVL input preparation")
+        pixel_values = []
+        num_patches_list = []
+        questions = []
+        img = requests.get(img_url, stream=True)
+        image = Image.open(BytesIO(img.content)).convert("RGB")
+
+        if self._image_height and self._image_width:
+            image = image.resize((self._image_height, self._image_width))
+        else:
+            logger.warning("Height and Width not specified. Using default image size for num_patches = 13.")
+            image = image.resize((constants.INTERN_IMAGE_HEIGHT, constants.INTERN_IMAGE_WIDTH))
+
+        # preprocess the resized image
+        pixel_value = self._processor.load_image(image, max_num=12)
+        num_patches_list.append(pixel_value.shape[0])
+        pixel_values.append(pixel_value)
+
+        question = "<image>\n" + prompt
+        questions.append(question)
+
+        pixel_values = torch.cat(pixel_values, dim=0)
+
+        # Chat Template information for prompt preprocessing
+        messages: List[List[str]] = []
+        roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+        prompt = self._processor(pixel_values, questions, messages, roles, num_patches_list=num_patches_list)
+
+        inputs = self._tokenizer(prompt, return_tensors="pt")
+        inputs["pixel_values"] = pixel_values.clone()
+
+        # Convert to numpy arrays
+        vision_inputs = {}
+        for k, v in inputs.items():
+            if k in {
+                "pixel_values",
+                "image_masks",
+                "image_input_idx",
+                "valid_idx",
+                "aspect_ratio_ids",
+                "aspect_ratio_mask",
+            }:
+                vision_inputs[k] = np.array(v)
+
+        # Convert specific inputs to float16
+        vision_inputs_fp16 = {"pixel_values", "image_masks"}
+        for k in vision_inputs_fp16:
+            if k in vision_inputs:
+                vision_inputs[k] = vision_inputs[k].astype("float16")
+
+        lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
+
+        return vision_inputs, lang_inputs
+
+    def prepare_molmo_inputs(self, image_url: str, query: str) -> Dict[str, np.ndarray]:
+        """
+        Download and preprocess image into model inputs
+        Args:
+            image_url: URL or path to image
+            query: Text query to process with image
+        Returns:
+            Dictionary of vision model inputs
+        Raises:
+            ValueError: If vision handler is not properly initialized
+            RuntimeError: If image processing fails
+        """
+        if not self.is_available():
+            raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
+
+        try:
+            # Download image
+            if image_url.startswith(("http://", "https://")):
+                image = Image.open(requests.get(image_url, stream=True).raw)
+            else:
+                image = Image.open(image_url)
+            image = image.resize((constants.MOLMO_IMAGE_HEIGHT, constants.MOLMO_IMAGE_WIDTH))
+            inputs = self._processor.process(images=[image], text=query)
+            inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
+            inputs["attention_mask"] = torch.ones((inputs["input_ids"].shape), dtype=torch.int64)
+            valid = inputs["image_input_idx"] > 0
+            valid = valid.reshape(1, -1)
+            inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
+            inputs["pixel_values"] = inputs.pop("images")
+
+            # Convert to numpy arrays
+            vision_inputs = {}
+            for k, v in inputs.items():
+                if k in {
+                    "pixel_values",
+                    "image_masks",
+                    "image_input_idx",
+                    "valid_idx",
+                    "aspect_ratio_ids",
+                    "aspect_ratio_mask",
+                }:
+                    vision_inputs[k] = np.array(v)
+
+            # Convert specific inputs to float16
+            vision_inputs_fp16 = {"pixel_values", "image_masks"}
+            for k in vision_inputs_fp16:
+                if k in vision_inputs:
+                    vision_inputs[k] = vision_inputs[k].astype("float16")
+
+            lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
+
+            return vision_inputs, lang_inputs
+        except Exception as e:
+            raise RuntimeError(f"Failed to process image {image_url}: {str(e)}")
+
     def prepare_vlm_inputs(self, image_url: str, query: str, prefill_seq_len: int) -> Dict[str, np.ndarray]:
         """
         Download and preprocess image into model inputs
@@ -77,6 +206,7 @@ class VisionHandler:
         Args:
             image_url: URL or path to image
             query: Text query to process with image
+            prefill_seq_len: Padded sequence length for language model
 
         Returns:
             Dictionary of vision model inputs
@@ -94,6 +224,17 @@ class VisionHandler:
                 image = Image.open(requests.get(image_url, stream=True).raw)
             else:
                 image = Image.open(image_url)
+
+            if self._image_height and self._image_width:
+                image = image.resize((self._image_width, self._image_height))
+            else:
+                logger.warning("Height and Width not specified. Using default image size.")
+                if "mistral3" in self._qeff_model.model.config.model_type:
+                    image = image.resize((constants.MISTRAL3_IMAGE_HEIGHT, constants.MISTRAL3_IMAGE_WIDTH))
+                if "llava_next" in self._qeff_model.model.config.model_type:
+                    image = image.resize(
+                        (constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH)
+                    )
 
             # Prepare conversation format
             conversation = [
@@ -323,7 +464,18 @@ class VisionHandler:
 
         try:
             ## Get vlm inputs ##
-            vision_inputs, lang_inputs = self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
+            if (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "internvl_chat"
+            ):
+                vision_inputs, lang_inputs = self.prepare_internVL_inputs(image_url, query)
+            elif (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "molmo"
+            ):
+                vision_inputs, lang_inputs = self.prepare_molmo_inputs(image_url, query)
+            else:
+                vision_inputs, lang_inputs = self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
 
             # Handle padding for language model
             pad_token_id = 1

@@ -1284,6 +1284,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
         generation_len: Optional[int] = None,
+        image_height: Optional[int] = None,
+        image_width: Optional[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generates output by executing the compiled QPC(s) on Cloud AI 100 Hardware cards.
@@ -1342,6 +1344,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 full_batch_size=fbs,
                 comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
+                image_height=image_height,
+                image_width=image_width,
             )
 
             # Call generate method
@@ -2493,6 +2497,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_offload=kv_offload,
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
                 qaic_config=qaic_config,
+                continuous_batching=continuous_batching,
                 **kwargs,
             )
         return cls(

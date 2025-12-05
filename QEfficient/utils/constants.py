@@ -100,6 +100,8 @@ INTERN_IMG_SIZE = 448
 INTERN_CTX_LEN = 4096
 INTERN_PREFILL_SEQ_LEN = INTERN_CTX_LEN - 256  # 4096-256
 INTERN_NUM_CHANNELS = 3
+INTERN_IMAGE_HEIGHT = 1000
+INTERN_IMAGE_WIDTH = 747
 
 INTERN_IMG_CONTEXT_TOKEN = 151667
 # Specific to InternVL3_5 series, same token won't work for InternVL2_5 series
@@ -134,6 +136,14 @@ QWEN2_5_VL_WIDTH = 536
 
 # Modules to cache while clearing the pytorch weights
 CACHE_MODULES = ["get_output_names", "get_dummy_inputs", "get_onnx_dynamic_axes", "get_specializations"]
+
+# Mistral3 Constants
+MISTRAL3_IMAGE_HEIGHT = 1540
+MISTRAL3_IMAGE_WIDTH = 1540
+
+# Molmo Constants
+MOLMO_IMAGE_HEIGHT = 536
+MOLMO_IMAGE_WIDTH = 354
 
 
 class Constants:
