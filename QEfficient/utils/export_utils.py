@@ -114,13 +114,15 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
 
     # Use the model's current configuration for hashing to ensure any post-load modifications are captured
     # TODO: Replace with get_model_config property of modeling classes
-    qeff_model.hash_params = {
-        "model_config": (
-            qeff_model.model.config.to_diff_dict()
-            if hasattr(qeff_model.model.config, "to_diff_dict")
-            else qeff_model.model.config
-        ),
-    }
+    qeff_model.hash_params.update(
+        {
+            "model_config": (
+                qeff_model.model.config.to_diff_dict()
+                if hasattr(qeff_model.model.config, "to_diff_dict")
+                else qeff_model.model.config
+            ),
+        }
+    )
 
     # Generate hash from relevant parameters
     export_hash, filtered_hash_params = create_export_hash(
