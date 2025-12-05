@@ -51,11 +51,16 @@ class EnhancedProgressCallback(ProgressCallback):
         super().__init__(*args, **kwargs)
 
     def on_train_begin(self, args, state, control, **kwargs):
+        """Set progress bar description at the start of training."""
         super().on_train_begin(args, state, control, **kwargs)
         if self.training_bar is not None:
             self.training_bar.set_description("Training Progress")
 
     def on_log(self, args, state, control, logs=None, **kwargs):
+        """
+        Override the default `on_log` behavior during training to display
+        the current epoch number, loss, and learning rate in the logs.
+        """
         if state.is_world_process_zero and self.training_bar is not None:
             # make a shallow copy of logs so we can mutate the fields copied
             # but avoid doing any value pickling.
@@ -113,10 +118,11 @@ class JSONLoggerCallback(TrainerCallback):
         logs: Optional[Dict] = None,
         **kwargs,
     ):
+        """Append sanitized log metrics (including global_step) to a JSONL file."""
         if logs is None:
             return
-        logs.pop("entropy")
-        logs.pop("mean_token_accuracy")
+        logs.pop("entropy", None)
+        logs.pop("mean_token_accuracy", None)
         if state.global_step:
             logs["global_step"] = state.global_step
         if logs is not None:
@@ -127,7 +133,13 @@ class JSONLoggerCallback(TrainerCallback):
 
 @registry.callback("qaic_profiler_callback")
 class QAICProfilerCallback(TrainerCallback):
+    """Callback to profile QAIC devices over a specified training step range."""
+
     def __init__(self, *args, **kwargs):
+        """
+        Initialize QAIC profiler settings (start/end steps and target device IDs).
+        """
+
         self.start_step = kwargs.get("start_step", -1)
         self.end_step = kwargs.get("end_step", -1)
         self.device_ids = kwargs.get("device_ids", [0])
@@ -147,7 +159,12 @@ class QAICProfilerCallback(TrainerCallback):
 
 @registry.callback("qaic_op_by_op_verifier_callback")
 class QAICOpByOpVerifierCallback(TrainerCallback):
+    """Callback to verify QAIC operations step-by-step during a specified training range."""
+
     def __init__(self, *args, **kwargs):
+        """ "
+        Initialize QAIC Op-by-Op verifier callback with profiling and tolerance settings.
+        """
         self.start_step = kwargs.get("start_step", -1)
         self.end_step = kwargs.get("end_step", -1)
         self.trace_dir = kwargs.get("trace_dir", "qaic_op_by_op_traces")

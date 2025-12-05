@@ -13,22 +13,8 @@ from QEfficient.finetune.experimental.core.component_registry import registry
 
 
 class ModelSummaryCallback(TrainerCallback):
-    def __init__(self, max_depth=1):
-        self.max_depth = max_depth
-
-    def on_train_begin(self, args, state, control, **kwargs):
-        model = kwargs.get("model")
-        if model is not None:
-            print("\n=== Model Summary ===")
-            print(model.__class__.__name__)
-            # Print layers up to max_depth
-            depth = 0
-            for name, module in model.named_children():
-                print(f"  {name}: {module.__class__.__name__}")
-                depth += 1
-                if depth >= self.max_depth:
-                    break
-            print("======================\n")
+    def __init__(self):
+        pass
 
 
 # Setup test data
@@ -68,6 +54,7 @@ def test_callbacks(callback_name):
         assert callback_inst.callback is not None
     else:
         assert callback_inst is not None
+        assert isinstance(callback_inst, TrainerCallback)
 
 
 @pytest.mark.parametrize("callback_name,callback_class", REGISTRY_CALLBACK_CONFIGS.items())
