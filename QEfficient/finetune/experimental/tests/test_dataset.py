@@ -507,6 +507,22 @@ def custom_completion(example):
 
         self.assertIn("not available", str(context.exception))
 
+    def test_sft_dataset_invalid_json_path(self):
+        """Test error when an invalid JSON file path is provided."""
+        invalid_path = "/path/to/nonexistent/file.json"
+
+        with self.assertRaises(FileNotFoundError) as context:
+            SFTDataset(
+                dataset_name="dummy",
+                split="train",
+                json_file_path=invalid_path,
+                prompt_template="Q: {question}",
+                completion_template="A: {answer}",
+            )
+
+        self.assertIn("JSON file not found or invalid", str(context.exception))
+        self.assertIn(invalid_path, str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

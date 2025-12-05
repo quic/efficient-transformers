@@ -17,3 +17,15 @@ def insert_pad_token(tokenizer):
         else:
             # Add a new pad token
             tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+
+
+def apply_train_test_split(dataset, split_ratio, split, seed):
+    """
+    Apply train/test split to the dataset based on split_ratio.
+    """
+    splitted_dataset = dataset.train_test_split(test_size=(1 - split_ratio), seed=seed)
+    if split == "test":
+        dataset = splitted_dataset["test"]
+    else:
+        dataset = splitted_dataset["train"]
+    return dataset

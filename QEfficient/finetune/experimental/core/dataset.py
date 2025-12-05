@@ -10,6 +10,7 @@ Dataset components for the training system.
 """
 
 import importlib
+import os
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict
@@ -18,6 +19,9 @@ from datasets import load_dataset, load_dataset_builder
 from torch.utils.data import Dataset
 
 from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.utils.dataset_utils import (
+    apply_train_test_split,
+)
 
 
 class BaseDataset(Dataset, ABC):
@@ -88,6 +92,9 @@ class SFTDataset(BaseDataset):
         self.completion_func_path = kwargs.get("completion_func", None)
         self.remove_samples_with_empty_columns = kwargs.get("remove_samples_with_empty_columns", True)
 
+        if self.json_file_path not in (None, ""):
+            if not os.path.isfile(self.json_file_path):
+                raise FileNotFoundError(f"JSON file not found or invalid: '{self.json_file_path}'")
         if (self.prompt_template is None and self.prompt_func_path is None) or (
             self.prompt_template is not None and self.prompt_func_path is not None
         ):
@@ -99,16 +106,6 @@ class SFTDataset(BaseDataset):
 
         # Call parent class __init__ which will call _initialize_dataset
         super().__init__(dataset_name, split, seed, **kwargs)
-
-    def _apply_train_test_split(self):
-        """
-        Apply train/test split to the dataset based on split_ratio.
-        """
-        splitted_dataset = self.dataset.train_test_split(test_size=(1 - self.split_ratio), seed=self.seed)
-        if self.split == "test":
-            self.dataset = splitted_dataset["test"]
-        else:
-            self.dataset = splitted_dataset["train"]
 
     def _initialize_dataset(self):
         """
@@ -123,7 +120,7 @@ class SFTDataset(BaseDataset):
 
             # Apply train/test split if needed
             if self.split in ["train", "test"]:
-                self._apply_train_test_split()
+                self.dataset = apply_train_test_split(self.dataset, self.split_ratio, self.split, self.seed)
         else:
             # Load dataset from HuggingFace
             db = load_dataset_builder(self.dataset_name)
@@ -138,12 +135,11 @@ class SFTDataset(BaseDataset):
             self.dataset = load_dataset(self.dataset_name, split=self.split)
 
             if len(available_splits) == 1:
-                self._apply_train_test_split()
+                self.dataset = apply_train_test_split(self.dataset, self.split_ratio, self.split, self.seed)
 
-        self.dataset_columns = self.dataset.column_names
-        self._setup_templates()
+        self.dataset = self._setup_templates(self.dataset, self.dataset.column_names)
 
-    def _setup_templates(self):
+    def _setup_templates(self, dataset, dataset_columns):
         """
         Set up prompt/completion templates or functions and apply preprocessing.
         """
@@ -152,12 +148,12 @@ class SFTDataset(BaseDataset):
             # Extract variables from templates and check if they exist in dataset columns
             prompt_variables = re.findall(r"\{(.*?)\}", self.prompt_template)
             for var in prompt_variables:
-                if var not in self.dataset_columns:
+                if var not in dataset_columns:
                     raise RuntimeError(
-                        f"Prompt template variable '{var}' not found in dataset columns: {self.dataset_columns}."
+                        f"Prompt template variable '{var}' not found in dataset columns: {dataset_columns}."
                     )
         else:
-            prompt_variables = self.dataset_columns
+            prompt_variables = dataset_columns
             self.prompt_func = self.import_func(self.prompt_func_path)
 
         if self.completion_template:
@@ -165,20 +161,19 @@ class SFTDataset(BaseDataset):
             # Extract variables from templates and check if they exist in dataset columns
             completion_variables = re.findall(r"\{(.*?)\}", self.completion_template)
             for var in completion_variables:
-                if var not in self.dataset_columns:
+                if var not in dataset_columns:
                     raise RuntimeError(
-                        f"Completion template variable '{var}' not found in dataset columns: {self.dataset_columns}."
+                        f"Completion template variable '{var}' not found in dataset columns: {dataset_columns}."
                     )
         else:
-            completion_variables = self.dataset_columns
+            completion_variables = dataset_columns
             self.completion_func = self.import_func(self.completion_func_path)
 
         # Filter out samples with None or empty strings in relevant columns
         relevant_columns = list(set(prompt_variables + completion_variables))
         if self.remove_samples_with_empty_columns:
-            self.dataset = self.dataset.filter(
-                lambda example: self._filter_empty_or_none_samples(example, relevant_columns)
-            )
+            dataset = dataset.filter(lambda example: self._filter_empty_or_none_samples(example, relevant_columns))
+        return dataset
 
     def import_func(self, func_path: str) -> Callable:
         if ":" not in func_path:
