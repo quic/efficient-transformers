@@ -24,6 +24,8 @@ class SamplerOutput(ModelOutput):
 
     probs: torch.FloatTensor = None
     next_tokens: torch.IntTensor = None
+    vision_embeds: Optional[torch.FloatTensor] = None  # For VLMs
+    image_idx: Optional[torch.IntTensor] = None  # for VLMs
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     past_repetition_penalty_buffer: Optional[torch.Tensor] = None
     past_presence_penalty_buffer: Optional[torch.Tensor] = None
@@ -103,6 +105,7 @@ def sampler_forward(
     attention_mask: Optional[torch.Tensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
     past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+    comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     inputs_embeds: Optional[torch.FloatTensor] = None,
     labels: Optional[torch.LongTensor] = None,
@@ -122,6 +125,9 @@ def sampler_forward(
     top_ps: Optional[torch.Tensor] = None,
     min_ps: Optional[torch.Tensor] = None,
     random_numbers: Optional[torch.Tensor] = None,
+    vision_embeds: Optional[torch.Tensor] = None,
+    image_idx: Optional[torch.Tensor] = None,
+    token_bitmasks: Optional[torch.Tensor] = None,
 ) -> Union[Tuple, SamplerOutput]:
     r"""
     Perform the sampling of next tokens on the QAIC device (instead of the host)
@@ -169,21 +175,43 @@ def sampler_forward(
         random_numbers (`torch.Tensor`, *optional*):
             Sampling parameter that represents the random seeds to use for random sampling.
             Must be in [-1, 1].
-    """
 
-    outputs = self.old_forward(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        position_ids=position_ids,
-        past_key_values=past_key_values,
-        batch_index=batch_index,
-        inputs_embeds=inputs_embeds,
-        use_cache=use_cache,
-        output_attentions=output_attentions,
-        output_hidden_states=output_hidden_states,
-        return_dict=return_dict,
-        cache_position=cache_position,
-    )
+        token_bitmasks (`torch.Tensor`, *optional*):
+            Boolean mask used to guide token-level filtering during decoding. Each
+            element of this tensor indicates whether the corresponding token should be
+            kept (1) or masked (0). Shape: (batch_size, vocab_size)
+    """
+    if vision_embeds is not None:
+        forward_kwargs = dict(
+            input_ids=input_ids,
+            vision_embeds=vision_embeds,
+            position_ids=position_ids,
+            image_idx=image_idx,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+        )
+        if batch_index is not None:
+            forward_kwargs["batch_index"] = batch_index
+
+        logits, vision_embeds, image_idx, past_key_values = self.old_forward(**forward_kwargs)
+        outputs = dict(logits=logits, vision_embeds=vision_embeds, image_idx=image_idx, past_key_values=past_key_values)
+        if position_ids.dim() == 3:  # For models using m-rope
+            position_ids = position_ids[0]
+    else:
+        outputs = self.old_forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            cache_position=cache_position,
+        )
 
     logits = outputs.get("logits", None)
     assert logits is not None, f"{self.model.__class__.__name__} does not return logits."
@@ -197,6 +225,13 @@ def sampler_forward(
         batch_index = torch.arange(batch_size).view(-1, 1)
 
     batch_index_reshaped = batch_index.view(-1)
+
+    # Guided decoding
+    if token_bitmasks is not None and (token_bitmasks != 1).any():
+        assert spec_length == 1, "Currently, guided decoding is not supported with Speculative Decoding"
+        # Mask logits where token_bitmasks is 0 with -inf
+        logits = torch.where(token_bitmasks == 1, logits, torch.finfo(torch.float16).min)
+
     # Prefill
     past_repetition_penalty_buffer_prefill, past_presence_penalty_buffer_prefill = prefill_path(
         input_ids=input_ids,
@@ -230,7 +265,9 @@ def sampler_forward(
         return SamplerOutput(
             probs=None,
             next_tokens=greedy_samples.reshape(-1, spec_length, 1),  # Return sampled next tokens instead of logits
-            past_key_values=outputs.past_key_values,
+            vision_embeds=outputs.get("vision_embeds", None),
+            image_idx=outputs.get("image_idx", None),
+            past_key_values=outputs.get("past_key_values", None),
             past_repetition_penalty_buffer=past_repetition_penalty_buffer,
             past_presence_penalty_buffer=past_presence_penalty_buffer,
         )
@@ -300,9 +337,8 @@ def sampler_forward(
         )  # (batch_size, spec_length, vocab_size)
 
     # Random Sampling
-    topk_probs_asc = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, max_top_k_ids)
     gumbel_noise = -torch.log(-torch.log(random_numbers.repeat(spec_length, 1)))  # Gumbel-Max Trick
-    y = topk_probs_asc + gumbel_noise
+    y = topk_values_asc + gumbel_noise  # (batch_size * spec_length, max_top_k_ids)
     random_samples_indices = torch.argmax(y, dim=1, keepdim=True)
     random_samples = torch.gather(topk_indices_asc, 1, random_samples_indices)  # (batch_size * spec_length, 1)
 
@@ -314,7 +350,9 @@ def sampler_forward(
     return SamplerOutput(
         probs=probs,
         next_tokens=next_tokens,  # Return sampled next tokens instead of logits
-        past_key_values=outputs.past_key_values,
+        vision_embeds=outputs.get("vision_embeds", None),
+        image_idx=outputs.get("image_idx", None),
+        past_key_values=outputs.get("past_key_values", None),
         past_repetition_penalty_buffer=past_repetition_penalty_buffer,
         past_presence_penalty_buffer=past_presence_penalty_buffer,
     )
