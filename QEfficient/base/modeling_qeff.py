@@ -20,9 +20,7 @@ import torch
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
-    CustomOpTransform,
     OnnxTransformPipeline,
-    RenameFunctionOutputsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
@@ -137,6 +135,7 @@ class QEFFBaseModel(ABC):
             mname = mname[4:]
         return mname
 
+    # TODO: Make get_model_config method abstract
     @property
     def get_model_config(self) -> Dict:
         """
