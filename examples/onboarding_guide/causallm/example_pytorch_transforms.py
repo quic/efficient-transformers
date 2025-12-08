@@ -289,4 +289,3 @@ class PoolingTransform:
         model = PooledModel(model, pooling_method)
         warnings.warn("Pooling is applied to the model.")
         return model, transformed
-    
