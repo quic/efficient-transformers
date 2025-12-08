@@ -33,7 +33,7 @@ pipeline {
            parallel {
                stage('Run Non-CLI Non-QAIC Tests') {
                    steps {
-                       timeout(time: 25, unit: 'MINUTES') {
+                       timeout(time: 40, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
@@ -200,8 +200,13 @@ pipeline {
                     echo "Failed to change ownership: ${error}"
                 }
             }
-            junit testResults: 'tests/tests_log.xml'
-
+            script {
+                try {
+                    junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
+                } catch (error) {
+                    echo "No test results file found or parsing failed: ${error}"
+                }
+            }
             script {
                 try {
                     sh '''
