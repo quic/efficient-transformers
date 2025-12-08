@@ -2558,7 +2558,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         if prefill_only:
-            assert not self.continuous_batching, "prefill_only=True is not supported with continuous_batching=True"
             self.prefill(enable=True, enable_chunking=kwargs.get("enable_chunking", False))
             self.hash_params.pop("retain_full_kv", None)
             seq_len = (
@@ -2632,7 +2631,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             pkv_dynamic_axes = (
                 self.model.get_pkv_dynamic_axes(
                     retain_full_kv=kwargs.get("retain_full_kv", False)
-                    or (prefill_only and kwargs.get("enable_chunking", False))
+                    or (prefill_only and kwargs.get("enable_chunking", False)),
+                    continuous_batching=self.continuous_batching,
                 )
                 if hasattr(self.model, "get_pkv_dynamic_axes")
                 else pkv_dynamic_axes
@@ -2644,7 +2644,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
 
             for i in range(self.num_layers):
-                pkv_dynamic_axes[i][0] = "full_batch_size" if self.continuous_batching else "batch_size"
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
@@ -3009,15 +3008,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.is_tlm:
             num_speculative_tokens = self.check_and_get_num_speculative_tokens(num_speculative_tokens, prefill_seq_len)
 
-        if self.continuous_batching and full_batch_size is None:
-            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-
-        if kv_cache_batch_size and not full_batch_size:
-            raise ValueError(
-                "KV caching requires continuous batching. Please set `full_batch_size` and "
-                "enable `continuous_batching=True` in `from_pretrained`."
-            )
-
         if (
             self.model.qaic_config is not None
             and self.model.qaic_config.get("include_sampler", False)
@@ -3027,7 +3017,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
 
         if kv_cache_batch_size and prefill_only is not None and prefill_only:
-            logger.warning("kv_cache_batch_size will be ignored as prefill_only is set to True")
+            logger.warning(
+                "kv_cache_batch_size will be ignored as prefill_only is set to True unless this is GPTOSS model"
+            )
 
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
@@ -3065,6 +3057,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
 
         if prefill_only is None or not prefill_only:
+            if self.continuous_batching and full_batch_size is None:
+                raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+            if kv_cache_batch_size and not full_batch_size:
+                raise ValueError(
+                    "KV caching requires continuous batching. Please set `full_batch_size` and "
+                    "enable `continuous_batching=True` in `from_pretrained`."
+                )
             if self.comp_ctx_lengths_decode is not None:
                 # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
                 for i in range(0, len(self.comp_ctx_lengths_decode)):

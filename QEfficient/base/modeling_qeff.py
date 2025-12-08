@@ -523,8 +523,8 @@ class QEFFBaseModel(ABC):
 
             exec_command = f'QAIC_COMPILER_OPTS_UNSUPPORTED="-loader-inline-all=0" {" ".join(command)}'
             raise FeatureNotAvailableError(
-                f"ONNX graph is exported with subfunctions, assert version of apps SDK should be used for compiling this model. \
-                                           Run following command manually with assert compiler:\n{exec_command}"
+                "ONNX graph is exported with subfunctions, assert version of apps SDK should be used for compiling this model."
+                + f"\nRun following command manually with assert compiler:\n{exec_command}"
             )
         try:
             subprocess.run(command, capture_output=True, check=True)

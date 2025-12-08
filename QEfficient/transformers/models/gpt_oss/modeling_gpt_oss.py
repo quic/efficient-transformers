@@ -92,8 +92,7 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             down_out = (intermediate @ W_d) + b_d  # [T, H]
 
             # Apply routing weights and accumulate
-            masked_down = torch.where(routing_weight > 0, down_out * routing_weight, torch.zeros_like(expert_out))
-            expert_out += masked_down
+            expert_out += down_out * routing_weight
 
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits
@@ -148,8 +147,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
             down_out = (intermediate @ W_d) + b_d  # [T, H]
 
             # Apply routing weights and accumulate
-            masked_down = torch.where(routing_weight > 0, down_out * routing_weight, torch.zeros_like(expert_out))
-            expert_out += masked_down
+            expert_out += down_out * routing_weight
 
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits
@@ -221,8 +219,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
             down_out = torch.cat(outs, dim=0)
 
             # Apply routing weights and accumulate
-            masked_down = torch.where(routing_weight > 0, down_out * routing_weight, torch.zeros_like(expert_out))
-            expert_out += masked_down
+            expert_out += down_out * routing_weight
 
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits
@@ -1296,16 +1293,15 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
             router_logits=outputs.router_logits,
         )
 
-    def get_pkv_dynamic_axes(
-        self,
-        retain_full_kv: Optional[bool] = False,
-    ):
+    def get_pkv_dynamic_axes(self, retain_full_kv: Optional[bool] = False, continuous_batching: Optional[bool] = False):
         pkv_dynamic_axes = []
         for layer_type in self.config.layer_types:
             if layer_type == "sliding_attention" and not retain_full_kv:
-                pkv_dynamic_axes.append({0: "batch_size", 2: "sliding_window"})
+                pkv_dynamic_axes.append(
+                    {0: "full_batch_size" if continuous_batching else "batch_size", 2: "sliding_window"}
+                )
             else:
-                pkv_dynamic_axes.append({0: "batch_size", 2: "ctx_len"})
+                pkv_dynamic_axes.append({0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"})
         return pkv_dynamic_axes
 
     def get_specializations(
