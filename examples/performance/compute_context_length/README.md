@@ -68,7 +68,7 @@ python vlm_inference.py \
 Basic CCL usage with text-only language models.
 
 **Supported Models:**
-- Llama (3.2, 3.3)
+- Llama (3.2, 3.3, swiftkv)
 - Gemma/Gemma-2
 - Mistral
 - Phi/Phi-3
@@ -77,6 +77,9 @@ Basic CCL usage with text-only language models.
 - GPT-2, GPT-J
 - CodeGen
 - OLMo-2
+- Mistral/Mixtral
+- Qwen2
+- Falcon
 
 **Command-Line Arguments:**
 - `--model-name`: HuggingFace model ID (default: meta-llama/Llama-3.2-1B)
