@@ -101,11 +101,13 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     Returns:
         Tuple of (export_hash: str, filtered_hash_params: dict)
     """
+    # Extract use_onnx_subfunctions before binding (it's used by wrapper, not _export)
+    use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
+
     # Extract function signature
     original_sig = inspect.signature(func)
     params = list(original_sig.parameters.values())[1:]  # Skip 'self'
     new_sig = inspect.Signature(params)
-
     # Bind all arguments
     bound_args = new_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
@@ -115,7 +117,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     # TODO: Replace with get_model_config property of modeling classes
     qeff_model.hash_params.update(
         {
-            "model_config": (
+            "config": (
                 qeff_model.model.config.to_diff_dict()
                 if hasattr(qeff_model.model.config, "to_diff_dict")
                 else qeff_model.model.config
@@ -130,7 +132,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
         dynamic_axes=all_args.get("dynamic_axes"),
         export_kwargs=all_args.get("export_kwargs", None),
         onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
-        use_onnx_subfunctions=all_args.get("use_onnx_subfunctions", False),
+        use_onnx_subfunctions=use_onnx_subfunctions,
     )
 
     return export_hash, filtered_hash_params
