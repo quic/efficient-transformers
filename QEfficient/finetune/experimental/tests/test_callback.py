@@ -50,11 +50,8 @@ def test_callbacks(callback_name):
     except ValueError as e:
         assert "Unknown callback" in str(e)
         return
-    if hasattr(callback_inst, "callback"):
-        assert callback_inst.callback is not None
-    else:
-        assert callback_inst is not None
-        assert isinstance(callback_inst, TrainerCallback)
+    assert callback_inst is not None
+    assert isinstance(callback_inst, TrainerCallback)
 
 
 @pytest.mark.parametrize("callback_name,callback_class", REGISTRY_CALLBACK_CONFIGS.items())
