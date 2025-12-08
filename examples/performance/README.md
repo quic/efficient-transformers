@@ -95,6 +95,56 @@ python on_device_sampling.py \
     --top-p 0.89
 ```
 
+### Compute-Context-Length
+
+Calculating Context-Length dynamically during inference for getting the best related performance within each window of context-length
+
+#### compute_context_length/basic_inference.py
+Configure CCL parameters: 1) ccl-enabled: to activate CCL feature, 2) comp-ctx-lengths-prefill: list of context length to be used during prefilling, and 3) comp-ctx-lengths-decode: list of context lengths to be used during decoding.
+
+**Usage for Text-only models:**
+```bash
+python compute_context_length/basic_inference.py \
+    --model-name meta-llama/Llama-3.1-8B \
+    --num-cores 16 \
+    --prefill-seq-len 32 \
+    --ctx-len 1024 \
+    --ccl-enabled \
+    --comp-ctx-lengths-prefill 500,1000 \
+    --comp-ctx-lengths-decode 512,1024
+```
+
+**Usage for VLM models such as mllama and llava:**
+```bash
+python compute_context_length/vlm_inference.py \
+    --model-name meta-llama/Llama-3.2-11B-Vision-Instruct \
+    --hf-token "" \
+    --num-cores 16 \
+    --prefill-seq-len 32 \
+    --ctx-len 8192 \
+    --img-size 560 \
+    --ccl-enabled \
+    --comp-ctx-lengths-prefill 4096 \
+    --comp-ctx-lengths-decode 6144,8192
+```
+
+**Usage with other MoE and Multimodal models:**
+For various models available in compute_context_length directory such as gemma3, gpt_oss, granite_vision, internvl, llama4_cb, llama4_multi_image, llama4, mistral3, molmo, qwen2_5_vl, qwen2_5_vl_cb, and qwen3moe, use the related inference script and only change the model-name and ccl configuration in the related script. The following is an example of each model:
+```bash
+python compute_context_length/gemma3.py
+python compute_context_length/gpt_oss.py
+python compute_context_length/granite_vision.py
+python compute_context_length/internvl.py
+python compute_context_length/llama4_cb.py
+python compute_context_length/llama4_multi_image.py
+python compute_context_length/llama4.py
+python compute_context_length/mistral3.py
+python compute_context_length/molmo.py
+python compute_context_length/qwen2_5_vl.py
+python compute_context_length/qwen2_5_vl_cb.py
+python compute_context_length/qwen3moe.py
+```
+
 ## Performance Tips
 
 1. **Speculative Decoding**: Best for long-form generation where draft model is much faster than target
