@@ -44,6 +44,16 @@ class QEffTextEncoder(QEFFBaseModel):
     _pytorch_transforms = [CustomOpsTransform, T5ModelTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying text encoder model
+        """
+        return self.model.config.__dict__
+
     def __init__(self, model: nn.Module) -> None:
         """
         Initialize the text encoder wrapper.
@@ -143,6 +153,16 @@ class QEffUNet(QEFFBaseModel):
     _pytorch_transforms = [CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying UNet model
+        """
+        return self.model.config.__dict__
+
     def __init__(self, model: nn.Module) -> None:
         """
         Initialize the UNet wrapper.
@@ -210,6 +230,16 @@ class QEffVAE(QEFFBaseModel):
 
     _pytorch_transforms = [CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying VAE model
+        """
+        return self.model.config.__dict__
 
     def __init__(self, model: nn.Module, type: str) -> None:
         """
@@ -313,6 +343,16 @@ class QEffFluxTransformerModel(QEFFBaseModel):
 
     _pytorch_transforms = [AttentionTransform, NormalizationTransform, CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying Flux transformer model
+        """
+        return self.model.config.__dict__
 
     def __init__(self, model: nn.Module) -> None:
         """

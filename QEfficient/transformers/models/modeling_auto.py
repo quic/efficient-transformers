@@ -289,6 +289,18 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, pooling=pooling, **kwargs)
 
+    @property
+    def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
+        return self.model.config.__dict__
+
     def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
@@ -2059,6 +2071,18 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             ),
         )
 
+    @property
+    def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying HuggingFace model.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary.
+        """
+        return self.model.config.__dict__
+
 
 class QEFFAutoModelForImageTextToText:
     """
@@ -2428,6 +2452,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
+
+    @property
+    def get_model_config(self) -> dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary of the underlying HuggingFace model.
+        """
+        return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False, **kwargs) -> str:
         """
@@ -3149,6 +3185,18 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
+    @property
+    def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying HuggingFace model.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary.
+        """
+        return self.model.config.__dict__
+
     def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
@@ -3520,6 +3568,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             )
 
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, pooling=pooling, **kwargs)
+
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
