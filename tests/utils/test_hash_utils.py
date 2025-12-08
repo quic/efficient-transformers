@@ -41,9 +41,6 @@ def test_to_hashable_float_nan(value):
 
 def test_json_serializable():
     # Test with a set
-    import ipdb
-
-    ipdb.set_trace()
     assert json_serializable({1, 2, 3}) == ["1", "2", "3"]
     # Test with an unsupported type
     with pytest.raises(TypeError):

@@ -51,8 +51,7 @@ def export_wrapper(func):
 
         # 3. Setup ONNX subfunctions if requested
         # TODO: No need of this variable, if export_kwargs contains classes (refer diffusers)
-        use_subfunctions = kwargs.get("use_onnx_subfunctions", False)
-        if use_subfunctions:
+        if use_onnx_subfunctions := kwargs.get("use_onnx_subfunctions", False):
             _setup_onnx_subfunctions(self, kwargs)
 
         # 4. Execute the actual export
@@ -62,7 +61,7 @@ def export_wrapper(func):
         _save_export_metadata(export_dir, filtered_hash_params)
 
         # 6. Always cleanup subfunctions if they were setup
-        if use_subfunctions:
+        if use_onnx_subfunctions:
             _cleanup_onnx_subfunctions(self)
 
         return onnx_path

@@ -108,9 +108,7 @@ class QEffT5Attention(T5Attention):
                 position_bias = self.compute_bias(
                     real_seq_length, key_length, device=scores.device, cache_position=cache_position
                 )
-                # Original line: position_bias = position_bias[:, :, -seq_length:, :]
                 if past_key_value is not None:  # This block is where the patch applies
-                    # position_bias = position_bias[:, :, -hidden_states.size(1) :, :] # Original line (commented in patch)
                     position_bias = position_bias[:, :, -1:, :]  # Added by patch
 
             if mask is not None:
