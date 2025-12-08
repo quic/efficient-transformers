@@ -174,26 +174,22 @@ def run_intern_on_aic(
     prefill_seq_len=3840,
     num_devices=1,
     num_cores=16,
+    ctx_len=512,
+    ccl_enabled=False,
+    comp_ctx_lengths_prefill=None,
+    comp_ctx_lengths_decode=None,
 ):
     ## STEP 1 -- LOAD THE MODEL
 
     # The original Intern-VL model, despite being multimodal, is loaded using `AutoModelForCausalLM` in Huggingface.
     # To maintain compatibility, we load this model using `QEFFAutoModelForCausalLM`.
 
-    ctx_len = 8192
-    comp_ctx_lengths_prefill = [4096]
-    comp_ctx_lengths_decode = [6144, ctx_len]
-
-    # model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, trust_remote_code=True)
-
     model = QEFFAutoModelForCausalLM.from_pretrained(
         model_name,
         kv_offload=kv_offload,
         trust_remote_code=True,
         qaic_config={
-            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
-            "ctx_len": ctx_len,
+            "ccl_enabled": ccl_enabled,
         },
     )
 
@@ -205,6 +201,8 @@ def run_intern_on_aic(
         ctx_len=ctx_len,
         prefill_seq_len=prefill_seq_len,
         mxfp6_matmul=False,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     ## STEP 3 -- SETUP THE PROCESSOR
@@ -263,6 +261,11 @@ if __name__ == "__main__":
     num_devices = 4
     num_cores = 16
 
+    ctx_len = 8192
+    ccl_enabled = True
+    comp_ctx_lengths_prefill = [4096]
+    comp_ctx_lengths_decode = [6144, ctx_len]
+
     run_intern_on_aic(
         model_name=model_name,
         prompt=prompt,
@@ -273,6 +276,10 @@ if __name__ == "__main__":
         prefill_seq_len=prefill_seq_len,
         num_devices=num_devices,
         num_cores=num_cores,
+        ctx_len=ctx_len,
+        ccl_enabled=ccl_enabled,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
 
