@@ -16,7 +16,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
-model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
+model_id = "openai/gpt-oss-120b"  # weights are not required to convert to fp32
 
 prompt2 = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
@@ -104,6 +104,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
 
 
+@pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_id", [model_id])
 @pytest.mark.parametrize("prompt", prompts)

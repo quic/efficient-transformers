@@ -337,8 +337,13 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
     ):
-        kwargs = {"offload_pt_weights": offload_pt_weights, "use_onnx_subfunctions": use_onnx_subfunctions}
+        kwargs = {
+            "offload_pt_weights": offload_pt_weights,
+            "use_onnx_subfunctions": use_onnx_subfunctions,
+            "retain_full_kv": retain_full_kv,
+        }
         if prefill_only:
             if self.prefill_onnx_path is None:
                 kwargs.update(
@@ -372,6 +377,7 @@ class QEFFBaseModel(ABC):
         prefill_only: Optional[str] = None,
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = None,
         **compiler_options,
     ) -> str:
         """
@@ -401,7 +407,12 @@ class QEFFBaseModel(ABC):
             onnx_path
             if onnx_path
             else self.get_onnx_path(
-                prefill_only, enable_chunking, specializations, offload_pt_weights, use_onnx_subfunctions
+                prefill_only,
+                enable_chunking,
+                specializations,
+                offload_pt_weights,
+                use_onnx_subfunctions,
+                retain_full_kv,
             )
         )
         compile_dir = Path(compile_dir or onnx_path.parent)

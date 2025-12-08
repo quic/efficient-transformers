@@ -1298,11 +1298,11 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
 
     def get_pkv_dynamic_axes(
         self,
-        chunked_prefill: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
     ):
         pkv_dynamic_axes = []
         for layer_type in self.config.layer_types:
-            if layer_type == "sliding_attention" and not chunked_prefill:
+            if layer_type == "sliding_attention" and not retain_full_kv:
                 pkv_dynamic_axes.append({0: "batch_size", 2: "sliding_window"})
             else:
                 pkv_dynamic_axes.append({0: "batch_size", 2: "ctx_len"})

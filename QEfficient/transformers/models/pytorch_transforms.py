@@ -663,6 +663,16 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
     }
 
 
+class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
+        QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+    }
+
+
 class RevertPrefillOnlyTransform(ModuleMappingTransform):
     _module_mapping = {
         **{v: k for k, v in PrefillOnlyTransform._module_mapping.items()},
