@@ -16,7 +16,6 @@ from QEfficient.utils._utils import (  # noqa: F401
     create_model_params,
     custom_format_warning,
     dump_qconfig,
-    export_wrapper,
     generate_mdp_partition_config,
     get_num_layers_from_config,
     get_num_layers_vlm,
