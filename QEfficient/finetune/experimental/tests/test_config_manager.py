@@ -19,9 +19,6 @@ def config_path() -> Path:
     return (here / "test_config.yaml").resolve()
 
 
-# git commit -s -m "[QEff.finetuning] Adding config_manager and its test cases."
-
-
 def test_config(config_path):
     # parse the yaml file
     master_config = parse_arguments(config_path)
