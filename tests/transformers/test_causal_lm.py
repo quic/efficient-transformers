@@ -211,7 +211,7 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
 
 @pytest.fixture
 def tmp_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr("QEfficient.utils._utils.QEFF_HOME", tmp_path)
+    monkeypatch.setattr("QEfficient.utils.export_utils.QEFF_HOME", tmp_path)
     yield tmp_path
 
 
