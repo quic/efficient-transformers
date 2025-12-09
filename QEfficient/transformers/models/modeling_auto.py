@@ -2971,6 +2971,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        if prefill_only is None or not prefill_only:
+            if self.continuous_batching and full_batch_size is None:
+                raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+            if kv_cache_batch_size and not full_batch_size:
+                raise ValueError(
+                    "KV caching requires continuous batching. Please set `full_batch_size` and "
+                    "enable `continuous_batching=True` in `from_pretrained`."
+                )
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -3057,13 +3065,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
 
         if prefill_only is None or not prefill_only:
-            if self.continuous_batching and full_batch_size is None:
-                raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-            if kv_cache_batch_size and not full_batch_size:
-                raise ValueError(
-                    "KV caching requires continuous batching. Please set `full_batch_size` and "
-                    "enable `continuous_batching=True` in `from_pretrained`."
-                )
             if self.comp_ctx_lengths_decode is not None:
                 # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
                 for i in range(0, len(self.comp_ctx_lengths_decode)):
