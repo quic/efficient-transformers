@@ -116,7 +116,8 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     # Use the model's current configuration for hashing to ensure any post-load modifications are captured
     # TODO: Replace with get_model_config property of modeling classes and remove the if-else
     # Determine the config dict to use, preferring .to_diff_dict() if available
-    if hasattr(qeff_model.model.config, "to_diff_dict"):
+
+    if hasattr(qeff_model.model, "config") and hasattr(qeff_model.model.config, "to_diff_dict"):
         config_val = qeff_model.model.config.to_diff_dict()
     elif hasattr(qeff_model.model, "model") and hasattr(qeff_model.model.model.config, "to_diff_dict"):
         config_val = qeff_model.model.model.config.to_diff_dict()
