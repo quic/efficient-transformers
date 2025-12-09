@@ -2979,6 +2979,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     "KV caching requires continuous batching. Please set `full_batch_size` and "
                     "enable `continuous_batching=True` in `from_pretrained`."
                 )
+        else:
+            if self.continuous_batching:
+                if not enable_chunking:
+                    raise NotImplementedError(
+                        "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                    )
+                if not isinstance(kv_cache_batch_size, int):
+                    raise ValueError(
+                        "Please pass valid integer for kv_cache_batch_size as continuous_batching is enabled for prefill-only model"
+                    )
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
