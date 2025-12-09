@@ -18,6 +18,7 @@ from QEfficient.base import (
     QEFFCommonLoader,
 )
 from QEfficient.compile.compile_helper import compile
+from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.peft import QEffAutoPeftModelForCausalLM
@@ -39,6 +40,7 @@ __all__ = [
     "QEFFAutoModelForImageTextToText",
     "QEFFAutoModelForSpeechSeq2Seq",
     "QEFFCommonLoader",
+    "QEffFluxPipeline",
 ]
 # For faster downloads via hf_transfer
 # This code is put above import statements as this needs to be executed before

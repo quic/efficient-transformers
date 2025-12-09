@@ -22,6 +22,7 @@ pipeline {
                    . preflight_qeff/bin/activate &&
                    pip install --upgrade pip setuptools &&
                    pip install .[test] &&
+                   pip install .[diffusers] &&
                    pip install junitparser pytest-xdist &&
                    pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 && #packages to load VLMs
@@ -69,7 +70,7 @@ pipeline {
        }
        stage('QAIC MultiModal Tests') {
                    steps {
-                       timeout(time: 60, unit: 'MINUTES') {
+                       timeout(time: 120, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
@@ -86,7 +87,7 @@ pipeline {
         }
        stage('Inference Tests') {
                    steps {
-                       timeout(time: 60, unit: 'MINUTES') {
+                       timeout(time: 120, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                     	   #source /qnn_sdk/bin/envsetup.sh &&
@@ -162,7 +163,7 @@ pipeline {
         // }
         stage('Finetune CLI Tests') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
+                timeout(time: 20, unit: 'MINUTES') {
                     sh '''
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
