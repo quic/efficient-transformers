@@ -687,7 +687,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
             )
         return compiler_options
-    
+
     def get_specializations(
         self,
         batch_size: int,
