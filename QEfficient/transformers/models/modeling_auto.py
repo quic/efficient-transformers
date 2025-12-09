@@ -1186,7 +1186,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.export(
                 use_onnx_subfunctions=use_onnx_subfunctions,
             )
-            
+
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
@@ -1205,11 +1205,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
-            
-         # Custom NPI file options
+
+        # Custom NPI file options
         if hasattr(self.model, "get_npi_file"):
             compiler_options = self.model.get_npi_file(self.model.name_or_path)
-            
+
         if not skip_lang:
             custom_io_lang = {}
             # Inputs
@@ -1818,7 +1818,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             img_size=img_size,
             **compiler_options,
         )
-        
+
         if hasattr(self.model, "get_npi_file"):
             compiler_options = self.model.get_npi_file(self.model.name_or_path)
 

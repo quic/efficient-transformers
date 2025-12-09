@@ -29,10 +29,20 @@ ONNX_EXPORT_CTX_LEN = 1024
 
 # Gemma3 Constant
 DEFAULT_GEMMA3_4B_NODE_PRECISION_INFO = str(
-    Path(__file__).resolve().parent.parent / "transformers" / "models" / "gemma3" / "configs" / "fp32_nodes_gemma3_4b.yaml"
+    Path(__file__).resolve().parent.parent
+    / "transformers"
+    / "models"
+    / "gemma3"
+    / "configs"
+    / "fp32_nodes_gemma3_4b.yaml"
 )
 DEFAULT_GEMMA3_27B_NODE_PRECISION_INFO = str(
-    Path(__file__).resolve().parent.parent / "transformers" / "models" / "gemma3" / "configs" / "fp32_nodes_gemma3_27b.yaml"
+    Path(__file__).resolve().parent.parent
+    / "transformers"
+    / "models"
+    / "gemma3"
+    / "configs"
+    / "fp32_nodes_gemma3_27b.yaml"
 )
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
