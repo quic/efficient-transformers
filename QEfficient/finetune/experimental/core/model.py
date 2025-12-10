@@ -9,13 +9,13 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Type
 
-import torch
 import torch.nn as nn
-from transformers import AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoTokenizer
 import transformers
+from transformers.utils.logging import get_logger
 
 from QEfficient.finetune.experimental.core.component_registry import registry
-from QEfficient.finetune.experimental.utils.dataset_helper import insert_pad_token
+from QEfficient.finetune.experimental.core.utils.dataset_utils import insert_pad_token
 
 logger = get_logger(__name__)
 
@@ -38,7 +38,6 @@ class BaseModel(nn.Module, ABC):
         if not isinstance(module, nn.Module):
             raise TypeError(f"load_model() must return nn.Module, got {type(module)}")
         obj._model = module
-        obj.add_module("_wrapped_model", module)  # register
         return obj
 
     @abstractmethod
@@ -70,14 +69,14 @@ class BaseModel(nn.Module, ABC):
     def get_input_embeddings(self):
         if hasattr(self.model, "get_input_embeddings"):
             return self.model.get_input_embeddings()
-        logger.log_rank_zero(f"Model {self.model_name} does not expose input embeddings", logging.WARNING)
+        logger.info(f"Model {self.model_name} does not expose input embeddings", logging.WARNING)
         return None
 
     def resize_token_embeddings(self, new_num_tokens: int) -> None:
         if hasattr(self.model, "resize_token_embeddings"):
             self.model.resize_token_embeddings(new_num_tokens)
         else:
-            logger.log_rank_zero(f"Model {self.model_name} cannot resize token embeddings", logging.WARNING)
+            logger.info(f"Model {self.model_name} cannot resize token embeddings", logging.WARNING)
 
     # optional
     def to(self, *args, **kwargs):
@@ -134,7 +133,7 @@ class HFModel(BaseModel):
         return extra
 
     def load_model(self) -> nn.Module:
-        logger.log_rank_zero(f"Loading HuggingFace model '{self.model_name}' via {self.auto_class.__name__}")
+        logger.info(f"Loading HuggingFace model '{self.model_name}' via {self.auto_class.__name__}")
 
         return self.auto_class.from_pretrained(
             self.model_name,
@@ -143,7 +142,7 @@ class HFModel(BaseModel):
 
     def load_tokenizer(self) -> AutoTokenizer:
         """Load Hugging Face tokenizer."""
-        logger.log_rank_zero(f"Loading tokenizer '{self.tokenizer_name}'")
+        logger.info(f"Loading tokenizer '{self.tokenizer_name}'")
         tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         insert_pad_token(tokenizer)
         return tokenizer
