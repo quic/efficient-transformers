@@ -52,7 +52,7 @@ def export_wrapper(func):
         # 3. Setup ONNX subfunctions if requested
         # TODO: No need of this variable, if export_kwargs contains classes (refer diffusers)
         if use_onnx_subfunctions := kwargs.get("use_onnx_subfunctions", False):
-            _setup_onnx_subfunctions(self, kwargs)
+            kwargs = _setup_onnx_subfunctions(self, kwargs)
 
         # 4. Execute the actual export
         onnx_path = func(self, *args, **kwargs)
@@ -186,6 +186,7 @@ def _setup_onnx_subfunctions(qeff_model, kwargs):
     # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
     export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
     kwargs["export_kwargs"] = export_kwargs
+    return export_kwargs
 
 
 def _cleanup_onnx_subfunctions(qeff_model):
