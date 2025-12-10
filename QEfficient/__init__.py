@@ -19,6 +19,7 @@ from QEfficient.base import (
 )
 from QEfficient.compile.compile_helper import compile
 from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
+from QEfficient.diffusers.pipelines.qwen_image.pipeline_qwenimage import QEFFQwenImagePipeline
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.peft import QEffAutoPeftModelForCausalLM
@@ -41,6 +42,8 @@ __all__ = [
     "QEFFAutoModelForSpeechSeq2Seq",
     "QEFFCommonLoader",
     "QEffFluxPipeline",
+    "QEFFQwenImagePipeline",
+
 ]
 # For faster downloads via hf_transfer
 # This code is put above import statements as this needs to be executed before
@@ -69,46 +72,5 @@ def check_qaic_sdk():
         return False
 
 
-# Conditionally import QAIC-related modules if the SDK is installed
-__version__ = "0.0.1.dev0"
-
-if check_qaic_sdk():
-    from QEfficient.base import (
-        QEFFAutoModel,
-        QEFFAutoModelForCausalLM,
-        QEFFAutoModelForCTC,
-        QEFFAutoModelForImageTextToText,
-        QEFFAutoModelForSpeechSeq2Seq,
-        QEFFCommonLoader,
-    )
-    from QEfficient.compile.compile_helper import compile
-
-    # Imports for the diffusers
-    from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEFFFluxPipeline
-    from QEfficient.diffusers.pipelines.qwen_image.pipeline_qwenimage import QEFFQwenImagePipeline
-    from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-    from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-    from QEfficient.peft import QEffAutoPeftModelForCausalLM
-    from QEfficient.transformers.transform import transform
-
-    # Users can use QEfficient.export for exporting models to ONNX
-    export = qualcomm_efficient_converter
-
-    __all__ = [
-        "transform",
-        "export",
-        "compile",
-        "cloud_ai_100_exec_kv",
-        "QEFFAutoModel",
-        "QEFFAutoModelForCausalLM",
-        "QEFFAutoModelForCTC",
-        "QEffAutoPeftModelForCausalLM",
-        "QEFFAutoModelForImageTextToText",
-        "QEFFAutoModelForSpeechSeq2Seq",
-        "QEFFCommonLoader",
-        "QEFFFluxPipeline",
-        "QEFFQwenImagePipeline",
-    ]
-
-else:
+if not check_qaic_sdk():
     logger.warning("QAIC SDK is not installed, eager mode features won't be available!")

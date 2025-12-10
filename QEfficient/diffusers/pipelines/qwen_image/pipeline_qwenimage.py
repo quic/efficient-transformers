@@ -461,17 +461,10 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         )
 
         # Initialize transformer session
-        # import onnxruntime
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(str(self.transformer.qpc_path))
-            # self.transformer.qpc_session = onnxruntime.InferenceSession(
-            #     "/home/dipankar/.cache/qeff_models/QwenImageTransformer2DModel/QwenImageTransformer2DModel-eec8953b65947df1/QwenImageTransformer2DModel.onnx"
-            # )
 
-        # image_rotary_emb = self.transformer.model.pos_embed(img_shapes, txt_seq_lens, device="cpu")
-        # img_rotary_emb = image_rotary_emb[0].numpy().astype(np.float32)
-        # text_rotary_emb = image_rotary_emb[1].numpy().astype(np.float32)
-
+        
         # 6. Denoising loop
         self.scheduler.set_begin_index(0)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -492,10 +485,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
                 noise_pred = self.transformer.qpc_session.run(transformer_inputs)
                 noise_pred = torch.tensor(noise_pred["output"])
-                # output_names = [output.name for output in self.transformer.qpc_session.get_outputs()]
-                # outputs = self.transformer.qpc_session.run(output_names, transformer_inputs)
-                # noise_pred = torch.tensor(outputs[0])
-                # breakpoint()
                 if do_true_cfg:
                     # Unconditional pass
                     transformer_inputs_uncond = {
@@ -508,9 +497,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
                     neg_noise_pred = self.transformer.qpc_session.run(transformer_inputs_uncond)
                     neg_noise_pred = torch.tensor(neg_noise_pred["output"])
-                    # output_names = [output.name for output in self.transformer.qpc_session.get_outputs()]
-                    # outputs = self.transformer.qpc_session.run(output_names, transformer_inputs_uncond)
-                    # neg_noise_pred = torch.tensor(outputs[0])
 
                     comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
                     cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)

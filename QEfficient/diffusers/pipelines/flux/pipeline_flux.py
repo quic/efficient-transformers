@@ -5,14 +5,20 @@
 #
 # ----------------------------------------------------------------------------
 
+# TODO: Pipeline Architecture Improvements
+# 1. Introduce QEffDiffusionPipeline base class to provide unified export, compile,
+#    and inference APIs across all diffusion pipelines, promoting code reusability
+#    and consistent interface design.
+# 2. Implement persistent QPC session management strategy to retain/drop compiled model
+#    sessions in memory across all pipeline modules.
+
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
 from diffusers import FluxPipeline
-from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
 from tqdm import tqdm
 
@@ -22,8 +28,10 @@ from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffVAE,
 )
 from QEfficient.diffusers.pipelines.pipeline_utils import (
+    ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
+    calculate_compressed_latent_dimension,
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
@@ -33,35 +41,65 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.logging_utils import logger
 
 
-class QEFFFluxPipeline(FluxPipeline):
+class QEffFluxPipeline:
     """
-    QEfficient-optimized Flux pipeline for text-to-image generation on Qualcomm AI hardware.
+    QEfficient-optimized Flux pipeline for high-performance text-to-image generation on Qualcomm AI hardware.
+
+    This pipeline provides an optimized implementation of the Flux diffusion model specifically designed
+    for deployment on Qualcomm AI Cloud (QAIC) devices. It wraps the original HuggingFace Flux model
+    components with QEfficient-optimized versions that can be exported to ONNX format and compiled
+    into Qualcomm Program Container (QPC) files for efficient inference.
+
+    The pipeline supports the complete Flux workflow including:
+    - Dual text encoding with CLIP and T5 encoders
+    - Transformer-based denoising with adaptive layer normalization
+    - VAE decoding for final image generation
+    - Performance monitoring and optimization
 
     Attributes:
-        text_encoder (QEffTextEncoder): Optimized CLIP text encoder
-        text_encoder_2 (QEffTextEncoder): Optimized T5 text encoder
-        transformer (QEffFluxTransformerModel): Optimized Flux transformer
-        vae_decode (QEffVAE): Optimized VAE decoder
-        modules (Dict): Dictionary of all pipeline modules for iteration
+        text_encoder (QEffTextEncoder): Optimized CLIP text encoder for pooled embeddings
+        text_encoder_2 (QEffTextEncoder): Optimized T5 text encoder for sequence embeddings
+        transformer (QEffFluxTransformerModel): Optimized Flux transformer for denoising
+        vae_decode (QEffVAE): Optimized VAE decoder for latent-to-image conversion
+        modules (Dict[str, Any]): Dictionary of all pipeline modules for batch operations
+        model (FluxPipeline): Original HuggingFace Flux model reference
+        tokenizer: CLIP tokenizer for text preprocessing
+        scheduler: Diffusion scheduler for timestep management
+
+    Example:
+        >>> from QEfficient.diffusers.pipelines.flux import QEffFluxPipeline
+        >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+        >>> images = pipeline(
+        ...     prompt="A beautiful sunset over mountains",
+        ...     height=512,
+        ...     width=512,
+        ...     num_inference_steps=28
+        ... )
+        >>> images.images[0].save("generated_image.png")
     """
 
     _hf_auto_class = FluxPipeline
 
-    def __init__(self, model, use_onnx_function: bool, *args, **kwargs):
+    def __init__(self, model, *args, **kwargs):
         """
         Initialize the QEfficient Flux pipeline.
 
+        This pipeline provides an optimized implementation of the Flux text-to-image model
+        for deployment on Qualcomm AI hardware. It wraps the original HuggingFace Flux model
+        components with QEfficient-optimized versions that can be exported to ONNX and compiled
+        for QAIC devices.
+
         Args:
             model: Pre-loaded FluxPipeline model
-            use_onnx_function (bool): Whether to export transformer blocks as ONNX functions
             **kwargs: Additional arguments including height and width
         """
+
         # Wrap model components with QEfficient optimized versions
+        self.model = model
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
-        self.transformer = QEffFluxTransformerModel(model.transformer, use_onnx_function=use_onnx_function)
-        self.vae_decode = QEffVAE(model, "decoder")
-        self.use_onnx_function = use_onnx_function
+        self.transformer = QEffFluxTransformerModel(model.transformer)
+        self.vae_decode = QEffVAE(model.vae, "decoder")
 
         # Store all modules in a dictionary for easy iteration during export/compile
         self.modules = {
@@ -78,34 +116,10 @@ class QEFFFluxPipeline(FluxPipeline):
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
 
-        # Set default image dimensions
-        self.height = kwargs.get("height", 256)
-        self.width = kwargs.get("width", 256)
-
         # Override VAE forward method to use decode directly
         self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
             latent_sample, return_dict
         )
-
-        # Calculate VAE scale factor from model config
-        self.vae_scale_factor = (
-            2 ** (len(model.vae.config.block_out_channels) - 1) if getattr(model, "vae", None) else 8
-        )
-
-        # Flux uses 2x2 patches, so multiply scale factor by patch size
-        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
-
-        # Set tokenizer max length with fallback
-        self.t_max_length = (
-            model.tokenizer.model_max_length if hasattr(model, "tokenizer") and model.tokenizer is not None else 77
-        )
-
-        # Calculate latent dimensions based on image size and VAE scale factor
-        self.default_sample_size = 128
-        self.latent_height = self.height // self.vae_scale_factor
-        self.latent_width = self.width // self.vae_scale_factor
-        # cl = compressed latent dimension (divided by 4 for Flux's 2x2 packing)
-        self.cl = (self.latent_height * self.latent_width) // 4
 
         # Sync max position embeddings between text encoders
         self.text_encoder_2.model.config.max_position_embeddings = (
@@ -116,96 +130,167 @@ class QEFFFluxPipeline(FluxPipeline):
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
-        use_onnx_function: bool = False,
-        height: Optional[int] = 512,
-        width: Optional[int] = 512,
         **kwargs,
     ):
         """
-        Load a pretrained Flux model and wrap it with QEfficient optimizations.
+        Load a pretrained Flux model from HuggingFace Hub or local path and wrap it with QEfficient optimizations.
+
+        This class method provides a convenient way to instantiate a QEffFluxPipeline from a pretrained
+        Flux model. It automatically loads the base FluxPipeline model in float32 precision on CPU
+        and wraps all components with QEfficient-optimized versions for QAIC deployment.
 
         Args:
-            pretrained_model_name_or_path (str or os.PathLike): HuggingFace model ID or local path
-            use_onnx_function (bool): Whether to export transformer blocks as ONNX functions
-            height (int): Target image height (default: 512)
-            width (int): Target image width (default: 512)
-            **kwargs: Additional arguments passed to FluxPipeline.from_pretrained
+            pretrained_model_name_or_path (str or os.PathLike): Either a HuggingFace model identifier
+                (e.g., "black-forest-labs/FLUX.1-schnell") or a local path to a saved model directory.
+            **kwargs: Additional keyword arguments passed to FluxPipeline.from_pretrained().
 
         Returns:
-            QEFFFluxPipeline: Initialized pipeline instance
+            QEffFluxPipeline: A fully initialized pipeline instance with QEfficient-optimized components
+                ready for export, compilation, and inference on QAIC devices.
+
+        Raises:
+            ValueError: If the model path is invalid or model cannot be loaded
+            OSError: If there are issues accessing the model files
+            RuntimeError: If model initialization fails
+
+        Example:
+            >>> # Load from HuggingFace Hub
+            >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>>
+            >>> # Load from local path
+            >>> pipeline = QEffFluxPipeline.from_pretrained("/path/to/local/flux/model")
+            >>>
+            >>> # Load with custom cache directory
+            >>> pipeline = QEffFluxPipeline.from_pretrained(
+            ...     "black-forest-labs/FLUX.1-dev",
+            ...     cache_dir="/custom/cache/dir"
+            ... )
         """
         # Load the base Flux model in float32 on CPU
         model = cls._hf_auto_class.from_pretrained(
             pretrained_model_name_or_path,
             torch_dtype=torch.float32,
+            device_map="cpu",
             **kwargs,
         )
-        model.to("cpu")
 
         return cls(
             model=model,
-            use_onnx_function=use_onnx_function,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
-            height=height,
-            width=width,
             **kwargs,
         )
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
         """
-        Export all pipeline modules to ONNX format.
+        Export all pipeline modules to ONNX format for deployment preparation.
 
-        This method iterates through all modules (text encoders, transformer, VAE decoder)
-        and exports each to ONNX using their respective configurations.
+        This method systematically exports each pipeline component (CLIP text encoder, T5 text encoder,
+        Flux transformer, and VAE decoder) to ONNX format. Each module is exported with its specific
+        configuration including dynamic axes, input/output specifications, and optimization settings.
+
+        The export process prepares the models for subsequent compilation to QPC format, enabling
+        efficient inference on QAIC hardware. ONNX subfunctions can be used for certain modules
+        to optimize memory usage and performance.
 
         Args:
-            export_dir (str, optional): Directory to save ONNX models. If None, uses default.
+            export_dir (str, optional): Target directory for saving ONNX model files. If None,
+                uses the default export directory structure based on model name and configuration.
+                The directory will be created if it doesn't exist.
+            use_onnx_subfunctions (bool, default=False): Whether to enable ONNX subfunction
+                optimization for supported modules. This can optimize thegraph and
+                improve compilation efficiency for models like the transformer.
 
         Returns:
-            str: Path to the export directory
+            str: Absolute path to the export directory containing all ONNX model files.
+                Each module will have its own subdirectory with the exported ONNX file.
+
+        Raises:
+            RuntimeError: If ONNX export fails for any module
+            OSError: If there are issues creating the export directory or writing files
+            ValueError: If module configurations are invalid
+
+        Note:
+            - All models are exported in float32 precision for maximum compatibility
+            - Dynamic axes are configured to support variable batch sizes and sequence lengths
+            - The export process may take several minutes depending on model size
+            - Exported ONNX files can be large (several GB for complete pipeline)
+
+        Example:
+            >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> export_path = pipeline.export(
+            ...     export_dir="/path/to/export",
+            ...     use_onnx_subfunctions=True
+            ... )
+            >>> print(f"Models exported to: {export_path}")
         """
         for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration for this module
-            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_config()
+            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
 
-            export_kwargs = {}
-            # Special handling for transformer: export blocks as functions if enabled
-            if module_name == "transformer" and self.use_onnx_function:
-                export_kwargs = {
-                    "export_modules_as_functions": self.transformer.model._block_classes,
-                }
+            export_params = {
+                "inputs": example_inputs,
+                "output_names": output_names,
+                "dynamic_axes": dynamic_axes,
+                "export_dir": export_dir,
+            }
 
-            # Export the module to ONNX
-            module_obj.export(
-                inputs=example_inputs,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                export_dir=export_dir,
-                export_kwargs=export_kwargs,
-            )
+            if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
+                export_params["use_onnx_subfunctions"] = True
+
+            module_obj.export(**export_params)
 
     @staticmethod
     def get_default_config_path() -> str:
         """
-        Get the path to the default Flux pipeline configuration file.
+        Get the absolute path to the default Flux pipeline configuration file.
 
         Returns:
-            str: Absolute path to flux_config.json
+            str: Absolute path to the flux_config.json file containing default pipeline
+                configuration settings for compilation and device allocation.
         """
-        return os.path.join(os.path.dirname(__file__), "flux_config.json")
+        return "QEfficient/diffusers/pipelines/configs/flux_config.json"
 
-    def compile(self, compile_config: Optional[str] = None, parallel: bool = False) -> None:
+    def compile(
+        self,
+        compile_config: Optional[str] = None,
+        parallel: bool = False,
+        height: int = 512,
+        width: int = 512,
+        use_onnx_subfunctions: bool = False,
+    ) -> None:
         """
-        Compile ONNX models for deployment on Qualcomm AI hardware.
-
-        This method compiles all pipeline modules (text encoders, transformer, VAE decoder)
-        into optimized QPC (Qualcomm Program Container) format for inference on QAIC devices.
+        Compile ONNX models into optimized QPC format for deployment on Qualcomm AI hardware.
 
         Args:
-            compile_config (str, optional): Path to JSON configuration file.
-                                           If None, uses default configuration.
-            parallel (bool): If True, compile modules in parallel using ProcessPoolExecutor.
-                           If False, compile sequentially (default: False).
+            compile_config (str, optional): Path to a JSON configuration file containing
+                compilation settings, device mappings, and optimization parameters. If None,
+                uses the default configuration from get_default_config_path().
+            parallel (bool, default=False): Compilation mode selection:
+                - True: Compile modules in parallel using ThreadPoolExecutor for faster processing
+                - False: Compile modules sequentially for lower resource usage
+            height (int, default=512): Target image height in pixels.
+            width (int, default=512): Target image width in pixels.
+            use_onnx_subfunctions (bool, default=False): Whether to export models with ONNX
+                subfunctions before compilation.
+
+        Raises:
+            RuntimeError: If compilation fails for any module or if QAIC compiler is not available
+            FileNotFoundError: If ONNX models haven't been exported or config file is missing
+            ValueError: If configuration parameters are invalid
+            OSError: If there are issues with file I/O during compilation
+
+        Example:
+            >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> # Sequential compilation with default config
+            >>> pipeline.compile(height=1024, width=1024)
+            >>>
+            >>> # Parallel compilation with custom config
+            >>> pipeline.compile(
+            ...     compile_config="/path/to/custom_config.json",
+            ...     parallel=True,
+            ...     height=512,
+            ...     width=512
+            ... )
         """
         # Ensure all modules are exported to ONNX before compilation
         if any(
@@ -217,18 +302,22 @@ class QEFFFluxPipeline(FluxPipeline):
                 self.vae_decode.onnx_path,
             ]
         ):
-            self.export()
+            self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Load compilation configuration
-        if self.custom_config is None:
-            config_manager(self, config_source=compile_config)
+        config_manager(self, config_source=compile_config)
+
+        # Calculate compressed latent dimension using utility function
+        cl, latent_height, latent_width = calculate_compressed_latent_dimension(
+            height, width, self.model.vae_scale_factor
+        )
 
         # Prepare dynamic specialization updates based on image dimensions
         specialization_updates = {
-            "transformer": {"cl": self.cl},
+            "transformer": {"cl": cl},
             "vae_decoder": {
-                "latent_height": self.latent_height,
-                "latent_width": self.latent_width,
+                "latent_height": latent_height,
+                "latent_width": latent_width,
             },
         }
 
@@ -246,7 +335,10 @@ class QEFFFluxPipeline(FluxPipeline):
         device_ids: Optional[List[int]] = None,
     ):
         """
-        Encode prompts using the T5 text encoder.
+        Encode text prompts using the T5 text encoder for detailed semantic understanding.
+
+        T5 provides rich sequence embeddings that capture fine-grained text details,
+        complementing CLIP's global representation in Flux's dual encoder setup.
 
         Args:
             prompt (str or List[str]): Input prompt(s) to encode
@@ -261,7 +353,6 @@ class QEFFFluxPipeline(FluxPipeline):
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
-        embed_dim = 4096  # T5 embedding dimension
 
         # Tokenize prompts with padding and truncation
         text_inputs = self.text_encoder_2.tokenizer(
@@ -294,7 +385,9 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # Allocate output buffers for QAIC inference
         text_encoder_2_output = {
-            "last_hidden_state": np.random.rand(batch_size, max_sequence_length, embed_dim).astype(np.float32),
+            "last_hidden_state": np.random.rand(
+                batch_size, max_sequence_length, self.text_encoder_2.model.config.d_model
+            ).astype(np.int32),
         }
         self.text_encoder_2.qpc_session.set_buffers(text_encoder_2_output)
 
@@ -302,9 +395,9 @@ class QEFFFluxPipeline(FluxPipeline):
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
 
         # Run T5 encoder inference and measure time
-        start_t5_time = time.time()
+        start_t5_time = time.perf_counter()
         prompt_embeds = torch.tensor(self.text_encoder_2.qpc_session.run(aic_text_input)["last_hidden_state"])
-        end_t5_time = time.time()
+        end_t5_time = time.perf_counter()
         text_encoder_2_perf = end_t5_time - start_t5_time
 
         # Duplicate embeddings for multiple images per prompt
@@ -321,7 +414,10 @@ class QEFFFluxPipeline(FluxPipeline):
         device_ids: Optional[List[int]] = None,
     ):
         """
-        Encode prompts using the CLIP text encoder.
+        Encode text prompts using the CLIP text encoder for global semantic representation.
+
+        CLIP provides pooled embeddings that capture high-level semantic meaning,
+        working alongside T5's detailed sequence embeddings in Flux's dual encoder setup.
 
         Args:
             prompt (str or List[str]): Input prompt(s) to encode
@@ -335,7 +431,6 @@ class QEFFFluxPipeline(FluxPipeline):
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
-        embed_dim = 768  # CLIP embedding dimension
 
         # Tokenize prompts
         text_inputs = self.tokenizer(
@@ -365,8 +460,10 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # Allocate output buffers for QAIC inference
         text_encoder_output = {
-            "last_hidden_state": np.random.rand(batch_size, self.tokenizer_max_length, embed_dim).astype(np.float32),
-            "pooler_output": np.random.rand(batch_size, embed_dim).astype(np.float32),
+            "last_hidden_state": np.random.rand(
+                batch_size, self.tokenizer_max_length, self.text_encoder.model.config.hidden_size
+            ).astype(np.float32),
+            "pooler_output": np.random.rand(batch_size, self.text_encoder.model.config.hidden_size).astype(np.int32),
         }
         self.text_encoder.qpc_session.set_buffers(text_encoder_output)
 
@@ -374,11 +471,10 @@ class QEFFFluxPipeline(FluxPipeline):
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
 
         # Run CLIP encoder inference and measure time
-        start_text_encoder_time = time.time()
+        start_text_encoder_time = time.perf_counter()
         aic_embeddings = self.text_encoder.qpc_session.run(aic_text_input)
-        end_text_encoder_time = time.time()
+        end_text_encoder_time = time.perf_counter()
         text_encoder_perf = end_text_encoder_time - start_text_encoder_time
-
         # Extract pooled output (used for conditioning in Flux)
         prompt_embeds = torch.tensor(aic_embeddings["pooler_output"])
 
@@ -398,14 +494,14 @@ class QEFFFluxPipeline(FluxPipeline):
         max_sequence_length: int = 512,
     ):
         """
-        Encode prompts using both CLIP and T5 text encoders.
+        Encode text prompts using Flux's dual text encoder architecture.
 
-        Flux uses a dual text encoder setup:
-        - CLIP provides pooled embeddings for global conditioning
-        - T5 provides sequence embeddings for detailed text understanding
+        Flux employs both CLIP and T5 encoders for comprehensive text understanding:
+        - CLIP provides pooled embeddings for global semantic conditioning
+        - T5 provides detailed sequence embeddings for fine-grained text control
 
         Args:
-            prompt (str or List[str]): Primary prompt(s)
+            prompt (str or List[str]): Primary prompt(s) for both encoders
             prompt_2 (str or List[str], optional): Secondary prompt(s) for T5. If None, uses primary prompt
             num_images_per_prompt (int): Number of images to generate per prompt
             prompt_embeds (torch.FloatTensor, optional): Pre-computed T5 embeddings
@@ -414,10 +510,10 @@ class QEFFFluxPipeline(FluxPipeline):
 
         Returns:
             tuple: (prompt_embeds, pooled_prompt_embeds, text_ids, encoder_perf_times)
-                - prompt_embeds: T5 sequence embeddings
-                - pooled_prompt_embeds: CLIP pooled embeddings
-                - text_ids: Position IDs for text tokens
-                - encoder_perf_times: List of [CLIP_time, T5_time]
+                - prompt_embeds (torch.Tensor): T5 sequence embeddings [batch*num_images, seq_len, 4096]
+                - pooled_prompt_embeds (torch.Tensor): CLIP pooled embeddings [batch*num_images, 768]
+                - text_ids (torch.Tensor): Position IDs for text tokens [seq_len, 3]
+                - encoder_perf_times (List[float]): Performance times [CLIP_time, T5_time]
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
 
@@ -448,6 +544,8 @@ class QEFFFluxPipeline(FluxPipeline):
 
     def __call__(
         self,
+        height: int = 512,
+        width: int = 512,
         prompt: Union[str, List[str]] = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         negative_prompt: Union[str, List[str]] = None,
@@ -464,68 +562,93 @@ class QEFFFluxPipeline(FluxPipeline):
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         output_type: Optional[str] = "pil",
-        return_dict: bool = True,
-        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
         custom_config_path: Optional[str] = None,
         parallel_compile: bool = False,
+        use_onnx_subfunctions: bool = False,
     ):
         """
-        Generate images from text prompts using the Flux pipeline.
+        Generate images from text prompts using the QEfficient-optimized Flux pipeline on QAIC hardware.
 
-        This is the main entry point for image generation. It orchestrates the entire pipeline:
-        1. Validates inputs and loads configuration
-        2. Encodes prompts using CLIP and T5
-        3. Prepares latents and timesteps
-        4. Runs denoising loop with transformer
-        5. Decodes latents to images with VAE
+        This is the main entry point for text-to-image generation. It orchestrates the complete Flux
+        diffusion pipeline optimized for Qualcomm AI Cloud devices.
 
         Args:
-            prompt (str or List[str]): Text prompt(s) for image generation
-            prompt_2 (str or List[str], optional): Secondary prompt for T5 encoder
-            negative_prompt (str or List[str], optional): Negative prompt for classifier-free guidance
-            negative_prompt_2 (str or List[str], optional): Secondary negative prompt
-            true_cfg_scale (float): True CFG scale (default: 1.0, disabled)
-            num_inference_steps (int): Number of denoising steps (default: 28)
-            timesteps (List[int], optional): Custom timestep schedule
-            guidance_scale (float): Guidance scale for generation (default: 3.5)
-            num_images_per_prompt (int): Number of images per prompt (default: 1)
-            generator (torch.Generator, optional): Random generator for reproducibility
-            latents (torch.FloatTensor, optional): Pre-generated latents
-            prompt_embeds (torch.FloatTensor, optional): Pre-computed prompt embeddings
-            pooled_prompt_embeds (torch.FloatTensor, optional): Pre-computed pooled embeddings
-            negative_prompt_embeds (torch.FloatTensor, optional): Pre-computed negative embeddings
-            negative_pooled_prompt_embeds (torch.FloatTensor, optional): Pre-computed negative pooled embeddings
-            output_type (str): Output format - "pil", "np", or "latent" (default: "pil")
-            return_dict (bool): Whether to return QEffPipelineOutput object (default: True)
-            joint_attention_kwargs (dict, optional): Additional attention processor kwargs
-            callback_on_step_end (Callable, optional): Callback function after each step
-            callback_on_step_end_tensor_inputs (List[str]): Tensors to pass to callback
-            max_sequence_length (int): Maximum sequence length for T5 (default: 512)
-            custom_config_path (str, optional): Path to custom compilation config
-            parallel_compile (bool): If True, compile modules in parallel for faster compilation.
-                                    If False, compile sequentially (default: False).
+            height (int, optional): Target image height in pixels. Must be divisible by 8. Default: 512.
+            width (int, optional): Target image width in pixels. Must be divisible by 8. Default: 512.
+            prompt (str or List[str]): Primary text prompt(s) describing the desired image(s).
+                Required unless `prompt_embeds` is provided.
+            prompt_2 (str or List[str], optional): Secondary prompt for T5 encoder. If None, uses `prompt`.
+            negative_prompt (str or List[str], optional): Negative prompt(s) describing what to avoid.
+                Only used when `true_cfg_scale > 1.0`.
+            negative_prompt_2 (str or List[str], optional): Secondary negative prompt for T5. If None, uses `negative_prompt`.
+            true_cfg_scale (float, optional): True classifier-free guidance scale. Values > 1.0 enable
+                negative prompting. Default: 1.0 (disabled).
+            num_inference_steps (int, optional): Number of denoising steps. Default: 28.
+            timesteps (List[int], optional): Custom timestep schedule. If provided, overrides `num_inference_steps`.
+            guidance_scale (float, optional): Guidance scale for classifier-free guidance. Default: 3.5.
+            num_images_per_prompt (int, optional): Number of images to generate per prompt. Default: 1.
+            generator (torch.Generator or List[torch.Generator], optional): Random generator for reproducibility.
+            latents (torch.FloatTensor, optional): Pre-generated latent tensors. If None, random latents are generated.
+            prompt_embeds (torch.FloatTensor, optional): Pre-computed T5 text embeddings. Shape: [batch, seq_len, 4096].
+            pooled_prompt_embeds (torch.FloatTensor, optional): Pre-computed CLIP pooled embeddings. Shape: [batch, 768].
+            negative_prompt_embeds (torch.FloatTensor, optional): Pre-computed negative T5 embeddings.
+            negative_pooled_prompt_embeds (torch.FloatTensor, optional): Pre-computed negative CLIP embeddings.
+            output_type (str, optional): Output format. Options: "pil" (default), "np", or "latent".
+            callback_on_step_end (Callable, optional): Callback function executed after each denoising step.
+            callback_on_step_end_tensor_inputs (List[str], optional): Tensor names to pass to callback. Default: ["latents"].
+            max_sequence_length (int, optional): Maximum token sequence length for T5 encoder. Default: 512.
+            custom_config_path (str, optional): Path to custom JSON configuration file for compilation settings.
+            parallel_compile (bool, optional): Whether to compile modules in parallel. Default: False.
+            use_onnx_subfunctions (bool, optional): Whether to export transformer blocks as ONNX subfunctions. Default: False.
 
         Returns:
-            QEffPipelineOutput or tuple: Generated images and performance metrics
+            QEffPipelineOutput: A dataclass containing:
+                - images: Generated image(s) in the format specified by `output_type`
+                - pipeline_module: Performance metrics for each pipeline component (text encoders, transformer, VAE)
+
+        Raises:
+            ValueError: If input validation fails or parameters are incompatible.
+            RuntimeError: If compilation fails or QAIC devices are unavailable.
+            FileNotFoundError: If custom config file is specified but not found.
+
+        Example:
+            >>> from QEfficient.diffusers.pipelines.flux import QEffFluxPipeline
+            >>> pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+            >>> result = pipeline(
+            ...     prompt="A serene mountain landscape at sunset",
+            ...     height=1024,
+            ...     width=1024,
+            ...     num_inference_steps=28,
+            ...     guidance_scale=7.5
+            ... )
+            >>> result.images[0].save("mountain_sunset.png")
+            >>> print(f"Transformer inference time: {sum(result.pipeline_module[2].perf):.2f}s")
         """
-        device = "cpu"
+        device = self.model._execution_device
 
-        # Step 1: Load configuration and compile models if needed
-        if custom_config_path is not None:
-            config_manager(self, custom_config_path)
-            set_module_device_ids(self)
+        if height is None or width is None:
+            logger.warning("Height or width is None. Setting default values of 512 for both dimensions.")
 
-        self.compile(compile_config=custom_config_path, parallel=parallel_compile)
+        self.compile(
+            compile_config=custom_config_path,
+            parallel=parallel_compile,
+            height=height,
+            width=width,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
+
+        # Set device IDs for all modules based on configuration
+        set_module_device_ids(self)
 
         # Validate all inputs
-        self.check_inputs(
+        self.model.check_inputs(
             prompt,
             prompt_2,
-            self.height,
-            self.width,
+            height,
+            width,
             negative_prompt=negative_prompt,
             negative_prompt_2=negative_prompt_2,
             prompt_embeds=prompt_embeds,
@@ -584,18 +707,21 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # Step 5: Prepare initial latents
         num_channels_latents = self.transformer.model.config.in_channels // 4
-        latents, latent_image_ids = self.prepare_latents(
+        latents, latent_image_ids = self.model.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
-            self.height,
-            self.width,
+            height,
+            width,
             prompt_embeds.dtype,
             device,
             generator,
             latents,
         )
 
-        # Step 6: Initialize transformer inference session
+        # Step 6: Calculate compressed latent dimension for transformer buffer allocation
+        cl, _, _ = calculate_compressed_latent_dimension(height, width, self.model.vae_scale_factor)
+
+        # Initialize transformer inference session
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(
                 str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
@@ -603,7 +729,7 @@ class QEFFFluxPipeline(FluxPipeline):
 
         # Allocate output buffer for transformer
         output_buffer = {
-            "output": np.random.rand(batch_size, self.cl, self.transformer.model.config.in_channels).astype(np.float32),
+            "output": np.random.rand(batch_size, cl, self.transformer.model.config.in_channels).astype(np.float32),
         }
         self.transformer.qpc_session.set_buffers(output_buffer)
 
@@ -611,11 +737,8 @@ class QEFFFluxPipeline(FluxPipeline):
         self.scheduler.set_begin_index(0)
 
         # Step 7: Denoising loop
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
+        with self.model.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                if self.interrupt:
-                    continue
-
                 # Prepare timestep embedding
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
                 temb = self.transformer.model.time_text_embed(timestep, pooled_prompt_embeds)
@@ -659,9 +782,9 @@ class QEFFFluxPipeline(FluxPipeline):
                 }
 
                 # Run transformer inference and measure time
-                start_transformer_step_time = time.time()
+                start_transformer_step_time = time.perf_counter()
                 outputs = self.transformer.qpc_session.run(inputs_aic)
-                end_transformer_step_time = time.time()
+                end_transformer_step_time = time.perf_counter()
                 transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
 
                 noise_pred = torch.from_numpy(outputs["output"])
@@ -693,7 +816,7 @@ class QEFFFluxPipeline(FluxPipeline):
             image = latents
         else:
             # Unpack and denormalize latents
-            latents = self._unpack_latents(latents, self.height, self.width, self.vae_scale_factor)
+            latents = self.model._unpack_latents(latents, height, width, self.model.vae_scale_factor)
             latents = (latents / self.vae_decode.model.scaling_factor) + self.vae_decode.model.shift_factor
 
             # Initialize VAE decoder inference session
@@ -703,19 +826,19 @@ class QEFFFluxPipeline(FluxPipeline):
                 )
 
             # Allocate output buffer for VAE decoder
-            output_buffer = {"sample": np.random.rand(batch_size, 3, self.height, self.width).astype(np.int32)}
+            output_buffer = {"sample": np.random.rand(batch_size, 3, height, width).astype(np.int32)}
             self.vae_decode.qpc_session.set_buffers(output_buffer)
 
             # Run VAE decoder inference and measure time
             inputs = {"latent_sample": latents.numpy()}
-            start_decode_time = time.time()
+            start_decode_time = time.perf_counter()
             image = self.vae_decode.qpc_session.run(inputs)
-            end_decode_time = time.time()
+            end_decode_time = time.perf_counter()
             vae_decode_perf = end_decode_time - start_decode_time
 
             # Post-process image
             image_tensor = torch.from_numpy(image["sample"])
-            image = self.image_processor.postprocess(image_tensor, output_type=output_type)
+            image = self.model.image_processor.postprocess(image_tensor, output_type=output_type)
 
             # Build performance metrics
             perf_metrics = [
