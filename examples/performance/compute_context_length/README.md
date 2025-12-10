@@ -37,8 +37,19 @@ python basic_inference.py \
     --model-name meta-llama/Llama-3.2-1B \
     --prompt "Hello, how are you?" \
     --ctx-len 1024 \
+    --ccl-enabled \
     --comp-ctx-lengths-prefill "256,500" \
     --comp-ctx-lengths-decode "512,1024" \
+    --generation-len 100
+```
+
+# For automatic CCL lists generation, simply not pass CCL lists and only pass ccl-enabled flag
+```bash
+python basic_inference.py \
+    --model-name meta-llama/Llama-3.2-1B \
+    --prompt "Hello, how are you?" \
+    --ctx-len 1024 \
+    --ccl-enabled \
     --generation-len 100
 ```
 
@@ -55,8 +66,19 @@ python vlm_inference.py \
     --model-name meta-llama/Llama-3.2-11B-Vision-Instruct \
     --query "Describe this image" \
     --image-url "https://..." \
+    --ccl-enabled \
     --comp-ctx-lengths-prefill "4096" \
     --comp-ctx-lengths-decode "6144,8192" \
+    --ctx-len 8192
+```
+
+# For automatic CCL lists generation, simply not pass CCL lists and only pass ccl-enabled flag
+```bash
+python vlm_inference.py \
+    --model-name meta-llama/Llama-3.2-11B-Vision-Instruct \
+    --query "Describe this image" \
+    --image-url "https://..." \
+    --ccl-enabled \
     --ctx-len 8192
 ```
 
