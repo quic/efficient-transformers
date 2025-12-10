@@ -2287,13 +2287,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
             else:
                 self.model, tf = PrefillOnlyTransform.apply(self.model)
-            self.prefill_enabled = True
+
         else:
             if retain_full_kv:
                 self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
                 self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
-            self.prefill_enabled = False
 
     def __init__(
         self,
@@ -2347,8 +2346,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
-
-        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(qaic_config)
 
         setattr(model.config, "max_seq_len_cached", max_seq_len_cached)
         super().__init__(model, qaic_config=qaic_config, **kwargs)
