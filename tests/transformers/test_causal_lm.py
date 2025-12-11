@@ -228,7 +228,7 @@ def test_prefill_only_specialized_models(config, cb, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
     if cb:
-        with pytest.raises(AssertionError):
+        with pytest.raises(NotImplementedError):
             qeff_model.export(tmp_path, prefill_only=True, offload_pt_weights=False)
     else:
         with pytest.raises(ValueError):

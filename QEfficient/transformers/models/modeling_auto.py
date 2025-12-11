@@ -2554,18 +2554,23 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
+        enable_chunking = kwargs.get("enable_chunking", False)
         if prefill_only:
-            self.prefill(enable=True, enable_chunking=kwargs.get("enable_chunking", False))
+            if not enable_chunking and self.continuous_batching:
+                raise NotImplementedError(
+                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                )
+            self.prefill(enable=True, enable_chunking=enable_chunking)
             self.hash_params.pop("retain_full_kv", None)
             seq_len = (
                 self.get_seq_len_and_handle_specialized_prefill_model(
-                    prefill_seq_len=prefill_seq_len, enable_chunking=kwargs.get("enable_chunking", False)
+                    prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                 )
                 if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
                 else seq_len
             )
             kv_cache_shape[2] = (
-                seq_len + self.model.config.sliding_window if kwargs.get("enable_chunking", False) else seq_len
+                seq_len + self.model.config.sliding_window if enable_chunking else seq_len
             )
         else:
             self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
@@ -2980,10 +2985,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
         else:
             if self.continuous_batching:
-                if not enable_chunking:
-                    raise NotImplementedError(
-                        "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                    )
+
                 if not isinstance(kv_cache_batch_size, int):
                     raise ValueError(
                         "Please pass valid integer for kv_cache_batch_size as continuous_batching is enabled for prefill-only model"
