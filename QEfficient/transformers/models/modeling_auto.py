@@ -1183,7 +1183,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
-
         if not skip_vision:
             self.vision_model._compile(
                 compile_dir=compile_dir,
@@ -1199,6 +1198,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 **compiler_options,
             )
 
+        # Custom NPI file options
+        if hasattr(self.model, "get_npi_file"):
+            compiler_options = self.model.get_npi_file(self.model.name_or_path)
+
         if not skip_lang:
             custom_io_lang = {}
             # Inputs
@@ -1212,7 +1215,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
-
             self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
@@ -1801,6 +1803,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **compiler_options,
         )
 
+        if hasattr(self.model, "get_npi_file"):
+            compiler_options = self.model.get_npi_file(self.model.name_or_path)
+
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         # inputs
@@ -1819,7 +1824,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
-
         self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
