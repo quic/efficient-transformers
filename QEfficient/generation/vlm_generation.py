@@ -36,6 +36,7 @@ from QEfficient.generation.text_generation_inference import (
     write_io_files,
 )
 from QEfficient.utils import LRUCache
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -313,6 +314,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
+        if self.include_sampler:
+            for op in Constants.SAMPLER_OPS:
+                if decode_batch_id is not None:
+                    lang_inputs[op] = self.sampling_params[op][decode_batch_id.flatten()]
+                else:
+                    lang_inputs[op] = self.sampling_params[op]
+
         for i in range(num_chunks):
             input_ids_slice = lang_inputs["input_ids"][:, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len]
             position_ids_slice = lang_inputs["position_ids"][
@@ -337,6 +345,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                     lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
                 chunk_inputs["comp_ctx_lengths"] = lang_inputs["comp_ctx_lengths"]
+
+            if self.include_sampler:
+                chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
+                for op in Constants.SAMPLER_OPS:
+                    chunk_inputs[op] = lang_inputs[op]
 
             outputs = self._session.run(chunk_inputs)
 
