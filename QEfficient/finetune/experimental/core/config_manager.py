@@ -602,6 +602,7 @@ class ConfigManager:
 
         cfg = self.config
         model = getattr(cfg, "model", {})
+        optimizers = getattr(cfg, "optimizers", {})
         dataset = getattr(cfg, "dataset", {})
         training = getattr(cfg, "training", {})
 
@@ -683,7 +684,8 @@ class ConfigManager:
                 backend not in {"qccl", "nccl", "gloo", None},
                 "training.ddp_config.ddp_backend must be one of {'qccl','nccl','gloo'} or omitted.",
             )
-
+        # -----------Optimizers----------
+        self._push(errors, float(optimizers.get("lr", 0)) <= 0, "optimizer.lr must be positive.")
         # ---------- Final ----------
         if errors:
             # Join messages with bullet points for readability
