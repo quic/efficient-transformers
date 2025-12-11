@@ -20,6 +20,9 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformerBlock,
 )
 from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
+from diffusers.models.transformers.transformer_qwenimage import (
+    QwenImageTransformer2DModel,
+)
 from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
@@ -47,6 +50,9 @@ from QEfficient.diffusers.models.transformers.transformer_wan import (
     QEffWanAttnProcessor,
     QEffWanTransformer3DModel,
 )
+from QEfficient.diffusers.models.transformers.transformer_qwenimage import (
+    QEffQwenImageTransformer2DModel,
+)
 
 
 class CustomOpsTransform(ModuleMappingTransform):
@@ -66,6 +72,7 @@ class AttentionTransform(ModuleMappingTransform):
         WanAttnProcessor: QEffWanAttnProcessor,
         WanAttention: QEffWanAttention,
         WanTransformer3DModel: QEffWanTransformer3DModel,
+        QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
         WanDecoder3d: QEffWanDecoder3d,
         WanEncoder3d: QEffWanEncoder3d,
         WanResidualBlock: QEffWanResidualBlock,
