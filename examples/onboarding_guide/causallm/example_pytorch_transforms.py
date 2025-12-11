@@ -28,8 +28,6 @@ from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
 from torch import nn
-
-# Example imports for three representative models
 from transformers.models.blueprint.modeling_blueprint import (
     BlueprintAttention,
     BlueprintDecoderLayer,
@@ -56,6 +54,8 @@ from transformers.models.mixtral.modeling_mixtral import (
 from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
+
+# Example imports for three representative models
 from QEfficient.transformers.models.blueprint.modeling_blueprint import (
     QEffBlueprintAttention,
     QEffBlueprintDecoderLayer,
