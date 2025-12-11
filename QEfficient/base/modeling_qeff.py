@@ -234,6 +234,8 @@ class QEFFBaseModel(ABC):
             instance using from_pretrained() for re-export.
 
         """
+        # TODO: Hack for retain_full_kv, handle this outside
+        export_kwargs.pop("retain_full_kv", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
@@ -542,5 +544,4 @@ class QEFFBaseModel(ABC):
         logger.info("Hashed parameters exported successfully.")
 
         self.qpc_path = qpc_path
-
         return qpc_path
