@@ -466,8 +466,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            export_kwargs=export_kwargs,
             offload_pt_weights=False,  # As weights are needed with AdaLN changes
+            **export_kwargs,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
