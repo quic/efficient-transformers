@@ -12,7 +12,6 @@ import os
 import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
@@ -27,9 +26,8 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
-from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.constants import KWARGS_INCLUSION_LIST, QEFF_MODELS_DIR, Constants, QnnConstants
-from QEfficient.utils.hash_utils import create_export_hash, json_serializable
+from QEfficient.utils.hash_utils import json_serializable
 from QEfficient.utils.logging_utils import logger
 
 
@@ -532,59 +530,9 @@ def create_model_params(qeff_model, **kwargs) -> Dict:
     """
     model_params = copy.deepcopy(kwargs)
     model_params = {k: v for k, v in model_params.items() if k in KWARGS_INCLUSION_LIST}
-    model_params["config"] = qeff_model.model.config.to_diff_dict()
     model_params["peft_config"] = getattr(qeff_model.model, "active_peft_config", None)
     model_params["applied_transform_names"] = qeff_model._transform_names()
     return model_params
-
-
-def export_wrapper(func):
-    def wrapper(self, *args, **kwargs):
-        export_dir = kwargs.get("export_dir", None)
-        parent_dir = self.model_architecture or self.model_name
-        export_dir = Path(export_dir or (QEFF_HOME / parent_dir / self.model_name))
-
-        # PREPROCESSING OF PARAMETERS
-
-        # Get the original signature
-        original_sig = inspect.signature(func)
-
-        # Remove 'self' from parameters
-        params = list(original_sig.parameters.values())[1:]  # skip 'self'
-        new_sig = inspect.Signature(params)
-
-        # Bind args and kwargs to the new signature
-        bound_args = new_sig.bind(*args, **kwargs)
-        bound_args.apply_defaults()
-
-        # Get arguments as a dictionary
-        all_args = bound_args.arguments
-
-        export_hash, filtered_hash_params = create_export_hash(
-            model_params=self.hash_params,
-            output_names=all_args.get("output_names"),
-            dynamic_axes=all_args.get("dynamic_axes"),
-            export_kwargs=all_args.get("export_kwargs", None),
-            onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
-            use_onnx_subfunctions=all_args.get("use_onnx_subfunctions", False),
-        )
-
-        export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
-        kwargs["export_dir"] = export_dir
-        self.export_hash = export_hash
-
-        # _EXPORT CALL
-        onnx_path = func(self, *args, **kwargs)
-
-        # POST-PROCESSING
-        # Dump JSON file with hashed parameters
-        hashed_params_export_path = export_dir / "hashed_export_params.json"
-        create_json(hashed_params_export_path, filtered_hash_params)
-        logger.info("Hashed parameters exported successfully.")
-
-        return onnx_path
-
-    return wrapper
 
 
 def execute_command(process: str, command: str, output_file_path: Optional[str] = None):
