@@ -205,12 +205,12 @@ def test_causal_lm_hash_creation(config, cb, subfunc, tmp_path):
     )
     output_names = []
     output_names.append("logits")
-
+    onnx_out_name_suffix = "InternalRetainedState" if subfunc else "RetainedState"
     for i in range(qeff_model.num_layers):
         pkv_dynamic_axes[i][0] = "full_batch_size" if qeff_model.continuous_batching else "batch_size"
         for kv in ["key", "value"]:
             dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
-            output_names.append(f"past_{kv}.{i}_RetainedState")
+            output_names.append(f"past_{kv}.{i}_{onnx_out_name_suffix}")
 
     if qeff_model.continuous_batching:
         dynamic_axes["batch_index"] = {0: "batch_size"}

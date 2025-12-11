@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import copy
 import inspect
 import re
 import warnings
@@ -42,7 +43,7 @@ def export_wrapper(func):
     def wrapper(self, *args, **kwargs):
         # 1. Setup ONNX subfunctions if requested
         if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
-            kwargs = _setup_onnx_subfunctions(self, kwargs)
+            args, kwargs = _setup_onnx_subfunctions(self, args, kwargs)
 
         # 2. Prepare export directory
         export_dir = _prepare_export_directory(self, kwargs)
@@ -112,7 +113,6 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     # Use the model's current configuration for hashing to ensure any post-load modifications are captured
     # TODO: Replace with get_model_config property of modeling classes and remove the if-else
     # Determine the config dict to use, preferring .to_diff_dict() if available
-
     if hasattr(qeff_model.model, "config") and hasattr(qeff_model.model.config, "to_diff_dict"):
         config_val = qeff_model.model.config.to_diff_dict()
     elif hasattr(qeff_model.model, "model") and hasattr(qeff_model.model.model.config, "to_diff_dict"):
@@ -120,14 +120,15 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     else:
         config_val = qeff_model.model.config
 
-    qeff_model.hash_params.update(
+    copy_of_hash_params = copy.deepcopy(qeff_model.hash_params)
+    copy_of_hash_params.update(
         {
             "config": config_val,
         }
     )
     # Generate hash from relevant parameters
     export_hash, filtered_hash_params = create_export_hash(
-        model_params=qeff_model.hash_params,
+        model_params=copy_of_hash_params,
         output_names=all_args.get("output_names"),
         dynamic_axes=all_args.get("dynamic_axes"),
         export_kwargs=all_args.get("export_kwargs", None),
@@ -137,7 +138,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     return export_hash, filtered_hash_params
 
 
-def _setup_onnx_subfunctions(qeff_model, kwargs):
+def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     """
     Setup ONNX subfunction export environment.
 
@@ -160,20 +161,22 @@ def _setup_onnx_subfunctions(qeff_model, kwargs):
     # Apply torch patches for subfunction support
     apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
-
     # Transform output names for subfunction compatibility
     if "output_names" in kwargs:
         kwargs["output_names"] = [
             re.sub("_RetainedState", "_InternalRetainedState", name) for name in kwargs["output_names"]
         ]
-
+    else:
+        args = list(args)
+        args[1] = [re.sub("_RetainedState", "_InternalRetainedState", name) for name in args[1]]
+        args = tuple(args)
     # Add subfunction-specific ONNX transforms
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
     # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
     kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
-    return kwargs
+    return args, kwargs
 
 
 def _cleanup_onnx_subfunctions(qeff_model):
