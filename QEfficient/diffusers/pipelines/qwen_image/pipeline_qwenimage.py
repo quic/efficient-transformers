@@ -176,7 +176,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices_transformer,
-            # node_precision_info="",
+            node_precision_info="/home/dipankar/fp32_nodes_scale_woscale_womatmul.yaml",
             aic_num_cores=num_cores,
             **compiler_options_transformer,
         )
@@ -480,23 +480,23 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
                 noise_pred = self.transformer.qpc_session.run(transformer_inputs)
                 noise_pred = torch.tensor(noise_pred["output"])
-                if do_true_cfg:
-                    # Unconditional pass
-                    transformer_inputs_uncond = {
-                        "hidden_states": latents.detach().numpy().astype(np.float32),
-                        "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
-                        "timestep": timestep,
-                    }
-                    if guidance is not None:
-                        transformer_inputs_uncond["guidance"] = guidance.numpy().astype(np.float32)
+                # if do_true_cfg:
+                #     # Unconditional pass
+                #     transformer_inputs_uncond = {
+                #         "hidden_states": latents.detach().numpy().astype(np.float32),
+                #         "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
+                #         "timestep": timestep,
+                #     }
+                #     if guidance is not None:
+                #         transformer_inputs_uncond["guidance"] = guidance.numpy().astype(np.float32)
 
-                    neg_noise_pred = self.transformer.qpc_session.run(transformer_inputs_uncond)
-                    neg_noise_pred = torch.tensor(neg_noise_pred["output"])
+                #     neg_noise_pred = self.transformer.qpc_session.run(transformer_inputs_uncond)
+                #     neg_noise_pred = torch.tensor(neg_noise_pred["output"])
 
-                    comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
-                    cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
-                    noise_norm = torch.norm(comb_pred, dim=-1, keepdim=True)
-                    noise_pred = comb_pred * (cond_norm / noise_norm)
+                #     comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
+                #     cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
+                #     noise_norm = torch.norm(comb_pred, dim=-1, keepdim=True)
+                #     noise_pred = comb_pred * (cond_norm / noise_norm)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
