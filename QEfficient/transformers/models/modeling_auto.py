@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import os
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -37,6 +38,7 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
+from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -584,6 +586,9 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -733,6 +738,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
@@ -2220,6 +2229,7 @@ class QEFFAutoModelForImageTextToText:
         NotImplementedError
             If `continuous_batching` is provided as True.
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
             NotImplementedError("Continuous batching is not supported for kv_offload = False")
@@ -2233,6 +2243,9 @@ class QEFFAutoModelForImageTextToText:
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        if enable_proxy and kv_offload:
+            logger.info("Proxy Model Enabled for QEfficient Model")
+            kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(
             model,
             kv_offload=kv_offload,
@@ -2320,6 +2333,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model_class_name = model.__class__.__name__
         if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
             raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
+
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
 
         # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
@@ -2415,6 +2432,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -2435,7 +2453,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
-
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
@@ -3039,6 +3057,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments. Currently supports:
             - `generation_len (int, optional)`: The maximum number of tokens to generate.
+            - `write_io (bool, optional)`: Whether to save the io files.
 
         Returns
         -------
@@ -3056,6 +3075,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
             generation_len = kwargs.pop("generation_len", None)
+            write_io = kwargs.pop("write_io", False)
             return QEfficient.cloud_ai_100_exec_kv(
                 tokenizer=tokenizer,
                 qpc_path=self.qpc_path,
@@ -3067,6 +3087,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 automation=kwargs.pop("automation", False),
                 iteration=kwargs.pop("iteration", 1),
                 is_tlm=self.is_tlm,
+                write_io_dir=os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None,
                 **kwargs,
             )
         else:
