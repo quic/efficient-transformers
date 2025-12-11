@@ -13,6 +13,9 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformer2DModel,
     FluxTransformerBlock,
 )
+from diffusers.models.transformers.transformer_qwenimage import (
+    QwenImageTransformer2DModel,
+)
 from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
@@ -28,6 +31,9 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxSingleTransformerBlock,
     QEffFluxTransformer2DModel,
     QEffFluxTransformerBlock,
+)
+from QEfficient.diffusers.models.transformers.transformer_qwenimage import (
+    QEffQwenImageTransformer2DModel,
 )
 
 
@@ -45,6 +51,7 @@ class AttentionTransform(ModuleMappingTransform):
         FluxTransformer2DModel: QEffFluxTransformer2DModel,
         FluxAttention: QEffFluxAttention,
         FluxAttnProcessor: QEffFluxAttnProcessor,
+        QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
     }
 
 
