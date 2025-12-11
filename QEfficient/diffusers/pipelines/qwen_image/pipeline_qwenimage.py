@@ -457,7 +457,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None
         )
 
-        # # Initialize transformer session
+        # Initialize transformer session
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(str(self.transformer.qpc_path))
 
@@ -477,7 +477,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
-
+                # self._current_timestep = t
                 timestep = (t.expand(latents.shape[0]) / 1000).detach().numpy().astype(np.float32)
 
                 # Conditional pass
