@@ -5,6 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
+from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers, undo_transformers_quantizers
 
-__all__ = ["replace_transformers_quantizers"]
+__all__ = ["replace_transformers_quantizers", "undo_transformers_quantizers"]
