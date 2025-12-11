@@ -452,9 +452,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         else:
             guidance = None
 
-        # if self.attention_kwargs is None:
-        #     self._attention_kwargs = {}
-
         txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist() if prompt_embeds_mask is not None else None
         negative_txt_seq_lens = (
             negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None
@@ -470,7 +467,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
-                # self._current_timestep = t
                 timestep = (t.expand(latents.shape[0]) / 1000).detach().numpy().astype(np.float32)
 
                 # Conditional pass
@@ -521,7 +517,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
-        # self._current_timestep = None
         if output_type == "latent":
             image = latents
         else:
@@ -539,9 +534,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
             image = self.vae_cpu.decode(latents, return_dict=False)[0][:, :, 0]
             image = self.image_processor.postprocess(image.detach(), output_type=output_type)
-
-        # Offload all models
-        # self.maybe_free_model_hooks()
 
         if not return_dict:
             return (image,)
