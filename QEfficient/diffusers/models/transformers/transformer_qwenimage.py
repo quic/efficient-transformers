@@ -353,7 +353,6 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
 
         # Apply RoPE
         if image_rotary_emb is not None:
-            # breakpoint()
             # Unpack the 4 tensors (cos and sin for both img and txt)
             img_freqs_cos, img_freqs_sin, txt_freqs_cos, txt_freqs_sin = image_rotary_emb
 
