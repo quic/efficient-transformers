@@ -44,6 +44,7 @@ model_kwargs = {"attn_implementation": "eager"}
 config_ids = [x.model_type for x in configs]
 
 
+@pytest.mark.on_qaic
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_subfunction_vs_nonsubfunction(config, tmp_path):
     tokenizer = AutoTokenizer.from_pretrained(config.model_type)
