@@ -51,7 +51,7 @@ def export_wrapper(func):
 
         # 3. Setup ONNX subfunctions if requested
         # TODO: No need of this variable, if export_kwargs contains classes (refer diffusers)
-        if use_onnx_subfunctions := kwargs.get("use_onnx_subfunctions", False):
+        if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
             kwargs = _setup_onnx_subfunctions(self, kwargs)
 
         # 4. Execute the actual export
@@ -102,7 +102,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
         Tuple of (export_hash: str, filtered_hash_params: dict)
     """
     # Extract use_onnx_subfunctions before binding (it's used by wrapper, not _export)
-    use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
+    use_onnx_subfunctions = kwargs.get("use_onnx_subfunctions", False)
 
     # Extract function signature
     original_sig = inspect.signature(func)
@@ -180,13 +180,9 @@ def _setup_onnx_subfunctions(qeff_model, kwargs):
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
-    # Configure export to use modules as functions
-    export_kwargs = kwargs.get("export_kwargs", {})
-
     # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
-    export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
-    kwargs["export_kwargs"] = export_kwargs
-    return export_kwargs
+    kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
+    return kwargs
 
 
 def _cleanup_onnx_subfunctions(qeff_model):

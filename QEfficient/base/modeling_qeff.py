@@ -205,11 +205,11 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        **export_kwargs,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
@@ -277,9 +277,6 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
-            # Export to ONNX
-            export_kwargs = {} if export_kwargs is None else export_kwargs
-
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
