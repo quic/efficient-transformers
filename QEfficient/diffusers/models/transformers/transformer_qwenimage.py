@@ -227,7 +227,6 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
             If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
             `tuple` where the first element is the sample tensor.
         """
-        # breakpoint()
         # Convert scalar tensors to Python integers and create img_shapes list
         if isinstance(frame, torch.Tensor):
             frame = frame.item() if frame.numel() == 1 else int(frame[0])
@@ -396,3 +395,8 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
         txt_attn_output = attn.to_add_out(txt_attn_output)
 
         return img_attn_output, txt_attn_output
+
+
+class QEffQwenImageAttention(Attention):
+    def __qeff_init__(self):
+        self.processor = QEffQwenDoubleStreamAttnProcessor2_0()
