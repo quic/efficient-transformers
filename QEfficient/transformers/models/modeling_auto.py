@@ -2569,9 +2569,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
                 else seq_len
             )
-            kv_cache_shape[2] = (
-                seq_len + self.model.config.sliding_window if enable_chunking else seq_len
-            )
+            kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
         else:
             self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
             self.hash_params.pop("prefill_only", None)
@@ -2985,7 +2983,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
         else:
             if self.continuous_batching:
-
                 if not isinstance(kv_cache_batch_size, int):
                     raise ValueError(
                         "Please pass valid integer for kv_cache_batch_size as continuous_batching is enabled for prefill-only model"
