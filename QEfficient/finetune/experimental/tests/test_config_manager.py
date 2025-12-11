@@ -20,11 +20,14 @@ def config_path() -> Path:
 
 
 def test_config(config_path):
-    # parse the yaml file
-    master_config = parse_arguments(config_path)
+    master_config = parse_arguments(args=[])
     config_manager = ConfigManager(master_config)
-    # Test that the config manager is initialized correctly
     assert isinstance(config_manager, ConfigManager)
+    config_manager.load_config(config_path)
+    try:
+        config_manager.validate_config()
+    except Exception as e:
+        pytest.fail(f"Config validation failed with error: {e}")
 
     # Test that all required fields are present
     missing = [
@@ -34,14 +37,26 @@ def test_config(config_path):
     ]
     assert not missing, f"Missing attributes: {missing}"
     trainer_config = config_manager.get_training_config()
-    assert (hasattr(trainer_config, attr) for attr in ("output_dir", "train_batch_size", "num_epochs"))
+    assert trainer_config is not None
+    assert isinstance(trainer_config, dict)
+    assert (hasattr(trainer_config, attr) for attr in ("output_dir", "train_batch_size", "num_epochs", "ddp_config"))
     dataset_config = config_manager.get_dataset_config()
+    assert dataset_config is not None
+    assert isinstance(dataset_config, dict)
     assert (hasattr(dataset_config, attr) for attr in ("dataset_type", "dataset_name", "tokenizer_name"))
     model_config = config_manager.get_model_config()
-    assert (hasattr(model_config, attr) for attr in ("model_type", "model_name", "use_peft"))
+    assert model_config is not None
+    assert isinstance(model_config, dict)
+    assert (hasattr(model_config, attr) for attr in ("model_type", "model_name", "use_peft", "peft_config"))
     scheduler_config = config_manager.get_scheduler_config()
+    assert scheduler_config is not None
+    assert isinstance(scheduler_config, dict)
     assert (hasattr(scheduler_config, attr) for attr in ("scheduler_name"))
     callback_config = config_manager.get_callback_config()
+    assert callback_config is not None
+    assert isinstance(callback_config, dict)
     assert (hasattr(callback_config, attr) for attr in ("earlystopping"))
     optimizer_config = config_manager.get_optimizer_config()
+    assert optimizer_config is not None
+    assert isinstance(optimizer_config, dict)
     assert (hasattr(optimizer_config, attr) for attr in ("optimizer_name", "lr"))
