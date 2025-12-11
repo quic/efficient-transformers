@@ -5,9 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-# Model configuration
+# model configuration
 model:
-  model_type: "hf"  # Hugging Face model
+  model_type: "hf"  
   auto_class_name: "AutoModelForCausalLM"
   model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
   load_in_4bit: false
@@ -17,9 +17,9 @@ model:
     lora_alpha: 16
     lora_dropout: 0.1
     target_modules: ["q_proj", "v_proj"]
-    bias: "none"  # Options: none, all, lora_only
-    task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
-    peft_type: "LORA"  # Options: LORA, IA3, etc.
+    bias: "none" 
+    task_type: "CAUSAL_LM" 
+    peft_type: "LORA" 
 
 # Dataset configuration
 dataset:
@@ -33,10 +33,10 @@ dataset:
   test_split: "test"
   group_by_length: True
   num_workers: 4
-  pin_memory: True
-  persistent_workers: True
-  prefetch_factor: 1
-  drop_last: False
+  dataloader_pin_memory: True
+  dataloader_persistent_workers: True
+  dataloader_prefetch_factor: 1
+  dataloader_drop_last: False
 
 # Training configuration
 training:
@@ -44,7 +44,7 @@ training:
   output_dir: "./training_results"
   overwrite_output_dir: False
   seed: 42
-
+  device: "qaic"
   do_eval: True
   eval_strategy: "epoch"
   eval_steps: 100
@@ -61,7 +61,6 @@ training:
   logging_steps: 10
 
   save_strategy: "epoch"
-  save_steps: 100   # If 'save_strategy' is 'steps' then it will be used.
   save_total_limit: 5
   metric_for_best_model: "eval_loss"
 
@@ -76,7 +75,6 @@ training:
     ddp_broadcast_buffers: null
     ddp_timeout: 1800
 
-  # Uncomment below to explicitly run on CPU
   use_cpu: False
 
   gradient_checkpointing: False
@@ -85,7 +83,6 @@ training:
     use_reenrant: False
 
   torch_compile: True
-  include_tokens_per_second: True
   include_num_input_tokens_seen: True
   average_tokens_across_devices: True
 
@@ -95,19 +92,9 @@ optimizers:
   lr: 5e-5
   weight_decay: 0.01
 
-
-# “linear” → transformers.get_linear_schedule_with_warmup
-# “cosine” → transformers.get_cosine_schedule_with_warmup
-# “cosine_with_restarts” -->transformers.get_cosine_with_hard_restarts_schedule_with_warmup
-# “polynomial” → transformers.get_polynomial_decay_schedule_with_warmup
-# “constant” → transformers.get_constant_schedule
-# “constant_with_warmup” → transformers.get_constant_schedule_with_warmup
-# “inverse_sqrt” → transformers.get_inverse_sqrt_schedule
-
 scheduler:
   scheduler_name: "cosine"
   warmup_steps: 100   # warmup_steps or warmup_ratio
-  warmup_ratio: 0.1
 
 callbacks:
   early_stopping:

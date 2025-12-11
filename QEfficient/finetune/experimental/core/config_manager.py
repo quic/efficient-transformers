@@ -11,10 +11,9 @@ Provides centralized configuration loading, validation, and management.
 
 import json
 import os
-import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 from transformers.hf_argparser import HfArgumentParser
@@ -257,7 +256,7 @@ class DdpConfig:
         metadata={"help": "The DDP backend to use (e.g., 'nccl', 'gloo', 'qccl')."},
     )
     ddp_find_unused_parameters: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Whether to find unused parameters in DDP."},
     )
     ddp_bucket_cap_mb: Optional[int] = field(
@@ -294,7 +293,10 @@ class TrainingConfig:
         default=42,
         metadata={"help": "Random seed for reproducibility."},
     )
-
+    device: str = field(
+        default="qaic",
+        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
+    )
     do_eval: bool = field(
         default=True,
         metadata={"help": "Whether to run evaluation during training."},
@@ -307,7 +309,6 @@ class TrainingConfig:
         default=100,
         metadata={"help": "Number of update steps between two evaluations."},
     )
-
     per_device_train_batch_size: int = field(
         default=1,
         metadata={"help": "Batch size per device during training."},
@@ -381,10 +382,6 @@ class TrainingConfig:
         default=True,
         metadata={"help": "Whether to compile the model with `torch.compile`."},
     )
-    include_tokens_per_second: bool = field(
-        default=True,
-        metadata={"help": "Whether to include tokens per second in logs."},
-    )
     include_num_input_tokens_seen: bool = field(
         default=True,
         metadata={"help": "Whether to include the number of input tokens seen in logs."},
@@ -426,6 +423,14 @@ class TrainingConfig:
         default=None,
         metadata={"help": "Whether to restore callback states from checkpoint."},
     )
+    report_to: Optional[List[str]] = field(
+        default=None,
+        metadata={"help": "The list of integrations to report the results and logs to."},
+    )
+    completion_only_loss: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to compute loss only on completion tokens."},
+    )
 
 
 @dataclass
@@ -455,7 +460,7 @@ class MasterConfig:
     )
 
 
-def parse_arguments(config_path: Optional[str] = None) -> MasterConfig:
+def parse_arguments(config_path: Optional[str] = None, args: Optional[List[str]] = None) -> MasterConfig:
     """Create argument parser for the new finetuning interface."""
     parser = HfArgumentParser(MasterConfig)
 
@@ -472,12 +477,15 @@ def parse_arguments(config_path: Optional[str] = None) -> MasterConfig:
         except Exception as e:
             raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
 
-    if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
-        master_config = parser.parse_yaml_file(yaml_file=os.path.abspath(sys.argv[1]))[0]
+    args = [] if args is None else args
+    # If a single positional YAML file was passed via args, parse it as YAML
+    if len(args) == 1 and (args[0].endswith(".yaml") or args[0].endswith(".yml")):
+        yaml_path = os.path.abspath(args[0])
+        (master_config,) = parser.parse_yaml_file(yaml_file=yaml_path)
     else:
-        master_config = parser.parse_args_into_dataclasses()
+        (master_config,) = parser.parse_args_into_dataclasses(args=args)
+        master_config = asdict(master_config)
+        master_config = MasterConfig(**master_config)
 
     return master_config
 
@@ -512,34 +520,58 @@ class ConfigManager:
 
         self.update_config(config_dict)
 
+    def _ensure_extra_params(self, obj) -> Dict[str, Any]:
+        """Ensure obj.extra_params exists and is a dict; return it."""
+        ep = getattr(obj, "extra_params", None)
+        if ep is None:
+            setattr(obj, "extra_params", {})
+            ep = obj.extra_params
+        if not isinstance(ep, dict):
+            raise TypeError("extra_params must be a dict.")
+        return ep
+
+    def _stash_top_level_extra(self, section: str, nested_key: str, value: Any) -> None:
+        """Store unknown nested values under MasterConfig.extra_params['section.nested_key']."""
+        ep = self._ensure_extra_params(self.config)
+        ep[f"{section}.{nested_key}"] = value
+
     def update_config(self, config_dict: Dict[str, Any]) -> None:
         """Update configuration with dictionary values."""
+
+        SPECIAL_KEYS = {"callbacks"}
+
         for key, value in config_dict.items():
             if hasattr(self.config, key):
-                if isinstance(value, dict) and hasattr(getattr(self.config, key), "__dataclass_fields__"):
-                    # Special handling for callbacks
-                    if key in ["callbacks", "optimizers", "loss_functions"]:
-                        nested_config = getattr(self.config, key)
-                        for component_name, component_dict in value.items():
-                            if isinstance(component_dict, dict):
-                                getattr(nested_config, key)[component_name] = component_dict
-                            else:
-                                getattr(nested_config, "extra_params")[component_name] = nested_config.extra_params[
-                                    component_name
-                                ] = component_dict
+                target = getattr(self.config, key)
+
+                # Special handling for callbacks (dict inside CallbackConfig)
+                if key in SPECIAL_KEYS and isinstance(value, dict):
+                    if is_dataclass(target) and hasattr(target, "callbacks") and isinstance(target.callbacks, dict):
+                        for component_name, component_cfg in value.items():
+                            target.callbacks[component_name] = component_cfg
+                    elif isinstance(target, dict):
+                        target.update(value)
                     else:
-                        # Update nested dataclass
-                        nested_config = getattr(self.config, key)
-                        for nested_key, nested_value in value.items():
-                            if hasattr(nested_config, nested_key):
-                                setattr(getattr(self.config, key), nested_key, nested_value)
-                            elif hasattr(nested_config, "extra_params"):
-                                getattr(getattr(self.config, key), "extra_params")[nested_key] = nested_value
-                else:
-                    setattr(self.config, key, value)
+                        self._stash_top_level_extra(key, "__all__", value)
+                    continue
+
+                if isinstance(value, dict) and is_dataclass(target):
+                    known = {f.name for f in fields(target)}
+                    for nested_key, nested_value in value.items():
+                        if nested_key in known:
+                            setattr(target, nested_key, nested_value)
+                        else:
+                            self._stash_top_level_extra(key, nested_key, nested_value)
+                    continue
+
+                if isinstance(value, dict) and isinstance(target, dict):
+                    target.update(value)
+                    continue
+                setattr(self.config, key, value)
+
             else:
-                # Store unknown parameters in extra_params
-                self.config.extra_params[key] = value
+                ep = self._ensure_extra_params(self.config)
+                ep[key] = value
 
     def save_config(self, output_path: Union[str, Path]) -> None:
         """Save current configuration to file."""
@@ -557,38 +589,105 @@ class ConfigManager:
         else:
             raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 
+    def _push(self, errs: List[str], cond: bool, msg: str) -> None:
+        """Append msg to errs if cond is True."""
+        if cond:
+            errs.append(msg)
+
     def validate_config(self) -> None:
-        """Validate configuration parameters."""
-        errors = []
+        """
+        Validate configuration parameters for MasterConfig.
+        """
+        errors: List[str] = []
 
-        # Validate model configuration
-        if not self.config.model.model_name:
-            errors.append("Model name is required")
+        cfg = self.config
+        model = getattr(cfg, "model", {})
+        dataset = getattr(cfg, "dataset", {})
+        training = getattr(cfg, "training", {})
 
-        # Validate dataset configuration
-        if not self.config.dataset.dataset_name:
-            errors.append("Dataset name is required")
+        # ---------- Model ----------
+        self._push(errors, not model.get("model_name"), "model.model_name is required.")
 
-        # Validate training parameters
-        if self.config.dataset.train_batch_size <= 0:
-            errors.append("Train batch size must be positive")
+        # PEFT validation
+        if model.get("use_peft"):
+            pc = model.get("peft_config", {})
+            self._push(errors, not isinstance(pc, dict), "model.peft_config must be a dict when use_peft=True.")
+            if isinstance(pc, dict):
+                self._push(
+                    errors,
+                    not isinstance(pc.get("lora_r", 0), int) or pc.get("lora_r", 0) <= 0,
+                    "model.peft_config.lora_r must be a positive integer.",
+                )
+                self._push(
+                    errors,
+                    not isinstance(pc.get("lora_alpha", 0), int) or pc.get("lora_alpha", 0) <= 0,
+                    "model.peft_config.lora_alpha must be a positive integer.",
+                )
+                self._push(
+                    errors,
+                    not (0.0 <= float(pc.get("lora_dropout", 0.0)) < 1.0),
+                    "model.peft_config.lora_dropout must be in [0,1).",
+                )
 
-        if self.config.dataset.eval_batch_size <= 0:
-            errors.append("Validation batch size must be positive")
+        # ---------- Dataset ----------
+        self._push(errors, not dataset.get("dataset_name"), "dataset.dataset_name is required.")
+        self._push(errors, not dataset.get("tokenizer_name"), "dataset.tokenizer_name is required.")
+        self._push(errors, dataset.get("max_seq_length", 0) <= 0, "dataset.max_seq_length must be positive.")
 
-        if self.config.training.num_train_epochs <= 0:
-            errors.append("Number of epochs must be positive")
+        # ---------- Training ----------
+        # Batch sizes
+        self._push(
+            errors,
+            training.get("per_device_train_batch_size", 0) <= 0,
+            "training.per_device_train_batch_size must be positive.",
+        )
+        self._push(
+            errors,
+            training.get("per_device_eval_batch_size", 0) <= 0,
+            "training.per_device_eval_batch_size must be positive.",
+        )
 
-        if self.config.training.gradient_accumulation_steps <= 0:
-            errors.append("Gradient accumulation steps must be positive")
+        # Epochs / steps
+        n_epochs = training.get("num_train_epochs", 0)
+        max_steps = training.get("max_steps", -1)
+        self._push(
+            errors,
+            n_epochs <= 0 and max_steps <= 0,
+            "Either training.num_train_epochs > 0 or training.max_steps > 0 must be set.",
+        )
 
-        # Validate device configuration
+        # Gradient accumulation
+        self._push(
+            errors,
+            training.get("gradient_accumulation_steps", 0) <= 0,
+            "training.gradient_accumulation_steps must be positive.",
+        )
+
+        # Logging / saving configs
+        self._push(errors, training.get("logging_steps", 0) < 0, "training.logging_steps must be >= 0.")
+        self._push(errors, training.get("save_total_limit", 0) < 0, "training.save_total_limit must be >= 0.")
+
+        # Device
         valid_devices = ["cpu", "cuda", "qaic"]
-        if self.config.training.device not in valid_devices:
-            errors.append(f"Device must be one of {valid_devices}")
+        training_device = training.get("device", None)
+        if training_device not in valid_devices:
+            self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
 
+        # DDP config
+        ddp = training.get("ddp_config", {})
+        if isinstance(ddp, dict):
+            backend = ddp.get("ddp_backend")
+            # Accept qccl for Qualcomm, nccl for CUDA, gloo for CPU
+            self._push(
+                errors,
+                backend not in {"qccl", "nccl", "gloo", None},
+                "training.ddp_config.ddp_backend must be one of {'qccl','nccl','gloo'} or omitted.",
+            )
+
+        # ---------- Final ----------
         if errors:
-            raise ValueError("Configuration validation failed:\n" + "\n".join(f"- {error}" for error in errors))
+            # Join messages with bullet points for readability
+            raise ValueError("Configuration validation failed:\n- " + "\n- ".join(errors))
 
     def get_callback_config(self) -> Dict[str, Any]:
         """Get callback configuration as dictionary."""
