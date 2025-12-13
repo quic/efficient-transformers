@@ -12,16 +12,17 @@ from QEfficient import QEFFAutoModelForCausalLM
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
 ## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
-## Use the optional comp_ctx_lengths argument to provide two lists of context lengths for the prefilling and decoding processes. If comp_ctx_lengths=None, the model will run with its default context length.
+## Use the optional comp_ctx_lengths_prefill and comp_ctx_lengths_decode to provide two lists of context lengths for the prefilling and decoding processes. If both are None, the lists will be generated automatically based on the context length.
 ##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
 ##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
 ##   - The second list, comp_ctx_lengths_decode, defines the compute-context-length values for the decoding process.
 ##           -- During decoding, the model selects an appropriate context length from the list based on the input prompt length and cache index.
-##           -- It starts from the correct value in the list and increases the context length dynamically when the cache index exceeds the current threshold.
+##           -- It starts from the correct value in the list and increases the context length dynamically when the generated token's cache index exceeds the current CCL value.
 
 ctx_len = 4096
+ccl_enabled = True
+# Two optional lists, comp_ctx_lengths_prefill and comp_ctx_lengths_decode, define CCL values for prefilling and decoding.
 # In moe models like gpt-oss, since prefill_seq_len=1 both comp_ctx_lengths_prefill and comp_ctx_lengths_decode can share similar lists.
-# Set the list of ccl during prefilling and decoding processes
 comp_ctx_lengths_prefill = comp_ctx_lengths_decode = [1024, ctx_len]
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
