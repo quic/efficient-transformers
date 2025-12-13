@@ -1127,7 +1127,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
-                print("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
+                logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
             self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
@@ -1772,7 +1772,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
-                print("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
+                logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
             self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
@@ -2868,7 +2868,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
-                print("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
+                logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
             self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
