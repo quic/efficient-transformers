@@ -222,7 +222,7 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
 
     # export
     start = perf_counter()
-    qeff_model.export(export_dir=tmp_path)
+    onnx_path = qeff_model.export(export_dir=tmp_path)
     end = perf_counter()
     export_time_0 = end - start
     model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.export_hash)
@@ -237,7 +237,7 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
     assert export_time_1 < export_time_0
 
     # test compile
-    qeff_model.compile(prefill_seq_len=32, ctx_len=64)
+    qeff_model.compile(onnx_path=onnx_path, prefill_seq_len=32, ctx_len=64)
     assert Path(qeff_model.qpc_path).is_dir()
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
