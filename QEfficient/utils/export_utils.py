@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import copy
 import inspect
 import re
 import warnings
@@ -40,19 +41,18 @@ def export_wrapper(func):
     """
 
     def wrapper(self, *args, **kwargs):
-        # 1. Prepare export directory
+        # 1. Setup ONNX subfunctions if requested
+        if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
+            args, kwargs = _setup_onnx_subfunctions(self, args, kwargs)
+
+        # 2. Prepare export directory
         export_dir = _prepare_export_directory(self, kwargs)
 
-        # 2. Generate hash and finalize export directory path
+        # 3. Generate hash and finalize export directory path
         export_hash, filtered_hash_params = _generate_export_hash(self, args, kwargs, func)
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
         self.export_hash = export_hash
-
-        # 3. Setup ONNX subfunctions if requested
-        # TODO: No need of this variable, if export_kwargs contains classes (refer diffusers)
-        if use_onnx_subfunctions := kwargs.get("use_onnx_subfunctions", False):
-            _setup_onnx_subfunctions(self, kwargs)
 
         # 4. Execute the actual export
         onnx_path = func(self, *args, **kwargs)
@@ -101,9 +101,6 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     Returns:
         Tuple of (export_hash: str, filtered_hash_params: dict)
     """
-    # Extract use_onnx_subfunctions before binding (it's used by wrapper, not _export)
-    use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
-
     # Extract function signature
     original_sig = inspect.signature(func)
     params = list(original_sig.parameters.values())[1:]  # Skip 'self'
@@ -116,7 +113,6 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     # Use the model's current configuration for hashing to ensure any post-load modifications are captured
     # TODO: Replace with get_model_config property of modeling classes and remove the if-else
     # Determine the config dict to use, preferring .to_diff_dict() if available
-
     if hasattr(qeff_model.model, "config") and hasattr(qeff_model.model.config, "to_diff_dict"):
         config_val = qeff_model.model.config.to_diff_dict()
     elif hasattr(qeff_model.model, "model") and hasattr(qeff_model.model.model.config, "to_diff_dict"):
@@ -124,26 +120,25 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     else:
         config_val = qeff_model.model.config
 
-    qeff_model.hash_params.update(
+    copy_of_hash_params = copy.deepcopy(qeff_model.hash_params)
+    copy_of_hash_params.update(
         {
             "config": config_val,
         }
     )
-
     # Generate hash from relevant parameters
     export_hash, filtered_hash_params = create_export_hash(
-        model_params=qeff_model.hash_params,
+        model_params=copy_of_hash_params,
         output_names=all_args.get("output_names"),
         dynamic_axes=all_args.get("dynamic_axes"),
         export_kwargs=all_args.get("export_kwargs", None),
         onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
-        use_onnx_subfunctions=use_onnx_subfunctions,
     )
 
     return export_hash, filtered_hash_params
 
 
-def _setup_onnx_subfunctions(qeff_model, kwargs):
+def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     """
     Setup ONNX subfunction export environment.
 
@@ -166,26 +161,22 @@ def _setup_onnx_subfunctions(qeff_model, kwargs):
     # Apply torch patches for subfunction support
     apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
-
-    # Store original state for restoration during cleanup
-    qeff_model._original_onnx_transforms = qeff_model._onnx_transforms.copy()
-
     # Transform output names for subfunction compatibility
     if "output_names" in kwargs:
         kwargs["output_names"] = [
             re.sub("_RetainedState", "_InternalRetainedState", name) for name in kwargs["output_names"]
         ]
-
+    else:
+        args = list(args)
+        args[1] = [re.sub("_RetainedState", "_InternalRetainedState", name) for name in args[1]]
+        args = tuple(args)
     # Add subfunction-specific ONNX transforms
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
-    # Configure export to use modules as functions
-    export_kwargs = kwargs.get("export_kwargs", {})
-
     # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
-    export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
-    kwargs["export_kwargs"] = export_kwargs
+    kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
+    return args, kwargs
 
 
 def _cleanup_onnx_subfunctions(qeff_model):
@@ -205,18 +196,11 @@ def _cleanup_onnx_subfunctions(qeff_model):
         even if export fails. Errors during cleanup are logged but
         not re-raised to avoid masking the original exception.
     """
-    try:
-        # Undo torch patches
-        undo_torch_patches()
-        InvalidIndexProvider.SUBFUNC_ENABLED = False
-
-        # Restore original ONNX transforms
-        if hasattr(qeff_model, "_original_onnx_transforms"):
-            qeff_model._onnx_transforms = qeff_model._original_onnx_transforms
-            delattr(qeff_model, "_original_onnx_transforms")
-
-    except Exception as e:
-        logger.error(f"Error during subfunction cleanup: {e}")
+    # Undo torch patches
+    undo_torch_patches()
+    InvalidIndexProvider.SUBFUNC_ENABLED = False
+    qeff_model._onnx_transforms.remove(RenameFunctionOutputsTransform)
+    qeff_model._onnx_transforms.remove(CustomOpTransform)
 
 
 def _save_export_metadata(export_dir: Path, filtered_hash_params: Dict):
