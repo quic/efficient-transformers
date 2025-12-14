@@ -265,6 +265,11 @@ from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssForCausalLM,
     QEffGptOssMLP,
     QEffGptOssModel,
+    QEffPrefillOnlyChunkedGptOssAttention,
+    QEffPrefillOnlyChunkedGptOssMLP,
+    QEffPrefillOnlyGptOssAttention,
+    QEffPrefillOnlyGptOssMLP,
+    QEffPrefillOnlyGptOssModel,
 )
 from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJAttention,
@@ -640,6 +645,39 @@ class KVCacheTransform(ModuleMappingTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
+
+
+class PrefillOnlyTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
+        QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+    }
+
+
+class PrefillOnlyChunkedTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+    }
+
+
+class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
+        QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+    }
+
+
+class RevertPrefillOnlyTransform(ModuleMappingTransform):
+    _module_mapping = {
+        **{v: k for k, v in PrefillOnlyTransform._module_mapping.items()},
+        **{v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()},
+    }
 
 
 class SpDTransform:

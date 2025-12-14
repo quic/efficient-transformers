@@ -1,0 +1,27 @@
+FP32NodeInstanceNames:
+  - CustomRMSNorm_58
+  - onnx::Shape_1033777
+  - CustomRMSNorm_349
+  - hidden.127
+  - CustomRMSNorm_27448
+  - onnx::Shape_1066066
+  - CustomRMSNorm_27709
+  - hidden.131
+  - CustomRMSNorm_54808
+  - onnx::Shape_878
+  - CustomRMSNorm_55105
+  - hidden
+  - hidden_states.259
+  - Add_348
+  - Add_347
+  - onnx::Add_1034099
+  - hidden_states.267
+  - Add_27708
+  - onnx::Add_1066358
+  - Add_27707
+  - hidden_states.3
+  - Add_55104
+  - onnx::Add_1209
+  - Add_55103
+  - /model/norm/CustomRMSNorm
+  - /model/norm/CustomRMSNorm_output_0
