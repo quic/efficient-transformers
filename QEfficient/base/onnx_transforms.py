@@ -95,12 +95,12 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
         "CtxGatherFunc": (CtxGatherFunc, CtxGather),
         "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
-        "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
-        "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
         "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
         "CtxGatherFuncBlockedKV": (CtxGatherFuncBlockedKV, CtxGatherBlockedKV),
         "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
+        "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
+        "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
     }
 
     @classmethod

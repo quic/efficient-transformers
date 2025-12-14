@@ -253,7 +253,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)
         return obj
 
-    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model with the active adapter to ONNX format.
 
@@ -291,10 +291,10 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             example_inputs,
             output_names,
             dynamic_axes,
-            export_kwargs={"do_constant_folding": False},  # To avoid merging adapter weights with base weights
+            do_constant_folding=False,  # To avoid merging adapter weights with base weights
             onnx_transform_kwargs={"adapter_name": self.model.active_adapter},
             export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            **kwargs,
         )
 
     def compile(
