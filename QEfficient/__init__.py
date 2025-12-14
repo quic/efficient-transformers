@@ -42,6 +42,10 @@ logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 warnings.formatwarning = custom_format_warning
 
 
+# custom warning for the better logging experience
+warnings.formatwarning = custom_format_warning
+
+
 # Users can use QEfficient.export for exporting models to ONNX
 export = qualcomm_efficient_converter
 __all__ = [
