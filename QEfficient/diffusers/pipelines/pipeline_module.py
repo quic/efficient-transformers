@@ -102,7 +102,7 @@ class QEffTextEncoder(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = None,
+        export_kwargs: Dict = {},
     ) -> str:
         """
         Export the text encoder model to ONNX format.
@@ -122,7 +122,7 @@ class QEffTextEncoder(QEFFBaseModel):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            export_kwargs=export_kwargs,
+            **export_kwargs,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
@@ -179,7 +179,7 @@ class QEffUNet(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = None,
+        export_kwargs: Dict = {},
     ) -> str:
         """
         Export the UNet model to ONNX format.
@@ -199,7 +199,7 @@ class QEffUNet(QEFFBaseModel):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            export_kwargs=export_kwargs,
+            **export_kwargs,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
@@ -292,7 +292,7 @@ class QEffVAE(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = None,
+        export_kwargs: Dict = {},
     ) -> str:
         """
         Export the VAE model to ONNX format.
@@ -312,7 +312,7 @@ class QEffVAE(QEFFBaseModel):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            export_kwargs=export_kwargs,
+            **export_kwargs,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
@@ -438,7 +438,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = None,
+        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """
@@ -466,8 +466,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            export_kwargs=export_kwargs,
             offload_pt_weights=False,  # As weights are needed with AdaLN changes
+            **export_kwargs,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:

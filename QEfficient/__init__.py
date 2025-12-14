@@ -6,7 +6,17 @@
 # -----------------------------------------------------------------------------
 
 import os
-import warnings
+
+# ----------------------------------------------------------------------------- #
+# For faster downloads via hf_transfer
+# This code is put above import statements as this needs to be executed before
+# hf_transfer is imported (will happen on line 15 via leading imports)
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+# DO NOT ADD ANY CODE ABOVE THIS LINE
+# Please contact maintainers if you must edit this file above this line.
+# ----------------------------------------------------------------------------- #
+# Placeholder for all non-transformer models registered in QEfficient
+import warnings  # noqa: I001
 
 import QEfficient.utils.model_registery  # noqa: F401
 from QEfficient.base import (
@@ -26,6 +36,10 @@ from QEfficient.transformers.transform import transform
 from QEfficient.utils import custom_format_warning
 from QEfficient.utils.logging_utils import logger
 
+# custom warning for the better logging experience
+warnings.formatwarning = custom_format_warning
+
+
 # Users can use QEfficient.export for exporting models to ONNX
 export = qualcomm_efficient_converter
 __all__ = [
@@ -42,14 +56,7 @@ __all__ = [
     "QEFFCommonLoader",
     "QEffFluxPipeline",
 ]
-# For faster downloads via hf_transfer
-# This code is put above import statements as this needs to be executed before
-# hf_transfer is imported (will happen on line 15 via leading imports)
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-# Placeholder for all non-transformer models registered in QEfficient
 
-# custom warning for the better logging experience
-warnings.formatwarning = custom_format_warning
 
 # Conditionally import QAIC-related modules if the SDK is installed
 __version__ = "0.0.1.dev0"
