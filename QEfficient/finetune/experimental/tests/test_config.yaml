@@ -1,0 +1,104 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+# model configuration
+model:
+  model_type: "hf"  
+  auto_class_name: "AutoModelForCausalLM"
+  model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
+  load_in_4bit: false
+  use_peft: true
+  peft_config:
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.1
+    target_modules: ["q_proj", "v_proj"]
+    bias: "none" 
+    task_type: "CAUSAL_LM" 
+    peft_type: "LORA" 
+
+# Dataset configuration
+dataset:
+  tokenizer_name: "HuggingFaceTB/SmolLM-135M"
+  dataset_type: "seq_completion"
+  # dataset_name: "Arthur-LAGACHERIE/very-smollm-corpus-0.5M"
+  dataset_name: "knkarthick/samsum"
+  train_split: "train"
+  max_seq_length: 512
+  split_ratio: 0.8  # Ratio for train/test split, used when only train_split is provided
+  test_split: "test"
+  group_by_length: True
+  num_workers: 4
+  dataloader_pin_memory: True
+  dataloader_persistent_workers: True
+  dataloader_prefetch_factor: 1
+  dataloader_drop_last: False
+
+# Training configuration
+training:
+  type: "sft"
+  output_dir: "./training_results"
+  overwrite_output_dir: False
+  seed: 42
+  device: "qaic"
+  do_eval: True
+  eval_strategy: "epoch"
+  eval_steps: 100
+
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 1
+  num_train_epochs: 1
+  max_steps: -1
+
+  log_level: "info"
+  log_on_each_node: True
+  logging_strategy: "steps"
+  logging_steps: 10
+
+  save_strategy: "epoch"
+  save_total_limit: 5
+  metric_for_best_model: "eval_loss"
+
+  dtype: "fp16"
+  completion_only_loss: True
+  report_to: "trackio"
+
+  ddp_config:
+    ddp_backend: "qccl"
+    ddp_find_unused_parameters: False
+    ddp_bucket_cap_mb: 25
+    ddp_broadcast_buffers: null
+    ddp_timeout: 1800
+
+  use_cpu: False
+
+  gradient_checkpointing: False
+  gradient_checkpointing_kwargs:
+    preserve_rng_state : True
+    use_reenrant: False
+
+  torch_compile: True
+  include_num_input_tokens_seen: True
+  average_tokens_across_devices: True
+
+# Optimizer configuration
+optimizers:
+  optimizer_name: "adamw"
+  lr: 5e-5
+  weight_decay: 0.01
+
+scheduler:
+  scheduler_name: "cosine"
+  warmup_steps: 100   # warmup_steps or warmup_ratio
+
+callbacks:
+  early_stopping:
+    early_stopping_patience: 3
+    early_stopping_threshold: 0.001
+  tensorboard:
+
