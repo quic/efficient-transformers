@@ -67,7 +67,6 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     without_sub_func_onnx_hash = hashlib.sha256(open(without_sub_func_onnx, "rb").read()).hexdigest()
     assert with_sub_func_onnx_hash != without_sub_func_onnx_hash
 
-    # hashlib.sha256(model)
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
     model_0_0.compile(onnx_path=with_sub_func_onnx, **compile_params)
     generation_00 = model_0_0.generate(prompts=["Help me with this"], tokenizer=tokenizer)
