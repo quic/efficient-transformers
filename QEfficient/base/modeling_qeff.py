@@ -8,7 +8,6 @@
 import gc
 import inspect
 import logging
-import re
 import shutil
 import subprocess
 import warnings
@@ -21,26 +20,21 @@ import torch
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
-    CustomOpTransform,
     OnnxTransformPipeline,
-    RenameFunctionOutputsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.cache_utils import InvalidIndexProvider
-from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils import (
     constants,
     create_json,
     create_model_params,
     dump_qconfig,
-    export_wrapper,
     generate_mdp_partition_config,
     hash_dict_params,
     load_json,
 )
-from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
+from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +60,7 @@ class QEFFBaseModel(ABC):
         super().__init__()
         self.model = model
         self.hash_params = create_model_params(self, **kwargs)
+        self.prefill_onnx_path: Optional[str] = None
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
@@ -126,8 +121,34 @@ class QEFFBaseModel(ABC):
             raise RuntimeError(error_msg)
 
     @property
+    def model_name(self) -> str:
+        """
+        Get the model class name without QEff/QEFF prefix.
+
+        This property extracts the underlying model's class name and removes
+        any QEff or QEFF prefix that may have been added during wrapping.
+
+        Returns:
+            str: Model class name (e.g., "CLIPTextModel" instead of "QEffCLIPTextModel")
+        """
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname
+
+    @property
     @abstractmethod
-    def model_name(self) -> str: ...
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        This is an abstract property that must be implemented by all subclasses.
+        Typically returns: self.model.config.__dict__
+
+        Returns:
+            Dict: The configuration dictionary of the underlying model
+        """
+        pass
 
     @abstractmethod
     def export(self, export_dir: Optional[str] = None) -> Path:
@@ -184,11 +205,11 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
-        use_onnx_subfunctions: bool = False,
+        prefill_only: Optional[bool] = False,
+        **export_kwargs,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
@@ -213,11 +234,16 @@ class QEFFBaseModel(ABC):
             instance using from_pretrained() for re-export.
 
         """
+        # TODO: Hack for retain_full_kv, handle this outside
+        export_kwargs.pop("retain_full_kv", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-            self.onnx_path = onnx_path
+            if prefill_only:
+                self.prefill_onnx_path = onnx_path
+            else:
+                self.onnx_path = onnx_path
             return onnx_path
 
         # check if the model is in meta state or weights are offloaded
@@ -253,19 +279,6 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
-            # Initialize the registry with your custom ops
-            export_kwargs = {} if export_kwargs is None else export_kwargs
-            if use_onnx_subfunctions:
-                warnings.warn(
-                    "The subfunction feature is experimental. Please note that using compile consecutively with and without subfunction may produce inconsistent results."
-                )
-                apply_torch_patches()
-                InvalidIndexProvider.SUBFUNC_ENABLED = True
-                output_names = [re.sub("_RetainedState", "_InternalRetainedState", s) for s in output_names]
-                export_kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(self.model)
-                self._onnx_transforms.append(RenameFunctionOutputsTransform)
-                self._onnx_transforms.append(CustomOpTransform)
-
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -309,14 +322,41 @@ class QEFFBaseModel(ABC):
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
-        if use_onnx_subfunctions:
-            undo_torch_patches()
-            InvalidIndexProvider.SUBFUNC_ENABLED = False
-            self._onnx_transforms.remove(CustomOpTransform)
-            self._onnx_transforms.remove(RenameFunctionOutputsTransform)
-
-        self.onnx_path = onnx_path
+        if prefill_only:
+            self.prefill_onnx_path = onnx_path
+        else:
+            self.onnx_path = onnx_path
         return onnx_path
+
+    def get_onnx_path(
+        self,
+        prefill_only: Optional[bool] = False,
+        enable_chunking: Optional[bool] = False,
+        specializations: Optional[List[Dict[str, int]]] = None,
+        offload_pt_weights: Optional[bool] = True,
+        use_onnx_subfunctions: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
+    ):
+        kwargs = {
+            "offload_pt_weights": offload_pt_weights,
+            "use_onnx_subfunctions": use_onnx_subfunctions,
+            "retain_full_kv": retain_full_kv,
+        }
+        if prefill_only:
+            if self.prefill_onnx_path is None:
+                kwargs.update(
+                    {
+                        "prefill_only": prefill_only,
+                        "prefill_seq_len": specializations[0].get("seq_len"),
+                        "enable_chunking": enable_chunking,
+                    }
+                )
+                self.export(**kwargs)
+            return self.prefill_onnx_path
+        else:
+            if self.onnx_path is None:
+                self.export(**kwargs)
+            return self.onnx_path
 
     @dump_qconfig
     def _compile(
@@ -332,6 +372,10 @@ class QEFFBaseModel(ABC):
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        prefill_only: Optional[str] = None,
+        offload_pt_weights: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = None,
         **compiler_options,
     ) -> str:
         """
@@ -357,11 +401,18 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-
-        if onnx_path is None and self.onnx_path is None:
-            self.export(use_onnx_subfunctions=use_onnx_subfunctions)
-
-        onnx_path = Path(onnx_path or self.onnx_path)
+        onnx_path = Path(
+            onnx_path
+            if onnx_path
+            else self.get_onnx_path(
+                prefill_only,
+                enable_chunking,
+                specializations,
+                offload_pt_weights,
+                use_onnx_subfunctions,
+                retain_full_kv,
+            )
+        )
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():
@@ -423,6 +474,7 @@ class QEFFBaseModel(ABC):
             "mdp_ts_num_devices": mdp_ts_num_devices,
             "mdp_ts_json": mdp_ts_json,
             "num_speculative_tokens": num_speculative_tokens,
+            "prefill_only": prefill_only,
         }
         compile_hash = hash_dict_params(compile_hash_params)
 
@@ -462,6 +514,16 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
+        if use_onnx_subfunctions:
+
+            class FeatureNotAvailableError(Exception):
+                pass
+
+            exec_command = f'QAIC_COMPILER_OPTS_UNSUPPORTED="-loader-inline-all=0" {" ".join(command)}'
+            raise FeatureNotAvailableError(
+                "ONNX graph is exported with subfunctions, assert version of apps SDK should be used for compiling this model."
+                + f"\nRun following command manually with assert compiler:\n{exec_command}"
+            )
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
@@ -482,5 +544,4 @@ class QEFFBaseModel(ABC):
         logger.info("Hashed parameters exported successfully.")
 
         self.qpc_path = qpc_path
-
         return qpc_path
