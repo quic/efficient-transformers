@@ -41,7 +41,7 @@ pipeline.transformer.model.transformer_low.load_lora_adapter(
 )
 pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 
-### for 2 layer model
+## for 2 layer model
 # pipeline.transformer.model.transformer_high.config.num_layers = 1
 # pipeline.transformer.model.transformer_low.config.num_layers = 1
 # original_blocks = pipeline.transformer.model.transformer_high.blocks
@@ -58,13 +58,12 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 prompt = "In a warmly lit living room, an elderly man with gray hair sits in a wooden armchair adorned with a blue cushion. He wears a gray cardigan over a white shirt, engrossed in reading a book. As he turns the pages, he subtly adjusts his posture, ensuring his glasses stay in place. He then removes his glasses, holding them in his hand, and turns his head to the right, maintaining his grip on the book. The soft glow of a bedside lamp bathes the scene, creating a calm and serene atmosphere, with gentle shadows enhancing the intimate setting."
 
 # exporting for 180 P but compile for given height, width in pipeline
-pipeline.export(height=192, width=320, use_onnx_subfunctions=True)
+# pipeline.export(height=192, width=320, num_frames=81, use_onnx_subfunctions=True)
 
-height = 192
-width = 320
 
-# height = 480
-# width = 832
+# compile for 480p resolution
+height = 480
+width = 832
 
 output = pipeline(
     prompt=prompt,

@@ -11,9 +11,10 @@ This module provides an optimized implementation of the WAN pipeline
 for high-performance text-to-video generation on Qualcomm AI hardware.
 The pipeline supports WAN 2.2 architectures with unified transformer.
 
-TODO: To enable VAE, UMT5 on QAIC
+TODO: 1. Update Vae, umt5 to Qaic; present running on cpu
 """
 
+import math
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -38,7 +39,7 @@ from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
 
 
-class QEffWanPipeline(WanPipeline):
+class QEffWanPipeline:
     """
     QEfficient-optimized WAN pipeline for high-performance text-to-video generation on Qualcomm AI hardware.
 
@@ -93,7 +94,7 @@ class QEffWanPipeline(WanPipeline):
             model: Pre-loaded WanPipeline model with transformer and transformer_2 components
             **kwargs: Additional keyword arguments including configuration parameters
         """
-        # Required by diffusers for serialization and device management
+        # Store original model and configuration
         self.model = model
         self.kwargs = kwargs
         self.custom_config = None
@@ -116,31 +117,33 @@ class QEffWanPipeline(WanPipeline):
         self.text_encoder.tokenizer = model.tokenizer
         self.scheduler = model.scheduler
 
-        # Register components with diffusers framework
-        # TODO: Clean up register_modules (verify all model.config are working correctly)
-        self.register_modules(
-            text_encoder=self.text_encoder,
-            scheduler=self.scheduler,
-            tokenizer=self.tokenizer,
-            transformer=self.transformer,
-            vae=self.vae_decode,
-        )
-
-        # Register configuration parameters
-        self.register_to_config(boundary_ratio=self.model.config.boundary_ratio)
-        self.register_to_config(expand_timesteps=self.model.config.expand_timesteps)
+        # Store configuration parameters directly
+        self.boundary_ratio = self.model.config.boundary_ratio
+        self.expand_timesteps = self.model.config.expand_timesteps
 
         # Configure VAE scale factors for video processing
         self.vae_scale_factor_temporal = (
-            self.vae_decode.config.scale_factor_temporal if getattr(self, "vae", None) else 4
+            self.vae_decode.config.scale_factor_temporal if hasattr(self.vae_decode, "config") else 4
         )
-        self.vae_scale_factor_spatial = self.vae_decode.config.scale_factor_spatial if getattr(self, "vae", None) else 8
+        self.vae_scale_factor_spatial = (
+            self.vae_decode.config.scale_factor_spatial if hasattr(self.vae_decode, "config") else 8
+        )
 
         # Initialize video processor for frame handling and post-processing
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
         # Extract patch dimensions from transformer configuration
         _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
+
+    @property
+    def do_classifier_free_guidance(self):
+        """
+        Determine if classifier-free guidance should be used.
+
+        Returns:
+            bool: True if CFG should be applied based on current guidance scales
+        """
+        return self._guidance_scale > 1.0 and (self._guidance_scale_2 is None or self._guidance_scale_2 > 1.0)
 
     @classmethod
     def from_pretrained(
@@ -196,24 +199,7 @@ class QEffWanPipeline(WanPipeline):
             **kwargs,
         )
 
-    @property
-    def components(self):
-        """
-        Get dictionary of all pipeline components.
-
-        Returns:
-            Dict[str, Any]: Dictionary containing all pipeline components including
-                text_encoder, transformer, vae, tokenizer, and scheduler.
-        """
-        return {
-            "text_encoder": self.text_encoder,
-            "transformer": self.transformer,
-            "vae": self.vae_decode,
-            "tokenizer": self.tokenizer,
-            "scheduler": self.scheduler,
-        }
-
-    def configure_height_width_cl_latents_hw(self, height, width):
+    def configure_height_width_cl_latents_hw(self, height, width, num_frames):
         """
         Configure pipeline dimensions and calculate compressed latent parameters.
 
@@ -224,6 +210,7 @@ class QEffWanPipeline(WanPipeline):
         Args:
             height (int): Target video height in pixels
             width (int): Target video width in pixels
+            num_frames (int): Target video frames in pixels
 
         Note:
             - Updates self.height, self.width, self.cl, self.latent_height, self.latent_width
@@ -231,9 +218,11 @@ class QEffWanPipeline(WanPipeline):
         """
         self.height = height
         self.width = width
-        self.cl, self.latent_height, self.latent_width = self.calculate_compressed_latent_dimension(height, width)
+        self.cl, self.latent_height, self.latent_width = self.calculate_compressed_latent_dimension(
+            height, width, num_frames
+        )
 
-    def calculate_compressed_latent_dimension(self, height, width):
+    def calculate_compressed_latent_dimension(self, height, width, num_frames):
         """
         Calculate the compressed latent dimension for transformer buffer allocation.
 
@@ -244,6 +233,7 @@ class QEffWanPipeline(WanPipeline):
         Args:
             height (int): Target video height in pixels
             width (int): Target video width in pixels
+            num_frames (int): Target video frames in pixels
 
         Returns:
             tuple: (cl, latent_height, latent_width)
@@ -254,28 +244,22 @@ class QEffWanPipeline(WanPipeline):
         Mathematical Formula:
             latent_height = height // vae_scale_factor_spatial
             latent_width = width // vae_scale_factor_spatial
+            latent_frames =  math.ceil(num_frames / vae_scale_factor_temporal)
             cl = (latent_height // patch_height) * (latent_width // patch_width) * latent_frames
 
-        Note:
-            - Uses constants.WAN_ONNX_EXPORT_LATENT_FRAMES for temporal dimension (21 frames for 81 input frames)
-            - TODO: Calculate latent frames dynamically based on input num_frames
         """
         # Calculate latent space dimensions after VAE encoding
         latent_height = height // self.vae_scale_factor_spatial
         latent_width = width // self.vae_scale_factor_spatial
-
-        # Calculate compressed sequence length for transformer processing
-        # TODO: Calculate latent frames based on actual frames passed in pipeline call
-        cl = (
-            latent_height // self.patch_height * latent_width // self.patch_width
-        ) * constants.WAN_ONNX_EXPORT_LATENT_FRAMES
-
+        latent_frames = math.ceil(num_frames / self.vae_scale_factor_temporal)
+        cl = (latent_height // self.patch_height * latent_width // self.patch_width) * latent_frames
         return cl, latent_height, latent_width
 
     def export(
         self,
         height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
         width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
+        num_frames: int = constants.WAN_ONNX_EXPORT_FRAMES,
         export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
     ) -> str:
@@ -292,6 +276,7 @@ class QEffWanPipeline(WanPipeline):
                 resolution and compile for higher resolution later for flexibility.
             width (int, default=320): Export width in pixels. Should maintain aspect ratio
                 appropriate for the target use case.
+            num_frames (int, default=81): frames in pixel space
             export_dir (str, optional): Target directory for saving ONNX model files. If None,
                 uses the default export directory structure. The directory will be created
                 if it doesn't exist.
@@ -317,7 +302,9 @@ class QEffWanPipeline(WanPipeline):
             ... )
         """
         # Calculate compressed latent dimensions for export configuration
-        export_cl, export_latent_height, export_latent_width = self.calculate_compressed_latent_dimension(height, width)
+        export_cl, export_latent_height, export_latent_width = self.calculate_compressed_latent_dimension(
+            height, width, num_frames
+        )
 
         # Export each module with video-specific parameters
         for module_name, module_obj in self.modules.items():
@@ -348,6 +335,7 @@ class QEffWanPipeline(WanPipeline):
             end_time = time.perf_counter()
             print(f"{module_name} export took {end_time - start_time:.2f} seconds")
 
+    @staticmethod
     def get_default_config_path():
         """
         Get the default configuration file path for WAN pipeline.
@@ -519,7 +507,8 @@ class QEffWanPipeline(WanPipeline):
         device = "cpu"
 
         # Configure pipeline dimensions and calculate compressed latent parameters
-        self.configure_height_width_cl_latents_hw(height, width)
+        # TODO : move to utils
+        self.configure_height_width_cl_latents_hw(height, width, num_frames)
 
         # Compile models with custom configuration if needed
         self.compile(
@@ -532,7 +521,7 @@ class QEffWanPipeline(WanPipeline):
         set_module_device_ids(self)
 
         # Step 1: Validate all inputs
-        self.check_inputs(
+        self.model.check_inputs(
             prompt,
             negative_prompt,
             height,
@@ -551,12 +540,12 @@ class QEffWanPipeline(WanPipeline):
             num_frames = num_frames // self.vae_scale_factor_temporal * self.vae_scale_factor_temporal + 1
         num_frames = max(num_frames, 1)
 
-        if self.config.boundary_ratio is not None and guidance_scale_2 is None:
+        if self.boundary_ratio is not None and guidance_scale_2 is None:
             guidance_scale_2 = guidance_scale
 
         # Initialize pipeline state
         self._guidance_scale = guidance_scale
-        self._guidance_scale_2 = guidance_scale_2
+        self._guidance_scale_2 = guidance_scale_2 if guidance_scale_2 is not None else guidance_scale
         self._attention_kwargs = attention_kwargs
         self._current_timestep = None
         self._interrupt = False
@@ -572,7 +561,7 @@ class QEffWanPipeline(WanPipeline):
         # Step 3: Encode input prompts using UMT5 text encoder
         # TODO: Update UMT5 on QAIC
         start_encoder_time = time.perf_counter()
-        prompt_embeds, negative_prompt_embeds = self.encode_prompt(
+        prompt_embeds, negative_prompt_embeds = self.model.encode_prompt(
             prompt=prompt,
             negative_prompt=negative_prompt,
             do_classifier_free_guidance=self.do_classifier_free_guidance,
@@ -598,7 +587,7 @@ class QEffWanPipeline(WanPipeline):
         # Step 5: Prepare initial latent variables for video generation
         num_channels_latents = self.transformer.model.config.in_channels
 
-        latents = self.prepare_latents(
+        latents = self.model.prepare_latents(
             batch_size * num_videos_per_prompt,
             num_channels_latents,
             height,
@@ -617,8 +606,8 @@ class QEffWanPipeline(WanPipeline):
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
 
         # Calculate boundary timestep for stage switching in WAN 2.2
-        if self.config.boundary_ratio is not None:
-            boundary_timestep = self.config.boundary_ratio * self.scheduler.config.num_train_timesteps
+        if self.boundary_ratio is not None:
+            boundary_timestep = self.boundary_ratio * self.scheduler.config.num_train_timesteps
         else:
             boundary_timestep = None
 
@@ -633,17 +622,16 @@ class QEffWanPipeline(WanPipeline):
             "output": np.random.rand(
                 batch_size,
                 self.cl,  # Compressed latent dimension
-                64,
-                # TODO: Use self.transformer.model.config.joint_attention_dim and in_channels
+                constants.WAN_DIT_OUT_CHANNELS,
             ).astype(np.int32),
         }
         self.transformer.qpc_session.set_buffers(output_buffer)
         transformer_perf = []
 
         # Step 8: Denoising loop with dual-stage processing
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
+        with self.model.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                if self.interrupt:
+                if self._interrupt:
                     continue
 
                 self._current_timestep = t
@@ -664,7 +652,7 @@ class QEffWanPipeline(WanPipeline):
                 latent_model_input = latents.to(transformer_dtype)
 
                 # Handle timestep expansion for temporal consistency
-                if self.config.expand_timesteps:
+                if self.expand_timesteps:
                     # Expand timesteps spatially for better temporal modeling
                     temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
                     timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
@@ -736,7 +724,6 @@ class QEffWanPipeline(WanPipeline):
                     print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
 
                     # Process transformer output
-                    noise_pred = torch.from_numpy(outputs["output"])
                     hidden_states = torch.tensor(outputs["output"])
 
                     # Reshape output from patches back to video format
@@ -791,7 +778,7 @@ class QEffWanPipeline(WanPipeline):
 
         self._current_timestep = None
 
-        # Step 9: Decode latents to video (unless output_type is "latent")
+        # Step 9: Decode latents to video
         if not output_type == "latent":
             # Prepare latents for VAE decoding
             latents = latents.to(self.vae_decode.dtype)

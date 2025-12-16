@@ -23,6 +23,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     set_module_device_ids,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils import constants
 from QEfficient.utils._utils import load_json
 from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
 
@@ -36,7 +37,7 @@ def wan_pipeline_call_with_mad_validation(
     pytorch_pipeline,
     height: int = 192,
     width: int = 320,
-    num_frames: int = 21,
+    num_frames: int = 81,
     prompt: Union[str, List[str]] = None,
     negative_prompt: Union[str, List[str]] = None,
     num_inference_steps: int = 2,
@@ -70,7 +71,7 @@ def wan_pipeline_call_with_mad_validation(
     device = "cpu"
 
     # Step 1: Configure height, width, and compile
-    pipeline.configure_height_width_cl_latents_hw(height, width)
+    pipeline.configure_height_width_cl_latents_hw(height, width, num_frames)
     pipeline.compile(
         compile_config=custom_config_path,
         parallel=parallel_compile,
@@ -80,7 +81,7 @@ def wan_pipeline_call_with_mad_validation(
     set_module_device_ids(pipeline)
 
     # Step 2: Check inputs
-    pipeline.check_inputs(
+    pipeline.model.check_inputs(
         prompt,
         negative_prompt,
         height,
@@ -95,7 +96,7 @@ def wan_pipeline_call_with_mad_validation(
         num_frames = num_frames // pipeline.vae_scale_factor_temporal * pipeline.vae_scale_factor_temporal + 1
     num_frames = max(num_frames, 1)
 
-    if pipeline.config.boundary_ratio is not None and guidance_scale_2 is None:
+    if pipeline.boundary_ratio is not None and guidance_scale_2 is None:
         guidance_scale_2 = guidance_scale
 
     pipeline._guidance_scale = guidance_scale
@@ -112,9 +113,9 @@ def wan_pipeline_call_with_mad_validation(
     else:
         batch_size = prompt_embeds.shape[0]
 
-    # Step 4: Encode input prompt (using CPU text encoder for now)
-    start_encoder_time = time.time()
-    prompt_embeds, negative_prompt_embeds = pipeline.encode_prompt(
+    # Step 4: Encode input prompt(using CPU text encoder for now)
+    start_encoder_time = time.perf_counter()
+    prompt_embeds, negative_prompt_embeds = pipeline.model.encode_prompt(
         prompt=prompt,
         negative_prompt=negative_prompt,
         do_classifier_free_guidance=pipeline.do_classifier_free_guidance,
@@ -124,7 +125,7 @@ def wan_pipeline_call_with_mad_validation(
         max_sequence_length=max_sequence_length,
         device=device,
     )
-    end_encoder_time = time.time()
+    end_encoder_time = time.perf_counter()
     text_encoder_perf = end_encoder_time - start_encoder_time
 
     # Get PyTorch reference prompt embeddings
@@ -154,7 +155,7 @@ def wan_pipeline_call_with_mad_validation(
 
     # Step 6: Prepare latent variables
     num_channels_latents = pipeline.transformer.model.config.in_channels
-    latents = pipeline.prepare_latents(
+    latents = pipeline.model.prepare_latents(
         batch_size * num_videos_per_prompt,
         num_channels_latents,
         height,
@@ -175,20 +176,24 @@ def wan_pipeline_call_with_mad_validation(
         )
 
     output_buffer = {
-        "output": np.random.rand(batch_size, pipeline.cl, 64).astype(np.int32),
+        "output": np.random.rand(
+            batch_size,
+            pipeline.cl,
+            constants.WAN_DIT_OUT_CHANNELS,
+        ).astype(np.int32),
     }
     pipeline.transformer.qpc_session.set_buffers(output_buffer)
     transformer_perf = []
 
     # Step 8: Denoising loop with transformer MAD validation
-    if pipeline.config.boundary_ratio is not None:
-        boundary_timestep = pipeline.config.boundary_ratio * pipeline.scheduler.config.num_train_timesteps
+    if pipeline.boundary_ratio is not None:
+        boundary_timestep = pipeline.boundary_ratio * pipeline.scheduler.config.num_train_timesteps
     else:
         boundary_timestep = None
 
     num_warmup_steps = len(timesteps) - num_inference_steps * pipeline.scheduler.order
 
-    with pipeline.progress_bar(total=num_inference_steps) as progress_bar:
+    with pipeline.model.progress_bar(total=num_inference_steps) as progress_bar:
         for i, t in enumerate(timesteps):
             if pipeline._interrupt:
                 continue
@@ -212,7 +217,7 @@ def wan_pipeline_call_with_mad_validation(
                 model_name = "transformer_low"
 
             latent_model_input = latents.to(transformer_dtype)
-            if pipeline.config.expand_timesteps:
+            if pipeline.expand_timesteps:
                 temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
                 timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
             else:
