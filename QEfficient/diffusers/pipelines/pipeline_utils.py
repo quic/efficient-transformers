@@ -93,9 +93,13 @@ def compile_modules_parallel(
         compile_kwargs = config["modules"][module_name]["compilation"]
 
         if specialization_updates and module_name in specialization_updates:
-            specializations.update(specialization_updates[module_name])
-
-        module_obj.compile(specializations=[specializations], **compile_kwargs)
+            if isinstance(specializations, list):
+                for spec in specializations:
+                    spec.update(specialization_updates[module_name])
+                module_obj.compile(specializations=specializations, **compile_kwargs)
+            else:
+                specializations.update(specialization_updates[module_name])
+                module_obj.compile(specializations=[specializations], **compile_kwargs)
 
     # Execute compilations in parallel
     with ThreadPoolExecutor(max_workers=len(modules)) as executor:

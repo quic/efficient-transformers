@@ -20,7 +20,6 @@ classifiers = [
 requires-python = ">=3.8,<3.11"
 dependencies = [
     "transformers==4.55.0",
-    "diffusers== 0.35.1",
     "huggingface-hub==0.34.0",
     "hf_transfer==0.1.9",
     "peft==0.17.0",
@@ -53,7 +52,12 @@ dependencies = [
 test = ["pytest","pytest-mock"]
 docs = ["Sphinx==7.1.2","sphinx-rtd-theme==2.0.0","myst-parser==3.0.1","sphinx-multiversion"]
 quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
-
+diffusers = [
+    "diffusers== 0.35.1",
+    "ftfy==6.3.1",
+    "imageio==2.37.2",
+    "imageio-ffmpeg==0.6.0"
+    ]
 [build-system]
 requires = ["setuptools>=62.0.0"]
 build-backend = "setuptools.build_meta"
@@ -75,3 +79,16 @@ target-version = "py310"
 addopts = "-W ignore -s -v"
 junit_logging = "all"
 doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
+markers = [
+    "on_qaic: marks tests as requiring QAIC hardware",
+    "diffusion_models: marks tests for diffusion models",
+    "wan: marks tests for WAN model",
+    "flux: marks tests for Flux model",
+    "regular: marks regular tests",
+    "nightly: marks nightly tests",
+    "multimodal: marks multimodal tests",
+    "qnn: marks QNN tests",
+    "cli: marks CLI tests",
+    "finetune: marks finetune tests",
+    "vllm: marks vLLM tests"
+]

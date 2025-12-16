@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
+from diffusers.models.transformers.transformer_wan import WanTransformerBlock
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -25,6 +26,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
 )
 from QEfficient.utils import constants
+from QEfficient.utils.torch_patches import apply_torch_patches
 
 
 class QEffTextEncoder(QEFFBaseModel):
@@ -360,8 +362,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
 
         Args:
             model (nn.Module): The Flux transformer model to wrap
-            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
-                                     for better modularity and potential optimization
         """
         super().__init__(model)
 
@@ -450,6 +450,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
             export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
+            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
+                                     for better modularity and potential optimization
 
         Returns:
             str: Path to the exported ONNX model
@@ -479,3 +481,243 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
         self._compile(specializations=specializations, **compiler_options)
+
+
+class QEffWanUnifiedWrapper(nn.Module):
+    """
+    A wrapper class that combines WAN high and low noise transformers into a single unified transformer.
+
+    This wrapper dynamically selects between high and low noise transformers based on the timestep shape
+    in the ONNX graph during inference. This approach enables efficient deployment of both transformer
+    variants in a single model.
+
+    Attributes:
+        transformer_high(nn.Module): The high noise transformer component
+        transformer_low(nn.Module): The low noise transformer component
+        config: Configuration shared between both transformers (from high noise transformer)
+    """
+
+    def __init__(self, transformer_high, transformer_low):
+        super().__init__()
+        self.transformer_high = transformer_high
+        self.transformer_low = transformer_low
+        # Both high and low noise transformers share the same configuration
+        self.config = transformer_high.config
+
+    def forward(
+        self,
+        hidden_states,
+        encoder_hidden_states,
+        rotary_emb,
+        temb,
+        timestep_proj,
+        tsp,
+        attention_kwargs=None,
+        return_dict=False,
+    ):
+        # Condition based on timestep shape
+        is_high_noise = tsp.shape[0] == torch.tensor(1)
+
+        high_hs = hidden_states.detach()
+        ehs = encoder_hidden_states.detach()
+        rhs = rotary_emb.detach()
+        ths = temb.detach()
+        projhs = timestep_proj.detach()
+
+        noise_pred_high = self.transformer_high(
+            hidden_states=high_hs,
+            encoder_hidden_states=ehs,
+            rotary_emb=rhs,
+            temb=ths,
+            timestep_proj=projhs,
+            attention_kwargs=attention_kwargs,
+            return_dict=return_dict,
+        )[0]
+
+        noise_pred_low = self.transformer_low(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            rotary_emb=rotary_emb,
+            temb=temb,
+            timestep_proj=timestep_proj,
+            attention_kwargs=attention_kwargs,
+            return_dict=return_dict,
+        )[0]
+
+        # Select based on timestep condition
+        noise_pred = torch.where(is_high_noise, noise_pred_high, noise_pred_low)
+        return noise_pred
+
+
+class QEffWanUnifiedTransformer(QEFFBaseModel):
+    """
+    Wrapper for WAN Unified Transformer with ONNX export and QAIC compilation capabilities.
+
+    This class handles the unified WAN transformer model that combines high and low noise transformers
+    into a single model for efficient deployment. Based on the timestep shape, the model dynamically
+    selects between high and low noise transformers during inference.
+
+    The wrapper applies specific transformations and optimizations for efficient inference on
+    Qualcomm AI hardware, particularly for video diffusion models.
+
+    Attributes:
+        model (nn.Module): The QEffWanUnifiedWrapper model that combines high/low noise transformers
+        _pytorch_transforms (List): PyTorch transformations applied before ONNX export
+        _onnx_transforms (List): ONNX transformations applied after export
+    """
+
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    def __init__(self, unified_transformer):
+        """
+        Initialize the Wan unified transformer.
+
+        Args:
+            model (nn.Module): Wan unified transformer model
+        """
+        super().__init__(unified_transformer)
+        self.model = unified_transformer
+
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying Wan transformer model
+        """
+        return self.model.config.__dict__
+
+    def get_onnx_params(
+        self,
+        batch_size: int = constants.WAN_ONNX_EXPORT_BATCH_SIZE,
+        seq_length: int = constants.WAN_ONNX_EXPORT_SEQ_LEN,
+        cl: int = constants.WAN_ONNX_EXPORT_CL_180P,
+        latent_height: int = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P,
+        latent_width: int = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P,
+        latent_frames: int = constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
+    ):
+        """
+        Generate ONNX export configuration for the Wan transformer.
+
+        Creates example inputs for all Wan-specific inputs including hidden states,
+        text embeddings, timestep conditioning,
+
+        Args:
+            batch_size (int): Batch size for example inputs (default: WAN_ONNX_EXPORT_BATCH_SIZE)
+            seq_length (int): Text sequence length (default: WAN_ONNX_EXPORT_SEQ_LEN)
+            cl (int): Compressed latent dimension (default: WAN_ONNX_EXPORT_CL_180P)
+            latent_height (int): Latent height dim (default: WAN_ONNX_EXPORT_LATENT_HEIGHT_180P)
+            latent_width (int): Latent Width dim (default: WAN_ONNX_EXPORT_LATENT_WIDTH_180P)
+            latent_frames(int): Latent Frames (default: WAN_ONNX_EXPORT_LATENT_FRAMES)
+
+        Returns:
+            Tuple containing:
+                - example_inputs (Dict): Sample inputs for ONNX export
+                - dynamic_axes (Dict): Specification of dynamic dimensions
+                - output_names (List[str]): Names of model outputs
+        """
+        example_inputs = {
+            "hidden_states": torch.randn(
+                batch_size,
+                self.model.config.in_channels,
+                latent_frames,
+                latent_height,
+                latent_width,
+                dtype=torch.float32,
+            ),
+            "encoder_hidden_states": torch.randn(
+                batch_size, seq_length, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
+            ),  # BS, seq len , text dim
+            # Rotary position embeddings: [2, context_length, 1, rotary_dim]; 2 is from tuple of cos, sin freqs
+            "rotary_emb": torch.randn(2, cl, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32),
+            # Timestep embeddings: [batch_size=1, embedding_dim]
+            "temb": torch.randn(
+                constants.WAN_ONNX_EXPORT_BATCH_SIZE, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
+            ),
+            # Projected timestep embeddings: [batch_size=1, projection_dim, embedding_dim]
+            "timestep_proj": torch.randn(
+                constants.WAN_ONNX_EXPORT_BATCH_SIZE,
+                constants.WAN_PROJECTION_DIM,
+                constants.WAN_TEXT_EMBED_DIM,
+                dtype=torch.float32,
+            ),
+            # Timestep parameter: Controls high/low noise transformer selection based on shape
+            "tsp": torch.ones(1, dtype=torch.int64),
+        }
+
+        output_names = ["output"]
+
+        dynamic_axes = {
+            "hidden_states": {
+                0: "batch_size",
+                1: "num_channels",
+                2: "num_frames",
+                3: "latent_height",
+                4: "latent_width",
+            },
+            "timestep": {0: "steps"},
+            "encoder_hidden_states": {0: "batch_size", 1: "sequence_length"},
+            "rotary_emb": {1: "cl"},
+            "tsp": {0: "model_type"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def export(
+        self,
+        inputs: Dict,
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_dir: str = None,
+        export_kwargs: Dict = None,
+        use_onnx_subfunctions: bool = False,
+    ) -> str:
+        """Export the Wan transformer model to ONNX format.
+
+        Args:
+            inputs (Dict): Example inputs for ONNX export
+            output_names (List[str]): Names of model outputs
+            dynamic_axes (Dict): Specification of dynamic dimensions
+            export_dir (str, optional): Directory to save ONNX model
+            export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
+            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
+                                     for better modularity and potential optimization
+        Returns:
+            str: Path to the exported ONNX model
+        """
+        if export_kwargs is None:
+            export_kwargs = {}
+
+        if use_onnx_subfunctions:
+            export_kwargs = {"export_modules_as_functions": {WanTransformerBlock}}
+
+        # torch patch to export onnx with subfunction
+        apply_torch_patches()  # TODO: Moving to _export is better
+
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=True,
+            **export_kwargs,
+        )
+
+    def compile(self, specializations, **compiler_options) -> None:
+        """
+        Compile the ONNX model for Qualcomm AI hardware.
+
+        Args:
+            specializations (List[Dict]): Model specialization configurations
+            **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
+        """
+        self._compile(specializations=specializations, **compiler_options)
+
+    @property
+    def model_name(self) -> str:
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname
