@@ -178,9 +178,9 @@ def test_auto_peft_model_for_causal_lm_activate_invalid(base_config, adapter_con
 def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_config, batch_size, tmp_path):
     _, lora_model = create_peft_model(base_config, adapter_config)
     qeff_model = QEffAutoPeftModelForCausalLM(lora_model)
-    qeff_model.export(tmp_path)
+    onnx_path = qeff_model.export(tmp_path)
     start = perf_counter()
-    qeff_model.compile(batch_size=batch_size, prefill_seq_len=32, ctx_len=128)
+    qeff_model.compile(onnx_path=onnx_path, batch_size=batch_size, prefill_seq_len=32, ctx_len=128)
     end = perf_counter()
     compile_time_0 = end - start
 
@@ -197,7 +197,7 @@ def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_con
     )
 
     start = perf_counter()
-    qeff_model.compile(batch_size=batch_size, prefill_seq_len=32, ctx_len=128)
+    qeff_model.compile(onnx_path=onnx_path, batch_size=batch_size, prefill_seq_len=32, ctx_len=128)
     end = perf_counter()
     compile_time_1 = end - start
     assert compile_time_1 < 0.01 * compile_time_0

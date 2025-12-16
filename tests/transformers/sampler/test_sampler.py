@@ -9,12 +9,13 @@ from typing import List, Union
 
 import numpy as np
 import pytest
-from transformers import AutoConfig, AutoProcessor
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
+from QEfficient.utils.test_utils import InternProcessor
 
 sampler_transform_configs = [
     pytest.param(
@@ -28,7 +29,7 @@ sampler_transform_configs = [
         False,  # is_vlm
     ),
     pytest.param(
-        "Qwen/Qwen2.5-VL-3B-Instruct",  # model
+        "OpenGVLab/InternVL2_5-1B",  # model
         (
             ["https://picsum.photos/id/237/536/354"] * 2,
             ["Can you describe the image in detail."] * 2,
@@ -53,7 +54,7 @@ greedy_sampling_configs = [
         False,  # is_vlm
     ),
     pytest.param(
-        "Qwen/Qwen2.5-VL-3B-Instruct",  # model
+        "OpenGVLab/InternVL2_5-1B",  # model
         (
             ["https://picsum.photos/id/237/536/354"] * 2,
             ["Can you describe the image in detail."] * 2,
@@ -77,19 +78,19 @@ random_sampling_configs = [
         1,  # spec_length
         False,  # is_vlm
     ),
-    # pytest.param(
-    #     "Qwen/Qwen2.5-VL-3B-Instruct",  # model
-    #     (
-    #         ["https://picsum.photos/id/237/536/354"] * 2,
-    #         ["Can you describe the image in detail."] * 2,
-    #     ),  # images and prompts
-    #     128,  # prefill_seq_len
-    #     4096,  # ctx_len
-    #     20,  # generation_len
-    #     2,  # full_batch_size
-    #     None,  # spec_length
-    #     True,  # is_vlm
-    # ),
+    pytest.param(
+        "OpenGVLab/InternVL2_5-1B",  # model
+        (
+            ["https://picsum.photos/id/237/536/354"] * 4,
+            ["Can you describe the image in detail."] * 4,
+        ),  # images and prompts
+        128,  # prefill_seq_len
+        4096,  # ctx_len
+        20,  # generation_len
+        4,  # full_batch_size
+        None,  # spec_length
+        True,  # is_vlm
+    ),
 ]
 guided_decoding_configs = [
     pytest.param(
@@ -103,7 +104,7 @@ guided_decoding_configs = [
         False,  # is_vlm
     ),
     pytest.param(
-        "Qwen/Qwen2.5-VL-3B-Instruct",  # model
+        "OpenGVLab/InternVL2_5-1B",  # model
         (
             ["https://picsum.photos/id/237/536/354"] * 2,
             ["Can you describe the image in detail."] * 2,
@@ -112,6 +113,31 @@ guided_decoding_configs = [
         4096,  # ctx_len
         20,  # generation_len
         2,  # full_batch_size
+        None,  # spec_length
+        True,  # is_vlm
+    ),
+]
+guided_decoding_configs = [
+    pytest.param(
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
+        Constants.INPUT_STR * 4,  # prompts
+        32,  # prefill_seq_len
+        64,  # ctx_len
+        20,  # generation_len
+        4,  # full_batch_size
+        1,  # spec_length
+        False,  # is_vlm
+    ),
+    pytest.param(
+        "OpenGVLab/InternVL2_5-1B",  # model
+        (
+            ["https://picsum.photos/id/237/536/354"] * 4,
+            ["Can you describe the image in detail."] * 4,
+        ),  # images and prompts
+        128,  # prefill_seq_len
+        4096,  # ctx_len
+        20,  # generation_len
+        4,  # full_batch_size
         None,  # spec_length
         True,  # is_vlm
     ),
@@ -141,11 +167,16 @@ def test_sampler_transform(
     # Export and compile QEfficient models
     additional_configs = {}
     if is_vlm:
-        config = AutoConfig.from_pretrained(model)
-        config.text_config.num_hidden_layers = 2
+        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
+        if "InternVL" in model:
+            config.llm_config.num_hidden_layers = 2
+            qeff_class = QEFFAutoModelForCausalLM
+            additional_configs["trust_remote_code"] = True
+        else:
+            config.text_config.num_hidden_layers = 2
+            qeff_class = QEFFAutoModelForImageTextToText
         additional_configs["config"] = config
         additional_configs["kv_offload"] = True
-        qeff_class = QEFFAutoModelForImageTextToText
     else:
         additional_configs["num_hidden_layers"] = 2
         qeff_class = QEFFAutoModelForCausalLM
@@ -277,20 +308,24 @@ def test_greedy_sampling(
     additional_configs = {}
     additional_params = {}
     if is_vlm:
-        config = AutoConfig.from_pretrained(model)
-        config.text_config.num_hidden_layers = 4
+        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
+        config.llm_config.num_hidden_layers = 4
         additional_configs["config"] = config
         additional_configs["kv_offload"] = True
-        qeff_class = QEFFAutoModelForImageTextToText
+        additional_configs["trust_remote_code"] = True
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model,
+            config=config,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, use_fast=False)
+        additional_params["processor"] = InternProcessor(model_hf, tokenizer)
         assert isinstance(prompts, tuple)
         additional_params["images"] = prompts[0]
-        additional_params["processor"] = AutoProcessor.from_pretrained(model)
         prompts = prompts[1]
     else:
         additional_configs["num_hidden_layers"] = 4
-        qeff_class = QEFFAutoModelForCausalLM
         spec_length -= 1
-    model_w_sampler = qeff_class.from_pretrained(
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
         qaic_config={
@@ -300,7 +335,7 @@ def test_greedy_sampling(
         },
         **additional_configs,
     )
-    model_wo_sampler = qeff_class.from_pretrained(
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
         qaic_config={
@@ -392,15 +427,20 @@ def test_random_sampling(
     additional_params = {}
     if is_vlm:
         additional_configs["kv_offload"] = True
-        qeff_class = QEFFAutoModelForImageTextToText
+        additional_configs["trust_remote_code"] = True
+        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model,
+            config=config,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, use_fast=False)
+        additional_params["processor"] = InternProcessor(model_hf, tokenizer)
         assert isinstance(prompts, tuple)
         additional_params["images"] = prompts[0]
-        additional_params["processor"] = AutoProcessor.from_pretrained(model)
         prompts = prompts[1]
     else:
-        qeff_class = QEFFAutoModelForCausalLM
         spec_length -= 1
-    model_w_sampler = qeff_class.from_pretrained(
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
         qaic_config={
@@ -410,7 +450,7 @@ def test_random_sampling(
         },
         **additional_configs,
     )
-    model_wo_sampler = qeff_class.from_pretrained(
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
         qaic_config={
@@ -474,60 +514,116 @@ def test_random_sampling(
     )
 
     # Compare generated texts
-    golden_texts = {
-        "w_sampler": "Aiden and I am a freelance writer who loves to explore the world. With over",
-        "wo_sampler": "John Smith and I am a software engineer. I have been working in the industry for the past ",
-    }
-    golden_ids = {
-        "w_sampler": [
-            [
-                319,
-                3615,
-                322,
-                306,
-                626,
-                263,
-                3005,
-                295,
-                749,
-                9227,
-                1058,
-                12355,
-                267,
-                304,
-                26987,
-                278,
-                3186,
-                29889,
-                2973,
-                975,
-            ]
-        ],
-        "wo_sampler": [
-            [
-                2259,
-                7075,
-                322,
-                306,
-                626,
-                263,
-                7047,
-                22055,
-                29889,
-                306,
-                505,
-                1063,
-                1985,
-                297,
-                278,
-                13661,
-                363,
-                278,
-                4940,
-                29871,
-            ]
-        ],
-    }
+    if model == "TinyLlama/TinyLlama-1.1B-Chat-v1.0":
+        golden_texts = {
+            "w_sampler": "Aiden and I am a freelance writer who loves to explore the world. With over",
+            "wo_sampler": "John Smith and I am a software engineer. I have been working in the industry for the past ",
+        }
+        golden_ids = {
+            "w_sampler": [
+                [
+                    319,
+                    3615,
+                    322,
+                    306,
+                    626,
+                    263,
+                    3005,
+                    295,
+                    749,
+                    9227,
+                    1058,
+                    12355,
+                    267,
+                    304,
+                    26987,
+                    278,
+                    3186,
+                    29889,
+                    2973,
+                    975,
+                ]
+            ],
+            "wo_sampler": [
+                [
+                    2259,
+                    7075,
+                    322,
+                    306,
+                    626,
+                    263,
+                    7047,
+                    22055,
+                    29889,
+                    306,
+                    505,
+                    1063,
+                    1985,
+                    297,
+                    278,
+                    13661,
+                    363,
+                    278,
+                    4940,
+                    29871,
+                ]
+            ],
+        }
+    elif model == "OpenGVLab/InternVL2_5-1B":
+        golden_texts = {
+            "w_sampler": "The description of this black puppy:\n\nThis scene features a small, young dog with smooth and shiny fur",
+            "wo_sampler": "The image features a black puppy sitting on a wooden surface. The puppy has a shiny, glossy coat",
+        }
+        golden_ids = {
+            "w_sampler": [
+                [
+                    785,
+                    4008,
+                    315,
+                    419,
+                    3691,
+                    41189,
+                    1447,
+                    1986,
+                    6109,
+                    4419,
+                    264,
+                    2613,
+                    11,
+                    3908,
+                    5562,
+                    448,
+                    10876,
+                    323,
+                    41199,
+                    18241,
+                ]
+            ],
+            "wo_sampler": [
+                [
+                    785,
+                    2168,
+                    4419,
+                    264,
+                    3691,
+                    41189,
+                    11699,
+                    389,
+                    264,
+                    22360,
+                    7329,
+                    13,
+                    576,
+                    41189,
+                    702,
+                    264,
+                    41199,
+                    11,
+                    73056,
+                    22875,
+                ]
+            ],
+        }
     for i in range(full_batch_size):
         assert (
             tokenizer.decode(model_w_sampler_exec_info.generated_ids[i][:generation_len]) == golden_texts["w_sampler"]
@@ -565,20 +661,24 @@ def test_guided_decoding(
     additional_configs = {}
     additional_params = {}
     if is_vlm:
-        config = AutoConfig.from_pretrained(model)
-        config.text_config.num_hidden_layers = 2
+        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
+        config.llm_config.num_hidden_layers = 2
         additional_configs["config"] = config
         additional_configs["kv_offload"] = True
-        qeff_class = QEFFAutoModelForImageTextToText
+        additional_configs["trust_remote_code"] = True
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model,
+            config=config,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, use_fast=False)
+        additional_params["processor"] = InternProcessor(model_hf, tokenizer)
         assert isinstance(prompts, tuple)
         additional_params["images"] = prompts[0]
-        additional_params["processor"] = AutoProcessor.from_pretrained(model)
         prompts = prompts[1]
     else:
         additional_configs["num_hidden_layers"] = 2
-        qeff_class = QEFFAutoModelForCausalLM
         spec_length -= 1
-    model_w_sampler_w_guided_decoding = qeff_class.from_pretrained(
+    model_w_sampler_w_guided_decoding = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
         qaic_config={
@@ -589,7 +689,7 @@ def test_guided_decoding(
         },
         **additional_configs,
     )
-    model_w_sampler_wo_guided_decoding = qeff_class.from_pretrained(
+    model_w_sampler_wo_guided_decoding = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
         qaic_config={

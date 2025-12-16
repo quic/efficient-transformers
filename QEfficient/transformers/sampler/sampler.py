@@ -37,7 +37,6 @@ def prefill_path(
     batch_index: torch.LongTensor,
     batch_index_reshaped: torch.LongTensor,
     past_repetition_penalty_buffer: torch.Tensor,
-    past_presence_penalty_buffer: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Initialize or update RetainedState buffers for prefill stage based on `input_ids`.
@@ -49,7 +48,6 @@ def prefill_path(
     positions_mask = (position_ids[:, :1] != zero_tensor).view(-1, 1)
     mul_value = CtxScatterFuncCB3D.apply(mul_value, batch_index, zero_tensor, positions_mask)
     past_repetition_penalty_buffer *= mul_value
-    past_presence_penalty_buffer *= mul_value
 
     # Mask out-of-bounds or invalid position_ids or input_ids
     input_ids = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, input_ids)
@@ -61,7 +59,7 @@ def prefill_path(
         input_ids,
         torch.ones(input_ids.shape, dtype=torch.bool),
     )
-    return past_repetition_penalty_buffer, past_presence_penalty_buffer
+    return past_repetition_penalty_buffer
 
 
 def decode_path(
@@ -115,6 +113,8 @@ def sampler_forward(
     return_dict: Optional[bool] = None,
     cache_position: Optional[torch.LongTensor] = None,
     num_logits_to_keep: Optional[int] = None,
+    vision_embeds: Optional[torch.FloatTensor] = None,
+    image_idx: Optional[torch.IntTensor] = None,
     last_accepted_output_tokens: Optional[torch.Tensor] = None,  # (batch_size, spec_length or less)
     past_repetition_penalty_buffer: Optional[torch.Tensor] = None,
     repetition_penalties: Optional[torch.Tensor] = None,
@@ -125,13 +125,14 @@ def sampler_forward(
     top_ps: Optional[torch.Tensor] = None,
     min_ps: Optional[torch.Tensor] = None,
     random_numbers: Optional[torch.Tensor] = None,
-    vision_embeds: Optional[torch.Tensor] = None,
-    image_idx: Optional[torch.Tensor] = None,
     token_bitmasks: Optional[torch.Tensor] = None,
 ) -> Union[Tuple, SamplerOutput]:
     r"""
     Perform the sampling of next tokens on the QAIC device (instead of the host)
     and return the next tokens and/or probability distributions.
+
+    The vision_embeds and image_idx parameters are optional
+    and are used only for VLMs when supported by the original forward function.
 
     Args:
         last_accepted_output_tokens (`torch.Tensor`, *optional*):
@@ -233,14 +234,14 @@ def sampler_forward(
         logits = torch.where(token_bitmasks == 1, logits, torch.finfo(torch.float16).min)
 
     # Prefill
-    past_repetition_penalty_buffer_prefill, past_presence_penalty_buffer_prefill = prefill_path(
+    past_repetition_penalty_buffer_prefill = prefill_path(
         input_ids=input_ids,
         position_ids=position_ids,
         batch_index=batch_index,
         batch_index_reshaped=batch_index_reshaped,
         past_repetition_penalty_buffer=past_repetition_penalty_buffer.clone(),
-        past_presence_penalty_buffer=past_presence_penalty_buffer.clone(),
     )
+    past_presence_penalty_buffer_prefill = torch.zeros(past_presence_penalty_buffer.shape, dtype=torch.bool)
     # Decode
     past_repetition_penalty_buffer_decode, past_presence_penalty_buffer_decode = decode_path(
         last_accepted_output_tokens=last_accepted_output_tokens,
@@ -259,19 +260,6 @@ def sampler_forward(
         is_prefill, past_presence_penalty_buffer_prefill, past_presence_penalty_buffer_decode
     )
 
-    # Greedy Sampling
-    greedy_samples = torch.argmax(logits, dim=1, keepdim=True)  # (batch_size * spec_length, 1)
-    if (temperatures == 0).all() and not self.qaic_config.get("return_pdfs", False):
-        return SamplerOutput(
-            probs=None,
-            next_tokens=greedy_samples.reshape(-1, spec_length, 1),  # Return sampled next tokens instead of logits
-            vision_embeds=outputs.get("vision_embeds", None),
-            image_idx=outputs.get("image_idx", None),
-            past_key_values=outputs.get("past_key_values", None),
-            past_repetition_penalty_buffer=past_repetition_penalty_buffer,
-            past_presence_penalty_buffer=past_presence_penalty_buffer,
-        )
-
     # Repetition Penalty
     if (repetition_penalties != 1.0).any():
         past_repetition_penalty_buffer_selected = past_repetition_penalty_buffer[batch_index_reshaped].repeat(
@@ -289,6 +277,19 @@ def sampler_forward(
             spec_length, 1
         )  # (batch_size * spec_length, vocab_size)
         logits -= presence_penalties * past_presence_penalty_buffer_selected
+
+    # Greedy Sampling
+    greedy_samples = torch.argmax(logits, dim=1, keepdim=True)  # (batch_size * spec_length, 1)
+    if (temperatures == 0).all() and not self.qaic_config.get("return_pdfs", False):
+        return SamplerOutput(
+            probs=None,
+            next_tokens=greedy_samples.reshape(-1, spec_length, 1),  # Return sampled next tokens instead of logits
+            vision_embeds=outputs.get("vision_embeds", None),
+            image_idx=outputs.get("image_idx", None),
+            past_key_values=outputs.get("past_key_values", None),
+            past_repetition_penalty_buffer=past_repetition_penalty_buffer,
+            past_presence_penalty_buffer=past_presence_penalty_buffer,
+        )
 
     # TODO: Frequency Penalty
 

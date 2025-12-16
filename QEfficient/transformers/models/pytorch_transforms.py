@@ -197,6 +197,10 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
+from transformers.models.t5.modeling_t5 import (
+    T5Attention,
+    T5LayerNorm,
+)
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
     WhisperDecoder,
@@ -261,6 +265,11 @@ from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssForCausalLM,
     QEffGptOssMLP,
     QEffGptOssModel,
+    QEffPrefillOnlyChunkedGptOssAttention,
+    QEffPrefillOnlyChunkedGptOssMLP,
+    QEffPrefillOnlyGptOssAttention,
+    QEffPrefillOnlyGptOssMLP,
+    QEffPrefillOnlyGptOssModel,
 )
 from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJAttention,
@@ -418,6 +427,10 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
+)
+from QEfficient.transformers.models.t5.modeling_t5 import (
+    QEffT5Attention,
+    QEffT5LayerNorm,
 )
 from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperAttention,
@@ -636,6 +649,39 @@ class KVCacheTransform(ModuleMappingTransform):
         return model, transformed
 
 
+class PrefillOnlyTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
+        QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+    }
+
+
+class PrefillOnlyChunkedTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+    }
+
+
+class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
+        QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+    }
+
+
+class RevertPrefillOnlyTransform(ModuleMappingTransform):
+    _module_mapping = {
+        **{v: k for k, v in PrefillOnlyTransform._module_mapping.items()},
+        **{v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()},
+    }
+
+
 class SpDTransform:
     """
     Apply generic QEffForCausalLM forward pass to extract `num_speculative_tokens+1` hidden states before computing logits during decode phase and extract last predicted token during prefill.
@@ -810,6 +856,14 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     }
 
     _match_class_replace_method = {}
+
+
+class T5ModelTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        T5Attention: QEffT5Attention,
+        T5LayerNorm: QEffT5LayerNorm,
+    }
 
 
 class PoolingTransform:
