@@ -113,6 +113,8 @@ def sampler_forward(
     return_dict: Optional[bool] = None,
     cache_position: Optional[torch.LongTensor] = None,
     num_logits_to_keep: Optional[int] = None,
+    vision_embeds: Optional[torch.FloatTensor] = None,
+    image_idx: Optional[torch.IntTensor] = None,
     last_accepted_output_tokens: Optional[torch.Tensor] = None,  # (batch_size, spec_length or less)
     past_repetition_penalty_buffer: Optional[torch.Tensor] = None,
     repetition_penalties: Optional[torch.Tensor] = None,
@@ -123,12 +125,13 @@ def sampler_forward(
     top_ps: Optional[torch.Tensor] = None,
     min_ps: Optional[torch.Tensor] = None,
     random_numbers: Optional[torch.Tensor] = None,
-    vision_embeds: Optional[torch.Tensor] = None,
-    image_idx: Optional[torch.Tensor] = None,
 ) -> Union[Tuple, SamplerOutput]:
     r"""
     Perform the sampling of next tokens on the QAIC device (instead of the host)
     and return the next tokens and/or probability distributions.
+
+    The vision_embeds and image_idx parameters are optional
+    and are used only for VLMs when supported by the original forward function.
 
     Args:
         last_accepted_output_tokens (`torch.Tensor`, *optional*):
