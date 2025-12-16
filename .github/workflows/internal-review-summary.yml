@@ -1,0 +1,168 @@
+name: Internal Review Summary
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Original PR number"
+        required: true
+        type: string
+      orig_repo:
+        description: "Original repo (owner/repo)"
+        required: true
+        type: string
+      orig_sha:
+        description: "Original head SHA"
+        required: true
+        type: string
+
+jobs:
+  summarize-internal-review:
+    runs-on: self-hosted
+
+    steps:
+      - name: 🛠 Setup internal review context
+        id: setup
+        run: |
+          set -euo pipefail
+
+          echo "PR number : ${{ inputs.pr_number }}"
+          echo "Repo      : ${{ inputs.orig_repo }}"
+          echo "Head SHA  : ${{ inputs.orig_sha }}"
+          echo
+
+          # Locate internal-review JSON on NFS
+          NFS_BASE="/prj/bdcqranium/qranium-ci/qeff-comments"
+          JSON_PATH="${NFS_BASE}/pr-${{ inputs.pr_number }}.json"
+          echo "Expected JSON path: ${JSON_PATH}"
+
+          if [ ! -f "${JSON_PATH}" ]; then
+            echo "ERROR: JSON file not found at ${JSON_PATH}"
+            exit 1
+          fi
+
+          # Raw JSON preview (first 400 chars)
+          echo
+          echo "----- JSON preview (first 400 chars) -----"
+          head -c 400 "${JSON_PATH}" || true
+          echo
+          echo "------------------------------------------"
+          echo
+
+          # Expose JSON path for later steps
+          echo "json_path=${JSON_PATH}" >> "$GITHUB_OUTPUT"
+
+      - name: 📋 Show review (table or full comment) and compute severity
+        id: analyze
+        run: |
+          set -euo pipefail
+
+          JSON_PATH="${{ steps.setup.outputs.json_path }}"
+          PY_HELPER="/prj/bdcqranium/qranium-ci/qeff-comments/Json-Parser/internal_review_analyzer.py"
+
+          echo "Using JSON: ${JSON_PATH}"
+          echo "Using Python helper: ${PY_HELPER}"
+          echo
+
+          echo "===== Internal review ====="
+
+          # Run analyzer but DO NOT let a non-zero exit code fail this step.
+          # Also capture its output to parse worst_severity=... if it prints that.
+          ANALYZER_OUTPUT="$(
+            python3 "${PY_HELPER}" "${JSON_PATH}" 2>&1 | tee /dev/stderr
+          )" || true
+
+          echo "========================="
+          echo
+
+          # 1) Try to parse worst_severity from analyzer output if it prints 'worst_severity=...'
+          WORST_FROM_LOG="$(printf '%s\n' "$ANALYZER_OUTPUT" | awk -F'=' '/^worst_severity=/{print $2}' | tail -n 1)"
+
+          # 2) Fallback: read from JSON summary.highest_severity (parser writes this)
+          WORST_FROM_JSON="$(jq -r '.summary.highest_severity // empty' "${JSON_PATH}")"
+
+          # Pick priority: analyzer log > JSON (or whichever you prefer)
+          if [ -n "${WORST_FROM_LOG}" ]; then
+            HIGHEST_SEV="${WORST_FROM_LOG}"
+          elif [ -n "${WORST_FROM_JSON}" ]; then
+            HIGHEST_SEV="${WORST_FROM_JSON}"
+          else
+            HIGHEST_SEV="None"
+          fi
+
+          echo "Resolved highest_severity = '${HIGHEST_SEV}'"
+
+          # Export for later steps
+          echo "highest_severity=${HIGHEST_SEV}" >> "$GITHUB_OUTPUT"
+
+      - name: 🚦 Gate on highest severity
+        id: gate
+        run: |
+          set -euo pipefail
+
+          HIGHEST_SEV="${{ steps.analyze.outputs.highest_severity }}"
+
+          echo "===== Decision ====="
+          echo "Overall severity is ${HIGHEST_SEV}"
+
+          case "${HIGHEST_SEV}" in
+            Critical|High|Medium)
+              echo "marking job as FAILED."
+              exit 1
+              ;;
+            Low|None|"")
+              echo "marking job as PASSED."
+              ;;
+            *)
+              echo "Unknown severity '${HIGHEST_SEV}' -> treating as PASSED."
+              ;;
+          esac
+
+      - name: ✅ Post internal-review status on original commit
+        if: always()
+        env:
+          GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          ORIG_REPO:      ${{ inputs.orig_repo }}
+          ORIG_SHA:       ${{ inputs.orig_sha }}
+          WORST_SEVERITY: ${{ steps.analyze.outputs.highest_severity }}
+          GITHUB_REPO:    ${{ github.repository }}
+          GITHUB_RUN_ID:  ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # Map worst_severity to GitHub status state
+          case "${WORST_SEVERITY}" in
+            Critical|High|Medium)
+              STATE="failure"
+              ;;
+            Low|None|"")
+              STATE="success"
+              ;;
+            *)
+              STATE="success"
+              ;;
+          esac
+
+          SUMMARY="Internal review: worst severity=${WORST_SEVERITY}"
+
+          TARGET_URL="https://github.com/${GITHUB_REPO}/actions/runs/${GITHUB_RUN_ID}"
+          echo "Final state: ${STATE}"
+          echo "Summary    : ${SUMMARY}"
+          echo "Details URL: ${TARGET_URL}"
+          echo "Posting status to ${ORIG_REPO} @ ${ORIG_SHA}"
+
+          curl -sS -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${ORIG_REPO}/statuses/${ORIG_SHA}" \
+            -d "$(jq -n \
+              --arg state "$STATE" \
+              --arg context "internal-review" \
+              --arg description "$SUMMARY" \
+              --arg target_url "$TARGET_URL" \
+              '{
+                state: $state,
+                context: $context,
+                description: $description,
+                target_url: $target_url
+              }')"
