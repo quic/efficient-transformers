@@ -37,6 +37,7 @@ def prefill_path(
     batch_index: torch.LongTensor,
     batch_index_reshaped: torch.LongTensor,
     past_repetition_penalty_buffer: torch.Tensor,
+    past_presence_penalty_buffer: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Initialize or update RetainedState buffers for prefill stage based on `input_ids`.
@@ -59,7 +60,10 @@ def prefill_path(
         input_ids,
         torch.ones(input_ids.shape, dtype=torch.bool),
     )
-    return past_repetition_penalty_buffer
+
+    mul_value = torch.zeros(past_presence_penalty_buffer.shape[0], 1, dtype=torch.bool)
+    past_presence_penalty_buffer *= mul_value
+    return past_repetition_penalty_buffer, past_presence_penalty_buffer
 
 
 def decode_path(
@@ -234,14 +238,14 @@ def sampler_forward(
         logits = torch.where(token_bitmasks == 1, logits, torch.finfo(torch.float16).min)
 
     # Prefill
-    past_repetition_penalty_buffer_prefill = prefill_path(
+    past_repetition_penalty_buffer_prefill, past_presence_penalty_buffer_prefill = prefill_path(
         input_ids=input_ids,
         position_ids=position_ids,
         batch_index=batch_index,
         batch_index_reshaped=batch_index_reshaped,
         past_repetition_penalty_buffer=past_repetition_penalty_buffer.clone(),
+        past_presence_penalty_buffer=past_presence_penalty_buffer.clone(),
     )
-    past_presence_penalty_buffer_prefill = torch.zeros(past_presence_penalty_buffer.shape, dtype=torch.bool)
     # Decode
     past_repetition_penalty_buffer_decode, past_presence_penalty_buffer_decode = decode_path(
         last_accepted_output_tokens=last_accepted_output_tokens,
