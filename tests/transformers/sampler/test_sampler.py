@@ -5,11 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import pytest
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -94,6 +94,42 @@ random_sampling_configs = [
 ]
 
 
+def prepare_model_setup(
+    model: str, is_vlm: bool, num_hidden_layers: Optional[int], prompts: Union[List, Tuple], spec_length: Optional[int]
+):
+    additional_configs = {}
+    additional_params = {}
+    if is_vlm:
+        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
+        if num_hidden_layers is not None:
+            config.llm_config.num_hidden_layers = num_hidden_layers
+        additional_configs["config"] = config
+        additional_configs["kv_offload"] = True
+        assert isinstance(prompts, tuple), "For VLMs, both image and text prompts must be provided."
+        additional_params["images"] = prompts[0]
+        prompts = prompts[1]
+
+        if "InternVL" in model:
+            additional_configs["trust_remote_code"] = True
+            model_hf = AutoModelForCausalLM.from_pretrained(
+                model,
+                config=config,
+                trust_remote_code=True,
+            )
+            tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, use_fast=False)
+            additional_params["processor"] = InternProcessor(model_hf, tokenizer)
+            qeff_class = QEFFAutoModelForCausalLM
+        else:
+            additional_params["processor"] = AutoProcessor.from_pretrained(model)
+            qeff_class = QEFFAutoModelForImageTextToText
+    else:
+        if num_hidden_layers is not None:
+            additional_configs["num_hidden_layers"] = num_hidden_layers
+        spec_length = (spec_length or 1) - 1
+        qeff_class = QEFFAutoModelForCausalLM
+    return additional_configs, additional_params, prompts, spec_length, qeff_class
+
+
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
@@ -106,7 +142,7 @@ def test_sampler_transform(
     ctx_len: int,
     generation_len: int,
     full_batch_size: int,
-    spec_length: int,
+    spec_length: Optional[int],
     is_vlm: bool,
 ):
     """
@@ -115,18 +151,10 @@ def test_sampler_transform(
     next tokens and/or probability distributions.
     """
     # Export and compile QEfficient models
-    additional_configs = {}
-    if is_vlm:
-        additional_configs["kv_offload"] = True
-        if "InternVL" in model:
-            qeff_class = QEFFAutoModelForCausalLM
-            additional_configs["trust_remote_code"] = True
-        else:
-            qeff_class = QEFFAutoModelForImageTextToText
-    else:
-        additional_configs["num_hidden_layers"] = 2
-        qeff_class = QEFFAutoModelForCausalLM
-        spec_length -= 1
+    num_hidden_layers = 2
+    additional_configs, additional_params, prompts, spec_length, qeff_class = prepare_model_setup(
+        model, is_vlm, num_hidden_layers, prompts, spec_length
+    )
     model_w_sampler = qeff_class.from_pretrained(
         model,
         continuous_batching=True,
@@ -209,31 +237,17 @@ def test_greedy_sampling(
     ctx_len: int,
     generation_len: int,
     full_batch_size: int,
-    spec_length: int,
+    spec_length: Optional[int],
     is_vlm: bool,
 ):
     """
     Test greedy sampling with QPC compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
-    additional_configs = {}
-    additional_params = {}
-    if is_vlm:
-        additional_configs["kv_offload"] = True
-        additional_configs["trust_remote_code"] = True
-        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            model,
-            config=config,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, use_fast=False)
-        additional_params["processor"] = InternProcessor(model_hf, tokenizer)
-        assert isinstance(prompts, tuple)
-        additional_params["images"] = prompts[0]
-        prompts = prompts[1]
-    else:
-        additional_configs["num_hidden_layers"] = 4
-        spec_length -= 1
+    num_hidden_layers = 4
+    additional_configs, additional_params, prompts, spec_length, qeff_class = prepare_model_setup(
+        model, is_vlm, num_hidden_layers, prompts, spec_length
+    )
     model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
@@ -325,30 +339,17 @@ def test_random_sampling(
     ctx_len: int,
     generation_len: int,
     full_batch_size: int,
-    spec_length: int,
+    spec_length: Optional[int],
     is_vlm: bool,
 ):
     """
     Test random sampling with QPC compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
-    additional_configs = {}
-    additional_params = {}
-    if is_vlm:
-        additional_configs["kv_offload"] = True
-        additional_configs["trust_remote_code"] = True
-        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            model,
-            config=config,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, use_fast=False)
-        additional_params["processor"] = InternProcessor(model_hf, tokenizer)
-        assert isinstance(prompts, tuple)
-        additional_params["images"] = prompts[0]
-        prompts = prompts[1]
-    else:
-        spec_length -= 1
+    num_hidden_layers = None
+    additional_configs, additional_params, prompts, spec_length, qeff_class = prepare_model_setup(
+        model, is_vlm, num_hidden_layers, prompts, spec_length
+    )
     model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
@@ -480,7 +481,7 @@ def test_random_sampling(
         }
     elif model == "OpenGVLab/InternVL2_5-1B":
         golden_texts = {
-            "w_sampler": "The description of this black puppy:\n\nThis scene features a small, young dog with smooth and shiny fur",
+            "w_sampler": "The description of this picture would be as follows:\n\nAn adorable black puppy is sitting on a wooden surface",
             "wo_sampler": "The image features a black puppy sitting on a wooden surface. The puppy has a shiny, glossy coat",
         }
         golden_ids = {
@@ -490,22 +491,22 @@ def test_random_sampling(
                     4008,
                     315,
                     419,
+                    6802,
+                    1035,
+                    387,
+                    438,
+                    11017,
+                    1447,
+                    2082,
+                    40608,
                     3691,
                     41189,
-                    1447,
-                    1986,
-                    6109,
-                    4419,
+                    374,
+                    11699,
+                    389,
                     264,
-                    2613,
-                    11,
-                    3908,
-                    5562,
-                    448,
-                    10876,
-                    323,
-                    41199,
-                    18241,
+                    22360,
+                    7329,
                 ]
             ],
             "wo_sampler": [
