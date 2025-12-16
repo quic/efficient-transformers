@@ -5,6 +5,8 @@
 #
 # ----------------------------------------------------------------------------
 
+import hashlib
+
 import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
@@ -57,7 +59,13 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     without_sub_func_onnx = model_0_0.export(tmp_path, use_onnx_subfunctions=False)
     hash_0_1 = model_0_0.export_hash
 
+    # Test that the export hash changes when use_onnx_subfunction is toggled, indicating different parameters are used
     assert hash_0_0 != hash_0_1
+
+    # Test that the exported ONNX files hash are different by comparing their hashes when use_onnx_subfunction is toggled
+    with_sub_func_onnx_hash = hashlib.sha256(open(with_sub_func_onnx, "rb").read()).hexdigest()
+    without_sub_func_onnx_hash = hashlib.sha256(open(without_sub_func_onnx, "rb").read()).hexdigest()
+    assert with_sub_func_onnx_hash != without_sub_func_onnx_hash
 
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
     model_0_0.compile(onnx_path=with_sub_func_onnx, **compile_params)
