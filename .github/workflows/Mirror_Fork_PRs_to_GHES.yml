@@ -1,0 +1,271 @@
+name: Mirror Fork PRs to GHES
+
+on:
+  pull_request:
+    # PR created, draft→ready transition, commits, reopen, close
+    types: [opened, ready_for_review, synchronize, reopened, closed]
+    branches: ["main"]
+
+# Per-PR concurrency avoids cross-PR contention
+concurrency:
+  group: fork-pr-mirror-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  mirror_or_close:
+    runs-on: [self-hosted, linux, x64]
+    env:
+      GHES_BASE_URL: https://github.qualcomm.com
+      GHES_OWNER: qranium
+      GHES_REPO: efficient-transformers
+      FORK_OWNER: "qraniumcitest"
+      FORK_REPO: "efficient-transformers"
+      GH_ACCEPT: "application/vnd.github+json, application/vnd.github.shadow-cat-preview+json"
+
+    steps:
+      - name: Exit if running in internal repo
+        if: github.repository == 'qranium/efficient-transformers'
+        run: |
+          echo "This workflow should not run in the internal repo. Exiting."
+          exit 0
+
+      - name: Debug event
+        run: |
+          echo "Event      : ${{ github.event_name }} / ${{ github.event.action }}"
+          echo "PR #       : ${{ github.event.pull_request.number }}"
+          echo "Draft?     : ${{ github.event.pull_request.draft }}"
+          echo "Head ref   : ${{ github.event.pull_request.head.ref }}"
+          echo "Head sha   : ${{ github.event.pull_request.head.sha }}"
+
+      - name: Preflight - verify GHES env and connectivity
+        run: |
+          set -e
+          nslookup github.qualcomm.com || (echo "DNS lookup failed. Connect VPN then re-run"; exit 1)
+          curl -I --max-time 10 "https://github.qualcomm.com" || (echo "Cannot reach GHES over HTTPS. Connect VPN then re-run"; exit 1)
+
+      - name: Checkout PR head
+        if: github.event.action != 'closed'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Configure git
+        if: github.event.action != 'closed'
+        run: |
+          git config user.email "pr-mirror@local"
+          git config user.name  "pr-mirror"
+
+      - name: Add GHES remote
+        if: github.event.action != 'closed'
+        env:
+          GHES_USER: ${{ secrets.GHES_USER }}
+          GHES_PAT:  ${{ secrets.GHES_PAT  }}
+        run: |
+          set -e
+          git remote add ghes "${GHES_BASE_URL}/${GHES_OWNER}/${GHES_REPO}.git" || true
+          git remote set-url ghes "https://${GHES_USER}:${GHES_PAT}@github.qualcomm.com/${GHES_OWNER}/${GHES_REPO}.git"
+          git ls-remote ghes --heads
+
+      - name: Push PR branch to GHES
+        if: github.event.action != 'closed'
+        id: push_branch
+        run: |
+          set -euo pipefail
+          PR_NUM="${{ github.event.pull_request.number }}"
+          BRANCH="fork-pr-${PR_NUM}"
+          git push ghes "HEAD:refs/heads/${BRANCH}" --force
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      # Canonical, body-free metadata strategy: use title only (no body parsing)
+      - name: Ensure GHES PR title exists and is canonical
+        if: github.event.action != 'closed'
+        id: ensure_pr
+        env:
+          GHES_PAT: ${{ secrets.GHES_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_NUM="${{ github.event.pull_request.number }}"
+          TITLE="${{ github.event.pull_request.title }}"
+          DRAFT_FLAG="${{ github.event.pull_request.draft }}"
+          API="${{ env.GHES_BASE_URL }}/api/v3/repos/${{ env.GHES_OWNER }}/${{ env.GHES_REPO }}/pulls"
+          BRANCH="${{ steps.push_branch.outputs.branch }}"
+          CANON_TITLE="[Fork PR #${PR_NUM}] ${TITLE}"
+
+          EXISTING="$(curl -s -H "Authorization: token ${GHES_PAT}" -H "Accept: ${GH_ACCEPT}" \
+                      "${API}?state=open&head=${{ env.GHES_OWNER }}:${BRANCH}" | jq -r '.[0].number // empty')"
+
+          if [ "$DRAFT_FLAG" = "true" ]; then DRAFT_JSON=true; else DRAFT_JSON=false; fi
+
+          if [ -n "$EXISTING" ]; then
+            echo "Updating GHES PR #${EXISTING} title to canonical form"
+            curl -s -X PATCH \
+              -H "Authorization: token ${GHES_PAT}" -H "Accept: ${GH_ACCEPT}" \
+              "${API}/${EXISTING}" \
+              -d "$(jq -n --arg t "$CANON_TITLE" '{title:$t}')" >/dev/null
+            echo "existing_pr=${EXISTING}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Creating GHES PR (draft=${DRAFT_JSON}) with canonical title"
+            RESP="$(curl -s -X POST \
+              -H "Authorization: token ${GHES_PAT}" -H "Accept: ${GH_ACCEPT}" \
+              "${API}" \
+              -d "$(jq -n \
+                    --arg t "$CANON_TITLE" \
+                    --arg h "${BRANCH}" \
+                    --arg b "" \
+                    --arg base "main" \
+                    --argjson draft "$DRAFT_JSON" \
+                    '{title:$t, head:$h, base:$base, body:$b, draft:$draft}')" )"
+            CREATED_NUM="$(printf '%s' "$RESP" | jq -r '.number // empty')"
+            echo "existing_pr=${CREATED_NUM}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set commit status gate (qeff/ready)
+        if: github.event.action != 'closed'
+        env:
+          GHES_PAT: ${{ secrets.GHES_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_BASE="${{ env.GHES_BASE_URL }}/api/v3"
+          OWNER="${{ env.GHES_OWNER }}"
+          REPO="${{ env.GHES_REPO }}"
+          SHA="${{ github.event.pull_request.head.sha }}"
+          STATE="$([ "${{ github.event.pull_request.draft }}" = "true" ] && echo pending || echo success)"
+          DESC="$([ "$STATE" = "success" ] && echo 'Upstream PR Ready for CI' || echo 'Upstream PR is Draft')"
+          curl -sS -X POST \
+            -H "Authorization: token ${GHES_PAT}" \
+            -H "Accept: application/vnd.github+json" \
+            "${API_BASE}/repos/${OWNER}/${REPO}/statuses/${SHA}" \
+            -d "$(jq -n \
+                  --arg state "$STATE" \
+                  --arg context "qeff/ready" \
+                  --arg description "$DESC" \
+                  '{state:$state, context:$context, description:$description}')"
+
+      - name: Align GHES PR state to upstream (single endpoint)
+        if: github.event.action != 'closed'
+        env:
+          GHES_PAT: ${{ secrets.GHES_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_BASE="${{ env.GHES_BASE_URL }}/api/v3/repos/${{ env.GHES_OWNER }}/${{ env.GHES_REPO }}"
+          DRAFT_FLAG="${{ github.event.pull_request.draft }}"
+          PR_ID="${{ steps.ensure_pr.outputs.existing_pr }}"
+          if [ -z "${PR_ID}" ]; then
+            echo "No GHES PR number resolved; skipping state alignment."
+            exit 0
+          fi
+          API_PR="${API_BASE}/pulls/${PR_ID}"
+          if [ "$DRAFT_FLAG" = "true" ]; then
+            curl -sS -X POST -H "Authorization: token ${GHES_PAT}" -H "Accept: ${GH_ACCEPT}" \
+                 "${API_PR}/convert_to_draft" >/dev/null || true
+          else
+            curl -sS -X POST -H "Authorization: token ${GHES_PAT}" -H "Accept: ${GH_ACCEPT}" \
+                 "${API_PR}/ready_for_review" >/dev/null || true
+          fi
+
+      # Dispatch ONLY for Draft→Ready (not for commits while Ready)
+      - name: Trigger internal workflow via workflow_dispatch (only on Ready transition)
+        if: github.event.action == 'ready_for_review' && github.event.pull_request.draft == false
+        env:
+          GHES_PAT: ${{ secrets.GHES_PAT }}
+          TARGET_OWNER: qranium
+          TARGET_REPO: efficient-transformers
+          TARGET_REF: main
+          WORKFLOW_FILE_NAME: post_feedback_to_gh_pr.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_BASE="https://github.qualcomm.com/api/v3/repos/${TARGET_OWNER}/${TARGET_REPO}"
+
+          # 1) Find workflow ID from workflow file name
+          WF_LIST="$(curl -sS -H "Authorization: token ${GHES_PAT}" -H "Accept: application/vnd.github+json" \
+            "${API_BASE}/actions/workflows")"
+          WF_ID="$(printf '%s' "${WF_LIST}" | jq -r --arg name "${WORKFLOW_FILE_NAME}" \
+            '.workflows[] | select(.path | endswith($name)) | .id')"
+
+          if [ -z "${WF_ID}" ] || [ "${WF_ID}" = "null" ]; then
+            echo "❌ Workflow '${WORKFLOW_FILE_NAME}' not found in ${TARGET_OWNER}/${TARGET_REPO}."
+            echo "${WF_LIST}" | jq .
+            exit 1
+          fi
+
+          # 2) External and internal PR numbers + SHA
+          EXT_PR="${{ github.event.pull_request.number }}"
+          SHA="${{ github.event.pull_request.head.sha }}"
+          INT_PR="${{ steps.ensure_pr.outputs.existing_pr }}"
+
+          echo "External PR: ${EXT_PR}"
+          echo "Internal GHES PR: ${INT_PR}"
+          echo "Head SHA: ${SHA}"
+
+          # 3) Dispatch internal workflow with correct mapping:
+          #    - pr_number   = internal GHES PR id
+          #    - external_pr = external PR id
+          #    - head_sha    = external head SHA
+          DISPATCH_URL="${API_BASE}/actions/workflows/${WF_ID}/dispatches"
+          HTTP_CODE="$(curl -sS -o /tmp/dispatch.out -w "%{http_code}" \
+            -X POST -H "Authorization: token ${GHES_PAT}" -H "Accept: application/vnd.github+json" \
+            "${DISPATCH_URL}" \
+            -d "$(jq -n \
+                  --arg ref "${TARGET_REF}" \
+                  --arg int_pr "${INT_PR}" \
+                  --arg ext_pr "${EXT_PR}" \
+                  --arg sha "${SHA}" \
+                  '{ref: $ref, inputs: {pr_number: $int_pr, external_pr: $ext_pr, head_sha: $sha}}')" )"
+
+          if [ "${HTTP_CODE}" != "204" ]; then
+            echo "❌ workflow_dispatch failed (HTTP ${HTTP_CODE})"
+            [ -f /tmp/dispatch.out ] && cat /tmp/dispatch.out || true
+            exit 1
+          fi
+          echo "✅ workflow_dispatch accepted (204 No Content)"
+
+      # 🔚 Closing & cleanup when upstream PR closes
+      - name: Close GHES PR and delete mirrored branch (cleanup)
+        if: github.event.action == 'closed'
+        env:
+          GHES_PAT:  ${{ secrets.GHES_PAT  }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_NUM="${{ github.event.pull_request.number }}"
+          BRANCH="fork-pr-${PR_NUM}"
+          API_BASE="${GHES_BASE_URL}/api/v3/repos/${GHES_OWNER}/${GHES_REPO}"
+
+          echo "Locating GHES PR for branch ${BRANCH}"
+          RESP="$(curl -sS -H "Authorization: token ${GHES_PAT}" -H "Accept: ${GH_ACCEPT}" \
+                    "${API_BASE}/pulls?state=all&head=${GHES_OWNER}:${BRANCH}" -w "\n%{http_code}")"
+          HTTP_CODE="$(printf '%s\n' "$RESP" | tail -n1)"
+          JSON="$(printf '%s\n' "$RESP" | sed '$d')"
+
+          if [ "${HTTP_CODE}" = "200" ]; then
+            PR_ID="$(printf '%s' "$JSON" | jq -r 'if type=="array" and length>0 then .[0].number else empty end')"
+            if [ -n "$PR_ID" ]; then
+              echo "Closing GHES PR #${PR_ID}"
+              curl -sS -X PATCH \
+                -H "Authorization: token ${GHES_PAT}" -H "Accept: ${GH_ACCEPT}" \
+                "${API_BASE}/pulls/${PR_ID}" \
+                -d '{"state":"closed"}' >/dev/null || true
+            else
+              echo "No GHES PR found for ${BRANCH} (already closed or never created)."
+            fi
+          else
+            echo "Pulls query failed HTTP=${HTTP_CODE}; payload:"
+            echo "$JSON"
+          fi
+
+          echo "Deleting branch ${BRANCH} (idempotent)"
+          DEL_CODE="$(curl -sS -o /tmp/del.out -w "%{http_code}" \
+            -X DELETE \
+            -H "Authorization: token ${GHES_PAT}" -H "Accept: ${GH_ACCEPT}" \
+            "${API_BASE}/git/refs/heads/${BRANCH}")"
+          if [ "${DEL_CODE}" = "204" ] || [ "${DEL_CODE}" = "404" ]; then
+            echo "Branch delete completed (HTTP ${DEL_CODE})"
+          else
+            echo "Branch delete returned HTTP ${DEL_CODE}"
+            cat /tmp/del.out || true
+          fi
