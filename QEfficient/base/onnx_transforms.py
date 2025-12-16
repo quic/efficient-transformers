@@ -19,16 +19,20 @@ from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGather,
     CtxGather3D,
+    CtxGatherBlockedKV,
     CtxGatherFunc,
     CtxGatherFunc3D,
+    CtxGatherFuncBlockedKV,
     CtxScatter,
     CtxScatter3D,
     CtxScatterFunc,
     CtxScatterFunc3D,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (
+    CtxGatherBlockedKVCB,
     CtxGatherCB,
     CtxGatherCB3D,
+    CtxGatherFuncBlockedKVCB,
     CtxGatherFuncCB,
     CtxGatherFuncCB3D,
     CtxScatterCB,
@@ -91,10 +95,12 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
         "CtxGatherFunc": (CtxGatherFunc, CtxGather),
         "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
-        "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
-        "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
         "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
+        "CtxGatherFuncBlockedKV": (CtxGatherFuncBlockedKV, CtxGatherBlockedKV),
+        "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
+        "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
+        "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
     }
 
     @classmethod

@@ -46,6 +46,7 @@ class InvalidIndexProvider:
         """
         if torch.onnx.is_in_onnx_export():
             if cls.SUBFUNC_ENABLED:
+                # TODO: should not return 0 remove this if condition, it can hurt perf
                 return 0
             else:
                 return torch.iinfo(torch.int32).max
@@ -681,6 +682,37 @@ class QEffHybridCacheForGPTOSS:
             legacy_cache += ((self.key_cache[layer_idx], self.value_cache[layer_idx]),)
         return legacy_cache
 
+    def write_only(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if len(self.key_cache) <= layer_idx:
+            self.key_cache.append(key_states)
+            self.value_cache.append(value_states)
+            k_out, v_out = key_states, value_states
+        else:
+            position_ids = cache_kwargs.get("position_ids")
+            is_sliding_layer = cache_kwargs.get("is_sliding")
+            _, _, ctx_len, _ = self.key_cache[layer_idx].shape
+            if is_sliding_layer:
+                kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1)
+                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
+                self.value_cache[layer_idx] = CtxScatterFunc.apply(
+                    self.value_cache[layer_idx], kv_position_ids, value_states
+                )
+            else:
+                kv_position_ids = position_ids
+
+                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
+                self.value_cache[layer_idx] = CtxScatterFunc.apply(
+                    self.value_cache[layer_idx], kv_position_ids, value_states
+                )
+            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+        return k_out, v_out
+
     def update(
         self,
         key_states: torch.Tensor,
@@ -746,4 +778,93 @@ class QEffHybridCacheForGPTOSS:
                 v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
 
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        return k_out, v_out
+
+    def full_cache_update_chunked(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index")
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+
+        # Scatter
+        if batch_index is not None:
+            if torch.onnx.is_in_onnx_export():
+                scatter_position_ids = torch.where(position_ids < 0, torch.iinfo(torch.int32).max, position_ids)
+            self.key_cache[layer_idx] = CtxScatterFuncCB.apply(
+                self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
+            )
+            self.value_cache[layer_idx] = CtxScatterFuncCB.apply(
+                self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
+            )
+        else:
+            self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
+            self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], position_ids, value_states)
+
+        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+
+        # Gather
+        ctx_len = cache_kwargs.get("CCL", k_out.shape[2])
+        ctx_indices = torch.arange(ctx_len)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+        if batch_index is not None:
+            k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices, ctx_len)
+            v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices, ctx_len)
+        else:
+            k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
+            v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+
+        return k_out, v_out
+
+    def sliding_window_update_chunked(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index")
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+
+        if batch_index is not None:
+            if torch.onnx.is_in_onnx_export():
+                scatter_position_ids = torch.where(position_ids < 0, torch.iinfo(torch.int32).max, position_ids)
+            self.key_cache[layer_idx] = CtxScatterFuncCB.apply(
+                self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
+            )
+            self.value_cache[layer_idx] = CtxScatterFuncCB.apply(
+                self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
+            )
+        else:
+            self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
+            self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], position_ids, value_states)
+
+        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+        sliding_window_len = cache_kwargs.get("sliding_window")
+
+        # Gather
+        ctx_len = position_ids.shape[1] + sliding_window_len
+        ctx_indices = torch.arange(ctx_len)[None, None, ...]
+        first_pos_idx = position_ids[0][0]
+        add_idx = torch.where(first_pos_idx >= sliding_window_len, first_pos_idx - sliding_window_len, 0)
+        ctx_indices += add_idx
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+        if batch_index is not None:
+            k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices, ctx_len)
+            v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices, ctx_len)
+        else:
+            k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
+            v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+
         return k_out, v_out
