@@ -7,7 +7,10 @@
 
 from typing import List, Optional, Set, Tuple
 
+from QEfficient.utils import constants
 
+
+# Better performance when context length is multiple of 1024 → map CL to the next multiple of 1024
 def next_multiple_of_1024(n: int) -> int:
     """Ceil 'n' to the next multiple of 1024."""
     if n <= 0:
@@ -27,20 +30,6 @@ def is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
 
 
-def band_index_from_mapped_cl(mapped_cl: int) -> int:
-    """
-    Compute band index ∈ {0,1,2} from mapped_cl using bit arithmetic.
-
-    Bands (upper bounds): 2^15=32768 → idx=0,  2^16=65536 → idx=1,  2^17=131072 → idx=2.
-    For mapped_cl > 131072, clamp to idx=2.
-    """
-    # ceil(log2(mapped_cl)) == bit_length(mapped_cl - 1)
-    ceil_log2 = (mapped_cl - 1).bit_length()
-    # map to {0,1,2} by subtracting 15 (the exponent for 32768) and clamping
-    idx = max(0, min(2, ceil_log2 - 15))
-    return idx
-
-
 def build_doubling_set(start: int, limit: int, max_elements: int) -> Set[int]:
     """
     Build a STRICT doubling set: {start, start*2, start*4, ...} up to 'limit',
@@ -50,10 +39,10 @@ def build_doubling_set(start: int, limit: int, max_elements: int) -> Set[int]:
     if max_elements <= 0 or start <= 0 or limit <= 0:
         return values
 
-    v = start
-    while v <= limit and len(values) < max_elements:
-        values.add(v)
-        v *= 2
+    element = start
+    while element <= limit and len(values) < max_elements:
+        values.add(element)
+        element *= 2
     return values
 
 
@@ -82,24 +71,9 @@ def automatic_ccl_generation(
 ) -> Tuple[List[int], List[int], int]:
     """
     Automatic Compute-Context-Length Lists Generation
-
     Purpose:
         Compute decode and prefill CCL lists based on an input context length (CL),
         prefill sequence length, and optional pre-specified lists.
-
-    High-level rules (unchanged from your finalized logic):
-        - prefill_seq_len > 1:
-            * If either list is provided, pass them through unchanged.
-            * decode: doubles from tiered start; MUST end at mapped_CL (last forced to mapped_CL).
-            * prefill:
-                • If CL is power of two: STRICT doubling from tiered start, bounded by CL (no forced non-doubling last).
-                • Else: doubles from tiered start, bounded by CL, and last element = floor_to_1000(mapped_CL).
-            * Max 5 elements per list.
-        - prefill_seq_len == 1:
-            * decode and prefill are IDENTICAL.
-            * start at 4096, double up to 10 elements.
-            * upper grid cap computed dynamically (start * 2^(max_elements-1)); last = mapped_CL.
-            * If mapped_CL < 4096, both lists are [mapped_CL].
     """
     # Handle non-positive CL
     if ctx_len <= 0:
@@ -114,50 +88,45 @@ def automatic_ccl_generation(
         seq = [mapped_cl]
         return seq, seq, mapped_cl
 
-    # Compute tier starts via band index (no hard-coded chain)
-    idx = band_index_from_mapped_cl(mapped_cl)
-    decode_start = 4096 << idx  # 4096, 8192, 16384
-    PREFILL_STARTS = {0: 4000, 1: 8000, 2: 16000}
-    prefill_start = PREFILL_STARTS[idx]
+    # To limit the number of elements in CCL list, the starting point will be calculated based on context length
+    for upper_bound, (decode_start, prefill_start) in constants.CCL_START_MAP.items():
+        if mapped_cl <= upper_bound:
+            break
 
     # Branch: prefill_seq_len > 1
     if prefill_seq_len > 1:
-        # Passthrough if either provided
-        if comp_ctx_lengths_decode is not None or comp_ctx_lengths_prefill is not None:
-            return (
-                comp_ctx_lengths_prefill if comp_ctx_lengths_prefill is not None else [],
-                comp_ctx_lengths_decode if comp_ctx_lengths_decode is not None else [],
-                mapped_cl,
-            )
-
-        # Due to limitations in the number of specializations during compilation, we set the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists to 5.
-        max_elems = 5
-
         # ---- Decode: strict doubling up to mapped_cl, then enforce last = mapped_cl
-        decode_set = build_doubling_set(start=decode_start, limit=mapped_cl, max_elements=max_elems)
+        decode_set = build_doubling_set(
+            start=decode_start, limit=mapped_cl, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
+        )
         decode_list = sorted(decode_set)
-        decode_list = ensure_last(decode_list, last_value=mapped_cl, max_elements=max_elems)
+        decode_list = ensure_last(decode_list, last_value=mapped_cl, max_elements=constants.CCL_MAX_ELEMENTS_LISTS)
 
         # ---- Prefill:
         if is_power_of_two(ctx_len):
-            # STRICT doubling only, bounded by ctx_len; do NOT force a non-doubling last
-            prefill_set = build_doubling_set(start=prefill_start, limit=ctx_len, max_elements=max_elems)
-            prefill_list = sorted(prefill_set)[:max_elems]
+            # STRICT doubling only, bounded by ctx_len
+            prefill_set = build_doubling_set(
+                start=prefill_start, limit=ctx_len, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
+            )
+            prefill_list = sorted(prefill_set)[: constants.CCL_MAX_ELEMENTS_LISTS]
         else:
             # Doubles bounded by ctx_len, but last must equal floor_to_1000(mapped_cl)
             prefill_last = floor_to_1000(mapped_cl)
-            prefill_set = build_doubling_set(start=prefill_start, limit=ctx_len, max_elements=max_elems)
+            prefill_set = build_doubling_set(
+                start=prefill_start, limit=ctx_len, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
+            )
             prefill_list = sorted(prefill_set)
-            prefill_list = ensure_last(prefill_list, last_value=prefill_last, max_elements=max_elems)
+            prefill_list = ensure_last(
+                prefill_list, last_value=prefill_last, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
+            )
 
-        # NOTE: return order preserved from your last snippet (prefill first, then decode)
         return prefill_list, decode_list, mapped_cl
 
     # Branch: prefill_seq_len == 1 → identical lists
     else:
-        # When prefill_seq_len=1 such as in MoE models, prefilling and decoding processes can use the same specializations and we can double the length of Ccl lists.
-        # Due to limitations in the number of specializations during compilation, we set the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists to 10.
-        max_elems = 10
+        # When prefill_seq_len=1 such as in MoE models, prefilling and decoding processes can use the same specializations and we can double the length of ccl lists.
+        # Due to limitations in the number of specializations during compilation, we set the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists to 2*constants.CCL_MAX_ELEMENTS_LISTS.
+        max_elems = 2 * constants.CCL_MAX_ELEMENTS_LISTS
         start_identical = 4096
 
         if mapped_cl < start_identical:
@@ -176,9 +145,10 @@ def automatic_ccl_generation(
 
 
 def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len):
-    # Automatic CCL generation: If both ccl_prefill and ccl_decode are None,
-    # generate optimized context length lists for prefill and decode based on ctx_len
+    # Automatic CCL generation: If both ccl_prefill and ccl_decode are None
     if ccl_prefill is None and ccl_decode is None:
+        # Generate optimized context length lists for prefill and decode based on ctx_len
+        # Due to compiler limitations, ccl_prefill and ccl_decode must have distinct values
         ccl_prefill, ccl_decode, ctx_len = automatic_ccl_generation(ctx_len, prefill_seq_len, ccl_prefill, ccl_decode)
     else:
         if prefill_seq_len == 1:
