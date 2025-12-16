@@ -419,6 +419,7 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3Model,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
+    QEffPrefillQwen3MoeSparseMoeBlock,
     QEffQwen3MoeAttention,
     QEffQwen3MoeDecoderLayer,
     QEffQwen3MoeForCausalLM,
@@ -654,32 +655,41 @@ class KVCacheTransform(ModuleMappingTransform):
 
 
 class PrefillOnlyTransform(ModuleMappingTransform):
+    # breakpoint()
     _module_mapping = {
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        # QEffQwen3MoeSparseMoeBlock:QEffPrefillQwen3MoeSparseMoeBlock,
+        # # QEffQwen3MoeModel:QEffPrefillOnlyQwen3MoeModel,
+        # QEffQwen3MoeAttention: QEffPrefillOnlyQwen3MoeAttention,
     }
 
 
 class PrefillOnlyChunkedTransform(ModuleMappingTransform):
+    # breakpoint()
     _module_mapping = {
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+        QEffQwen3MoeSparseMoeBlock: QEffPrefillQwen3MoeSparseMoeBlock,
     }
 
 
 class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
+    # breakpoint()
     _module_mapping = {
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+        QEffPrefillQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
     }
 
 
 class RevertPrefillOnlyTransform(ModuleMappingTransform):
+    # breakpoint()
     _module_mapping = {
         **{v: k for k, v in PrefillOnlyTransform._module_mapping.items()},
         **{v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()},

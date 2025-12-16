@@ -2588,7 +2588,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
+        # breakpoint()
         if prefill_only:
+            # breakpoint()
             if not enable_chunking and self.continuous_batching:
                 raise NotImplementedError(
                     "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
@@ -2602,7 +2604,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
                 else seq_len
             )
-            kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
+            # breakpoint()
+            kv_cache_shape[2] = (
+                seq_len + (0 if self.model.config.sliding_window is None else self.model.config.sliding_window)
+                if enable_chunking
+                else seq_len
+            )
         else:
             self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
             self.hash_params.pop("prefill_only", None)
@@ -2610,8 +2617,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params.pop("NUM_FFN_BLOCKS", None)
             self.hash_params.pop("ENABLE_OPT_SWA", None)
             self.hash_params.pop("chunking", None)
+            # breakpoint()
             if kwargs.get("retain_full_kv", False):
-                kv_cache_shape[2] = seq_len + self.model.config.sliding_window
+                kv_cache_shape[2] = seq_len + (
+                    0 if self.model.config.sliding_window is None else self.model.config.sliding_window
+                )
                 self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
@@ -2700,6 +2710,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
+        # breakpoint()
         return self._export(
             example_inputs,
             output_names,
