@@ -6,12 +6,7 @@
 # ----------------------------------------------------------------------------
 from collections import Counter
 
-<<<<<<< HEAD
 import onnx
-=======
-import hashlib
-
->>>>>>> 06c2e75 (Updated tests of onnx_sunfunction (#668))
 import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
