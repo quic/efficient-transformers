@@ -98,10 +98,9 @@ def get_sampling_inputs_and_outputs(
     """
     bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
     fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+    seq_len: int = example_inputs["input_ids"].shape[-1]
 
-    example_inputs["last_accepted_output_tokens"] = torch.zeros(
-        (bs, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN), dtype=torch.int64
-    )
+    example_inputs["last_accepted_output_tokens"] = torch.zeros((bs, seq_len), dtype=torch.int64)
     dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
 
     example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
