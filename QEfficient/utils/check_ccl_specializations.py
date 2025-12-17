@@ -8,6 +8,7 @@
 from typing import List, Optional, Set, Tuple
 
 from QEfficient.utils import constants
+from QEfficient.utils.logging_utils import logger
 
 
 # Better performance when context length is multiple of 1024 → map CL to the next multiple of 1024
@@ -93,7 +94,6 @@ def automatic_ccl_generation(
         if mapped_cl <= upper_bound:
             break
 
-    # Branch: prefill_seq_len > 1
     if prefill_seq_len > 1:
         # ---- Decode: strict doubling up to mapped_cl, then enforce last = mapped_cl
         decode_set = build_doubling_set(
@@ -122,7 +122,6 @@ def automatic_ccl_generation(
 
         return prefill_list, decode_list, mapped_cl
 
-    # Branch: prefill_seq_len == 1 → identical lists
     else:
         # When prefill_seq_len=1 such as in MoE models, prefilling and decoding processes can use the same specializations and we can double the length of ccl lists.
         # Due to limitations in the number of specializations during compilation, we set the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists to 2*constants.CCL_MAX_ELEMENTS_LISTS.
@@ -188,8 +187,8 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
                 ccl_prefill.sort()
                 ccl_decode.sort()
 
-    print("CCL Configuration:")
-    print(f"  - Prefill context lengths: {ccl_prefill}")
-    print(f"  - Decode context lengths: {ccl_decode}")
-    print(f"  - Max context length: {ctx_len}")
+    logger.info("CCL Configuration:")
+    logger.info(f"  - Prefill context lengths: {ccl_prefill}")
+    logger.info(f"  - Decode context lengths: {ccl_decode}")
+    logger.info(f"  - Max context length: {ctx_len}")
     return ccl_prefill, ccl_decode, ctx_len
