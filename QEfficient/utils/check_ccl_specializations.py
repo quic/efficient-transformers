@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Set, Tuple
+from typing import List, Tuple
 
 from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
@@ -31,44 +31,32 @@ def is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
 
 
-def build_doubling_set(start: int, limit: int, max_elements: int) -> Set[int]:
+def build_doubling_list(start: int, limit: int, max_elements: int, last_value: int = None) -> List[int]:
     """
-    Build a STRICT doubling set: {start, start*2, start*4, ...} up to 'limit',
-    collecting at most 'max_elements' values. Returns a set; caller will sort.
+    Build a STRICT doubling list: {start, start*2, start*4, ...} up to 'limit',
+    collecting at most 'max_elements' values. Returns a list.
+    Ensure the last element equals 'last_value' by appending or replacing the final element.
     """
-    values: Set[int] = set()
+    values: List[int] = []
     if max_elements <= 0 or start <= 0 or limit <= 0:
         return values
 
     element = start
     while element <= limit and len(values) < max_elements:
-        values.add(element)
+        values.append(element)
         element *= 2
-    return values
 
-
-def ensure_last(sorted_seq: List[int], last_value: int, max_elements: int) -> List[int]:
-    """
-    Ensure the last element equals 'last_value' by appending or replacing the final element,
-    keeping length <= max_elements. If the sequence is empty, return [last_value].
-    """
-    if max_elements <= 0:
-        return []
-    if not sorted_seq:
-        return [last_value][:max_elements]
-    if sorted_seq[-1] != last_value:
-        if len(sorted_seq) < max_elements:
-            sorted_seq.append(last_value)
+    if last_value is not None and values[-1] != last_value:
+        if len(values) < max_elements:
+            values.append(last_value)
         else:
-            sorted_seq[-1] = last_value
-    return sorted_seq[:max_elements]
+            values[-1] = last_value
+    return values[:max_elements]
 
 
 def automatic_ccl_generation(
     ctx_len: int,
     prefill_seq_len: int,
-    comp_ctx_lengths_prefill: Optional[List[int]] = None,
-    comp_ctx_lengths_decode: Optional[List[int]] = None,
 ) -> Tuple[List[int], List[int], int]:
     """
     Automatic Compute-Context-Length Lists Generation
@@ -96,33 +84,29 @@ def automatic_ccl_generation(
 
     if prefill_seq_len > 1:
         # ---- Decode: strict doubling up to mapped_cl, then enforce last = mapped_cl
-        decode_set = build_doubling_set(
-            start=decode_start, limit=mapped_cl, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
+        decode_list = build_doubling_list(
+            start=decode_start, limit=mapped_cl, max_elements=constants.CCL_MAX_ELEMENTS_LISTS, last_value=mapped_cl
         )
-        decode_list = sorted(decode_set)
-        decode_list = ensure_last(decode_list, last_value=mapped_cl, max_elements=constants.CCL_MAX_ELEMENTS_LISTS)
 
         # ---- Prefill:
-        if is_power_of_two(ctx_len):
-            # STRICT doubling only, bounded by ctx_len
-            prefill_set = build_doubling_set(
-                start=prefill_start, limit=ctx_len, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
+        if is_power_of_two(mapped_cl):
+            # STRICT doubling only, bounded by mapped_cl
+            prefill_list = build_doubling_list(
+                start=prefill_start, limit=mapped_cl, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
             )
-            prefill_list = sorted(prefill_set)[: constants.CCL_MAX_ELEMENTS_LISTS]
         else:
-            # Doubles bounded by ctx_len, but last must equal floor_to_1000(mapped_cl)
+            # Doubles bounded by mapped_cl, but last must equal floor_to_1000(mapped_cl)
             prefill_last = floor_to_1000(mapped_cl)
-            prefill_set = build_doubling_set(
-                start=prefill_start, limit=ctx_len, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
-            )
-            prefill_list = sorted(prefill_set)
-            prefill_list = ensure_last(
-                prefill_list, last_value=prefill_last, max_elements=constants.CCL_MAX_ELEMENTS_LISTS
+            prefill_list = build_doubling_list(
+                start=prefill_start,
+                limit=mapped_cl,
+                max_elements=constants.CCL_MAX_ELEMENTS_LISTS,
+                last_value=prefill_last,
             )
 
         return prefill_list, decode_list, mapped_cl
 
-    else:
+    elif prefill_seq_len == 1:
         # When prefill_seq_len=1 such as in MoE models, prefilling and decoding processes can use the same specializations and we can double the length of ccl lists.
         # Due to limitations in the number of specializations during compilation, we set the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists to 2*constants.CCL_MAX_ELEMENTS_LISTS.
         max_elems = 2 * constants.CCL_MAX_ELEMENTS_LISTS
@@ -132,15 +116,13 @@ def automatic_ccl_generation(
             seq = [mapped_cl]
             return seq, seq, mapped_cl
 
-        # Dynamic grid cap: start * 2^(max_elems - 1)
-        grid_cap = start_identical * (1 << (max_elems - 1))
-        limit = min(mapped_cl, grid_cap)
+        limit = min(mapped_cl, start_identical * (2 ** (max_elems - 1)))
 
-        seq_set = build_doubling_set(start=start_identical, limit=limit, max_elements=max_elems)
-        seq_list = sorted(seq_set)
-        seq_list = ensure_last(seq_list, last_value=mapped_cl, max_elements=max_elems)
+        seq_list = build_doubling_list(start=start_identical, limit=limit, max_elements=max_elems, last_value=mapped_cl)
 
         return seq_list, seq_list, mapped_cl
+    else:
+        logger.warning("prefill_seq_len cannot be less than 1!")
 
 
 def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len):
@@ -148,13 +130,12 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
     if ccl_prefill is None and ccl_decode is None:
         # Generate optimized context length lists for prefill and decode based on ctx_len
         # Due to compiler limitations, ccl_prefill and ccl_decode must have distinct values
-        ccl_prefill, ccl_decode, ctx_len = automatic_ccl_generation(ctx_len, prefill_seq_len, ccl_prefill, ccl_decode)
+        ccl_prefill, ccl_decode, ctx_len = automatic_ccl_generation(ctx_len, prefill_seq_len)
     else:
         if prefill_seq_len == 1:
             if ccl_prefill is not None and ccl_decode is not None:
                 # both prefill and decode ccl can share the same specializations since prefill_seq_len=1. So, a sorted union of both lists can be used for both of them.
-                ccl_union_all = sorted(set(ccl_prefill + ccl_decode))
-                ccl_union_all = [min(x, ctx_len) for x in ccl_union_all]
+                ccl_union_all = sorted(set([min(x, ctx_len) for x in ccl_prefill + ccl_decode]))
                 ccl_prefill = ccl_union_all
                 ccl_decode = ccl_union_all
         else:
@@ -187,8 +168,8 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
                 ccl_prefill.sort()
                 ccl_decode.sort()
 
-    logger.info("CCL Configuration:")
-    logger.info(f"  - Prefill context lengths: {ccl_prefill}")
-    logger.info(f"  - Decode context lengths: {ccl_decode}")
-    logger.info(f"  - Max context length: {ctx_len}")
+    print("CCL Configuration:")
+    print(f"  - Prefill context lengths: {ccl_prefill}")
+    print(f"  - Decode context lengths: {ccl_decode}")
+    print(f"  - Max context length: {ctx_len}")
     return ccl_prefill, ccl_decode, ctx_len
