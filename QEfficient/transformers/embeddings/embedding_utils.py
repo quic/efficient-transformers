@@ -92,9 +92,9 @@ class PooledModel(nn.Module):
         self.pooling_fn = pooling_fn
 
     def forward(
-        self, input_ids: Optional[torch.Tensor] = None, attention_mask: Optional[torch.Tensor] = None, **kwargs
+        self, input_ids: Optional[torch.Tensor] = None, attention_mask: Optional[torch.Tensor] = None, position_ids: Optional[torch.Tensor]=None, **kwargs
     ):
-        output = self.base_model(input_ids, attention_mask, **kwargs)
+        output = self.base_model(input_ids=input_ids,attention_mask=attention_mask,position_ids=position_ids, **kwargs)
         return self.pooling_fn(output[0], attention_mask)
 
 

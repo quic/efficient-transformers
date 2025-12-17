@@ -286,12 +286,16 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                do_constant_folding=True,
+                export_params=True,
+                opset_version=18,
+                verbose=True,
                 **export_kwargs,
             )
+            
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
+            model = onnx.load("onnx_model_new/model.onnx", load_external_data=False)
 
             # Clear temporary references
             transform_kwargs = {

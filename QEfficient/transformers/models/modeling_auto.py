@@ -335,9 +335,13 @@ class QEFFAutoModel(QEFFTransformersBase):
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
         }
-
-        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
+        dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "attention_mask": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+        }
 
         output_names = ["output"]
 
@@ -419,7 +423,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
         specializations = [
-            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
+            {"batch_size": batch_size, "sequence_length": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
         return self._compile(
@@ -427,7 +431,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=False,
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -523,23 +527,33 @@ class QEFFAutoModel(QEFFTransformersBase):
                 inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
             )
         )
+        position_ids = np.array(
+                    torch.arange(self.seq_len, dtype=torch.int64).view(1, self.seq_len).repeat(self.batch_size, 1)
+                )
 
-        inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
+        inputs = dict(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids)
 
         # TODO: Remove try and catch after compiler fix
         try:
             outputs = {
-                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(np.float32),
+                "last_hidden_state": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(np.float32),
             }
             self.qpc_session.set_buffers(outputs)
             outputs = self.qpc_session.run(inputs)
         except Exception:
+            # outputs = {
+            #     "last_hidden_state": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
+            #         np.float32
+            #     ),
+            # }
             outputs = {
-                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
+                "last_hidden_state": np.random.randn(self.batch_size, self.seq_len, 1024).astype(
                     np.float32
                 ),
             }
             self.qpc_session.set_buffers(outputs)
+            import ipdb
+            ipdb.set_trace()
             outputs = self.qpc_session.run(inputs)
         return outputs
 
