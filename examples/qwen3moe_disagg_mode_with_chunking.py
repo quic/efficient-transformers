@@ -18,28 +18,25 @@ model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"  # weights are not required to con
 prompt = """
 Explain quantum computing in simple terms.
 """
-config = AutoConfig.from_pretrained(model_id, num_hidden_layers=2)
-tokenizer = AutoTokenizer.from_pretrained(model_id, num_hidden_layers=2)
+config = AutoConfig.from_pretrained(model_id)
+tokenizer = AutoTokenizer.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 128 * 3
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
-breakpoint()
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 decode_qpc_path = qeff_model.compile(
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=2,
-    split_retained_state_io=True,
+    num_devices=1,
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
     retain_full_kv=True,
 )
-breakpoint()
 
 # Following command errors out by default, the user is supposed to run the printed command and provide the generated qpc path as prefill_qpc_path commenting out lines 55-68
 # prefill_qpc_path = "/home/dipankar/.cache/qeff_models/Qwen3MoeForCausalLM/Qwen3MoeForCausalLM-2fff95dd3d8e1907/qpc-0d9874dc75da1555/qpc"
@@ -60,7 +57,7 @@ prefill_qpc_path = qeff_model.compile(
     # use_onnx_subfunctions=True,
 )
 
-breakpoint()
+
 inputs = tokenizer(prompt, return_tensors="np", padding=True)
 position_ids = inputs["attention_mask"].sum(1, keepdims=True)
 generation_len = CTX_LEN - position_ids.max()
@@ -74,9 +71,9 @@ inputs = {k: torch.from_numpy(v) for k, v in inputs.items()}
 inputs.pop("past_key_values", None)
 inputs = {k: v.detach().numpy() for k, v in inputs.items()}
 
-breakpoint()
 
 prefill_session = QAICInferenceSession(prefill_qpc_path)
+decode_session = QAICInferenceSession(decode_qpc_path)
 
 all_outputs = []
 for i in range(num_chunks):
@@ -86,16 +83,12 @@ for i in range(num_chunks):
     ins = time.time()
     qpc_out = prefill_session.run(chunk_inputs)
     print(f"time for this run={time.time() - ins}")
-    breakpoint()
     for i in range(config.num_hidden_layers):
         inputs[f"past_key.{i}"] = qpc_out[f"past_key.{i}_RetainedState"]
         inputs[f"past_value.{i}"] = qpc_out[f"past_value.{i}_RetainedState"]
 
 all_outputs.append(np.argmax(qpc_out["logits"]))
-prefill_session.deactivate()
-decode_session = QAICInferenceSession(decode_qpc_path)
-breakpoint()
-# decode_session.activate()
+
 decode_inputs = {
     "input_ids": np.argmax(qpc_out["logits"]).reshape(1, 1),
     "position_ids": np.max(inputs["position_ids"]).reshape(1, 1) + 1,
