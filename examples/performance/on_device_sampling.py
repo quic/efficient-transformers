@@ -30,10 +30,7 @@ def main(args, **kwargs):
             return_pdfs = args.override_qaic_config.get("aic_return_pdfs", None) == "true"
             max_top_k_ids = int(args.override_qaic_config.get("max_top_k_ids", 512))
             np.random.seed(int(args.random_number))
-<<<<<<< HEAD
             include_guided_decoding = args.override_qaic_config.get("aic_include_guided_decoding", None) == "true"
-=======
->>>>>>> 58fd3a7 (Extend on-device sampling support for dual QPC VLMs (#597))
             sampling_params = {
                 "repetition_penalties": np.array(args.repetition_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
                 "presence_penalties": np.array(args.presence_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
@@ -155,7 +152,6 @@ if __name__ == "__main__":
             --top-p 0.89 \
             --min-p 0.6 \
             --random-number 26
-<<<<<<< HEAD
 
     3. With guided decoding:
         python3.10 examples/on_device_sampling.py \
@@ -176,8 +172,6 @@ if __name__ == "__main__":
             --top-p 0.89 \
             --min-p 0.6 \
             --random-number 26
-=======
->>>>>>> 58fd3a7 (Extend on-device sampling support for dual QPC VLMs (#597))
     """
 
     parser = argparse.ArgumentParser(description="Run QEfficient model with On Device Sampling")
