@@ -160,6 +160,7 @@ CCL_START_MAP = {
 }
 # Limitation in the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists during automatic lists generation process.
 CCL_MAX_ELEMENTS_LISTS = 5
+CCL_START_CTX_LEN = 4096
 
 
 class Constants:

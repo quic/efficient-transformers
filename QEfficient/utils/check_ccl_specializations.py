@@ -73,7 +73,7 @@ def automatic_ccl_generation(
     mapped_cl = next_multiple_of_1024(ctx_len)
 
     # Early small-ctx_len case for identical lists
-    if mapped_cl <= 4096:
+    if mapped_cl <= constants.CCL_START_CTX_LEN:
         seq = [mapped_cl]
         return seq, seq, mapped_cl
 
@@ -110,15 +110,14 @@ def automatic_ccl_generation(
         # When prefill_seq_len=1 such as in MoE models, prefilling and decoding processes can use the same specializations and we can double the length of ccl lists.
         # Due to limitations in the number of specializations during compilation, we set the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists to 2*constants.CCL_MAX_ELEMENTS_LISTS.
         max_elems = 2 * constants.CCL_MAX_ELEMENTS_LISTS
-        start_identical = 4096
 
-        if mapped_cl < start_identical:
+        if mapped_cl < constants.CCL_START_CTX_LEN:
             seq = [mapped_cl]
             return seq, seq, mapped_cl
 
-        limit = min(mapped_cl, start_identical * (2 ** (max_elems - 1)))
+        limit = min(mapped_cl, constants.CCL_START_CTX_LEN * (2 ** (max_elems - 1)))
 
-        seq_list = build_doubling_list(start=start_identical, limit=limit, max_elements=max_elems, last_value=mapped_cl)
+        seq_list = build_doubling_list(start=constants.CCL_START_CTX_LEN, limit=limit, max_elements=max_elems, last_value=mapped_cl)
 
         return seq_list, seq_list, mapped_cl
     else:
@@ -139,21 +138,12 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
                 ccl_prefill = ccl_union_all
                 ccl_decode = ccl_union_all
         else:
-            # Step 1: Cap values to ctx_len
-            ccl_prefill = [min(x, ctx_len) for x in ccl_prefill] if ccl_prefill is not None else None
-            ccl_decode = [min(x, ctx_len) for x in ccl_decode] if ccl_decode is not None else None
+            if ccl_prefill:
+                ccl_prefill = sorted({min(x, ctx_len) for x in (ccl_prefill)})
+            if ccl_decode:
+                ccl_decode = sorted({min(x, ctx_len) for x in (ccl_decode)})
 
-            # Step 2: Remove duplicates within each list
-            ccl_prefill = list(set(ccl_prefill)) if ccl_prefill is not None else None
-            ccl_decode = list(set(ccl_decode)) if ccl_decode is not None else None
-
-            if ccl_prefill is None or ccl_decode is None:
-                if ccl_prefill:
-                    ccl_prefill.sort()
-                if ccl_decode:
-                    ccl_decode.sort()
-            else:
-                # Step 3: Ensure no overlap between ccl_prefill and ccl_decode
+            if ccl_prefill is not None and ccl_decode is not None:
                 tmp_prefill = ccl_prefill
                 ccl_prefill = []
                 for val in tmp_prefill:
@@ -163,11 +153,8 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
                             break  # Prevent negative values
                     if val >= 0:
                         ccl_prefill.append(val)
-
-                # Step 4: Sort both lists
                 ccl_prefill.sort()
-                ccl_decode.sort()
-
+            
     print("CCL Configuration:")
     print(f"  - Prefill context lengths: {ccl_prefill}")
     print(f"  - Decode context lengths: {ccl_decode}")
