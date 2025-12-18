@@ -117,7 +117,9 @@ def automatic_ccl_generation(
 
         limit = min(mapped_cl, constants.CCL_START_CTX_LEN * (2 ** (max_elems - 1)))
 
-        seq_list = build_doubling_list(start=constants.CCL_START_CTX_LEN, limit=limit, max_elements=max_elems, last_value=mapped_cl)
+        seq_list = build_doubling_list(
+            start=constants.CCL_START_CTX_LEN, limit=limit, max_elements=max_elems, last_value=mapped_cl
+        )
 
         return seq_list, seq_list, mapped_cl
     else:
@@ -154,7 +156,7 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
                     if val >= 0:
                         ccl_prefill.append(val)
                 ccl_prefill.sort()
-            
+
     print("CCL Configuration:")
     print(f"  - Prefill context lengths: {ccl_prefill}")
     print(f"  - Decode context lengths: {ccl_decode}")
