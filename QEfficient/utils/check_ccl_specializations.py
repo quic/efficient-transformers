@@ -156,9 +156,9 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
                     if val >= 0:
                         ccl_prefill.append(val)
                 ccl_prefill.sort()
-
-    print("CCL Configuration:")
-    print(f"  - Prefill context lengths: {ccl_prefill}")
-    print(f"  - Decode context lengths: {ccl_decode}")
-    print(f"  - Max context length: {ctx_len}")
+            
+    logger.info("CCL Configuration:")
+    logger.info(f"  - Prefill context lengths: {ccl_prefill}")
+    logger.info(f"  - Decode context lengths: {ccl_decode}")
+    logger.info(f"  - Max context length: {ctx_len}")
     return ccl_prefill, ccl_decode, ctx_len
