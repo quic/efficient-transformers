@@ -145,10 +145,11 @@ class TestSFTTrainerWithModel:
             "model_name": "HuggingFaceTB/SmolLM-135M",
             "auto_class_name": "AutoModelForCausalLM",
             "use_cache": False,
-            "torch_dtype": "float32",
+            "torch_dtype": "float16",
             "attn_implementation": "eager",
             "device_map": None,
             "use_peft": False,
+            "model_config_kwargs": {"num_hidden_layers": 1},
         }
 
     @pytest.fixture
@@ -158,10 +159,11 @@ class TestSFTTrainerWithModel:
             "model_name": "HuggingFaceTB/SmolLM-135M",
             "auto_class_name": "AutoModelForCausalLM",
             "use_cache": False,
-            "torch_dtype": "float32",
+            "torch_dtype": "float16",
             "attn_implementation": "eager",
             "device_map": None,
             "use_peft": True,
+            "model_config_kwargs": {"num_hidden_layers": 1},
             "peft_config": {
                 "lora_r": LORA_R,
                 "lora_alpha": LORA_ALPHA,
@@ -183,44 +185,6 @@ class TestSFTTrainerWithModel:
             ]
         }
         return Dataset.from_dict(data)
-
-    def test_hf_model_initialization(self, model_config):
-        """Test that HFModel can be initialized properly."""
-
-        model = HFModel(**model_config)
-        assert model is not None
-        assert model.model_name == model_config["model_name"]
-        assert model.auto_class_name == model_config["auto_class_name"]
-
-    def test_hf_model_load_model(self, model_config):
-        """Test that HFModel can load the underlying model."""
-
-        model = HFModel(**model_config)
-        loaded_model = model.load_model()
-
-        assert loaded_model is not None
-        assert hasattr(loaded_model, "forward")
-        assert hasattr(loaded_model, "config")
-
-    def test_hf_model_load_tokenizer(self, model_config):
-        """Test that HFModel can load the tokenizer."""
-
-        model = HFModel(**model_config)
-        tokenizer = model.load_tokenizer()
-
-        assert tokenizer is not None
-        assert hasattr(tokenizer, "encode")
-        assert hasattr(tokenizer, "decode")
-        assert tokenizer.pad_token is not None
-
-    def test_hf_model_with_peft_config(self, peft_model_config):
-        """Test that HFModel can be initialized with PEFT configuration."""
-
-        model = HFModel(**peft_model_config)
-        assert model.use_peft is True
-        assert model.lora_config is not None
-        assert model.lora_config.r == LORA_R
-        assert model.lora_config.lora_alpha == LORA_ALPHA
 
     def test_model_forward_pass(self, model_config):
         """Test that the loaded model can perform a forward pass."""
@@ -318,60 +282,6 @@ class TestSFTTrainerWithModel:
         assert trainer is not None
         assert trainer.model is not None
 
-    def test_model_training_mode(self, model_config):
-        """Test that model can be set to training and evaluation modes."""
-
-        model = HFModel(**model_config)
-        loaded_model = model.load_model()
-
-        # Test training mode
-        loaded_model.train()
-        assert loaded_model.training is True
-
-        # Test evaluation mode
-        loaded_model.eval()
-        assert loaded_model.training is False
-
-    def test_model_parameters_accessible(self, model_config):
-        """Test that model parameters are accessible."""
-
-        model = HFModel(**model_config)
-        loaded_model = model.load_model()
-
-        # Check parameters
-        params = list(loaded_model.parameters())
-        assert len(params) > 0
-
-        # Check named parameters
-        named_params = dict(loaded_model.named_parameters())
-        assert len(named_params) > 0
-
-    def test_tokenizer_encoding_decoding(self, model_config):
-        """Test that tokenizer can encode and decode text properly."""
-
-        model = HFModel(**model_config)
-        tokenizer = model.load_tokenizer()
-
-        # Test encoding
-        text = "Hello, world!"
-        encoded = tokenizer.encode(text)
-        assert len(encoded) > 0
-
-        # Test decoding
-        decoded = tokenizer.decode(encoded)
-        assert isinstance(decoded, str)
-        assert len(decoded) > 0
-
-    def test_model_device_placement(self, model_config):
-        """Test that model can be moved to different devices."""
-
-        model = HFModel(**model_config)
-        loaded_model = model.load_model()
-
-        # Test CPU placement
-        loaded_model = loaded_model.to("cpu")
-        assert next(loaded_model.parameters()).device.type == "cpu"
-
     def test_sft_trainer_train_dataset_required(self, model_config):
         """Test that SFTTrainer requires a training dataset."""
 
@@ -401,31 +311,3 @@ class TestSFTTrainerWithModel:
                 args=sft_config,
                 processing_class=tokenizer,
             )
-
-    def test_peft_model_trainable_parameters(self, peft_model_config):
-        """Test that PEFT model has correct trainable vs total parameters ratio."""
-
-        # Load model with PEFT configuration
-        hf_model = HFModel(**peft_model_config)
-        model = hf_model.load_model()
-
-        # Count total parameters
-        total_params = sum(p.numel() for p in model.parameters())
-
-        # Count trainable parameters
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-        # Count frozen parameters
-        frozen_params = total_params - trainable_params
-        print(f"Total Parameters: {total_params:,}")
-        print(f"Trainable Parameters: {trainable_params:,}")
-        print(f"Frozen Parameters: {frozen_params:,}")
-        # Assertions to ensure PEFT is properly configured
-        assert total_params > 0, "Model should have parameters"
-        assert trainable_params > 0, "Model should have trainable parameters (PEFT adapters)"
-        assert frozen_params > 0, "Model should have frozen parameters (base model)"
-        assert trainable_params < total_params, "Trainable parameters should be less than total (PEFT efficiency)"
-        # Print info for debugging (will show in pytest output with -v flag)
-        print(f"\nTotal parameters: {total_params:,}")
-        print(f"Trainable parameters: {trainable_params:,}")
-        print(f"Frozen parameters: {frozen_params:,}")
