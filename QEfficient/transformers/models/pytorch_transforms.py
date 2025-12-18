@@ -242,6 +242,7 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3Attention,
     QEffGemma3CustomRMSNormAIC,
     QEffGemma3DecoderLayer,
+    QEffGemma3DecoderWrapper,
     QEffGemma3ForCausalLMModel,
     QEffGemma3ForConditionalGeneration,
     QEffGemma3TextModel,
@@ -313,6 +314,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaRotaryEmbedding,
 )
 from QEfficient.transformers.models.llama4.modeling_llama4 import (
+    QEffLlama4DecoderWrapper,
     QEffLlama4ForCausalLM,
     QEffLlama4ForConditionalGeneration,
     QEffLlama4Router,
@@ -325,9 +327,11 @@ from QEfficient.transformers.models.llama4.modeling_llama4 import (
     QEffLlama4VisionModel,
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
+    QEFFLlavaDecoderWrapper,
     QEffLlavaForConditionalGeneration,
 )
 from QEfficient.transformers.models.llava_next.modeling_llava_next import (
+    QEffLlavaNextDecoderWrapper,
     QEffLlavaNextForConditionalGeneration,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
@@ -755,12 +759,16 @@ class SamplerTransform:
     _module_mapping = {
         QEffFalconForCausalLM,
         QEffGemmaForCausalLM,
+        QEffGemma3DecoderWrapper,
         QEffGPT2LMHeadModel,
         QEffGPTJForCausalLM,
         QEffGraniteForCausalLM,
         QEffGraniteMoeForCausalLM,
         QEffInternDecoderWrapper,
         QEffLlamaForCausalLM,
+        QEffLlama4DecoderWrapper,
+        QEFFLlavaDecoderWrapper,
+        QEffLlavaNextDecoderWrapper,
         QEffMptForCausalLM,
         QEffPhi3ForCausalLM,
         QEffQwen2ForCausalLM,
