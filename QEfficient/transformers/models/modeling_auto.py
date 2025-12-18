@@ -2251,7 +2251,6 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(
             model,
@@ -2347,6 +2346,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             - **return_pdfs** (bool): If True, returns probability distributions along with sampled tokens.
               For Speculative Decoding Target Language Models, this is always True.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
+            - **include_guided_decoding** (bool): If True, enables guided token-level filtering
+              during decoding. Only works when include_sampler=True.
             - **num_kv_blocks** (int): Number of K/V blocks for BlockedKV attention implementation.
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
@@ -2443,6 +2444,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
               and ``return_pdfs=False`` for regular model.
             - **max_top_k_ids** (int): Maximum number of top K tokens (<= vocab size) to consider during sampling.
               The values provided in ``top_ks`` tensor must be less than this maximum limit.
+            - **include_guided_decoding** (bool): If True, enables guided token-level filtering
+              during decoding. Only works when include_sampler=True.
 
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.

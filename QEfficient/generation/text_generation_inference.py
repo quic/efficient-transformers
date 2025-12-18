@@ -329,6 +329,7 @@ def cloud_ai_100_exec_kv(
     is_tlm: bool = False,
     include_sampler: bool = False,
     return_pdfs: bool = False,
+    include_guided_decoding: bool = False,
     sampling_params: Optional[Dict[str, Any]] = None,
 ):
     """
@@ -356,6 +357,8 @@ def cloud_ai_100_exec_kv(
         next tokens. For Speculative Decoding Target Language Model,
         `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
         Decoding Draft Language Model and `return_pdfs`=False for regular model.
+        :include_guided_decoding (bool, default=False): If True, enables guided token-level filtering
+        during decoding. Only works when `include_sampler`=True.
         sampling_params (Dict[str, Any], default=None): A dictionary of sampling parameters supported by the QAIC backend.
         The dictionary should contain the following keys:
         `repetition_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
@@ -394,6 +397,7 @@ def cloud_ai_100_exec_kv(
         is_tlm=is_tlm,
         include_sampler=include_sampler,
         return_pdfs=return_pdfs,
+        include_guided_decoding=include_guided_decoding,
         sampling_params=sampling_params,
     )
 
@@ -442,6 +446,7 @@ class QEffTextGenerationBase:
         is_tlm: Optional[int] = None,
         include_sampler: bool = False,
         return_pdfs: bool = False,
+        include_guided_decoding: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
         activate: bool = True,
     ) -> None:
@@ -451,6 +456,7 @@ class QEffTextGenerationBase:
         self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
         self.return_pdfs = return_pdfs
+        self.include_guided_decoding = include_guided_decoding
         self.sampling_params = sampling_params
         self._qpc_path = qpc_path  # Store qpc_path for later use
 
@@ -461,7 +467,9 @@ class QEffTextGenerationBase:
 
         # Validate sampler inputs for On-Device Sampling
         self.include_sampler = validate_sampler_inputs(
-            session_inputs=set(self._session.input_names), include_sampler=include_sampler
+            session_inputs=set(self._session.input_names),
+            include_sampler=include_sampler,
+            include_guided_decoding=include_guided_decoding,
         )
 
         # Fetch the variables from the QPC
@@ -628,7 +636,7 @@ class QEffTextGenerationBase:
             decode_inputs["batch_index"] = self.batch_index
         if self.include_sampler:
             decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
-            for op in Constants.SAMPLER_OPS:
+            for op in Constants.SAMPLER_OPS | ({"token_bitmasks"} if self.include_guided_decoding else set()):
                 if self.batch_index is not None:
                     decode_inputs[op] = self.sampling_params[op][self.batch_index.flatten()]
                 else:
@@ -795,7 +803,7 @@ class QEffTextGenerationBase:
             inputs["num_logits_to_keep"] = np.zeros((1, 1))
         if self.include_sampler:
             inputs["last_accepted_output_tokens"] = inputs["input_ids"]
-            for op in Constants.SAMPLER_OPS:
+            for op in Constants.SAMPLER_OPS | ({"token_bitmasks"} if self.include_guided_decoding else set()):
                 if decode_batch_id is not None:
                     inputs[op] = self.sampling_params[op][decode_batch_id.flatten()]
                 else:
@@ -1067,6 +1075,7 @@ class TextGeneration:
         is_tlm: bool = False,
         include_sampler: bool = False,
         return_pdfs: bool = False,
+        include_guided_decoding: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._qaic_model = QEffTextGenerationBase(
@@ -1082,6 +1091,7 @@ class TextGeneration:
             is_tlm=is_tlm,
             include_sampler=include_sampler,
             return_pdfs=return_pdfs,
+            include_guided_decoding=include_guided_decoding,
             sampling_params=sampling_params,
         )
         self._full_batch_size = self._qaic_model.full_batch_size
