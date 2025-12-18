@@ -36,6 +36,7 @@ from QEfficient.generation.text_generation_inference import (
     write_io_files,
 )
 from QEfficient.utils import LRUCache
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -83,9 +84,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         vision_qpc_path: str,
         device_id: Optional[List[int]] = None,
         ctx_len: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         full_batch_size: Optional[int] = None,
+        image_height: Optional[int] = None,
+        image_width: Optional[int] = None,
         is_tlm: bool = False,
         include_sampler: bool = False,
         return_pdfs: bool = False,
@@ -105,6 +110,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             enable_debug_logs: Enable debug logging
             write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
+            image_height: Desired image height for resizing
+            image_width: Desired image width for resizing
             is_tlm: Target language model flag
             include_sampler: Enable on-device sampling (new feature)
             return_pdfs: Return probability distributions
@@ -123,6 +130,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             qpc_path=lang_qpc_path,
             full_batch_size=full_batch_size,
             ctx_len=ctx_len,
+            comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+            comp_ctx_lengths_decode=comp_ctx_lengths_decode,
             device_id=device_id,
             enable_debug_logs=enable_debug_logs,
             write_io_dir=write_io_dir,
@@ -139,6 +148,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
         self.qeff_model = qeff_model
         self.processor = processor
+        self.tokenizer = tokenizer
+        self.image_height = image_height
+        self.image_width = image_width
         self._vision_qpc_path = vision_qpc_path
         self.device_id = device_id  # Store device_id for vision components
         self.enable_debug_logs = enable_debug_logs  # Store for vision components
@@ -169,6 +181,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             qeff_model=self.qeff_model,
             vision_session=self._vision_session,
             processor=self.processor,
+            tokenizer=self.tokenizer,
+            image_height=self.image_height,
+            image_width=self.image_width,
             config=vision_config,
             lang_session=self._session,  # Pass language session for coordination
         )
@@ -294,6 +309,18 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         outputs = None
         chunk_image_idx = None
 
+        if self.comp_ctx_lengths_prefill is not None:
+            self.list_of_comp_ctx_lengths_prefill = [np.zeros(length) for length in self.comp_ctx_lengths_prefill]
+            prefill_ccl_id = 0
+            lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
+        if self.include_sampler:
+            for op in Constants.SAMPLER_OPS:
+                if decode_batch_id is not None:
+                    lang_inputs[op] = self.sampling_params[op][decode_batch_id.flatten()]
+                else:
+                    lang_inputs[op] = self.sampling_params[op]
+
         for i in range(num_chunks):
             input_ids_slice = lang_inputs["input_ids"][:, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len]
             position_ids_slice = lang_inputs["position_ids"][
@@ -311,6 +338,18 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
             if "cross_attention_mask" in lang_inputs:
                 chunk_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"]
+
+            if self.comp_ctx_lengths_prefill is not None:
+                if (i + 1) * self._prefill_seq_len > self.comp_ctx_lengths_prefill[prefill_ccl_id]:
+                    prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
+                    lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
+                chunk_inputs["comp_ctx_lengths"] = lang_inputs["comp_ctx_lengths"]
+
+            if self.include_sampler:
+                chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
+                for op in Constants.SAMPLER_OPS:
+                    chunk_inputs[op] = lang_inputs[op]
 
             outputs = self._session.run(chunk_inputs)
 

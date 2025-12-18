@@ -14,7 +14,8 @@ from QEfficient.utils.constants import HASH_HEXDIGEST_STR_LEN
 
 def json_serializable(obj):
     if isinstance(obj, set):
-        return sorted(obj)
+        # Convert set to a sorted list of strings for consistent hashing
+        return sorted([cls.__name__ if isinstance(cls, type) else str(cls) for cls in obj])
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
@@ -55,7 +56,6 @@ def create_export_hash(**kwargs):
     export_params = {}
     export_params["output_names"] = kwargs.get("output_names")
     export_params["dynamic_axes"] = kwargs.get("dynamic_axes")
-
     export_hash_params["export_params"] = export_params
 
     export_kwargs = kwargs.get("export_kwargs")
@@ -67,5 +67,4 @@ def create_export_hash(**kwargs):
         export_hash_params.update(onnx_transform_kwargs)
     if export_hash_params.get("peft_config") is not None and not isinstance(export_hash_params["peft_config"], dict):
         export_hash_params["peft_config"] = export_hash_params["peft_config"].to_dict()
-
     return hash_dict_params(export_hash_params), export_hash_params

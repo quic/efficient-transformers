@@ -17,7 +17,8 @@ import onnxruntime
 import torch
 from onnx import external_data_helper
 
-from QEfficient.base.onnx_transforms import FP16ClipTransform
+from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransformPipeline
+from QEfficient.utils import constants
 
 
 def export_onnx(
@@ -97,7 +98,7 @@ def export_onnx(
             input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
-            opset_version=13,
+            opset_version=constants.ONNX_EXPORT_OPSET,
             custom_opsets={"com.qti.aisw.onnx": 1},
         )
     except Exception as e:
@@ -218,7 +219,8 @@ def fix_onnx_fp16(
         :str: Updated base name of exported ONNX model.
     """
     model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-    model, fp16_fix = FP16ClipTransform.apply(model, onnx_base_dir=gen_models_path)
+    onnx_transforms = OnnxTransformPipeline(transforms=[FP16ClipTransform])
+    model, fp16_fix = onnx_transforms.apply(model, model_name="", onnx_base_dir=gen_models_path)
 
     if fp16_fix:
         # Save FP16 model

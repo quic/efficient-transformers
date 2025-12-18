@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -215,6 +215,7 @@ class QEffGemma3Attention(Gemma3Attention):
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
@@ -254,6 +255,9 @@ class QEffGemma3Attention(Gemma3Attention):
                 "is_sliding": self.is_sliding,
                 "sliding_window_pattern": self.config.sliding_window_pattern,
             }
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -297,6 +301,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
@@ -323,6 +328,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -363,6 +369,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -429,6 +436,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
@@ -466,6 +474,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -525,6 +534,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -592,7 +602,16 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.config = self.model.config
         self.lm_head = self.model.lm_head
 
-    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
+    def forward(
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+    ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_index
@@ -603,7 +622,12 @@ class QEffGemma3DecoderWrapper(nn.Module):
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
         outputs = self.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
+            use_cache=True,
         )
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
@@ -620,7 +644,15 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEffGemma3DecoderWrapper(self)
 
-    def forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values):
+    def forward(
+        self,
+        input_ids,
+        position_ids,
+        pixel_values,
+        image_idx,
+        past_key_values,
+        comp_ctx_lengths: Optional[List[int]] = None,
+    ):
         image_features = self.get_image_features(pixel_values=pixel_values)
         inputs_embeds = self.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
@@ -632,7 +664,11 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
         outputs = self.language_model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            use_cache=True,
         )
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
@@ -647,7 +683,12 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: int,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
@@ -667,24 +708,77 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 "ctx_len": ctx_len,
             }
         ]
-        lang = [
-            {
-                "batch_size": batch_size,
+        if comp_ctx_lengths_prefill and comp_ctx_lengths_decode:
+            lang = []
+
+            for i in range(0, len(comp_ctx_lengths_prefill)):
+                lang_prefill = {
+                    "batch_size": 1 if continuous_batching else batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
+                    "sliding_window": self.language_model.config.sliding_window,
+                    "img_size": img_size,
+                    "mm_tokens_per_image": mm_tokens_per_image,
+                    "vision_batch_size": batch_size,
+                }
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
+                lang.append(lang_prefill)
+
+            for i in range(0, len(comp_ctx_lengths_decode)):
+                lang_decode = {
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_decode[i],
+                    "sliding_window": self.language_model.config.sliding_window,
+                    "img_size": img_size,
+                    "mm_tokens_per_image": mm_tokens_per_image,
+                    "vision_batch_size": batch_size,
+                }
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
+                lang.append(lang_decode)
+
+        else:
+            lang_prefill = {
+                "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "sliding_window": self.language_model.config.sliding_window,
                 "img_size": img_size,
                 "mm_tokens_per_image": mm_tokens_per_image,
-            },
-            {
-                "batch_size": batch_size,
+                "vision_batch_size": batch_size,
+            }
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
+
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": "1",
                 "ctx_len": ctx_len,
                 "sliding_window": self.language_model.config.sliding_window,
                 "img_size": img_size,
                 "mm_tokens_per_image": mm_tokens_per_image,
-            },
-        ]
+                "vision_batch_size": batch_size,
+            }
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
+            lang = [lang_prefill, lang_decode]
+
         specializations = {}
 
         if kv_offload:
@@ -694,17 +788,21 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "mm_tokens_per_image"}
+        lang_dynamic_axes["vision_embeds"] = {0: "vision_batch_size", 1: "mm_tokens_per_image"}
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
         vision_dynamic_axes["pixel_values"] = {0: "batch_size", 2: "img_size", 3: "img_size"}
 
-        pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
-        pkv_dynamic_sliding_axes = {0: "batch_size", 2: "sliding_window"}
+        pkv_dynamic_axes = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
+        pkv_dynamic_sliding_axes = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "sliding_window"}
         layer_switch = (
             self.language_model.config.sliding_window_pattern
             if hasattr(self.language_model.config, "sliding_window_pattern")
@@ -718,6 +816,9 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                     else pkv_dynamic_axes
                 )
                 lang_dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
+
+        if comp_ctx_lengths is not None:
+            lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         dynamic_axes = {}
         if kv_offload:
@@ -767,7 +868,9 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             past_key_values.append(pkv)
         return past_key_values
 
-    def get_dummy_inputs(self, kv_offload: bool = False):
+    def get_dummy_inputs(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 896)
         else:
@@ -806,12 +909,21 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
+
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
         # Add data for KV
         lang_inputs["past_key_values"] = self.get_dummy_pkv_cache(
             config=self.language_model.config,
-            batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
+
+        if comp_ctx_lengths is not None:
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         inputs = {}
         if kv_offload:

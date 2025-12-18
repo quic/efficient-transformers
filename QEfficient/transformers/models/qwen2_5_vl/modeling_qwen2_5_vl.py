@@ -7,7 +7,7 @@
 
 import math
 import os
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -361,6 +361,79 @@ class QEffQwen2_5_VLRotaryEmbedding(Qwen2_5_VLRotaryEmbedding):
         )
 
 
+def eager_attention_forward_blockedKV(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    num_kv_blocks: Optional[torch.Tensor] = None,
+    cache_kwargs: Optional[Dict[str, Any]] = None,
+    layer_idx: int = None,
+    past_key_value: Optional[Cache] = None,
+    **kwargs,
+):
+    # Initialize result tensor
+    output = torch.zeros_like(query)
+
+    # Initialize Running Maximum
+    batch_size, num_heads, seq_len, _ = query.shape
+    current_max = torch.full((batch_size, num_heads, seq_len), float(MIN_MASKED_ATTENTION_VALUE))
+
+    # Initialize Denominator
+    current_denominator = torch.zeros(batch_size, num_heads, seq_len)
+
+    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    position_ids = cache_kwargs.get("position_ids")
+    block_size = -(-past_seen_tokens // num_kv_blocks)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+
+    for j in range(num_kv_blocks):
+        start_index = j * block_size
+        end_index = (j + 1) * block_size
+        K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
+        K_block_states = repeat_kv(K_block, module.num_key_value_groups)
+        V_block_states = repeat_kv(V_block, module.num_key_value_groups)
+        past_seen_tokens_start = start_index
+        past_seen_tokens_end = torch.where(
+            torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+            past_seen_tokens,
+            end_index,
+        )
+        causal_mask_block = _create_causal_mask(
+            position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start
+        )
+
+        # Compute attention scores for the block
+        attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) / math.sqrt(module.head_dim)
+        if attention_mask is not None:
+            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+
+        # Update Running row maximum
+        prev_max = current_max
+        current_max = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
+        delta_max = prev_max - current_max
+
+        current_exp = torch.exp(
+            attn_weights_block - current_max.unsqueeze(-1)
+        )  # Subract current_max from each column of attn_weights_block
+
+        # update running denominator
+        prev_denominator = current_denominator
+        current_denominator = prev_denominator * torch.exp(delta_max) + current_exp.sum(axis=-1)
+
+        prob = current_exp / current_denominator.unsqueeze(-1)
+
+        prev_output = output
+        output = ((prev_denominator / current_denominator).unsqueeze(-1)) * prev_output * torch.exp(
+            delta_max.unsqueeze(-1)
+        ) + torch.matmul(prob, V_block_states)
+    attn_output = output.transpose(1, 2).contiguous()
+    attn_weights = None
+
+    return attn_output, attn_weights
+
+
 def eager_attention_forward_q_blocked(
     module: nn.Module,
     query: torch.Tensor,
@@ -440,6 +513,10 @@ def eager_attention_forward(
     key: torch.Tensor,
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
+    num_kv_blocks: Optional[torch.Tensor] = None,
+    cache_kwargs: Optional[Dict[str, Any]] = None,
+    layer_idx: int = None,
+    past_key_value: Optional[Cache] = None,
     **kwargs,
 ):
     """
@@ -449,6 +526,19 @@ def eager_attention_forward(
 
     if blocking_mode == "q":
         return eager_attention_forward_q_blocked(module, query, key, value, attention_mask, **kwargs)
+    elif blocking_mode != "q" and num_kv_blocks is not None:
+        return eager_attention_forward_blockedKV(
+            module,
+            query,
+            key,
+            value,
+            attention_mask,
+            cache_kwargs=cache_kwargs,
+            num_kv_blocks=num_kv_blocks,
+            layer_idx=layer_idx,
+            past_key_value=past_key_value,
+            **kwargs,
+        )
     elif blocking_mode == "default":
         # Original implementation
         key_states = repeat_kv(key, module.num_key_value_groups)
@@ -485,10 +575,12 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        num_kv_blocks: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -503,6 +595,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
 
         kv_seq_len = key_states.shape[-2]
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
@@ -511,9 +604,27 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         )
 
         if past_key_value is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids[0]}
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if num_kv_blocks is not None:
+                cache_kwargs = {
+                    "sin": sin,
+                    "cos": cos,
+                    "batch_index": batch_index,
+                    "position_ids": position_ids[0],
+                    "past_seen_tokens": past_seen_tokens,
+                }
+                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                # sin and cos are specific to RoPE models; cache_position needed for the static cache
+                cache_kwargs = {
+                    "sin": sin,
+                    "cos": cos,
+                    "batch_index": batch_index,
+                    "position_ids": position_ids[0],
+                }
+                if comp_ctx_lengths is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
 
@@ -523,6 +634,10 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
             key_states,
             value_states,
             attention_mask,
+            num_kv_blocks=num_kv_blocks,
+            cache_kwargs=cache_kwargs,
+            layer_idx=self.layer_idx,
+            past_key_value=past_key_value,
             **kwargs,
         )
 
@@ -543,6 +658,7 @@ class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
@@ -582,6 +698,7 @@ class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -614,6 +731,7 @@ class QEffQwen2_5_VLTextModel(Qwen2_5_VLTextModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -664,6 +782,7 @@ class QEffQwen2_5_VLTextModel(Qwen2_5_VLTextModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
@@ -702,6 +821,7 @@ class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -725,6 +845,7 @@ class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -774,6 +895,7 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         image_idx,
         past_key_values,
         batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
     ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
@@ -788,6 +910,7 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=True,
         )
@@ -807,7 +930,13 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
     def get_qeff_language_decoder(self):
         return QEffQwen_2_5_vl_DecoderWrapper(self)
 
-    def get_dummy_inputs(self, kv_offload: bool = False, continuous_batching: bool = False, **kwargs):
+    def get_dummy_inputs(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        **kwargs,
+    ):
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 
@@ -862,6 +991,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
+        if comp_ctx_lengths is not None:
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+
         inputs = {}
         if kv_offload:
             inputs["vision"] = vision_inputs
@@ -887,6 +1019,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+
         if height is None or width is None:
             height = constants.QWEN2_5_VL_HEIGHT
             width = constants.QWEN2_5_VL_WIDTH
@@ -966,37 +1101,75 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 "grid_w": grid_w,
             }
         ]
-        lang_prefill = {
-            "batch_size": 1 if continuous_batching else batch_size,
-            "seq_len": prefill_seq_len,
-            "ctx_len": ctx_len,
-            "vision_size": vision_size,
-            "vision_batch_size": batch_size,
-        }
 
-        if continuous_batching:
-            lang_prefill["full_batch_size"] = kv_cache_batch_size
+        if comp_ctx_lengths_prefill is not None:
+            lang = []
+
+            for i in range(0, len(comp_ctx_lengths_prefill)):
+                lang_prefill = {
+                    "batch_size": 1 if continuous_batching else batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "vision_size": vision_size,
+                    "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
+                    "vision_batch_size": batch_size,
+                }
+
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
+
+                lang.append(lang_prefill)
+
+            for i in range(0, len(comp_ctx_lengths_decode)):
+                lang_decode = {
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "vision_size": vision_size,
+                    "comp_ctx_lengths": comp_ctx_lengths_decode[i],
+                    "vision_batch_size": batch_size,
+                }
+
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
+
+                lang.append(lang_decode)
         else:
-            lang_prefill["batch_size"] = kv_cache_batch_size
-        if full_batch_size:
-            lang_prefill["full_batch_exec_size"] = full_batch_size
+            lang_prefill = {
+                "batch_size": 1 if continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "vision_size": vision_size,
+                "vision_batch_size": batch_size,
+            }
 
-        lang_decode = {
-            "batch_size": full_batch_size if continuous_batching else batch_size,
-            "seq_len": 1,
-            "ctx_len": ctx_len,
-            "vision_size": vision_size,
-            "vision_batch_size": batch_size,
-        }
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
 
-        if continuous_batching:
-            lang_decode["full_batch_size"] = kv_cache_batch_size
-        else:
-            lang_decode["batch_size"] = kv_cache_batch_size
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": 1,
+                "ctx_len": ctx_len,
+                "vision_size": vision_size,
+                "vision_batch_size": batch_size,
+            }
 
-        lang = []
-        lang.append(lang_prefill)
-        lang.append(lang_decode)
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
+
+            lang = [lang_prefill, lang_decode]
 
         specializations = {}
 
@@ -1009,7 +1182,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False, continuous_batching: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
 
@@ -1036,6 +1211,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+
+        if comp_ctx_lengths is not None:
+            lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         dynamic_axes = {}
 

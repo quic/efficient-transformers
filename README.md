@@ -93,8 +93,12 @@ python3.10 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
-# Clone and Install the QEfficient Repo.
+# Clone and Install the QEfficient repository from the mainline branch
 pip install git+https://github.com/quic/efficient-transformers
+
+# Clone and Install the QEfficient repository from a specific branch, tag or commit by appending @ref
+# Release branch (e.g., release/v1.20.0):
+pip install "git+https://github.com/quic/efficient-transformers@release/v1.20.0"
 
 # Or build wheel package using the below command.
 pip install build wheel
@@ -108,8 +112,8 @@ For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Li
 
 ## Documentation
 
-* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
-* [Python API](https://quic.github.io/efficient-transformers/source/hl_api.html)
+* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)
+* [QEFF API](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
 * [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html)
 * [Models coming soon](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon)
 
