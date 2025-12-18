@@ -868,6 +868,9 @@ class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.visual
 
+    def get_repeated_layers(self):
+        return self.model.visual.blocks[0].__class__
+
     def forward(self, pixel_values, image_grid_thw):
         image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)
         bs = image_grid_thw.shape[0]
@@ -882,6 +885,9 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.model.language_model
+
+    def get_repeated_layers(self):
+        return QEffQwen2_5_VLDecoderLayer
 
     def forward(
         self,

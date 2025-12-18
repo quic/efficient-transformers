@@ -30,6 +30,9 @@ class QEFFLlavaEncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.vision_tower
 
+    def get_repeated_layers(self):
+        return self.model.vision_tower.vision_model.encoder.layers[0].__class__
+
     def forward(self, pixel_values):
         # Image features
         image_outputs = self.model.vision_tower(pixel_values, output_hidden_states=True)
@@ -53,6 +56,9 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         self.config = self.model.config
         self.language_model = self.model.language_model
         self.lm_head = self.model.lm_head
+
+    def get_repeated_layers(self):
+        return self.model.language_model.layers[0].__class__
 
     def forward(
         self,

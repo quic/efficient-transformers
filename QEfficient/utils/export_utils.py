@@ -14,7 +14,6 @@ from typing import Dict
 
 from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
-from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
@@ -171,14 +170,21 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
         ]
     else:
         args = list(args)
-        args[1] = [re.sub("_RetainedState", "_InternalRetainedState", name) for name in args[1]]
+        args[1] = [
+            re.sub("_RetainedState", "_InternalRetainedState", name)
+            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            else name
+            for name in args[1]
+        ]
         args = tuple(args)
+
     # Add subfunction-specific ONNX transforms
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
     # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
-    kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
+    # import pdb; pdb.set_trace()
+    kwargs["export_modules_as_functions"] = {qeff_model.model.get_repeated_layers()}
     return args, kwargs
 
 
