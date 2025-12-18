@@ -10,12 +10,12 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
     undo_transformers_quantizers,
 )
 from QEfficient.utils._utils import (  # noqa: F401
+    LRUCache,
     check_and_assign_cache_dir,
     create_json,
     create_model_params,
     custom_format_warning,
     dump_qconfig,
-    export_wrapper,
     generate_mdp_partition_config,
     get_num_layers_from_config,
     get_num_layers_vlm,

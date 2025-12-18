@@ -50,6 +50,7 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
+    LlamaRotaryEmbedding,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -93,7 +94,7 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 # Placeholder for all non-transformer models
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
-    QeffCodeGenBlock,
+    QEffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
@@ -122,6 +123,7 @@ from .models.llama.modeling_llama import (
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+    QEffLlamaRotaryEmbedding,
 )
 from .models.mistral.modeling_mistral import (
     QEffMistralAttention,
@@ -183,7 +185,11 @@ qeff_supported_architectures = ModelArchitectures(
     ]
 )
 
+# This is for supporting different seq_len for different layers for Sliding window attn, chunked attn etc.
 DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "llama4", "gemma3_text", "llama4_text"}
+
+# This is for supporting different modelling classes specially written for prefill-only model
+SPECIALIZED_PREFILL_ONLY_MODEL_ARCH = {"gpt_oss"}
 
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.
@@ -203,6 +209,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     LlamaForCausalLM: QEffLlamaForCausalLM,
     LlamaDecoderLayer: QEffLlamaDecoderLayer,
     LlamaRMSNorm: CustomRMSNormAIC,
+    LlamaRotaryEmbedding: QEffLlamaRotaryEmbedding,
     # Gemma model layers
     GemmaModel: QEffGemmaModel,
     GemmaAttention: QEffGemmaAttention,
@@ -224,7 +231,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     CodeGenAttention: QEffCodeGenAttention,
     CodeGenModel: QEffCodeGenModel,
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
-    CodeGenBlock: QeffCodeGenBlock,
+    CodeGenBlock: QEffCodeGenBlock,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
     MistralDecoderLayer: QEffMistralDecoderLayer,

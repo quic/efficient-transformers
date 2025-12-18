@@ -68,7 +68,8 @@ class InputHandler:
         batch_size, input_len = input_ids.shape
         inputs.pop("attention_mask")
         inputs.pop("token_type_ids", None)
-        position_ids = torch.arange(input_len).view(1, -1)
+        usable_bs = self.full_batch_size if self.full_batch_size else 1
+        position_ids = torch.arange(input_len).view(1, input_len).repeat(usable_bs, 1)
         inputs["input_ids"] = torch.concat(
             [
                 input_ids,
@@ -87,13 +88,20 @@ class InputHandler:
 
         if self.full_batch_size:
             inputs["input_ids"] = input_ids
-            inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
-            inputs["batch_index"] = torch.arange(1).view(-1, 1)
+            inputs["position_ids"] = position_ids
+            inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
 
         past_key_values = []
         for i in range(self.n_layer):
-            past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
-            past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
+            if (
+                all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
+                and self.config.layer_types[i] == "sliding_attention"
+            ):
+                pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
+            else:
+                pad_shape = self.padding_shape
+            past_key = torch.zeros((pad_shape), dtype=torch.float32)
+            past_value = torch.zeros((pad_shape), dtype=torch.float32)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
@@ -113,18 +121,15 @@ class InputHandler:
         """
         updated_inputs = {}
         if self.full_batch_size:
-            batch_index = torch.arange(1).view(-1, 1)
-
             input_ids = pt_outputs.logits.detach().argmax(2)
             updated_inputs["input_ids"] = torch.full((self.full_batch_size, 1), self.tokenizer.pad_token_id)
-            updated_inputs["input_ids"][batch_index.view(-1)] = input_ids
+            updated_inputs["input_ids"][inputs["batch_index"].view(-1)] = input_ids
 
             position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
             updated_inputs["position_ids"] = torch.full((self.full_batch_size, 1), 0)
-            updated_inputs["position_ids"][batch_index.view(-1)] = position_ids
+            updated_inputs["position_ids"][inputs["batch_index"].view(-1)] = position_ids
 
-            updated_inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
-
+            updated_inputs["batch_index"] = inputs["batch_index"]
         else:
             updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
             updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
@@ -169,8 +174,17 @@ class InputHandler:
                 inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
         else:
             for i in range(self.n_layer):
-                inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
-                inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+                if (
+                    all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
+                    and self.config.layer_types[i] == "sliding_attention"
+                ):
+                    pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
+                else:
+                    pad_shape = self.padding_shape
+                inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
+                inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
+        if self.full_batch_size:
+            inputs["batch_index"] = np.arange(self.full_batch_size).reshape(-1, 1)
         return inputs
 
     def update_ort_inputs(self, inputs, ort_outputs):
@@ -191,7 +205,8 @@ class InputHandler:
         for i in range(self.n_layer):
             updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
-
+        if self.full_batch_size:
+            updated_inputs["batch_index"] = inputs["batch_index"]
         return updated_inputs
 
     def update_ort_outputs(self, ort_outputs):
@@ -249,7 +264,7 @@ class InputHandlerVLM:
 
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
+        head_dim = getattr(txt_cfg, "head_dim", txt_cfg.hidden_size // txt_cfg.num_attention_heads)
         if hasattr(txt_cfg, "cross_attention_layers"):
             cross_attention_layers = txt_cfg.cross_attention_layers
 
@@ -287,7 +302,7 @@ class InputHandlerVLM:
             txt_cfg = self.config.llm_config
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
+        head_dim = getattr(txt_cfg, "head_dim", txt_cfg.hidden_size // txt_cfg.num_attention_heads)
         if hasattr(txt_cfg, "cross_attention_layers"):
             cross_attention_layers = txt_cfg.cross_attention_layers
             vis_cfg = self.config.vision_config
@@ -298,6 +313,7 @@ class InputHandlerVLM:
         if "attention_mask" in inputs.keys():
             inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
+        inputs["image_idx"] = np.array([[0]])
 
         vision_inputs = {
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
@@ -349,6 +365,7 @@ class InputHandlerVLM:
         outputs["image_features_RetainedState"] = (
             ort_outputs["image_features_RetainedState"] if "image_features_RetainedState" in ort_outputs else None
         )
+        outputs["image_idx"] = ort_outputs["image_idx_output"]
         return outputs
 
     def update_vlm_ort_inputs(self, inputs, ort_outputs):
@@ -414,7 +431,7 @@ class InputHandlerInternVL(InputHandlerVLM):
 
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
+        head_dim = getattr(txt_cfg, "head_dim", txt_cfg.hidden_size // txt_cfg.num_attention_heads)
 
         inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
@@ -435,7 +452,7 @@ class InputHandlerInternVL(InputHandlerVLM):
             txt_cfg = self.config.llm_config
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
+        head_dim = getattr(txt_cfg, "head_dim", txt_cfg.hidden_size // txt_cfg.num_attention_heads)
 
         question = "<image>\n" + self.prompt
         pixel_values = self.processor.load_image(self.image, max_num=12)
@@ -449,6 +466,7 @@ class InputHandlerInternVL(InputHandlerVLM):
         if "attention_mask" in inputs.keys():
             inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
+        inputs["image_idx"] = np.array([[0]])
 
         vision_inputs = {
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}

@@ -7,11 +7,12 @@
 
 """PyTorch GPTBigCode model."""
 
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
-from transformers.cache_utils import Cache
+from torch import nn
+from transformers.cache_utils import Cache, EncoderDecoderCache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
@@ -25,6 +26,7 @@ from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 # Fused kernels
@@ -55,75 +57,48 @@ def masked_softmax(x: torch.Tensor, mask: torch.Tensor, mask_value: torch.Tensor
     return x
 
 
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
+
+def eager_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+):
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+
+    if attention_mask is not None:
+        attn_weights = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+        )
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_output = torch.matmul(attn_weights, value_states)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, attn_weights
+
+
 class QEffGPTBigCodeAttention(GPTBigCodeAttention):
-    def _attn(self, query, key, value, attention_mask=None, head_mask=None):
-        dtype = query.dtype
-        softmax_dtype = torch.float32 if self.attention_softmax_in_fp32 else dtype
-        upcast = dtype != softmax_dtype
-        unscale = self.layer_idx + 1 if self.scale_attention_softmax_in_fp32 and upcast else 1
-        scale_factor = torch.tensor(1 / self.head_dim**0.5, dtype=torch.float32)
-        # MQA models: (batch_size, query_length, num_heads * head_dim)
-        # MHA models: (batch_size, num_heads, query_length, head_dim)
-        query_shape = query.shape
-        batch_size = query_shape[0]
-        key_length = key.size(-1)
-        if self.multi_query:
-            # (batch_size, query_length, num_heads, head_dim) x (batch_size, head_dim, key_length)
-            # -> (batch_size, query_length, num_heads, key_length)
-            query_length = query_shape[1]
-            attn_shape = (batch_size, query_length, self.num_heads, key_length)
-            attn_view = (batch_size, query_length * self.num_heads, key_length)
-            # No copy needed for MQA 2, or when layer_past is provided.
-            query = query.reshape(batch_size, query_length * self.num_heads, self.head_dim)
-        else:
-            # (batch_size, num_heads, query_length, head_dim) x (batch_size, num_heads, head_dim, key_length)
-            # -> (batch_size, num_heads, query_length, key_length)
-            query_length = query_shape[2]
-            attn_shape = (batch_size, self.num_heads, query_length, key_length)
-            attn_view = (batch_size * self.num_heads, query_length, key_length)
-            # Always copies
-            query = query.reshape(batch_size * self.num_heads, query_length, self.head_dim)
-            # No copy when layer_past is provided.
-            key = key.reshape(batch_size * self.num_heads, self.head_dim, key_length)
-
-        attn_weights = (scale_factor * torch.bmm(query, key)).view(attn_shape)
-
-        if upcast:
-            # Use a fused kernel to prevent a large overhead from casting and scaling.
-            # Sub-optimal when the key length is not a multiple of 8.
-            if attention_mask is None:
-                attn_weights = upcast_softmax(attn_weights, unscale, softmax_dtype)
-            else:
-                mask_value = self._get_mask_value(attn_weights.device, softmax_dtype)
-                attn_weights = upcast_masked_softmax(attn_weights, attention_mask, mask_value, unscale, softmax_dtype)
-        else:
-            if attention_mask is not None:
-                mask_value = self._get_mask_value(attn_weights.device, softmax_dtype)
-
-                # The fused kernel is very slow when the key length is not a multiple of 8, so we skip fusion.
-                attn_weights = torch.where(attention_mask, mask_value, attn_weights)
-
-            attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1)
-
-        attn_weights = self.attn_dropout(attn_weights)
-
-        # Mask heads if we want to
-        if head_mask is not None:
-            if self.multi_query:
-                head_mask = head_mask.transpose(1, 2)
-            attn_weights = attn_weights * head_mask
-
-        if self.multi_query:
-            attn_output = torch.bmm(attn_weights.view(attn_view), value).view(query_shape)
-        else:
-            attn_output = torch.matmul(attn_weights, value)
-
-        return attn_output, attn_weights
-
     def forward(
         self,
         hidden_states: torch.Tensor,
         layer_past: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -136,49 +111,72 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
         Tuple[torch.Tensor, Optional[torch.Tensor]],
         Tuple[torch.Tensor, Optional[torch.Tensor], Tuple[torch.Tensor, ...]],
     ]:
-        if encoder_hidden_states is not None:
+        input_shape = hidden_states.shape[:-1]
+
+        if layer_past is not None:
+            if isinstance(layer_past, EncoderDecoderCache):
+                if self.is_cross_attention:
+                    # after the first generated id, we can subsequently re-use all key/value_states from cache
+                    curr_past_key_value = layer_past.cross_attention_cache
+                else:
+                    curr_past_key_value = layer_past.self_attention_cache
+            else:
+                curr_past_key_value = layer_past
+
+        if self.is_cross_attention:
             if not hasattr(self, "q_attn") or not self.is_cross_attention:
                 raise ValueError(
                     "If class is used as cross attention, the weights `q_attn` have to be defined. "
                     "Please make sure to instantiate class with `GPTBigCodeAttention(..., is_cross_attention=True)`."
                 )
+            if layer_past is not None:
+                # reuse k,v, cross_attentions
+                key = curr_past_key_value.layers[self.layer_idx].keys
+                value = curr_past_key_value.layers[self.layer_idx].values
+            else:
+                query = self.q_attn(hidden_states).view(*input_shape, -1, self.head_dim).transpose(1, 2)
+                key, value = self.c_attn(encoder_hidden_states).split((self.head_dim, self.head_dim), dim=-1)
 
-            query = self.q_attn(hidden_states)
-            key_value = self.c_attn(encoder_hidden_states)
-            attention_mask = encoder_attention_mask
-        elif self.multi_query:
-            query, key, value = self.c_attn(hidden_states).split((self.embed_dim, self.kv_dim, self.kv_dim), dim=2)
         else:
-            # Note: We split as (self.num_heads, 3, self.head_dim) instead of (3, self.num_heads, self.head_dim),
-            # i.e., the memory layout is not the same as GPT2.
-            # This makes the concatenation with past_key_value more efficient.
-            query, key_value = (
-                self.c_attn(hidden_states)
-                .view(*hidden_states.shape[:2], self.num_heads, 3 * self.head_dim)
-                .transpose(1, 2)
-                .split((self.head_dim, 2 * self.head_dim), dim=3)
-            )
+            if self.multi_query:
+                query, key, value = (
+                    self.c_attn(hidden_states).unsqueeze(1).split((self.embed_dim, self.kv_dim, self.kv_dim), dim=3)
+                )
+                query = query.view(*input_shape, -1, self.head_dim).transpose(1, 2)
+            else:
+                query, key, value = (
+                    self.c_attn(hidden_states)
+                    .view(*hidden_states.shape[:2], self.num_heads, 3 * self.head_dim)
+                    .transpose(1, 2)
+                    .split(3 * [self.head_dim], dim=3)
+                )
 
         if layer_past is not None:
+            # save all key/value_states to cache to be re-used for fast auto-regressive generation
             cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-            key, value = layer_past.update3D(key, value, self.layer_idx, cache_kwargs)
-        present = (layer_past.key_cache[self.layer_idx], layer_past.value_cache[self.layer_idx])
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
+            key, value = curr_past_key_value.update(key, value, self.layer_idx, cache_kwargs)
+            # set flag that curr layer for cross-attn is already updated so we can re-use in subsequent calls
+            if self.is_cross_attention:
+                layer_past.is_updated[self.layer_idx] = True
 
-        attn_output, attn_weights = self._attn(query, key.transpose(-1, -2), value, attention_mask, head_mask)
+        attention_interface = eager_attention_forward
 
-        if not self.multi_query:
-            attn_output = attn_output.transpose(1, 2).reshape(hidden_states.shape)
+        attn_output, attn_weights = attention_interface(
+            self,
+            query,
+            key,
+            value,
+            attention_mask,
+            scaling=self.scaling,
+        )
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
-
-        outputs = (attn_output, present)
-        if output_attentions:
-            if self.multi_query:
-                # Transpose to return weights in the usual format (batch_size, num_heads, query_length, key_length)
-                attn_weights = attn_weights.transpose(1, 2)
-            outputs += (attn_weights,)
-
-        return outputs  # a, present, (attentions)
+        return attn_output, attn_weights
 
 
 class QEffGPTBigCodeBlock(GPTBigCodeBlock):
@@ -186,6 +184,7 @@ class QEffGPTBigCodeBlock(GPTBigCodeBlock):
         self,
         hidden_states: Optional[Tuple[torch.Tensor]],
         layer_past: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -200,6 +199,7 @@ class QEffGPTBigCodeBlock(GPTBigCodeBlock):
         attn_outputs = self.attn(
             hidden_states,
             layer_past=layer_past,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,
@@ -232,27 +232,23 @@ class QEffGPTBigCodeBlock(GPTBigCodeBlock):
             attn_output = cross_attn_outputs[0]
             # residual connection
             hidden_states = residual + attn_output
-            outputs = outputs + cross_attn_outputs[2:]  # add cross attentions if we output attention weights
+            outputs = outputs + cross_attn_outputs[1:]  # add cross attentions if we output attention weights
 
         residual = hidden_states
         hidden_states = self.ln_2(hidden_states)
         feed_forward_hidden_states = self.mlp(hidden_states)
-        # residual connection
+
         hidden_states = residual + feed_forward_hidden_states
 
-        if use_cache:
-            outputs = (hidden_states,) + outputs
-        else:
-            outputs = (hidden_states,) + outputs[1:]
-
-        return outputs  # hidden_states, present, (attentions, cross_attentions)
+        return (hidden_states,) + outputs
 
 
 class QEffGPTBigCodeModel(GPTBigCodeModel):
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.Tensor]] = None,
+        past_key_values: Optional[list[torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
@@ -273,10 +269,9 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
         elif input_ids is not None:
-            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
             batch_size = input_ids.shape[0]
@@ -291,23 +286,19 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         if batch_size <= 0:
             raise ValueError("batch_size has to be defined and > 0")
 
-        if token_type_ids is not None:
-            token_type_ids = token_type_ids.view(-1, input_shape[-1])
-
+        return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
+            return_legacy_cache = True
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
         past_length = past_key_values.get_seq_length() if past_key_values is not None else 0
 
+        if inputs_embeds is None:
+            inputs_embeds = self.wte(input_ids)
+
         position_ids = position_ids.view(-1, seq_length).long()
 
-        # update attention mask for Cloud Ai 100
-        self_attention_mask = _create_causal_mask(position_ids, past_length)
-        # MQA models: (batch_size, query_length, n_heads, key_length)
-        # MHA models: (batch_size, n_heads, query_length, key_length)
-        if self.multi_query:
-            self_attention_mask = self_attention_mask.transpose(1, 2)
-
-        attention_mask = self_attention_mask
+        # update attention mask for Cloud AI 100
+        attention_mask = _create_causal_mask(position_ids, past_length)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
@@ -325,14 +316,13 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         # head_mask has shape n_layer x batch x n_heads x N x N
         head_mask = self.get_head_mask(head_mask, self.config.n_layer)
 
-        if inputs_embeds is None:
-            inputs_embeds = self.wte(input_ids)
         position_ids1 = position_ids.clone()
         position_ids1[position_ids1 == -1] = 0
         position_embeds = self.wpe(position_ids1)
         hidden_states = inputs_embeds + position_embeds
 
         if token_type_ids is not None:
+            token_type_ids = token_type_ids.view(-1, input_shape[-1])
             token_type_embeds = self.wte(token_type_ids)
             hidden_states = hidden_states + token_type_embeds
 
@@ -340,17 +330,17 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
 
         output_shape = input_shape + (hidden_states.size(-1),)
 
-        presents = [] if use_cache else None
         all_self_attentions = () if output_attentions else None
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
         all_hidden_states = () if output_hidden_states else None
-        for i, (block, layer_past) in enumerate(zip(self.h, past_key_values)):
+        for i, block in enumerate(self.h):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             outputs = block(
                 hidden_states,
                 layer_past=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 position_ids=position_ids,
                 batch_index=batch_index,
                 attention_mask=attention_mask,
@@ -362,13 +352,11 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
             )
 
             hidden_states = outputs[0]
-            if use_cache:
-                presents.append(outputs[1])
 
             if output_attentions:
-                all_self_attentions = all_self_attentions + (outputs[2 if use_cache else 1],)
+                all_self_attentions = all_self_attentions + (outputs[1],)
                 if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (outputs[3 if use_cache else 2],)
+                    all_cross_attentions = all_cross_attentions + (outputs[2],)
 
         hidden_states = self.ln_f(hidden_states)
 
@@ -377,9 +365,12 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
 
+        if return_legacy_cache:
+            past_key_values = past_key_values.to_legacy_cache()
+
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
-            past_key_values=presents,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
             cross_attentions=all_cross_attentions,
@@ -390,7 +381,8 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        past_key_values: Optional[tuple[tuple[torch.Tensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
@@ -416,6 +408,7 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
@@ -442,14 +435,3 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
             attentions=transformer_outputs.attentions,
             cross_attentions=transformer_outputs.cross_attentions,
         )
-
-    @staticmethod
-    def _reorder_cache(
-        past_key_values: Tuple[Tuple[torch.Tensor]], beam_idx: torch.Tensor
-    ) -> Tuple[Tuple[torch.Tensor]]:
-        """
-        This function is used to re-order the `past_key_values` cache if [`~PreTrainedModel.beam_search`] or
-        [`~PreTrainedModel.beam_sample`] is called. This is required to match `past_key_values` with the correct
-        beam_idx at every generation step.
-        """
-        return tuple(layer_past.index_select(0, beam_idx.to(layer_past.device)) for layer_past in past_key_values)

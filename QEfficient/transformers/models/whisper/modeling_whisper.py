@@ -55,6 +55,7 @@ class QEffWhisperAttention(WhisperAttention):
         position_ids_layer: torch.Tensor = None,
         key_value_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
@@ -63,18 +64,23 @@ class QEffWhisperAttention(WhisperAttention):
         is_cross_attention: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
-        bsz, tgt_len, _ = hidden_states.size()
+        # determine input shapes
+        bsz, tgt_len = hidden_states.shape[:-1]
+        q_input_shape = (bsz, tgt_len, -1, self.head_dim)
 
-        # get query proj
-        query_states = self._shape(self.q_proj(hidden_states) * self.scaling, tgt_len, bsz)
+        query_states = self.q_proj(hidden_states) * self.scaling
+        query_states = query_states.view(*q_input_shape)
+        query_states = query_states.transpose(1, 2).contiguous()
 
         if self.is_decoder:
             if is_cross_attention and past_key_value:
                 # cross_attentions
                 key_states_old = past_key_value[self.layer_idx][0]
                 value_states_old = past_key_value[self.layer_idx][1]
-                key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
-                value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
+                key_states = self.k_proj(key_value_states).view(bsz, -1, self.num_heads, self.head_dim)
+                value_states = self.v_proj(key_value_states).view(bsz, -1, self.num_heads, self.head_dim)
+                key_states = key_states.transpose(1, 2).contiguous()
+                value_states = value_states.transpose(1, 2).contiguous()
                 indices = (torch.arange(bsz),)
                 key_states_new = torch.index_put(key_states_old, indices, key_states)
                 value_states_new = torch.index_put(value_states_old, indices, value_states)
@@ -85,21 +91,28 @@ class QEffWhisperAttention(WhisperAttention):
                     input_features.shape[2] == torch.tensor(1), value_states_old, value_states_new
                 )
 
-                past_key_value.key_cache[self.layer_idx] = key_states
-                past_key_value.value_cache[self.layer_idx] = value_states
+                past_key_value.layers[self.layer_idx].keys = key_states
+                past_key_value.layers[self.layer_idx].values = value_states
             else:
                 # self attention decoder
-                key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
-                value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+                key_states = self.k_proj(hidden_states).view(bsz, -1, self.num_heads, self.head_dim)
+                value_states = self.v_proj(hidden_states).view(bsz, -1, self.num_heads, self.head_dim)
+                key_states = key_states.transpose(1, 2).contiguous()
+                value_states = value_states.transpose(1, 2).contiguous()
                 if past_key_value is not None:
                     cache_kwargs = {"position_ids": position_ids_layer}
+                    if comp_ctx_lengths is not None:
+                        attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                        cache_kwargs["CCL"] = attention_mask.shape[-1]
                     key_states, value_states = past_key_value.update(
                         key_states, value_states, self.layer_idx, cache_kwargs
                     )
         else:
             # self_attention Encoder
-            key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            key_states = self.k_proj(hidden_states).view(bsz, -1, self.num_heads, self.head_dim)
+            value_states = self.v_proj(hidden_states).view(bsz, -1, self.num_heads, self.head_dim)
+            key_states = key_states.transpose(1, 2).contiguous()
+            value_states = value_states.transpose(1, 2).contiguous()
 
         src_len = key_states.size(2)
 
@@ -150,7 +163,7 @@ class QEffWhisperAttention(WhisperAttention):
 
         attn_output = self.out_proj(attn_output)
 
-        return [attn_output, attn_weights, past_key_value]
+        return [attn_output, attn_weights]
 
 
 class QEffWhisperDecoderLayer(WhisperDecoderLayer):
@@ -172,6 +185,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
         layer_head_mask: Optional[torch.Tensor] = None,
         cross_attn_layer_head_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = True,
         cache_position: Optional[torch.LongTensor] = None,
@@ -203,9 +217,10 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
 
         # Self Attention
         self_attn_past_key_value = past_key_value.self_attention_cache if past_key_value is not None else None
-        hidden_states, self_attn_weights, self_attn_present_key_value = self.self_attn(
+        hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
             past_key_value=self_attn_past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
@@ -217,13 +232,12 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
         hidden_states = residual + hidden_states
 
         # Cross-Attention Block
-        cross_attn_present_key_value = None
         cross_attn_weights = None
         if is_encoder_decoder:
             residual = hidden_states
             hidden_states = self.encoder_attn_layer_norm(hidden_states)
             cross_attn_past_key_value = past_key_value.cross_attention_cache if past_key_value is not None else None
-            hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
+            hidden_states, cross_attn_weights = self.encoder_attn(
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
                 attention_mask=encoder_attention_mask,
@@ -236,13 +250,6 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
             )
             hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
             hidden_states = residual + hidden_states
-
-            # update the cached past_key_values accordingly
-            past_key_value.self_attention_cache = self_attn_present_key_value
-            past_key_value.cross_attention_cache = cross_attn_present_key_value
-        else:
-            # if no cross_attention, still need to update self_attn cache
-            past_key_value = self_attn_present_key_value
 
         # Fully Connected
         residual = hidden_states
@@ -387,6 +394,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         cross_attn_head_mask=None,
         position_ids=None,
         past_key_values=None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         inputs_embeds=None,
         use_cache=None,
         output_attentions=None,
@@ -531,6 +539,7 @@ class QEffWhisperDecoder(WhisperDecoder):
                 layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                 cross_attn_layer_head_mask=(cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None),
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 position_ids_layer=position_ids,
@@ -642,6 +651,7 @@ class QEffWhisperModel(WhisperModel):
         cross_attn_head_mask=None,
         encoder_outputs=None,
         past_key_values=None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         decoder_inputs_embeds=None,
         use_cache=None,
         output_attentions=None,
@@ -673,6 +683,7 @@ class QEffWhisperModel(WhisperModel):
             head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             inputs_embeds=decoder_inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
@@ -718,6 +729,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         cross_attn_head_mask: Optional[torch.Tensor] = None,
         encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         past_key_values: Optional[Union[EncoderDecoderCache, Tuple[torch.FloatTensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         decoder_inputs_embeds: Optional[Tuple[torch.FloatTensor]] = None,
         position_ids: Optional[Tuple[torch.LongTensor]] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -739,6 +751,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
             decoder_head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             decoder_inputs_embeds=decoder_inputs_embeds,
             decoder_position_ids=position_ids,
             use_cache=use_cache,

@@ -19,10 +19,11 @@ classifiers = [
 ]
 requires-python = ">=3.8,<3.11"
 dependencies = [
-    "transformers==4.51.3",
-    "huggingface-hub==0.30.0",
+    "transformers==4.55.0",
+    "diffusers== 0.35.1",
+    "huggingface-hub==0.34.0",
     "hf_transfer==0.1.9",
-    "peft==0.13.2",
+    "peft==0.17.0",
     "datasets==2.20.0",
     "fsspec==2023.6.0",
     "multidict==6.0.4",
@@ -39,11 +40,13 @@ dependencies = [
     "fire",
     "py7zr",
     "torchmetrics==1.7.0",
-    "torch==2.4.1; platform_machine=='aarch64'",
+    "torch==2.7.0; platform_machine=='aarch64'",
     # Specifying torch cpu package URL per python version, update the list once pytorch releases whl for python>3.11
     "torch@https://download.pytorch.org/whl/cpu/torch-2.4.1%2Bcpu-cp38-cp38-linux_x86_64.whl ; python_version=='3.8' and platform_machine=='x86_64'",
-    "torch@https://download.pytorch.org/whl/cpu/torch-2.4.1%2Bcpu-cp39-cp39-linux_x86_64.whl ; python_version=='3.9' and platform_machine=='x86_64'",
-    "torch@https://download.pytorch.org/whl/cpu/torch-2.4.1%2Bcpu-cp310-cp310-linux_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
+    "torch@https://download.pytorch.org/whl/cpu/torch-2.7.0%2Bcpu-cp39-cp39-manylinux_2_28_x86_64.whl ; python_version=='3.9' and platform_machine=='x86_64'",
+    "torch@https://download.pytorch.org/whl/cpu/torch-2.7.0%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
+    "torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.22.0%2Bcpu-cp39-cp39-manylinux_2_28_x86_64.whl ; python_version=='3.9' and platform_machine=='x86_64'",
+    "torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.22.0%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
 ]
 
 [project.optional-dependencies]

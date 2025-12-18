@@ -10,7 +10,7 @@ import os
 from collections import deque
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import transformers
@@ -18,7 +18,9 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.sampler_utils import validate_sampler_inputs
 
 
 @dataclass
@@ -316,12 +318,18 @@ def cloud_ai_100_exec_kv(
     prompts_txt_file_path: Optional[str] = None,
     device_id: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
+    comp_ctx_lengths_prefill: Optional[List[int]] = None,
+    comp_ctx_lengths_decode: Optional[List[int]] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
     write_io_dir: Optional[str] = None,
     automation=False,
+    iteration: int = 1,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
     is_tlm: bool = False,
+    include_sampler: bool = False,
+    return_pdfs: bool = False,
+    sampling_params: Optional[Dict[str, Any]] = None,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -341,7 +349,17 @@ def cloud_ai_100_exec_kv(
         :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.
         :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
         :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
+        :iteration (int): Number of iterations to run the inference. ``Defaults to 1``.
         :prompt_to_lora_id_mapping (List[int]): Mapping to associate prompts with their respective LoRA adapter.
+        :include_sampler (bool, default=False): Enable/Disable sampling of next tokens.
+        :return_pdfs (bool, default=False): Return probability distributions along with sampled
+        next tokens. For Speculative Decoding Target Language Model,
+        `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
+        Decoding Draft Language Model and `return_pdfs`=False for regular model.
+        sampling_params (Dict[str, Any], default=None): A dictionary of sampling parameters supported by the QAIC backend.
+        The dictionary should contain the following keys:
+        `repetition_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
+        `min_ps`, and `random_numbers`. Each value should be a numpy array of shape (batch_size, 1).
 
     Returns:
         :CloudAI100ExecInfo: Object holding execution output and performance details.
@@ -368,35 +386,44 @@ def cloud_ai_100_exec_kv(
         qpc_path=qpc_path,
         device_id=device_id,
         ctx_len=ctx_len,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
         enable_debug_logs=enable_debug_logs,
         write_io_dir=write_io_dir,
         full_batch_size=full_batch_size,
         is_tlm=is_tlm,
+        include_sampler=include_sampler,
+        return_pdfs=return_pdfs,
+        sampling_params=sampling_params,
     )
-    if full_batch_size is None:
-        exec_info = [
-            generate_text.generate(prompt[i : i + batch_size], generation_len, stream, prompt_to_lora_id_mapping)
-            for i in range(0, len(prompt), batch_size)
-        ]
-        prefill_time = np.average([info.perf_metrics.prefill_time for info in exec_info])
-        decode_perf = np.average([info.perf_metrics.decode_perf for info in exec_info])
-        total_perf = np.average([info.perf_metrics.total_perf for info in exec_info])
-        total_time = np.average([info.perf_metrics.total_time for info in exec_info])
-        generated_texts = [info.generated_texts for info in exec_info]
-        generated_ids = [info.generated_ids for info in exec_info]
 
-        exec_info = CloudAI100ExecInfo(
-            batch_size=batch_size,
-            generated_texts=generated_texts,
-            generated_ids=generated_ids,
-            perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
-        )
-    else:
-        exec_info = generate_text.generate(
-            prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
-        )
+    for _ in range(0, int(iteration)):
+        if full_batch_size is None:
+            exec_info = [
+                generate_text.generate(prompt[i : i + batch_size], generation_len, stream, prompt_to_lora_id_mapping)
+                for i in range(0, len(prompt), batch_size)
+            ]
+            prefill_time = np.average([info.perf_metrics.prefill_time for info in exec_info])
+            decode_perf = np.average([info.perf_metrics.decode_perf for info in exec_info])
+            total_perf = np.average([info.perf_metrics.total_perf for info in exec_info])
+            total_time = np.average([info.perf_metrics.total_time for info in exec_info])
+            generated_texts = [info.generated_texts for info in exec_info]
+            generated_ids = [info.generated_ids for info in exec_info]
 
-    print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
+            exec_info = CloudAI100ExecInfo(
+                batch_size=batch_size,
+                generated_texts=generated_texts,
+                generated_ids=generated_ids,
+                perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
+            )
+        else:
+            exec_info = generate_text.generate(
+                prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
+            )
+
+        print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
+
+    # TODO: Need to handle the case where exec_info if given for n iterations
     return exec_info
 
 
@@ -407,17 +434,35 @@ class QEffTextGenerationBase:
         qpc_path: str,
         full_batch_size: Optional[int] = None,
         ctx_len: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         is_tlm: Optional[int] = None,
+        include_sampler: bool = False,
+        return_pdfs: bool = False,
+        sampling_params: Optional[Dict[str, Any]] = None,
+        activate: bool = True,
     ) -> None:
         self._ctx_len = ctx_len
+        self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
+        self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
         self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
+        self.return_pdfs = return_pdfs
+        self.sampling_params = sampling_params
+        self._qpc_path = qpc_path  # Store qpc_path for later use
 
         # Load QPC
-        self._session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
+        self._session = QAICInferenceSession(
+            qpc_path, device_id, activate=activate, enable_debug_logs=enable_debug_logs
+        )
+
+        # Validate sampler inputs for On-Device Sampling
+        self.include_sampler = validate_sampler_inputs(
+            session_inputs=set(self._session.input_names), include_sampler=include_sampler
+        )
 
         # Fetch the variables from the QPC
         self._vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
@@ -523,10 +568,17 @@ class QEffTextGenerationBase:
         Returns:
             vocab_size: The vocabulary size fetched from the session's allowed shapes.
         """
+        key = (
+            "probs"
+            if self.include_sampler and self.return_pdfs
+            else "next_tokens"
+            if self.include_sampler
+            else "logits"
+        )
         if self._session.allowed_shapes:
-            return [x[self._session.binding_index_map["logits"]] for x in self._session.allowed_shapes][0][1][2]
+            return [x[self._session.binding_index_map[key]] for x in self._session.allowed_shapes][0][1][2]
 
-        return self._session.bindings[self._session.binding_index_map["logits"]].dims[2]
+        return self._session.bindings[self._session.binding_index_map[key]].dims[2]
 
     def _fetch_generation_len(self, generation_len, max_gen_len):
         """
@@ -574,6 +626,13 @@ class QEffTextGenerationBase:
             decode_inputs["position_ids"] = self.decode_pos_ids
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
+        if self.include_sampler:
+            decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
+            for op in Constants.SAMPLER_OPS:
+                if self.batch_index is not None:
+                    decode_inputs[op] = self.sampling_params[op][self.batch_index.flatten()]
+                else:
+                    decode_inputs[op] = self.sampling_params[op]
 
         if self._prompt_to_lora_id_mapping_decode:
             if self.full_batch_size:
@@ -589,21 +648,24 @@ class QEffTextGenerationBase:
 
     def _fetch_next_token_id(self, outputs):
         """
-        Fetches the next token ID from the model's output logits.
-        The method identifies the token with the highest probability using argmax along the last dimension.
+        Fetches the next token ID from the model's output.
+
         Args:
-            outputs (dict): A dictionary containing the model's output logits. The key "logits" should map to a numpy array of shape (batch_size, sequence_length, vocab_size) or (batch_size, vocab_size).
+            outputs (dict): A dictionary containing the model's output.
 
         Returns:
             numpy.ndarray: An array of the next token IDs for each sequence in the batch.
         """
-        logits = outputs["logits"]
-        if len(logits.shape) == 2:
-            logits = np.expand_dims(logits, 1)
-
-        # Get output token
-        next_token_id = logits.argmax(2)
-        return next_token_id
+        if self.include_sampler:
+            if self.return_pdfs:
+                return outputs["probs"].argmax(2)
+            else:
+                return outputs["next_tokens"].reshape(outputs["next_tokens"].shape[0], outputs["next_tokens"].shape[1])
+        else:
+            logits = outputs["logits"]
+            if len(logits.shape) == 2:
+                logits = np.expand_dims(logits, 1)
+            return logits.argmax(2)
 
     def initialize_decode_inputs(self, num_prompts, execution_batch_size, max_gen_length):
         """
@@ -673,6 +735,23 @@ class QEffTextGenerationBase:
 
             _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
+    def _set_output_buffers(self, batch_size: int = 1, sequence_length: int = 1):
+        """
+        Sets the sizes of the output buffers.
+
+        Args:
+            batch_size (int): The batch size.
+        """
+        if self.include_sampler:
+            if self.return_pdfs:
+                probs_out_placeholder = np.zeros((batch_size, sequence_length, self._vocab_size), dtype=np.float32)
+                self._session.set_buffers({"probs": probs_out_placeholder})
+            next_tokens_out_placeholder = np.zeros((batch_size, sequence_length, 1), dtype=np.int64)
+            self._session.set_buffers({"next_tokens": next_tokens_out_placeholder})
+        else:
+            logits_out_placeholder = np.zeros((batch_size, sequence_length, self._vocab_size), dtype=np.float32)
+            self._session.set_buffers({"logits": logits_out_placeholder})
+
     def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
         """
         Runs prefill for a given prompt and generation length.
@@ -702,9 +781,8 @@ class QEffTextGenerationBase:
         max_gen_len = self._ctx_len - position_ids.max()
         generation_len = self._fetch_generation_len(generation_len, max_gen_len)
 
-        # Set the prefill logic buffer
-        logits_out_placeholder = np.zeros((prefill_logit_bs, 1, self._vocab_size), dtype=np.float32)
-        self._session.set_buffers({"logits": logits_out_placeholder})
+        # Set the prefill output buffers
+        self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
 
         inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -712,8 +790,16 @@ class QEffTextGenerationBase:
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
+
         if self.is_tlm:
             inputs["num_logits_to_keep"] = np.zeros((1, 1))
+        if self.include_sampler:
+            inputs["last_accepted_output_tokens"] = inputs["input_ids"]
+            for op in Constants.SAMPLER_OPS:
+                if decode_batch_id is not None:
+                    inputs[op] = self.sampling_params[op][decode_batch_id.flatten()]
+                else:
+                    inputs[op] = self.sampling_params[op]
 
         if self._prompt_to_lora_id_mapping_prefill:
             if self.full_batch_size:
@@ -724,7 +810,17 @@ class QEffTextGenerationBase:
                 batch_lora_ids = [self._prompt_to_lora_id_mapping_prefill.popleft() for i in range(self.batch_size)]
                 inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
 
+        if self.comp_ctx_lengths_prefill is not None:
+            self.list_of_comp_ctx_lengths_prefill = [np.zeros(length) for length in self.comp_ctx_lengths_prefill]
+            prefill_ccl_id = 0
+            inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
         for i in range(num_chunks):
+            if self.comp_ctx_lengths_prefill is not None:
+                if (i + 1) * self._prefill_seq_len > self.comp_ctx_lengths_prefill[prefill_ccl_id]:
+                    prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
+                    inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
             chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][
                 :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
@@ -732,7 +828,10 @@ class QEffTextGenerationBase:
             chunk_inputs["position_ids"] = inputs["position_ids"][
                 :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
+            if self.include_sampler:
+                chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
             outputs = self._session.run(chunk_inputs)
+
             if self._write_io_dir is not None:
                 write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
         return (
@@ -740,6 +839,19 @@ class QEffTextGenerationBase:
             position_ids,
             generation_len,
         )
+
+    def initialize_ccl(self, decode_inputs):
+        self.list_of_comp_ctx_lengths_decode = [np.zeros(length) for length in self.comp_ctx_lengths_decode]
+        max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
+        max_position_id = np.max(decode_inputs["position_ids"])
+        ccl_id_initial = 0
+        ccl_id = ccl_id_initial
+        for i in range(ccl_id_initial, len(self.comp_ctx_lengths_decode)):
+            if max_position_id < self.comp_ctx_lengths_decode[i]:
+                ccl_id = i
+                break
+
+        return ccl_id, max_ccl_id
 
     def run_continuous_batching_decode(self, prompt_queue, generation_len):
         """
@@ -753,11 +865,12 @@ class QEffTextGenerationBase:
 
         """
 
-        # Set logits placeholder for decode
-        logits_out_placeholder = np.zeros(
-            (self.full_batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32
+        # Set output placeholders for decode
+        self._set_output_buffers(
+            batch_size=self.full_batch_size,
+            sequence_length=self._decode_seq_len,
         )
-        self._session.set_buffers({"logits": logits_out_placeholder})
+
         # Generate flag for tracking progress for each batch ID
         current_decode_ongoing = np.full((self.full_batch_size, 1), True)
 
@@ -771,14 +884,15 @@ class QEffTextGenerationBase:
         # Prepare decode inputs inputs.
         decode_inputs = self.prepare_decode_inputs()
 
+        if self.comp_ctx_lengths_decode is not None:
+            ccl_id, max_ccl_id = self.initialize_ccl(decode_inputs)
+            decode_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_decode[ccl_id]
+
         while prompt_queue or current_decode_ongoing.any():
             outputs = self._session.run(decode_inputs)
 
             # Prepare inputs for next iteration
-            logits = outputs["logits"]
-            if len(logits.shape) == 2:
-                logits = np.expand_dims(logits, 1)
-            next_token_id = logits.argmax(2)
+            next_token_id = self._fetch_next_token_id(outputs)
 
             for decode_batch_id in range(self.full_batch_size):
                 if (
@@ -800,13 +914,30 @@ class QEffTextGenerationBase:
                         self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze(1)
                         generated_id_current_index[decode_batch_id] = 1
 
-                        self._session.set_buffers({"logits": logits_out_placeholder})
+                        self._set_output_buffers(
+                            batch_size=self.full_batch_size,
+                            sequence_length=self._decode_seq_len,
+                        )
                         decode_pause_time += perf_counter() - start
 
                         if self._prompt_to_lora_id_mapping_decode:
                             decode_inputs["lora_ids"][decode_batch_id] = self._prompt_to_lora_id_mapping_decode[
                                 batch_id_map[decode_batch_id]
                             ]
+
+                        if self.comp_ctx_lengths_decode is not None:
+                            ###Recalculate ccl_id based on position ids###
+                            # Determine the maximum value of position_ids across all batch elements
+                            max_position_id = np.max(decode_inputs["position_ids"])
+
+                            # Update ccl_id and comp_ctx_lengths_decode based on the maximum position id
+                            ccl_id_initial = 0
+                            ccl_id = ccl_id_initial
+                            for i in range(ccl_id_initial, len(self.comp_ctx_lengths_decode)):
+                                if max_position_id < self.comp_ctx_lengths_decode[i]:
+                                    ccl_id = i
+                                    break
+                            decode_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_decode[ccl_id]
 
                     else:
                         current_decode_ongoing[decode_batch_id] = False
@@ -817,12 +948,25 @@ class QEffTextGenerationBase:
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
                         next_token_id[decode_batch_id, -1]
                     )
+                    if self.include_sampler:
+                        decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
+
+                    if self.comp_ctx_lengths_decode is not None:
+                        # Update ccl_id and comp_ctx_lengths_decode based on the maximum position id
+                        if (
+                            decode_inputs["position_ids"][decode_batch_id, -1]
+                            >= self.comp_ctx_lengths_decode[ccl_id] - 1
+                        ):
+                            ccl_id = min(ccl_id + 1, max_ccl_id)
+                            decode_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_decode[ccl_id]
 
                     generated_id_current_index[decode_batch_id] += 1
 
         return decode_pause_time
 
-    def run_decode(self, decode_inputs, generation_len, streamer: Optional[transformers.TextStreamer] = None):
+    def run_decode(
+        self, decode_inputs, generation_len, automation, streamer: Optional[transformers.TextStreamer] = None
+    ):
         """
         Default method for running decode. Executes the decoding process for a given set of inputs and a specified generation length.
 
@@ -842,7 +986,18 @@ class QEffTextGenerationBase:
             self._session.set_buffers({"logits": logits_out_placeholder})
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
         num_token = 0
+
+        if self.comp_ctx_lengths_decode is not None:
+            ccl_id, max_ccl_id = self.initialize_ccl(decode_inputs)
+            decode_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_decode[ccl_id]
+
+        cache_index = np.max(decode_inputs["position_ids"])
         for num_token in range(1, generation_len):
+            if self.comp_ctx_lengths_decode is not None:
+                if cache_index >= self.comp_ctx_lengths_decode[ccl_id] - 1:
+                    ccl_id = min(ccl_id + 1, max_ccl_id)
+                    decode_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_decode[ccl_id]
+
             if streamer:
                 streamer.put(decode_inputs["input_ids"][0])
             outputs = self._session.run(decode_inputs)
@@ -852,16 +1007,19 @@ class QEffTextGenerationBase:
                 self._write_io_dir = None
 
             # Prepare inputs for next iteration
-            decode_inputs["input_ids"] = outputs["logits"].argmax(2)
+            decode_inputs["input_ids"] = self._fetch_next_token_id(outputs)
             decode_inputs["position_ids"][:, -1] += 1
+            cache_index += 1
             self.generated_ids[:, num_token] = decode_inputs["input_ids"][:, -1]
             finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+            if self.include_sampler:
+                decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
 
-            if finished_sequences.all():
+            if finished_sequences.all() and not automation:
                 break
         return num_token
 
-    def generate_decode_stream(self, decode_inputs, generation_len):
+    def generate_decode_stream(self, decode_inputs, generation_len, automation):
         """
         Generator method for yielding decode tokens. Executes the decoding process for a given set of inputs and a specified generation length.
 
@@ -889,7 +1047,7 @@ class QEffTextGenerationBase:
             self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
             finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
 
-            if finished_sequences.all():
+            if finished_sequences.all() and not automation:
                 break
         yield decode_inputs["input_ids"]  # yield the last token
 
@@ -901,17 +1059,36 @@ class TextGeneration:
         qpc_path: str,
         full_batch_size: Optional[int] = None,
         ctx_len: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         is_tlm: bool = False,
+        include_sampler: bool = False,
+        return_pdfs: bool = False,
+        sampling_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._qaic_model = QEffTextGenerationBase(
-            tokenizer, qpc_path, full_batch_size, ctx_len, device_id, enable_debug_logs, write_io_dir, is_tlm
+            tokenizer=tokenizer,
+            qpc_path=qpc_path,
+            full_batch_size=full_batch_size,
+            ctx_len=ctx_len,
+            comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+            comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+            device_id=device_id,
+            enable_debug_logs=enable_debug_logs,
+            write_io_dir=write_io_dir,
+            is_tlm=is_tlm,
+            include_sampler=include_sampler,
+            return_pdfs=return_pdfs,
+            sampling_params=sampling_params,
         )
         self._full_batch_size = self._qaic_model.full_batch_size
         self._tokenizer = self._qaic_model.tokenizer
         self._ctx_len = ctx_len
+        self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
+        self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
         self._perf_metrics = None
         self._prompt_queue = None
         self._text_streamer = None
@@ -953,6 +1130,7 @@ class TextGeneration:
         prompt: List[str],
         generation_len: Optional[int] = None,
         stream: Optional[bool] = True,
+        automation: Optional[bool] = False,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
     ):
         """
@@ -980,7 +1158,7 @@ class TextGeneration:
         decode_inputs = self._qaic_model.prepare_decode_inputs()
 
         loop_start = perf_counter()  # Start decode loop timer
-        num_token = self._qaic_model.run_decode(decode_inputs, generation_len, self._text_streamer)
+        num_token = self._qaic_model.run_decode(decode_inputs, generation_len, automation, self._text_streamer)
         end = perf_counter()
         generated_texts = self._tokenizer.batch_decode(self._qaic_model.generated_ids, skip_special_tokens=True)
 
@@ -1034,6 +1212,7 @@ class TextGeneration:
         self,
         prompt: List[str],
         generation_len: Optional[int] = None,
+        automation: Optional[bool] = False,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
     ):
         """
@@ -1063,7 +1242,7 @@ class TextGeneration:
 
         loop_start = perf_counter()  # Start decode loop timer
         num_token = 0
-        for token_id in self._qaic_model.generate_decode_stream(decode_inputs, generation_len):
+        for token_id in self._qaic_model.generate_decode_stream(decode_inputs, generation_len, automation):
             decoded_tokens = []
             for idx in range(self._qaic_model.batch_size):
                 decoded_tokens.append(self._tokenizer.decode(token_id[idx], skip_special_tokens=True))
@@ -1082,6 +1261,7 @@ class TextGeneration:
         prompt: List[str],
         generation_len: Optional[int] = None,
         stream: bool = True,
+        automation: Optional[bool] = False,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
     ):
         """
@@ -1105,7 +1285,7 @@ class TextGeneration:
             if stream:
                 print("\nPrompt : " + prompt[0] + "\nCompletion :", flush=True, end="")
             perf_metrics, generated_texts = self._regular_model_execution(
-                prompt, generation_len, stream, prompt_to_lora_id_mapping
+                prompt, generation_len, stream, automation, prompt_to_lora_id_mapping
             )
 
         if stream:

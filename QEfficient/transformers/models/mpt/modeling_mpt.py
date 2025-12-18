@@ -12,6 +12,7 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
+from transformers.cache_utils import Cache
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
@@ -38,6 +39,7 @@ class QEffMptAttention(MptAttention):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
     ):
@@ -50,20 +52,15 @@ class QEffMptAttention(MptAttention):
         value_states = value_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
 
         if past_key_value is not None:
-            if len(past_key_value) != 0:
-                cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-                pkv = QEffDynamicCache()
-                pkv.key_cache.append(past_key_value[0])
-                pkv.value_cache.append(past_key_value[1])
-                key_states, value_states = pkv.update(key_states, value_states, 0, cache_kwargs)
-        if use_cache:
-            past_key_value = (pkv.key_cache[0], pkv.value_cache[0])
-        else:
-            past_key_value = None
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.softmax_scale
 
-        query_length = seq_length if past_key_value is None else seq_length + past_key_value[0].shape[2]
+        query_length = seq_length if past_key_value is None else seq_length + past_key_value.get_seq_length()
 
         if position_bias is not None:
             if len(position_bias.shape) != 3:
@@ -108,6 +105,7 @@ class QEffMptBlock(MptBlock):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         use_cache: bool = False,
         output_attentions: bool = False,
     ):
@@ -125,6 +123,7 @@ class QEffMptBlock(MptBlock):
             batch_index=batch_index,
             attention_mask=attention_mask,
             past_key_value=layer_past,
+            comp_ctx_lengths=comp_ctx_lengths,
             use_cache=use_cache,
         )
 
@@ -137,15 +136,7 @@ class QEffMptBlock(MptBlock):
 
         # MLP.
         output = self.ffn(layernorm_output, residual)
-        outputs = (output,)
-
-        if use_cache:
-            outputs += (past_key_value,)
-
-        if output_attentions:
-            outputs += (attn_weights,)
-
-        return outputs  # hidden_states, present, attentions
+        return output, attn_weights
 
 
 class QEFfMptModel(MptModel):
@@ -159,6 +150,7 @@ class QEFfMptModel(MptModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -190,18 +182,18 @@ class QEFfMptModel(MptModel):
         if inputs_embeds is None:
             inputs_embeds = self.wte(input_ids)
 
+        return_legacy_cache = False
+        if use_cache and not isinstance(past_key_values, Cache):
+            return_legacy_cache = True
+            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+
         hidden_states = inputs_embeds
 
-        presents = () if use_cache else None
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
 
         # Compute alibi tensor: check build_alibi_tensor documentation
-        seq_length_with_past = seq_length
-        past_key_values_length = 0
-        if past_key_values[0] is not None:
-            past_key_values_length = past_key_values[0][0].shape[2]
-            seq_length_with_past = seq_length_with_past + past_key_values_length
+        past_key_values_length = past_key_values.get_seq_length() if past_key_values is not None else 0
 
         alibi = self.build_mpt_alibi_tensor(self.num_heads, self.config.max_seq_len, device=hidden_states.device)
 
@@ -213,13 +205,14 @@ class QEFfMptModel(MptModel):
         elif attention_mask is None:
             causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values_length)
 
-        for block, layer_past in zip(self.blocks, past_key_values):
+        for block in self.blocks:
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             outputs = block(
                 hidden_states,
-                layer_past=layer_past,
+                layer_past=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 batch_index=batch_index,
@@ -228,24 +221,27 @@ class QEFfMptModel(MptModel):
                 position_bias=alibi,
             )
             hidden_states = outputs[0]
-            if use_cache is True:
-                presents = presents + (outputs[1],)
 
             if output_attentions:
-                all_self_attentions = all_self_attentions + (outputs[2 if use_cache else 1],)
+                all_self_attentions = all_self_attentions + (outputs[1],)
 
         # Add last hidden state
         hidden_states = self.norm_f(hidden_states)
+
+        if return_legacy_cache:
+            past_key_values = past_key_values.to_legacy_cache()
 
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, presents, all_hidden_states, all_self_attentions] if v is not None)
+            return tuple(
+                v for v in [hidden_states, past_key_values, all_hidden_states, all_self_attentions] if v is not None
+            )
 
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
-            past_key_values=presents,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
         )
@@ -262,6 +258,7 @@ class QEffMptForCausalLM(MptForCausalLM):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -283,6 +280,7 @@ class QEffMptForCausalLM(MptForCausalLM):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,

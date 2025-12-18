@@ -117,6 +117,7 @@ class QEffFalconAttention(FalconAttention):
         attention_mask: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Cache] = None,
         head_mask: Optional[torch.Tensor] = None,
@@ -135,13 +136,15 @@ class QEffFalconAttention(FalconAttention):
         key_layer = key_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
-        kv_seq_len = key_layer.shape[-2]
-        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         cos, sin = self.rotary_emb(value_layer, seq_len=kv_seq_len)
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
 
         if layer_past is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
 
         if attention_mask is not None:
@@ -162,10 +165,7 @@ class QEffFalconAttention(FalconAttention):
 
         attn_output = self.dense(attn_output)
 
-        if output_attentions:
-            return attn_output, layer_past, attention_scores
-        else:
-            return attn_output, layer_past
+        return attn_output, attention_scores
 
 
 class QEffFalconDecoderLayer(FalconDecoderLayer):
@@ -176,6 +176,7 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
         attention_mask: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Union[Cache, Tuple[torch.Tensor, torch.Tensor]]] = None,
         head_mask: Optional[torch.Tensor] = None,
@@ -193,12 +194,13 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
             attention_layernorm_out = self.input_layernorm(hidden_states)
 
         # Self attention.
-        attn_outputs = self.self_attention(
+        attention_output, attn_weights = self.self_attention(
             attention_layernorm_out,
             layer_past=layer_past,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             alibi=alibi,
             head_mask=head_mask,
@@ -206,8 +208,6 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
             output_attentions=output_attentions,
             cache_position=cache_position,
         )
-
-        attention_output = attn_outputs[0]
 
         if not self.config.new_decoder_architecture:
             if self.config.parallel_attn:
@@ -225,8 +225,6 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
         ):
             mlp_layernorm_out = attention_layernorm_out
 
-        outputs = attn_outputs[1:]
-
         # MLP.
         mlp_output = self.mlp(mlp_layernorm_out)
 
@@ -235,12 +233,7 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
 
         output = dropout_add(mlp_output, residual, self.config.hidden_dropout, training=self.training)
 
-        if use_cache:
-            outputs = (output,) + outputs
-        else:
-            outputs = (output,) + outputs[1:]
-
-        return outputs  # hidden_states, past_kv, attentions
+        return output, attn_weights
 
 
 class QEffFalconModel(FalconModel):
@@ -258,6 +251,7 @@ class QEffFalconModel(FalconModel):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, Tuple[Tuple[torch.Tensor, torch.Tensor], ...]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
@@ -320,6 +314,7 @@ class QEffFalconModel(FalconModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 head_mask=head_mask[i],
                 use_cache=use_cache,
@@ -365,24 +360,16 @@ class QEffFalconForCausalLM(FalconForCausalLM):
         position_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[Tuple[torch.Tensor], CausalLMOutputWithCrossAttentions]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
-            `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
-            are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
-        """
-
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         transformer_outputs = self.transformer(
@@ -390,6 +377,7 @@ class QEffFalconForCausalLM(FalconForCausalLM):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
