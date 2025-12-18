@@ -106,29 +106,7 @@ pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
 )
 ```
 
-### 2. Export at Low Resolution, Compile for Higher
-
-Export ONNX models at low resolution for flexibility:
-
-```python
-# Export at 180p for faster export
-pipeline.export(height=192, width=320, num_frames = 81, use_onnx_subfunctions=True)
-
-
-# Generate at higher resolution
-output = pipeline(
-    prompt="Your prompt here",
-    height=480,  # Higher than export resolution
-    width=832,
-    num_frames = 81
-    use_onnx_subfunctions=True, # set True to enable subfunction
-    custom_config_path="examples/diffusers/wan/wan_config.json",
-)
-```
-**NOTE**: To export model with subfunction while export we need pass **use_onnx_subfunctions = True**.
- - if you are directly using pipeline() without export, make sure to pass in pipeline(**use_onnx_subfunctions = True**)
-
-### 3. To Run with Blocking
+### 2. To Run with Blocking
 
 Use environment variables to enable attention blocking:
 
@@ -151,9 +129,6 @@ Head blocking is common in all modes
 - **`q`**: Block query processing (along with Head blocking)
 - **`qkv`**: Block query, key, and value (along with Head blocking)
 - **`default`**: Head-only blocking
-
-### Note: Always pass blocks details of desired resolution
-- Incase if you are exporting onnx with 180p, but desired resolution is 720p then keep block sizes as for 720p.
 
 
 ## Configuration File
@@ -248,7 +223,6 @@ export_to_video(frames, "output.mp4", fps=16)  # Export to MP4
 - WAN 2.2 Lightning is optimized for 4-step generation with `guidance_scale=1.0`
 - The transformer uses dual-stage processing (high/low noise models)
 - Attention blocking is essential for higher resolutions (480p+)
-- Export resolution can be different from generation resolution for flexibility (Recommended to export for 180p with blocking needed for higher resolution)
 
 
 ## References

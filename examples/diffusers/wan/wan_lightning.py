@@ -54,16 +54,8 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # )  # 2 layers
 
 
-# prompt = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 prompt = "In a warmly lit living room, an elderly man with gray hair sits in a wooden armchair adorned with a blue cushion. He wears a gray cardigan over a white shirt, engrossed in reading a book. As he turns the pages, he subtly adjusts his posture, ensuring his glasses stay in place. He then removes his glasses, holding them in his hand, and turns his head to the right, maintaining his grip on the book. The soft glow of a bedside lamp bathes the scene, creating a calm and serene atmosphere, with gentle shadows enhancing the intimate setting."
 
-# exporting for 180 P but compile for given height, width in pipeline
-# pipeline.export(height=192, width=320, num_frames=81, use_onnx_subfunctions=True)
-
-
-# compile for 480p resolution
-height = 480
-width = 832
 
 output = pipeline(
     prompt=prompt,
@@ -73,15 +65,11 @@ output = pipeline(
     num_inference_steps=4,
     generator=torch.manual_seed(0),
     custom_config_path="examples/diffusers/wan/wan_config.json",
-    height=height,
-    width=width,
+    height=480,
+    width=832,
     use_onnx_subfunctions=True,
     parallel_compile=True,
 )
 frames = output.images[0]
 export_to_video(frames, "output_t2v.mp4", fps=16)
 print(output)
-
-## To run with HQKV blocking for 480 P
-# QAIC_COMPILER_OPTS_UNSUPPORTED="-loader-inline-all=0" ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=21 num_q_blocks=2  python3 examples/diffusers/wan/wan_lightning.py
-# for 180p - QAIC_COMPILER_OPTS_UNSUPPORTED="-loader-inline-all=0" ATTENTION_BLOCKING_MODE=kv head_block_size=16 num_kv_blocks=3 python3  examples/diffusers/wan/wan_lightning.py

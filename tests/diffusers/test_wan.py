@@ -14,12 +14,14 @@ import safetensors.torch
 import torch
 from diffusers import WanPipeline
 from diffusers.loaders.lora_conversion_utils import _convert_non_diffusers_wan_lora_to_diffusers
+from diffusers.utils import export_to_video
 from huggingface_hub import hf_hub_download
 
 from QEfficient import QEffWanPipeline
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
+    calculate_latent_dimensions,
     set_module_device_ids,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -70,8 +72,16 @@ def wan_pipeline_call_with_mad_validation(
 
     device = "cpu"
 
-    # Step 1: Configure height, width, and compile
-    pipeline.configure_height_width_cl_latents_hw(height, width, num_frames)
+    # Step 1: Compile() (export and compile)
+    pipeline.cl, pipeline.latent_height, pipeline.latent_width, pipeline.latent_frames = calculate_latent_dimensions(
+        height,
+        width,
+        num_frames,
+        pipeline.model.vae.config.scale_factor_spatial,
+        pipeline.model.vae.config.scale_factor_temporal,
+        pipeline.patch_height,
+        pipeline.patch_width,
+    )
     pipeline.compile(
         compile_config=custom_config_path,
         parallel=parallel_compile,
@@ -92,8 +102,13 @@ def wan_pipeline_call_with_mad_validation(
         guidance_scale_2,
     )
 
-    if num_frames % pipeline.vae_scale_factor_temporal != 1:
-        num_frames = num_frames // pipeline.vae_scale_factor_temporal * pipeline.vae_scale_factor_temporal + 1
+    if num_frames % pipeline.model.vae.config.scale_factor_temporal != 1:
+        num_frames = (
+            num_frames
+            // pipeline.model.vae.config.scale_factor_temporal
+            * pipeline.model.vae.config.scale_factor_temporal
+            + 1
+        )
     num_frames = max(num_frames, 1)
 
     if pipeline.boundary_ratio is not None and guidance_scale_2 is None:
@@ -205,14 +220,12 @@ def wan_pipeline_call_with_mad_validation(
                 # High-noise stage
                 current_model = pipeline.transformer.model.transformer_high
                 pytorch_current_model = pytorch_pipeline.transformer
-                current_guidance_scale = guidance_scale
                 model_type = torch.ones(1, dtype=torch.int64)
                 model_name = "transformer_high"
             else:
                 # Low-noise stage
                 current_model = pipeline.transformer.model.transformer_low
                 pytorch_current_model = pytorch_pipeline.transformer_2
-                current_guidance_scale = guidance_scale_2
                 model_type = torch.ones(2, dtype=torch.int64)
                 model_name = "transformer_low"
 
@@ -282,29 +295,6 @@ def wan_pipeline_call_with_mad_validation(
                 model_name,
                 f"step {i} (t={t.item():.1f})",
             )
-
-            # Handle classifier-free guidance if needed
-            if pipeline.do_classifier_free_guidance:
-                # For WAN Lightning, CFG is typically False, but handle it if enabled
-                with current_model.cache_context("uncond"):
-                    inputs_aic_uncond = {
-                        "hidden_states": latents.detach().numpy(),
-                        "encoder_hidden_states": negative_prompt_embeds.detach().numpy(),
-                        "rotary_emb": rotary_emb.detach().numpy(),
-                        "temb": temb.detach().numpy(),
-                        "timestep_proj": timestep_proj.detach().numpy(),
-                        "tsp": model_type.detach().numpy(),
-                    }
-
-                    outputs_uncond = pipeline.transformer.qpc_session.run(inputs_aic_uncond)
-                    hidden_states_uncond = torch.tensor(outputs_uncond["output"])
-                    hidden_states_uncond = hidden_states_uncond.reshape(
-                        batch_size, post_patch_num_frames, post_patch_height, post_patch_width, p_t, p_h, p_w, -1
-                    )
-                    hidden_states_uncond = hidden_states_uncond.permute(0, 7, 1, 4, 2, 5, 3, 6)
-                    noise_uncond = hidden_states_uncond.flatten(6, 7).flatten(4, 5).flatten(2, 3)
-
-                    noise_pred = noise_uncond + current_guidance_scale * (noise_pred - noise_uncond)
 
             # Update latents using scheduler
             latents = pipeline.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
@@ -508,6 +498,12 @@ def test_wan_pipeline(wan_pipeline):
             print(f"   - Frame mode: {frame_validation['mode']}")
             print(f"   - Frame variance: {frame_validation['variance']:.2f}")
             print(f"   - Mean pixel value: {frame_validation['mean_pixel_value']:.2f}")
+
+            # Save result as video
+            frames = result.images[0]
+            export_to_video(frames, "test_wan_output_t2v.mp4", fps=16)
+            print("\n🎬 VIDEO SAVED: test_wan_output_t2v.mp4")
+            print(result)
 
         if config["validation_checks"]["onnx_export"]:
             # Check if transformer ONNX file exists

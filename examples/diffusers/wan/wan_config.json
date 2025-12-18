@@ -1,44 +1,37 @@
 {
-  "description": "Default configuration for Wan pipeline",
+  "description": "Default configuration for Wan pipeline with unified transformer (model_type: 1 for high noise; model_type:2 for low noise)",
   "model_type": "wan",
   "modules": {
     "transformer": {
-      "specializations": [ {
-          "batch_size": "1",
-          "num_channels": "16",
-          "num_frames": "21",
-          "latent_height": "24",
-          "latent_width": "40",
-          "steps": "1",
-          "sequence_length": "512",
-          "cl": "3840",
-          "model_type": 1
-        },
-      {
-          "batch_size": "1",
-          "num_channels": "16",
-          "num_frames": "21",
-          "latent_height": "24",
-          "latent_width": "40",
-          "steps": "1",
-          "sequence_length": "512",
-          "cl": "3840",
-          "model_type": 2
-        }
-      ],
-      "compilation": {
-        "onnx_path": null,
-        "compile_dir": null,
-        "mdp_ts_num_devices": 16,
-        "mxfp6_matmul": true,
-        "convert_to_fp16": true,
-        "aic_num_cores": 16,
-        "mos": 1,
-        "mdts_mos": 1
-      },
-      "execute": {
-        "device_ids": null
-      }
+          "specializations": [
+                              {
+                                  "batch_size": "1",
+                                  "num_channels": "16",
+                                  "steps": "1",
+                                  "sequence_length": "512",
+                                  "model_type": 1
+                              },
+                              {
+                                  "batch_size": "1",
+                                  "num_channels": "16",
+                                  "steps": "1",
+                                  "sequence_length": "512",
+                                  "model_type": 2
+                              }
+                          ],
+          "compilation":  {
+                              "onnx_path": null,
+                              "compile_dir": null,
+                              "mdp_ts_num_devices": 16,
+                              "mxfp6_matmul": true,
+                              "convert_to_fp16": true,
+                              "aic_num_cores": 16,
+                              "mos": 1,
+                              "mdts_mos": 1
+                         },
+          "execute":     {
+                              "device_ids": null
+                          }
     }
   }
 }

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import PIL.Image
 import torch
+import torch.nn as nn
 from tqdm import tqdm
 
 from QEfficient.utils._utils import load_json
@@ -36,6 +37,48 @@ def calculate_compressed_latent_dimension(height: int, width: int, vae_scale_fac
     # cl = compressed latent dimension (divided by 4 for Flux's 2x2 packing)
     cl = (latent_height * latent_width) // 4
     return cl, latent_height, latent_width
+
+
+def calculate_latent_dimensions(
+    height: int,
+    width: int,
+    num_frames: int,
+    vae_scale_factor_spatial: int,
+    vae_scale_factor_temporal: int,
+    patch_height: int,
+    patch_width: int,
+) -> int:
+    """
+    Calculate the latent dimensions, Compressed latent dimension (cl) for transformer buffer allocation.
+
+    This method computes the compressed sequence length (cl) that the transformer
+    will process, based on the target video dimensions, VAE scale factors, and
+    patch sizes. This is crucial for proper buffer allocation in QAIC inference.
+
+    Args:
+        height (int): Target video height in pixels
+        width (int): Target video width in pixels
+        num_frames (int): Target video frames in pixels
+
+    Returns:
+        tuple: (cl, latent_height, latent_width)
+            - cl (int): Compressed latent dimension for transformer input
+            - latent_height (int): Height in latent space
+            - latent_width (int): Width in latent space
+
+    Mathematical Formula:
+        latent_height = height // vae_scale_factor_spatial
+        latent_width = width // vae_scale_factor_spatial
+        latent_frames =  math.ceil(num_frames / vae_scale_factor_temporal)
+        cl = (latent_height // patch_height) * (latent_width // patch_width) * latent_frames
+
+    """
+    # Calculate latent space dimensions after VAE encoding
+    latent_height = height // vae_scale_factor_spatial
+    latent_width = width // vae_scale_factor_spatial
+    latent_frames = math.ceil(num_frames / vae_scale_factor_temporal)
+    cl = (latent_height // patch_height * latent_width // patch_width) * latent_frames
+    return cl, latent_height, latent_width, latent_frames
 
 
 def config_manager(cls, config_source: Optional[str] = None):
@@ -94,14 +137,19 @@ def compile_modules_parallel(
         specializations = config["modules"][module_name]["specializations"].copy()
         compile_kwargs = config["modules"][module_name]["compilation"]
 
-        if specialization_updates and module_name in specialization_updates:
-            if isinstance(specializations, list):
-                for spec in specializations:
-                    spec.update(specialization_updates[module_name])
-                module_obj.compile(specializations=specializations, **compile_kwargs)
+        if (
+            specialization_updates and module_name in specialization_updates
+        ):  # Apply specialization updates if available
+            if isinstance(specializations, list):  # for unified models spec will be [{high_noise}, {low_noise}]
+                for i, spec in enumerate(specializations):
+                    spec.update(specialization_updates[module_name][i])
             else:
                 specializations.update(specialization_updates[module_name])
-                module_obj.compile(specializations=[specializations], **compile_kwargs)
+                specializations = [specializations]
+        else:
+            specializations = [specializations]
+        # Compile with prepared specializations
+        module_obj.compile(specializations=specializations, **compile_kwargs)
 
     # Execute compilations in parallel
     with ThreadPoolExecutor(max_workers=len(modules)) as executor:
@@ -140,12 +188,19 @@ def compile_modules_sequential(
         specializations = module_config[module_name]["specializations"].copy()
         compile_kwargs = module_config[module_name]["compilation"]
 
-        # Apply dynamic specialization updates if provided
-        if specialization_updates and module_name in specialization_updates:
-            specializations.update(specialization_updates[module_name])
-
-        # Compile the module to QPC format
-        module_obj.compile(specializations=[specializations], **compile_kwargs)
+        if (
+            specialization_updates and module_name in specialization_updates
+        ):  # Apply specialization updates if available
+            if isinstance(specializations, list):  # for unified models spec will be [{high_noise}, {low_noise}]
+                for i, spec in enumerate(specializations):
+                    spec.update(specialization_updates[module_name][i])
+            else:
+                specializations.update(specialization_updates[module_name])
+                specializations = [specializations]
+        else:
+            specializations = [specializations]
+        # Compile with prepared specializations
+        module_obj.compile(specializations=specializations, **compile_kwargs)
 
 
 @dataclass(frozen=True)
@@ -224,440 +279,67 @@ class QEffPipelineOutput:
 ONNX_SUBFUNCTION_MODULE = ["transformer"]
 
 
-# ============================================================================
-# Attention Blocking Utilities for Memory-Efficient Processing
-# ============================================================================
-
-
-def get_attention_blocking_config():
+class QEffWanUnifiedWrapper(nn.Module):
     """
-    Get attention blocking configuration from environment variables.
+    A wrapper class that combines WAN high and low noise transformers into a single unified transformer.
 
-    Returns:
-        tuple: (blocking_mode, head_block_size, num_kv_blocks, num_q_blocks)
-            - blocking_mode (str): The blocking strategy ('kv', 'q', 'qkv', 'default')
-            - head_block_size (int or None): Number of attention heads per block
-            - num_kv_blocks (int or None): Number of key-value blocks
-            - num_q_blocks (int or None): Number of query blocks
+    This wrapper dynamically selects between high and low noise transformers based on the timestep shape
+    in the ONNX graph during inference. This approach enables efficient deployment of both transformer
+    variants in a single model.
+
+    Attributes:
+        transformer_high(nn.Module): The high noise transformer component
+        transformer_low(nn.Module): The low noise transformer component
+        config: Configuration shared between both transformers (from high noise transformer)
     """
-    mode = os.environ.get("ATTENTION_BLOCKING_MODE", "default").lower()
-    head_block_size = int(os.environ.get("head_block_size", 0)) or None
-    num_kv_blocks = int(os.environ.get("num_kv_blocks", 0)) or None
-    num_q_blocks = int(os.environ.get("num_q_blocks", 0)) or None
 
-    # Validate blocking mode
-    valid_modes = ["kv", "qkv", "q", "default"]
-    if mode not in valid_modes:
-        raise ValueError(f"Invalid ATTENTION_BLOCKING_MODE: {mode}. Must be one of {valid_modes}")
-
-    return mode, head_block_size, num_kv_blocks, num_q_blocks
-
-
-def apply_head_blocking(
-    q: torch.FloatTensor,
-    k: torch.FloatTensor,
-    v: torch.FloatTensor,
-    attention_mask: Optional[torch.FloatTensor] = None,
-) -> torch.FloatTensor:
-    """
-    Forward pass with head-only blocking (default mode).
-
-    This method processes attention heads in blocks while computing full attention
-    matrices for each head block. It's less memory-efficient than other blocking
-    modes but simpler and faster for moderate sequence lengths.
-
-    Args:
-        q (torch.FloatTensor): Query tensor of shape (BS, NH, CL, DH)
-        k (torch.FloatTensor): Key tensor of shape (BS, NH, CL, DH)
-        v (torch.FloatTensor): Value tensor of shape (BS, NH, CL, DH)
-        attention_mask (Optional[torch.FloatTensor]): Attention mask tensor
-
-    Returns:
-        torch.FloatTensor: Attention output of shape (BS, NH, CL, DH)
-    """
-    BS, NH, CL, DH = q.shape
-    scale_factor = 1.0 / math.sqrt(DH)
-
-    # Get head blocking configuration
-    _, head_block_size, _, _ = get_attention_blocking_config()
-    head_block_size = head_block_size or NH
-    num_head_blocks = math.ceil(NH / head_block_size)
-
-    # Optimization: Handle small sequences with standard attention
-    BS, NH, K_CL, DH = k.shape
-    if K_CL <= 512:
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scale_factor
-        if attention_mask is not None:
-            scores = torch.where(attention_mask, scores, torch.tensor(-1e4, dtype=scores.dtype, device=scores.device))
-        probs = torch.softmax(scores, dim=-1)
-        out = torch.matmul(probs, v)
-        return out
-
-    outputs = []
-
-    # Process each head block independently
-    for head_block_idx in range(num_head_blocks):
-        h_start = head_block_idx * head_block_size
-        h_end = min(h_start + head_block_size, NH)
-
-        # Extract head blocks
-        q_g = q[:, h_start:h_end, :, :]
-        k_g = k[:, h_start:h_end, :, :]
-        v_g = v[:, h_start:h_end, :, :]
-
-        # Compute full attention matrix for this head block
-        qkblock = torch.matmul(q_g, k_g.transpose(-2, -1)) * scale_factor
-
-        # Standard softmax computation
-        probs = torch.softmax(qkblock, dim=-1)
-
-        # Compute attention output
-        output_blocks = torch.matmul(probs, v_g)
-        outputs.append(output_blocks)
-
-    # Concatenate all head blocks along head dimension
-    out = torch.cat(outputs, dim=1)  # (BS, NH, CL, DH)
-    return out
-
-
-def apply_kv_blocking(
-    q: torch.FloatTensor,
-    k: torch.FloatTensor,
-    v: torch.FloatTensor,
-    attention_mask: Optional[torch.FloatTensor] = None,
-) -> torch.FloatTensor:
-    """
-    Forward pass with Key-Value blocking and head blocking.
-
-    This method processes key-value pairs in blocks while keeping queries intact.
-    It uses online softmax to maintain numerical stability and reduce memory usage
-    compared to computing full attention matrices.
-
-    Args:
-        q (torch.FloatTensor): Query tensor of shape (BS, NH, CL, DH)
-        k (torch.FloatTensor): Key tensor of shape (BS, NH, CL, DH)
-        v (torch.FloatTensor): Value tensor of shape (BS, NH, CL, DH)
-        attention_mask (Optional[torch.FloatTensor]): Attention mask tensor
-
-    Returns:
-        torch.FloatTensor: Attention output of shape (BS, NH, CL, DH)
-    """
-    BS, NH, CL, DH = q.shape
-    scale_factor = 1.0 / math.sqrt(DH)
-
-    # Get blocking configuration
-    _, head_block_size, num_kv_blocks, _ = get_attention_blocking_config()
-    head_block_size = head_block_size or NH
-    num_kv_blocks = num_kv_blocks or CL
-    num_head_blocks = math.ceil(NH / head_block_size)
-    block_positions = [(i * CL) // num_kv_blocks for i in range(num_kv_blocks)]
-
-    # Handle small sequences with standard attention
-    BS, NH, K_CL, DH = k.shape
-    if K_CL <= 512:
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scale_factor
-        if attention_mask is not None:
-            scores = torch.where(attention_mask, scores, torch.tensor(-1e4, dtype=scores.dtype, device=scores.device))
-        probs = torch.softmax(scores, dim=-1)
-        out = torch.matmul(probs, v)
-        return out
-
-    head_outputs = []
-
-    # Process each head block
-    for head_block_idx in range(num_head_blocks):
-        h_start = head_block_idx * head_block_size
-        h_end = min(h_start + head_block_size, NH)
-        num_h = h_end - h_start
-
-        q_g = q[:, h_start:h_end, :, :]
-        k_g = k[:, h_start:h_end, :, :]
-        v_g = v[:, h_start:h_end, :, :]
-
-        # Initialize online softmax statistics
-        running_exp_sum = torch.zeros((BS, num_h, CL), device=q.device, dtype=q.dtype)
-        running_max = torch.full((BS, num_h, CL), float("-inf"), device=q.device, dtype=q.dtype)
-        output_blocks = torch.zeros_like(q_g)
-
-        # Process K,V in blocks using online softmax
-        for kv_block_idx in range(num_kv_blocks):
-            ki = block_positions[kv_block_idx]
-
-            # Calculate KV block size
-            if kv_block_idx == num_kv_blocks - 1:
-                real_kv_len = CL - ki
-            else:
-                real_kv_len = block_positions[kv_block_idx + 1] - ki
-
-            k_block = k_g[:, :, ki : ki + real_kv_len, :]
-            v_block = v_g[:, :, ki : ki + real_kv_len, :]
-
-            # Compute attention scores for current KV block
-            qkblock = torch.matmul(q_g, k_block.transpose(-2, -1)) * scale_factor
-
-            # Online softmax: Update running maximum
-            prev_max = running_max.clone()
-            running_max = torch.maximum(prev_max, torch.max(qkblock, dim=-1)[0])
-
-            # Calculate numerical stability adjustments
-            delta_max = prev_max - running_max
-            curr_exp = torch.exp(qkblock - running_max.unsqueeze(-1))
-
-            # Update running sum of exponentials
-            prev_exp_sum = running_exp_sum.clone()
-            curr_exp_sum = torch.einsum("bhqk->bhq", curr_exp)
-            running_exp_sum = prev_exp_sum * torch.exp(delta_max) + curr_exp_sum
-
-            # Compute normalized attention weights
-            inv_running_exp_sum = 1.0 / running_exp_sum
-            softmax_qkblock = curr_exp * inv_running_exp_sum.unsqueeze(-1)
-
-            # Update output with rescaling
-            prev_out = output_blocks.clone()
-            rescale_factor = (prev_exp_sum * inv_running_exp_sum) * torch.exp(delta_max)
-            output_blocks = rescale_factor.unsqueeze(-1) * prev_out + torch.matmul(softmax_qkblock, v_block)
-
-        head_outputs.append(output_blocks)
-
-    out = torch.cat(head_outputs, dim=1)  # (BS, NH, CL, DH)
-    return out
-
-
-def apply_q_blocking(
-    q: torch.FloatTensor,
-    k: torch.FloatTensor,
-    v: torch.FloatTensor,
-    attention_mask: Optional[torch.FloatTensor] = None,
-) -> torch.FloatTensor:
-    """
-    Forward pass with Query blocking and head blocking.
-
-    This method processes query tokens in blocks while keeping key-value pairs intact.
-    It's useful when the sequence length is large but memory constraints are primarily
-    due to the query dimension.
-
-    Args:
-        q (torch.FloatTensor): Query tensor of shape (BS, NH, CL, DH)
-        k (torch.FloatTensor): Key tensor of shape (BS, NH, CL, DH)
-        v (torch.FloatTensor): Value tensor of shape (BS, NH, CL, DH)
-        attention_mask (Optional[torch.FloatTensor]): Attention mask tensor
-
-    Returns:
-        torch.FloatTensor: Attention output of shape (BS, NH, CL, DH)
-    """
-    BS, NH, CL, DH = q.shape
-    scale_factor = 1.0 / math.sqrt(DH)
-
-    # Get blocking configuration
-    _, head_block_size, _, num_q_blocks = get_attention_blocking_config()
-    head_block_size = head_block_size or NH
-    num_q_blocks = num_q_blocks or CL
-    num_head_blocks = math.ceil(NH / head_block_size)
-    q_block_positions = [(i * CL) // num_q_blocks for i in range(num_q_blocks)]
-
-    # Handle small sequences with standard attention
-    BS, NH, K_CL, DH = k.shape
-    if K_CL <= 512:
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scale_factor
-        if attention_mask is not None:
-            scores = torch.where(attention_mask, scores, torch.tensor(-1e4, dtype=scores.dtype, device=scores.device))
-        probs = torch.softmax(scores, dim=-1)
-        out = torch.matmul(probs, v)
-        return out
-
-    head_outputs = []
-
-    # Process each head block
-    for head_block_idx in range(num_head_blocks):
-        h_start = head_block_idx * head_block_size
-        h_end = min(h_start + head_block_size, NH)
-
-        q_g = q[:, h_start:h_end, :, :]
-        k_g = k[:, h_start:h_end, :, :]
-        v_g = v[:, h_start:h_end, :, :]
-
-        q_output_list = []
-
-        # Process queries in blocks
-        for q_block_idx in range(num_q_blocks):
-            qi = q_block_positions[q_block_idx]
-
-            # Calculate Q block size
-            if q_block_idx == num_q_blocks - 1:
-                real_q_len = CL - qi
-            else:
-                real_q_len = q_block_positions[q_block_idx + 1] - qi
-
-            q_block = q_g[:, :, qi : qi + real_q_len, :]
-
-            # Compute attention for this query block against all keys
-            scores = torch.matmul(q_block, k_g.transpose(-2, -1)) * scale_factor
-            probs = torch.softmax(scores, dim=-1)
-            out_block = torch.matmul(probs, v_g)
-
-            q_output_list.append(out_block)
-
-        # Concatenate query blocks
-        head_output = torch.cat(q_output_list, dim=2)
-        head_outputs.append(head_output)
-
-    out = torch.cat(head_outputs, dim=1)  # (BS, NH, CL, DH)
-    return out
-
-
-def apply_qkv_blocking(
-    q: torch.FloatTensor,
-    k: torch.FloatTensor,
-    v: torch.FloatTensor,
-    attention_mask: Optional[torch.FloatTensor] = None,
-) -> torch.FloatTensor:
-    """
-    Forward pass with combined Query, Key, Value blocking and head blocking.
-
-    This method implements the most memory-efficient attention computation by blocking
-    along all three dimensions: heads, queries, and key-values.
-
-    Args:
-        q (torch.FloatTensor): Query tensor of shape (BS, NH, CL, DH)
-        k (torch.FloatTensor): Key tensor of shape (BS, NH, CL, DH)
-        v (torch.FloatTensor): Value tensor of shape (BS, NH, CL, DH)
-        attention_mask (Optional[torch.FloatTensor]): Attention mask tensor
-
-    Returns:
-        torch.FloatTensor: Attention output of shape (BS, NH, CL, DH)
-    """
-    BS, NH, CL, DH = q.shape
-    scale_factor = 1.0 / math.sqrt(DH)
-
-    # Get blocking configuration from environment variables
-    _, head_block_size, num_kv_blocks, num_q_blocks = get_attention_blocking_config()
-    head_block_size = head_block_size or NH
-    num_kv_blocks = num_kv_blocks or CL
-    num_q_blocks = num_q_blocks or CL
-    num_head_blocks = math.ceil(NH / head_block_size)
-
-    # Calculate block positions for even distribution
-    kv_block_positions = [(i * CL) // num_kv_blocks for i in range(num_kv_blocks)]
-    q_block_positions = [(i * CL) // num_q_blocks for i in range(num_q_blocks)]
-
-    # Optimization: Use standard attention for small sequences
-    BS, NH, K_CL, DH = k.shape
-    if K_CL <= 512:
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scale_factor
-        if attention_mask is not None:
-            scores = torch.where(attention_mask, scores, torch.tensor(-1e4, dtype=scores.dtype, device=scores.device))
-        probs = torch.softmax(scores, dim=-1)
-        out = torch.matmul(probs, v)
-        return out
-
-    head_outputs = []
-
-    # Process attention heads in blocks to reduce memory usage
-    for head_block_idx in range(num_head_blocks):
-        h_start = head_block_idx * head_block_size
-        h_end = min(h_start + head_block_size, NH)
-        num_h = h_end - h_start
-
-        # Extract current head block
-        q_g = q[:, h_start:h_end, :, :]
-        k_g = k[:, h_start:h_end, :, :]
-        v_g = v[:, h_start:h_end, :, :]
-        q_output_list = []
-
-        # Process queries in blocks within each head block
-        for q_block_idx in range(num_q_blocks):
-            qi = q_block_positions[q_block_idx]
-
-            # Calculate actual Q block size (handle remainder for last block)
-            if q_block_idx == num_q_blocks - 1:
-                real_q_len = CL - qi
-            else:
-                real_q_len = q_block_positions[q_block_idx + 1] - qi
-
-            q_block = q_g[:, :, qi : qi + real_q_len, :]
-
-            # Initialize online softmax statistics for this Q block
-            running_exp_sum = torch.zeros((BS, num_h, real_q_len), device=q.device, dtype=q.dtype)
-            running_max = torch.full((BS, num_h, real_q_len), float("-inf"), device=q.device, dtype=q.dtype)
-            output_blocks = torch.zeros((BS, num_h, real_q_len, DH), device=q.device, dtype=q.dtype)
-
-            # Process K,V in blocks for this Q block (online softmax)
-            for kv_block_idx in range(num_kv_blocks):
-                ki = kv_block_positions[kv_block_idx]
-
-                # Calculate actual KV block size
-                if kv_block_idx == num_kv_blocks - 1:
-                    real_kv_len = CL - ki
-                else:
-                    real_kv_len = kv_block_positions[kv_block_idx + 1] - ki
-
-                k_block = k_g[:, :, ki : ki + real_kv_len, :]
-                v_block = v_g[:, :, ki : ki + real_kv_len, :]
-
-                # Compute attention scores for current Q-K block
-                qkblock = torch.matmul(q_block, k_block.transpose(-2, -1)) * scale_factor
-
-                # Online softmax: Update running maximum
-                prev_max = running_max.clone()
-                if qkblock.shape[-1] == 0:
-                    running_max = prev_max
-                else:
-                    running_max = torch.maximum(prev_max, torch.max(qkblock, dim=-1)[0])
-
-                # Calculate adjustment factor for numerical stability
-                delta_max = prev_max - running_max
-                curr_exp = torch.exp(qkblock - running_max.unsqueeze(-1))
-
-                # Online softmax: Update running sum of exponentials
-                prev_exp_sum = running_exp_sum.clone()
-                curr_exp_sum = torch.einsum("bhqk->bhq", curr_exp)
-                running_exp_sum = prev_exp_sum * torch.exp(delta_max) + curr_exp_sum
-
-                # Compute normalized attention weights for this block
-                inv_running_exp_sum = 1.0 / running_exp_sum
-                softmax_qkblock = curr_exp * inv_running_exp_sum.unsqueeze(-1)
-
-                # Online softmax: Update output with rescaling of previous blocks
-                prev_out = output_blocks.clone()
-                rescale_factor = (prev_exp_sum * inv_running_exp_sum) * torch.exp(delta_max)
-                output_blocks = rescale_factor.unsqueeze(-1) * prev_out + torch.matmul(softmax_qkblock, v_block)
-
-            q_output_list.append(output_blocks)
-
-        # Concatenate all Q blocks for this head block
-        head_output = torch.cat(q_output_list, dim=2)
-        head_outputs.append(head_output)
-
-    # Concatenate all head blocks
-    out = torch.cat(head_outputs, dim=1)
-    return out
-
-
-def compute_blocked_attention(
-    q: torch.FloatTensor,
-    k: torch.FloatTensor,
-    v: torch.FloatTensor,
-    blocking_mode: str = "default",
-    attention_mask: Optional[torch.FloatTensor] = None,
-) -> torch.FloatTensor:
-    """
-    Main dispatcher function for different attention blocking strategies.
-
-    Args:
-        q (torch.FloatTensor): Query tensor of shape (BS, NH, CL, DH)
-        k (torch.FloatTensor): Key tensor of shape (BS, NH, CL, DH)
-        v (torch.FloatTensor): Value tensor of shape (BS, NH, CL, DH)
-        blocking_mode (str): Blocking strategy ('kv', 'q', 'qkv', 'default')
-        attention_mask (Optional[torch.FloatTensor]): Attention mask tensor
-
-    Returns:
-        torch.FloatTensor: Attention output of shape (BS, NH, CL, DH)
-    """
-    if blocking_mode == "kv":
-        return apply_kv_blocking(q, k, v, attention_mask)
-    elif blocking_mode == "q":
-        return apply_q_blocking(q, k, v, attention_mask)
-    elif blocking_mode == "qkv":
-        return apply_qkv_blocking(q, k, v, attention_mask)
-    else:  # default
-        return apply_head_blocking(q, k, v, attention_mask)
+    def __init__(self, transformer_high, transformer_low):
+        super().__init__()
+        self.transformer_high = transformer_high
+        self.transformer_low = transformer_low
+        # Both high and low noise transformers share the same configuration
+        self.config = transformer_high.config
+
+    def forward(
+        self,
+        hidden_states,
+        encoder_hidden_states,
+        rotary_emb,
+        temb,
+        timestep_proj,
+        tsp,
+        attention_kwargs=None,
+        return_dict=False,
+    ):
+        # Condition based on timestep shape
+        is_high_noise = tsp.shape[0] == torch.tensor(1)
+
+        high_hs = hidden_states.detach()
+        ehs = encoder_hidden_states.detach()
+        rhs = rotary_emb.detach()
+        ths = temb.detach()
+        projhs = timestep_proj.detach()
+
+        noise_pred_high = self.transformer_high(
+            hidden_states=high_hs,
+            encoder_hidden_states=ehs,
+            rotary_emb=rhs,
+            temb=ths,
+            timestep_proj=projhs,
+            attention_kwargs=attention_kwargs,
+            return_dict=return_dict,
+        )[0]
+
+        noise_pred_low = self.transformer_low(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            rotary_emb=rotary_emb,
+            temb=temb,
+            timestep_proj=timestep_proj,
+            attention_kwargs=attention_kwargs,
+            return_dict=return_dict,
+        )[0]
+
+        # Select based on timestep condition
+        noise_pred = torch.where(is_high_noise, noise_pred_high, noise_pred_low)
+        return noise_pred

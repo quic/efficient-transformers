@@ -526,23 +526,18 @@ class QEFFBaseModel(ABC):
             )
         try:
             subprocess.run(command, capture_output=True, check=True)
-        # TODO: remove once compiler fix exit code (failing with error: Benchmark run failed, exit code 1)
         except subprocess.CalledProcessError as e:
-            # Check if exit code is 1 and programqpc.bin exists in qpc_path
-            if e.returncode == 1 and qpc_path and (qpc_path / "programqpc.bin").is_file():
-                logger.warning("Compiler exited with code 1, but programqpc.bin exists. Continuing...")
-            else:
-                raise RuntimeError(
-                    "\n".join(
-                        [
-                            "Compilation failed!",
-                            f"Compiler command: {e.cmd}",
-                            f"Compiler exitcode: {e.returncode}",
-                            "Compiler stderr:",
-                            e.stderr.decode(),
-                        ]
-                    )
+            raise RuntimeError(
+                "\n".join(
+                    [
+                        "Compilation failed!",
+                        f"Compiler command: {e.cmd}",
+                        f"Compiler exitcode: {e.returncode}",
+                        "Compiler stderr:",
+                        e.stderr.decode(),
+                    ]
                 )
+            )
         # Dump JSON file with hashed parameters
         hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
         create_json(hashed_compile_params_path, compile_hash_params)

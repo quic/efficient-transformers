@@ -26,7 +26,7 @@ from diffusers.models.transformers.transformer_wan import (
 )
 from diffusers.utils import set_weights_and_activate_adapters
 
-from QEfficient.diffusers.pipelines.pipeline_utils import (
+from QEfficient.diffusers.pipelines.modeling_utils import (
     compute_blocked_attention,
     get_attention_blocking_config,
 )
@@ -226,7 +226,7 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         1. Patch embedding of input
         2. Rotary embedding preparation
         3. Cross-attention with encoder states
-        4. Transformer block processing (with optional gradient checkpointing)
+        4. Transformer block processing
         5. Output normalization and projection
 
         Args:
@@ -254,17 +254,9 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         if encoder_hidden_states_image is not None:
             encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
 
-        # Process through transformer blocks
-        if torch.is_grad_enabled() and self.gradient_checkpointing:
-            # Use gradient checkpointing to save memory during training
-            for block in self.blocks:
-                hidden_states = self._gradient_checkpointing_func(
-                    block, hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
-                )
-        else:
-            # Standard forward pass
-            for block in self.blocks:
-                hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+        # Standard forward pass
+        for block in self.blocks:
+            hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
 
         # Output normalization, projection & unpatchify
         if temb.ndim == 3:

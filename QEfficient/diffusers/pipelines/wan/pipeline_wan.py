@@ -14,7 +14,6 @@ The pipeline supports WAN 2.2 architectures with unified transformer.
 TODO: 1. Update Vae, umt5 to Qaic; present running on cpu
 """
 
-import math
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -24,11 +23,13 @@ import torch
 from diffusers import WanPipeline
 from diffusers.video_processor import VideoProcessor
 
-from QEfficient.diffusers.pipelines.pipeline_module import QEffWanUnifiedTransformer, QEffWanUnifiedWrapper
+from QEfficient.diffusers.pipelines.pipeline_module import QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
+    QEffWanUnifiedWrapper,
+    calculate_latent_dimensions,
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
@@ -121,16 +122,8 @@ class QEffWanPipeline:
         self.boundary_ratio = self.model.config.boundary_ratio
         self.expand_timesteps = self.model.config.expand_timesteps
 
-        # Configure VAE scale factors for video processing
-        self.vae_scale_factor_temporal = (
-            self.vae_decode.config.scale_factor_temporal if hasattr(self.vae_decode, "config") else 4
-        )
-        self.vae_scale_factor_spatial = (
-            self.vae_decode.config.scale_factor_spatial if hasattr(self.vae_decode, "config") else 8
-        )
-
         # Initialize video processor for frame handling and post-processing
-        self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
+        self.video_processor = VideoProcessor(vae_scale_factor=self.model.vae.config.scale_factor_spatial)
 
         # Extract patch dimensions from transformer configuration
         _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
@@ -199,67 +192,8 @@ class QEffWanPipeline:
             **kwargs,
         )
 
-    def configure_height_width_cl_latents_hw(self, height, width, num_frames):
-        """
-        Configure pipeline dimensions and calculate compressed latent parameters.
-
-        This method sets the target video dimensions and calculates the corresponding
-        compressed latent dimension (cl) and latent space dimensions for buffer allocation
-        and transformer processing.
-
-        Args:
-            height (int): Target video height in pixels
-            width (int): Target video width in pixels
-            num_frames (int): Target video frames in pixels
-
-        Note:
-            - Updates self.height, self.width, self.cl, self.latent_height, self.latent_width
-            - Used internally before compilation and inference
-        """
-        self.height = height
-        self.width = width
-        self.cl, self.latent_height, self.latent_width = self.calculate_compressed_latent_dimension(
-            height, width, num_frames
-        )
-
-    def calculate_compressed_latent_dimension(self, height, width, num_frames):
-        """
-        Calculate the compressed latent dimension for transformer buffer allocation.
-
-        This method computes the compressed sequence length (cl) that the transformer
-        will process, based on the target video dimensions, VAE scale factors, and
-        patch sizes. This is crucial for proper buffer allocation in QAIC inference.
-
-        Args:
-            height (int): Target video height in pixels
-            width (int): Target video width in pixels
-            num_frames (int): Target video frames in pixels
-
-        Returns:
-            tuple: (cl, latent_height, latent_width)
-                - cl (int): Compressed latent dimension for transformer input
-                - latent_height (int): Height in latent space
-                - latent_width (int): Width in latent space
-
-        Mathematical Formula:
-            latent_height = height // vae_scale_factor_spatial
-            latent_width = width // vae_scale_factor_spatial
-            latent_frames =  math.ceil(num_frames / vae_scale_factor_temporal)
-            cl = (latent_height // patch_height) * (latent_width // patch_width) * latent_frames
-
-        """
-        # Calculate latent space dimensions after VAE encoding
-        latent_height = height // self.vae_scale_factor_spatial
-        latent_width = width // self.vae_scale_factor_spatial
-        latent_frames = math.ceil(num_frames / self.vae_scale_factor_temporal)
-        cl = (latent_height // self.patch_height * latent_width // self.patch_width) * latent_frames
-        return cl, latent_height, latent_width
-
     def export(
         self,
-        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
-        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
-        num_frames: int = constants.WAN_ONNX_EXPORT_FRAMES,
         export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
     ) -> str:
@@ -272,11 +206,6 @@ class QEffWanPipeline:
         compilation to QPC format for efficient inference on QAIC hardware.
 
         Args:
-            height (int, default=192): Export height in pixels. Users can export at low
-                resolution and compile for higher resolution later for flexibility.
-            width (int, default=320): Export width in pixels. Should maintain aspect ratio
-                appropriate for the target use case.
-            num_frames (int, default=81): frames in pixel space
             export_dir (str, optional): Target directory for saving ONNX model files. If None,
                 uses the default export directory structure. The directory will be created
                 if it doesn't exist.
@@ -295,27 +224,15 @@ class QEffWanPipeline:
         Example:
             >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
             >>> export_path = pipeline.export(
-            ...     height=480,
-            ...     width=832,
             ...     export_dir="/path/to/export",
             ...     use_onnx_subfunctions=True
             ... )
         """
-        # Calculate compressed latent dimensions for export configuration
-        export_cl, export_latent_height, export_latent_width = self.calculate_compressed_latent_dimension(
-            height, width, num_frames
-        )
 
         # Export each module with video-specific parameters
         for module_name, module_obj in self.modules.items():
             # Get ONNX export configuration with video dimensions
-            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params(
-                batch_size=1,
-                seq_length=512,  # Text sequence length
-                cl=export_cl,  # Compressed latent dimension
-                latent_height=export_latent_height,
-                latent_width=export_latent_width,
-            )
+            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
 
             # Prepare export parameters
             export_params = {
@@ -329,11 +246,7 @@ class QEffWanPipeline:
             if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
                 export_params["use_onnx_subfunctions"] = True
 
-            # Export with performance timing
-            start_time = time.perf_counter()
             module_obj.export(**export_params)
-            end_time = time.perf_counter()
-            print(f"{module_name} export took {end_time - start_time:.2f} seconds")
 
     @staticmethod
     def get_default_config_path():
@@ -388,9 +301,7 @@ class QEffWanPipeline:
         if any(
             path is None
             for path in [
-                # self.text_encoder.onnx_path,  # TODO: Enable when UMT5 is optimized
                 self.transformer.onnx_path,
-                # self.vae_decode.onnx_path,  # TODO: Enable when VAE is optimized
             ]
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
@@ -400,11 +311,22 @@ class QEffWanPipeline:
 
         # Prepare dynamic specialization updates based on video dimensions
         specialization_updates = {
-            "transformer": {
-                "cl": self.cl,  # Compressed latent dimension
-                "latent_height": self.latent_height,  # Latent space height
-                "latent_width": self.latent_width,  # Latent space width
-            }
+            "transformer": [
+                # high noise
+                {
+                    "cl": self.cl,  # Compressed latent dimension
+                    "latent_height": self.latent_height,  # Latent space height
+                    "latent_width": self.latent_width,  # Latent space width
+                    "num_frames": self.latent_frames,  # Latent frames
+                },
+                # low noise
+                {
+                    "cl": self.cl,  # Compressed latent dimension
+                    "latent_height": self.latent_height,  # Latent space height
+                    "latent_width": self.latent_width,  # Latent space width
+                    "num_frames": self.latent_frames,  # Latent frames
+                },
+            ]
         }
 
         # Use generic utility functions for compilation
@@ -505,10 +427,20 @@ class QEffWanPipeline:
             >>> result.images[0].save("cat_garden.mp4")
         """
         device = "cpu"
+        self.height = height
+        self.width = width
+        self.num_frames = num_frames
 
         # Configure pipeline dimensions and calculate compressed latent parameters
-        # TODO : move to utils
-        self.configure_height_width_cl_latents_hw(height, width, num_frames)
+        self.cl, self.latent_height, self.latent_width, self.latent_frames = calculate_latent_dimensions(
+            self.height,
+            self.width,
+            self.num_frames,
+            self.model.vae.config.scale_factor_spatial,
+            self.model.vae.config.scale_factor_temporal,
+            self.patch_height,
+            self.patch_width,
+        )
 
         # Compile models with custom configuration if needed
         self.compile(
@@ -533,11 +465,14 @@ class QEffWanPipeline:
         )
 
         # Ensure num_frames satisfies temporal divisibility requirements
-        if num_frames % self.vae_scale_factor_temporal != 1:
+        if num_frames % self.model.vae.config.scale_factor_temporal != 1:
             logger.warning(
-                f"`num_frames - 1` has to be divisible by {self.vae_scale_factor_temporal}. Rounding to the nearest number."
+                f"`num_frames - 1` has to be divisible by {self.model.vae.config.scale_factor_temporal}. Rounding to the nearest number."
             )
-            num_frames = num_frames // self.vae_scale_factor_temporal * self.vae_scale_factor_temporal + 1
+            num_frames = (
+                num_frames // self.model.vae.config.scale_factor_temporal * self.model.vae.config.scale_factor_temporal
+                + 1
+            )
         num_frames = max(num_frames, 1)
 
         if self.boundary_ratio is not None and guidance_scale_2 is None:

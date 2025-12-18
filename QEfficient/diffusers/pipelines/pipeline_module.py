@@ -483,72 +483,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         self._compile(specializations=specializations, **compiler_options)
 
 
-class QEffWanUnifiedWrapper(nn.Module):
-    """
-    A wrapper class that combines WAN high and low noise transformers into a single unified transformer.
-
-    This wrapper dynamically selects between high and low noise transformers based on the timestep shape
-    in the ONNX graph during inference. This approach enables efficient deployment of both transformer
-    variants in a single model.
-
-    Attributes:
-        transformer_high(nn.Module): The high noise transformer component
-        transformer_low(nn.Module): The low noise transformer component
-        config: Configuration shared between both transformers (from high noise transformer)
-    """
-
-    def __init__(self, transformer_high, transformer_low):
-        super().__init__()
-        self.transformer_high = transformer_high
-        self.transformer_low = transformer_low
-        # Both high and low noise transformers share the same configuration
-        self.config = transformer_high.config
-
-    def forward(
-        self,
-        hidden_states,
-        encoder_hidden_states,
-        rotary_emb,
-        temb,
-        timestep_proj,
-        tsp,
-        attention_kwargs=None,
-        return_dict=False,
-    ):
-        # Condition based on timestep shape
-        is_high_noise = tsp.shape[0] == torch.tensor(1)
-
-        high_hs = hidden_states.detach()
-        ehs = encoder_hidden_states.detach()
-        rhs = rotary_emb.detach()
-        ths = temb.detach()
-        projhs = timestep_proj.detach()
-
-        noise_pred_high = self.transformer_high(
-            hidden_states=high_hs,
-            encoder_hidden_states=ehs,
-            rotary_emb=rhs,
-            temb=ths,
-            timestep_proj=projhs,
-            attention_kwargs=attention_kwargs,
-            return_dict=return_dict,
-        )[0]
-
-        noise_pred_low = self.transformer_low(
-            hidden_states=hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-            rotary_emb=rotary_emb,
-            temb=temb,
-            timestep_proj=timestep_proj,
-            attention_kwargs=attention_kwargs,
-            return_dict=return_dict,
-        )[0]
-
-        # Select based on timestep condition
-        noise_pred = torch.where(is_high_noise, noise_pred_high, noise_pred_low)
-        return noise_pred
-
-
 class QEffWanUnifiedTransformer(QEFFBaseModel):
     """
     Wrapper for WAN Unified Transformer with ONNX export and QAIC compilation capabilities.
@@ -589,56 +523,42 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def get_onnx_params(
-        self,
-        batch_size: int = constants.WAN_ONNX_EXPORT_BATCH_SIZE,
-        seq_length: int = constants.WAN_ONNX_EXPORT_SEQ_LEN,
-        cl: int = constants.WAN_ONNX_EXPORT_CL_180P,
-        latent_height: int = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P,
-        latent_width: int = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P,
-        latent_frames: int = constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
-    ):
+    def get_onnx_params(self):
         """
         Generate ONNX export configuration for the Wan transformer.
 
         Creates example inputs for all Wan-specific inputs including hidden states,
         text embeddings, timestep conditioning,
-
-        Args:
-            batch_size (int): Batch size for example inputs (default: WAN_ONNX_EXPORT_BATCH_SIZE)
-            seq_length (int): Text sequence length (default: WAN_ONNX_EXPORT_SEQ_LEN)
-            cl (int): Compressed latent dimension (default: WAN_ONNX_EXPORT_CL_180P)
-            latent_height (int): Latent height dim (default: WAN_ONNX_EXPORT_LATENT_HEIGHT_180P)
-            latent_width (int): Latent Width dim (default: WAN_ONNX_EXPORT_LATENT_WIDTH_180P)
-            latent_frames(int): Latent Frames (default: WAN_ONNX_EXPORT_LATENT_FRAMES)
-
         Returns:
             Tuple containing:
                 - example_inputs (Dict): Sample inputs for ONNX export
                 - dynamic_axes (Dict): Specification of dynamic dimensions
                 - output_names (List[str]): Names of model outputs
         """
+        batch_size = constants.WAN_ONNX_EXPORT_BATCH_SIZE
         example_inputs = {
+            # hidden_states = [ bs, in_channels, frames, latent_height, latent_width]
             "hidden_states": torch.randn(
                 batch_size,
                 self.model.config.in_channels,
-                latent_frames,
-                latent_height,
-                latent_width,
+                constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
+                constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P,
+                constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P,
                 dtype=torch.float32,
             ),
+            # encoder_hidden_states = [BS, seq len , text dim]
             "encoder_hidden_states": torch.randn(
-                batch_size, seq_length, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
-            ),  # BS, seq len , text dim
-            # Rotary position embeddings: [2, context_length, 1, rotary_dim]; 2 is from tuple of cos, sin freqs
-            "rotary_emb": torch.randn(2, cl, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32),
-            # Timestep embeddings: [batch_size=1, embedding_dim]
-            "temb": torch.randn(
-                constants.WAN_ONNX_EXPORT_BATCH_SIZE, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
+                batch_size, constants.WAN_ONNX_EXPORT_SEQ_LEN, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
             ),
+            # Rotary position embeddings: [2, context_length, 1, rotary_dim]; 2 is from tuple of cos, sin freqs
+            "rotary_emb": torch.randn(
+                2, constants.WAN_ONNX_EXPORT_CL_180P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32
+            ),
+            # Timestep embeddings: [batch_size=1, embedding_dim]
+            "temb": torch.randn(batch_size, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32),
             # Projected timestep embeddings: [batch_size=1, projection_dim, embedding_dim]
             "timestep_proj": torch.randn(
-                constants.WAN_ONNX_EXPORT_BATCH_SIZE,
+                batch_size,
                 constants.WAN_PROJECTION_DIM,
                 constants.WAN_TEXT_EMBED_DIM,
                 dtype=torch.float32,

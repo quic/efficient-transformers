@@ -88,7 +88,7 @@ FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
 SIZE_THRESHOLD_DEFAULT = 1024
 
 
-COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw"]
+COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-compile-only"]
 DEFAULT_AIC_HW_VERSION = "ai100"
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
