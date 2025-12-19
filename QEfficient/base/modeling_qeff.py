@@ -326,6 +326,7 @@ class QEFFBaseModel(ABC):
             self.prefill_onnx_path = onnx_path
         else:
             self.onnx_path = onnx_path
+        logger.info("Model export is finished and saved at: %s", onnx_path)
         return onnx_path
 
     def get_onnx_path(
@@ -544,4 +545,5 @@ class QEFFBaseModel(ABC):
         logger.info("Hashed parameters exported successfully.")
 
         self.qpc_path = qpc_path
+        logger.info("Model compilation is finished and saved at: %s", qpc_path)
         return qpc_path

@@ -12,7 +12,9 @@ import queue
 import threading
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-from typing import Optional
+from typing import Any, Dict, List, Optional
+
+from tabulate import tabulate
 
 
 class JSONNamespaceFormatter(logging.Formatter):
@@ -231,102 +233,104 @@ class QEFFLogger:
             cls._instance = None
             cls._logfile = None
 
-    # @classmethod
-    # def _parse_dt(cls, date_str: str, time_str: str) -> datetime:
-    #     """Parse 'YYYY-MM-DD' and 'HH:MM:SS' into a datetime."""
-    #     return datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+    @classmethod
+    def _parse_dt(cls, date_str: str, time_str: str) -> datetime:
+        """Parse 'YYYY-MM-DD' and 'HH:MM:SS' into a datetime."""
+        return datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
 
-    # @classmethod
-    # def _print_table(cls) -> None:
-    #     """
-    #     Parse the line-delimited JSON log in cls._logfile and print timing table:
-    #       - Model Loading      : t2 - t1
-    #       - Model Exporting    : t3 - t2
-    #       - Model Compilation  : t4 - t3
-    #       - Text Generation    : t5 - t4
-    #       - Total Time         : t5 - t1
+    @classmethod
+    def print_table(cls) -> None:
+        """
+        Parse the line-delimited JSON log in cls._logfile and print timing table with t1 as baseline (0.0s):
+          - Model Loading      : t2 - t1
+          - Model Exporting    : t3 - t2
+          - Model Compilation  : t4 - t3
+          - Text Generation    : t5 - t4
+          - Total Time         : t5 - t1
 
-    #     Milestones are inferred from message substrings:
-    #       t1: first log line timestamp (start)
-    #       t2: "PyTorch export successful"
-    #       t3: "Transformed ONNX saved"
-    #       t4: "QPC_path" (compilation finished)
-    #       t5: "specialization_file_path" (text-gen ready) ; falls back to t4 if missing
-    #     """
-    #     path = cls._logfile
-    #     if not path:
-    #         raise FileNotFoundError("Log file path is not set (cls._logfile is None).")
-    #     if not os.path.exists(path):
-    #         raise FileNotFoundError(f"Log file does not exist: {path}")
+        Milestones (matched to your log sample):
+          t1: first log line timestamp (baseline)
+          t2: "PyTorch export successful"
+          t3: "Transformed ONNX saved"
+          t4: "Model compilation is finished and saved"
+          t5: "Text Generated finised"
+             If t5 is missing, we fall back to "specialization_file_path" as readiness marker.
+        """
+        path = cls._logfile
+        if not path:
+            raise FileNotFoundError("Log file path is not set (cls._logfile is None).")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Log file does not exist: {path}")
 
-    #     t1: Optional[datetime] = None
-    #     t2: Optional[datetime] = None
-    #     t3: Optional[datetime] = None
-    #     t4: Optional[datetime] = None
-    #     t5: Optional[datetime] = None
+        t_start: Optional[datetime] = None
+        t_export_done: Optional[datetime] = None
+        t_onnx_saved: Optional[datetime] = None
+        t_compile_done: Optional[datetime] = None
+        t_text_done: Optional[datetime] = None
+        t_text_ready: Optional[datetime] = None
 
-    #     with open(path, "r", encoding="utf-8") as f:
-    #         for line in f:
-    #             line = line.strip()
-    #             if not line:
-    #                 continue
-    #             try:
-    #                 rec: Dict[str, Any] = json.loads(line)
-    #             except json.JSONDecodeError:
-    #                 # Skip non-JSON lines safely
-    #                 continue
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec: Dict[str, Any] = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
-    #             date_str = rec.get("date")
-    #             time_str = rec.get("time")
-    #             msg = rec.get("message", "")
-    #             if not date_str or not time_str:
-    #                 continue
+                date_str = rec.get("date")
+                time_str = rec.get("time")
+                msg = rec.get("message", "")
+                if not date_str or not time_str:
+                    continue
 
-    #             ts = cls._parse_dt(date_str, time_str)
+                ts = cls._parse_dt(date_str, time_str)
 
-    #             if t1 is None:
-    #                 t1 = ts
+                if t_start is None:
+                    t_start = ts
 
-    #             if ("PyTorch export successful" in msg) and (t2 is None):
-    #                 t2 = ts
+                if ("PyTorch export successful" in msg) and (t_export_done is None):
+                    t_export_done = ts
 
-    #             if ("Transformed ONNX saved" in msg) and (t3 is None):
-    #                 t3 = ts
+                if ("Transformed ONNX saved" in msg) and (t_onnx_saved is None):
+                    t_onnx_saved = ts
 
-    #             if ("QPC_path" in msg) and (t4 is None):
-    #                 t4 = ts
+                if ("Model compilation is finished and saved" in msg) and (t_compile_done is None):
+                    t_compile_done = ts
 
-    #             if ("specialization_file_path" in msg) and (t5 is None):
-    #                 t5 = ts
+                if ("Text Generated finised" in msg) and (t_text_done is None):
+                    t_text_done = ts
 
-    #     if t1 is None:
-    #         raise ValueError("Could not determine start time (no valid log lines with date/time).")
-    #     if t2 is None:
-    #         t2 = t1
-    #     if t3 is None:
-    #         t3 = t2
-    #     if t4 is None:
-    #         t4 = t3
-    #     if t5 is None:
-    #         t5 = t4
+                if ("specialization_file_path" in msg) and (t_text_ready is None):
+                    t_text_ready = ts
 
-    #     # Compute seconds between milestones
-    #     def diff(a: datetime, b: datetime) -> float:
-    #         return max(0.0, (b - a).total_seconds())
+        if t_start is None:
+            raise ValueError("Could not determine start time (no valid log lines with date/time).")
 
-    #     timing_data: List[List[Any]] = [
-    #         ["Model Loading",      diff(t1, t2)],
-    #         ["Model Exporting",    diff(t2, t3)],
-    #         ["Model Compilation",  diff(t3, t4)],
-    #         ["Text Generation",    diff(t4, t5)],
-    #         ["Total Time",         diff(t1, t5)],
-    #     ]
+        if t_text_done is None:
+            t_text_done = t_text_ready
 
-    #     print(
-    #         tabulate(
-    #             timing_data,
-    #             headers=["Step", "Time (s)"],
-    #             tablefmt="github",
-    #             floatfmt=".3f",
-    #                    )
-    #     )
+        t_export_done = t_export_done or t_start
+        t_onnx_saved = t_onnx_saved or t_export_done
+        t_compile_done = t_compile_done or t_onnx_saved
+        t_text_done = t_text_done or t_compile_done
+
+        def to_offset_seconds(t: datetime) -> float:
+            return (t - t_start).total_seconds()
+
+        o1 = 0.0
+        o2 = to_offset_seconds(t_export_done)
+        o3 = to_offset_seconds(t_onnx_saved)
+        o4 = to_offset_seconds(t_compile_done)
+        o5 = to_offset_seconds(t_text_done)
+
+        timing_data: List[List[Any]] = [
+            ["Model Loading", max(0.0, o2 - o1)],
+            ["Model Exporting", max(0.0, o3 - o2)],
+            ["Model Compilation", max(0.0, o4 - o3)],
+            ["Text Generation", max(0.0, o5 - o4)],
+            ["Total Time", max(0.0, o5 - o1)],
+        ]
+
+        print(tabulate(timing_data, headers=["Step", "Time (s)"], tablefmt="github", floatfmt=".3f"))
