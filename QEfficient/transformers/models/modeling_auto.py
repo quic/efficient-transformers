@@ -1460,7 +1460,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         lang_session.set_buffers(vision_outputs)
 
         if self.comp_ctx_lengths_prefill is not None:
-            list_of_comp_ctx_lengths_prefill = [np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill]
+            list_of_comp_ctx_lengths_prefill = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+            ]
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
@@ -1509,7 +1511,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Decode loop
         if self.comp_ctx_lengths_decode is not None:
             max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
-            list_of_comp_ctx_lengths_decode = [np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode]
+            list_of_comp_ctx_lengths_decode = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+            ]
             max_position_id = np.max(lang_inputs["position_ids"])
             ccl_id_initial = 0
             ccl_id = ccl_id_initial
@@ -2000,7 +2004,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs["image_idx"] = np.array([[0]])
 
         if self.comp_ctx_lengths_prefill is not None:
-            list_of_comp_ctx_lengths_prefill = [np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill]
+            list_of_comp_ctx_lengths_prefill = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+            ]
             prefill_ccl_id = 0
             inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
@@ -2041,7 +2047,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         # Decode loop
         if self.comp_ctx_lengths_decode is not None:
-            list_of_comp_ctx_lengths_decode = [np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode]
+            list_of_comp_ctx_lengths_decode = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+            ]
             max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
             max_position_id = np.max(inputs["position_ids"])
             ccl_id_initial = 0
