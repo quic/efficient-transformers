@@ -20,14 +20,16 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 ## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
-## Use the optional comp_ctx_lengths argument to provide two lists of context lengths for the prefilling and decoding processes. If comp_ctx_lengths=None, the model will run with its default context length.
+## Use the optional comp_ctx_lengths_prefill and comp_ctx_lengths_decode to provide two lists of context lengths for the prefilling and decoding processes. If both are None, the lists will be generated automatically based on the context length.
 ##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
 ##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
 ##   - The second list, comp_ctx_lengths_decode, defines the compute-context-length values for the decoding process.
 ##           -- During decoding, the model selects an appropriate context length from the list based on the input prompt length and cache index.
-##           -- It starts from the correct value in the list and increases the context length dynamically when the cache index exceeds the current threshold.
+##           -- It starts from the correct value in the list and increases the context length dynamically when the generated token's cache index exceeds the current CCL value.
 
 ctx_len = 4096
+ccl_enabled = True
+# Two optional lists, comp_ctx_lengths_prefill and comp_ctx_lengths_decode, define CCL values for prefilling and decoding.
 # Set the list of ccl during prefilling process
 comp_ctx_lengths_prefill = [3072]
 # Set the list of ccl during decoding process
@@ -42,7 +44,7 @@ if continious_batching:
         config=config,
         continuous_batching=True,
         qaic_config={
-            "ccl_enabled": True,
+            "ccl_enabled": ccl_enabled,
         },
     )
 
@@ -69,7 +71,7 @@ else:
         kv_offload=True,
         config=config,
         qaic_config={
-            "ccl_enabled": True,
+            "ccl_enabled": ccl_enabled,
         },
     )
 

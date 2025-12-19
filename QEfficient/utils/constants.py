@@ -168,6 +168,16 @@ WAN_ONNX_EXPORT_LATENT_WIDTH_180P = 40
 WAN_ONNX_EXPORT_HEIGHT_180P = 192
 WAN_ONNX_EXPORT_WIDTH_180P = 320
 
+# For the purpose of automatic CCL lists generation, to limit the number of elements in CCL list, the starting point will be calculated based on context length
+CCL_START_MAP = {
+    32768: (4096, 4000),
+    65536: (8192, 8000),
+    float("inf"): (16384, 16000),
+}
+# Limitation in the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists during automatic lists generation process.
+CCL_MAX_ELEMENTS_LISTS = 5
+CCL_START_CTX_LEN = 4096
+
 
 class Constants:
     # Export Constants.
