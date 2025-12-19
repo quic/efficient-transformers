@@ -10,12 +10,11 @@ Wan2.2-Lightning Custom Configuration Example
 
 This example demonstrates how to customize the Wan2.2-Lightning model with various options:
 1. Custom video dimensions (height/width) and frame count
-2. Custom transformer model and text encoder
-3. Custom scheduler configuration
-4. Reduced model layers for faster inference
-5. Custom compilation settings
-6. Custom runtime configuration via JSON config file
-7. LoRA adapter loading and configuration
+2. Custom scheduler configuration
+3. Reduced model layers for faster inference
+4. Custom compilation settings
+5. Custom runtime configuration via JSON config file
+6. LoRA adapter loading and configuration
 
 Use this example to learn how to tune Wan2.2-Lightning for your specific video generation needs.
 """
@@ -34,16 +33,6 @@ from QEfficient import QEffWanPipeline
 
 # Option 1: Basic initialization with default parameters
 pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
-
-# Option 2: Advanced initialization with custom modules
-# Uncomment and modify to use your own custom components:
-#
-# pipeline = QEffWanPipeline.from_pretrained(
-#     "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
-#     text_encoder=custom_text_encoder,      # Your custom text encoder
-#     transformer=custom_transformer,         # Your custom transformer model
-#     tokenizer=custom_tokenizer,             # Your custom tokenizer
-# )
 
 # ============================================================================
 # LORA ADAPTER LOADING FOR LIGHTNING MODEL

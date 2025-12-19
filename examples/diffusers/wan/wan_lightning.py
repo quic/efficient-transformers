@@ -41,21 +41,8 @@ pipeline.transformer.model.transformer_low.load_lora_adapter(
 )
 pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 
-## for 2 layer model
-# pipeline.transformer.model.transformer_high.config.num_layers = 1
-# pipeline.transformer.model.transformer_low.config.num_layers = 1
-# original_blocks = pipeline.transformer.model.transformer_high.blocks
-# org_blocks = pipeline.transformer.model.transformer_low.blocks
-# pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
-#     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config.num_layers)]
-# )  # 2 layers
-# pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
-#     [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config.num_layers)]
-# )  # 2 layers
-
 
 prompt = "In a warmly lit living room, an elderly man with gray hair sits in a wooden armchair adorned with a blue cushion. He wears a gray cardigan over a white shirt, engrossed in reading a book. As he turns the pages, he subtly adjusts his posture, ensuring his glasses stay in place. He then removes his glasses, holding them in his hand, and turns his head to the right, maintaining his grip on the book. The soft glow of a bedside lamp bathes the scene, creating a calm and serene atmosphere, with gentle shadows enhancing the intimate setting."
-
 
 output = pipeline(
     prompt=prompt,
