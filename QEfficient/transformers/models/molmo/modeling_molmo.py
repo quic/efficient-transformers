@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -568,6 +568,16 @@ class QEffMolmoEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
 
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.model.transformer.blocks[0].__class__}
+
     def forward(self, pixel_values, image_masks, image_input_idx, valid_idx):
         image_features, _ = self.model.model.vision_backbone(pixel_values, image_masks)
         num_image, num_patch = image_features.shape[1:3]
@@ -587,6 +597,16 @@ class QEffMolmoDecoderWrapper(nn.Module):
         self.model = model
         # self.language_model = self.model.language_model
         self.config = self.model.config
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.model.vision_backbone.image_vit.transformer.resblocks[0].__class__}
 
     def forward(
         self,

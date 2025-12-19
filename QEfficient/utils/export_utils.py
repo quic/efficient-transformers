@@ -183,8 +183,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
     # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
-    # import pdb; pdb.set_trace()
-    kwargs["export_modules_as_functions"] = {qeff_model.model.get_repeated_layers()}
+    kwargs["export_modules_as_functions"] = qeff_model.model.get_repeated_layer_class()
     return args, kwargs
 
 

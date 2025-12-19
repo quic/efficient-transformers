@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -151,6 +151,16 @@ class QEFFMistral3EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.vision_tower
 
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_tower.transformer.layers[0].__class__}
+
     def forward(self, pixel_values):
         image_sizes = torch.tensor([[pixel_values.shape[2], pixel_values.shape[3]]]).repeat(pixel_values.shape[0], 1)
         image_features = self.model.get_image_features(
@@ -167,6 +177,16 @@ class QEFFMistral3DecoderWrapper(nn.Module):
         self.model = model
         self.config = self.model.config
         self.language_model = self.model.language_model
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return self.model.language_model.layers[0].__class__
 
     def forward(
         self,

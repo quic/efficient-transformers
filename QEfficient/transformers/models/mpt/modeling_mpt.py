@@ -7,7 +7,7 @@
 
 """PyTorch MPT model."""
 
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.utils.checkpoint
@@ -253,6 +253,16 @@ class QEffMptForCausalLM(MptForCausalLM):
     The only differences are:
     - add new args cache idx for the kv retention
     """
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffMptBlock}
 
     def forward(
         self,

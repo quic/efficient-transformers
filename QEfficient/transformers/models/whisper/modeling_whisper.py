@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -717,6 +717,16 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
     - Added get_dummy_inputs, get_onnx_dynamic_axes, get_output_names for AutoModel export
     - changed forward inputs decoder_input_ids and decoder_position_ids to input_ids and position_ids
     """
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.encoder.layers[0].__class__, QEffWhisperDecoderLayer}
 
     def forward(
         self,

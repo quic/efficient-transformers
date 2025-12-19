@@ -885,35 +885,6 @@ class PoolingTransform:
         return model, transformed
 
 
-def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
-    """
-    Dynamically determine which DecoderLayer classes should be exported as functions
-    based on the model's architecture using the existing KVCacheTransform mapping.
-    """
-
-    DECODER_LAYER_PATTERNS = ["DecoderLayer", "Block", "Layer"]
-    decoder_layer_classes = set()
-
-    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
-        qeff_class_name = qeff_class.__name__
-        if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
-            decoder_layer_classes.add(qeff_class)
-
-    model_decoder_classes = set()
-    model_class_name = model.__class__.__name__
-    if "EncoderWrapper" in model_class_name:
-        model_decoder_classes.update(
-            module.__class__ for module in model.modules() if "Qwen2_5_VLVisionBlock" in module.__class__.__name__
-        )
-        return model_decoder_classes
-
-    model_decoder_classes.update(
-        module.__class__ for module in model.modules() if module.__class__ in decoder_layer_classes
-    )
-
-    return model_decoder_classes
-
-
 class BlockedKVAttentionTransform:
     _module_mapping = {
         QEffLlamaAttention,

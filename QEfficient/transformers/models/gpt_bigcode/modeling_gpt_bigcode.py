@@ -7,7 +7,7 @@
 
 """PyTorch GPTBigCode model."""
 
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.utils.checkpoint
@@ -378,6 +378,16 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
 
 
 class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffGPTBigCodeBlock}
+
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
