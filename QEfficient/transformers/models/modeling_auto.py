@@ -1139,17 +1139,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
-            if comp_ctx_lengths_prefill is None or comp_ctx_lengths_decode is None:
-                logger.warning(
-                    "Please set comp_ctx_lengths_prefill and comp_ctx_lengths_decode with a proper list of context lengths. Using non-CCL default model."
-                )
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+            if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
+                logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
-
         # For supporting VLLM and Disaggregated with CCL
-        if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+        elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
 
@@ -1465,7 +1462,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         lang_session.set_buffers(vision_outputs)
 
         if self.comp_ctx_lengths_prefill is not None:
-            list_of_comp_ctx_lengths_prefill = [np.zeros(length) for length in self.comp_ctx_lengths_prefill]
+            list_of_comp_ctx_lengths_prefill = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+            ]
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
@@ -1514,7 +1513,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Decode loop
         if self.comp_ctx_lengths_decode is not None:
             max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
-            list_of_comp_ctx_lengths_decode = [np.zeros(length) for length in self.comp_ctx_lengths_decode]
+            list_of_comp_ctx_lengths_decode = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+            ]
             max_position_id = np.max(lang_inputs["position_ids"])
             ccl_id_initial = 0
             ccl_id = ccl_id_initial
@@ -1794,17 +1795,14 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
-            if comp_ctx_lengths_prefill is None or comp_ctx_lengths_decode is None:
-                logger.warning(
-                    "Please set comp_ctx_lengths_prefill and comp_ctx_lengths_decode with a proper list of context lengths. Using non-CCL default model."
-                )
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+            if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
+                logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
-
         # For supporting VLLM and Disaggregated with CCL
-        if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+        elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
 
@@ -2008,7 +2006,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs["image_idx"] = np.array([[0]])
 
         if self.comp_ctx_lengths_prefill is not None:
-            list_of_comp_ctx_lengths_prefill = [np.zeros(length) for length in self.comp_ctx_lengths_prefill]
+            list_of_comp_ctx_lengths_prefill = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+            ]
             prefill_ccl_id = 0
             inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
@@ -2049,7 +2049,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         # Decode loop
         if self.comp_ctx_lengths_decode is not None:
-            list_of_comp_ctx_lengths_decode = [np.zeros(length) for length in self.comp_ctx_lengths_decode]
+            list_of_comp_ctx_lengths_decode = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+            ]
             max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
             max_position_id = np.max(inputs["position_ids"])
             ccl_id_initial = 0
@@ -2624,7 +2626,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
         if self.comp_ctx_lengths_prefill is not None:
-            example_inputs["comp_ctx_lengths"] = torch.randint(0, 512, (512,), dtype=torch.long)
+            example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
@@ -2950,16 +2952,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
-            if comp_ctx_lengths_prefill is None or comp_ctx_lengths_decode is None:
-                logger.warning(
-                    "Please set comp_ctx_lengths_prefill and comp_ctx_lengths_decode with a proper list of context lengths. Using non-CCL default model."
-                )
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+            if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
+                logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
-
         # For supporting VLLM and Disaggregated with CCL
-        if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+        elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
             if isinstance(comp_ctx_lengths_prefill, str):
                 import ast
 
@@ -2974,7 +2973,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.comp_ctx_lengths_prefill = comp_ctx_lengths_prefill
                 self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
 
-            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = process_ccl_specializations(
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
         # --- Validation ---

@@ -152,6 +152,16 @@ FLUX_ADALN_DUAL_BLOCK_CHUNKS = 12  # 6 chunks for norm1 + 6 chunks for norm1_con
 FLUX_ADALN_SINGLE_BLOCK_CHUNKS = 3
 FLUX_ADALN_OUTPUT_DIM = 6144  # 2 * FLUX_ADALN_HIDDEN_DIM
 
+# For the purpose of automatic CCL lists generation, to limit the number of elements in CCL list, the starting point will be calculated based on context length
+CCL_START_MAP = {
+    32768: (4096, 4000),
+    65536: (8192, 8000),
+    float("inf"): (16384, 16000),
+}
+# Limitation in the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists during automatic lists generation process.
+CCL_MAX_ELEMENTS_LISTS = 5
+CCL_START_CTX_LEN = 4096
+
 
 class Constants:
     # Export Constants.
