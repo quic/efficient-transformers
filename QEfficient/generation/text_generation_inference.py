@@ -1314,4 +1314,5 @@ class TextGeneration:
             generated_ids=self._qaic_model.generated_ids,
             perf_metrics=perf_metrics,
         )
+        logger.info("Text Generated finised")
         return latency_stats
