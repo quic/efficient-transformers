@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import pytest
 import torch
 import torch.nn as nn
@@ -6,6 +13,8 @@ from unittest import mock
 import transformers
 from QEfficient.finetune.experimental.core import model
 from QEfficient.finetune.experimental.core.model import BaseModel, HFModel
+from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.component_registry import ComponentFactory
 
 
 class TestMockModel(nn.Module):
@@ -17,6 +26,7 @@ class TestMockModel(nn.Module):
         return self.linear(x)
 
 
+@registry.model("testcustom")
 class TestCustomModel(BaseModel):
     def __init__(self, model_name):
         super().__init__(model_name)
@@ -37,8 +47,7 @@ def test_model_property_errors_if_not_created():
 
 
 def test_create_builds_and_registers():
-    breakpoint()
-    m = TestCustomModel.create("dummy")
+    m = ComponentFactory.create_model("testcustom", "dummy")
     # inner model exists and registered
     assert "_model" in m._modules
     assert isinstance(m.model, TestMockModel)
@@ -48,7 +57,7 @@ def test_create_builds_and_registers():
 
 
 def test_tokenizer_lazy_loading():
-    m = TestCustomModel.create("dummy")
+    m = ComponentFactory.create_model("testcustom", "dummy")
     assert m._tokenizer is None
     tok = m.tokenizer
     assert tok == "dummy-tokenizer"
@@ -56,7 +65,7 @@ def test_tokenizer_lazy_loading():
 
 
 def test_to_moves_inner_and_returns_self():
-    m = TestCustomModel.create("dummy")
+    m = ComponentFactory.create_model("testcustom", "dummy")
     with mock.patch.object(TestMockModel, "to", autospec=True) as mocked_to:
         ret = m.to("cuda:0")
     mocked_to.assert_called_once_with(m.model, "cuda:0")
@@ -64,7 +73,7 @@ def test_to_moves_inner_and_returns_self():
 
 
 def test_train_eval_sync_flags():
-    m = TestCustomModel.create("dummy")
+    m = ComponentFactory.create_model("testcustom", "dummy")
     m.eval()
     assert m.training is False
     assert m.model.training is False
@@ -74,7 +83,7 @@ def test_train_eval_sync_flags():
 
 
 def test_resize_token_embeddings_and_get_input_embeddings_warn(monkeypatch):
-    m = TestCustomModel.create("dummy")
+    m = ComponentFactory.create_model("testcustom", "dummy")
 
     # resize_token_embeddings: underlying model lacks the method, should warn and not raise
     with mock.patch("QEfficient.finetune.experimental.core.model.logger.info") as mocked_log:
@@ -88,7 +97,7 @@ def test_resize_token_embeddings_and_get_input_embeddings_warn(monkeypatch):
 
 
 def test_state_dict_contains_inner_params():
-    m = TestCustomModel.create("dummy")
+    m = ComponentFactory.create_model("testcustom", "dummy")
     sd = m.state_dict()
     # should contain params from TestMockModel.linear
     assert any("linear.weight" in k for k in sd)
@@ -98,7 +107,7 @@ def test_state_dict_contains_inner_params():
 # HFModel tests
 def test_hfmodel_invalid_auto_class_raises():
     with pytest.raises(ValueError):
-        HFModel.create("hf-name", auto_class_name="AutoDoesNotExist")
+        ComponentFactory.create_model("hf", "hf-name", auto_class_name="AutoDoesNotExist")
 
 
 def test_hfmodel_loads_auto_and_tokenizer(monkeypatch):
@@ -131,7 +140,7 @@ def test_hfmodel_loads_auto_and_tokenizer(monkeypatch):
         mock.Mock(),
         raising=False,
     )
-
+    m = ComponentFactory.create_model("hf", "hf-name")
     m = HFModel.create("hf-name")
     assert isinstance(m.model, FakeAuto)
 

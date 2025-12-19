@@ -34,6 +34,7 @@ class BaseModel(nn.Module, ABC):
     @classmethod
     def create(cls, model_name: str, **model_kwargs: Any) -> "BaseModel":
         obj = cls(model_name, **model_kwargs)
+        # load model after __init__ finishes
         module = obj.load_model()
         if not isinstance(module, nn.Module):
             raise TypeError(f"load_model() must return nn.Module, got {type(module)}")
@@ -42,8 +43,8 @@ class BaseModel(nn.Module, ABC):
 
     @abstractmethod
     def load_model(self) -> nn.Module:
-        """Create and return the underlying torch.nn.Module."""
-        ...
+        """Load and return the underlying torch.nn.Module."""
+        pass
 
     def load_tokenizer(self) -> Any:
         """Override if the model exposes a tokenizer."""

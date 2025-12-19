@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-
 import logging
 from typing import Callable, Dict, Optional, Type
 
@@ -198,3 +197,14 @@ class ComponentRegistry:
 
 # Global registry instance
 registry = ComponentRegistry()
+
+
+class ComponentFactory:
+    @staticmethod
+    def create_model(model_type: str, model_name: str, **kwargs) -> any:
+        """Create a model instance."""
+        model_class = registry.get_model(model_type)
+        if model_class is None:
+            raise ValueError(f"Unknown model: {model_type}. Available: {registry.list_models()}")
+        model_instance = model_class.create(model_name, **kwargs)
+        return model_instance
