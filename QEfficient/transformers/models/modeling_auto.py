@@ -69,8 +69,10 @@ from QEfficient.utils import (
     get_padding_shape_from_config,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
+
+logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
 
 
 class QEFFTransformersBase(QEFFBaseModel):

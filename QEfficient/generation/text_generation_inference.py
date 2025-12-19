@@ -19,8 +19,10 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.sampler_utils import validate_sampler_inputs
+
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 
 @dataclass

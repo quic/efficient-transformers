@@ -9,7 +9,9 @@ from typing import Callable, Dict, Tuple, Type
 
 from torch import nn
 
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 
 class PytorchTransform:
