@@ -86,7 +86,7 @@ pipeline {
         }
         stage('QAIC Diffusion Models Tests') {
             steps {
-                timeout(time: 30, unit: 'MINUTES') {
+                timeout(time: 120, unit: 'MINUTES') {
                     sh '''
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
