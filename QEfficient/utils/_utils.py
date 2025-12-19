@@ -28,7 +28,9 @@ from transformers import (
 
 from QEfficient.utils.constants import KWARGS_INCLUSION_LIST, QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.hash_utils import json_serializable
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 
 class LRUCache:

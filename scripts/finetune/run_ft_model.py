@@ -14,7 +14,9 @@ from peft import AutoPeftModelForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
-from QEfficient.finetune.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("FT", loglevel="INFO")
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")

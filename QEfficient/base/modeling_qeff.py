@@ -7,7 +7,6 @@
 
 import gc
 import inspect
-import logging
 import shutil
 import subprocess
 import warnings
@@ -35,8 +34,9 @@ from QEfficient.utils import (
     load_json,
 )
 from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = logging.getLogger(__name__)
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 
 class QEFFBaseModel(ABC):
