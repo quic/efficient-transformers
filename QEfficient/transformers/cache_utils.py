@@ -45,11 +45,7 @@ class InvalidIndexProvider:
             int: Invalid index value (0 for ONNX functions, INT32_MAX otherwise)
         """
         if torch.onnx.is_in_onnx_export():
-            if cls.SUBFUNC_ENABLED:
-                # TODO: should not return 0 remove this if condition, it can hurt perf
-                return 0
-            else:
-                return torch.iinfo(torch.int32).max
+            return torch.iinfo(torch.int32).max
         else:
             return 0
 
