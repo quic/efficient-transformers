@@ -39,7 +39,7 @@ def calculate_compressed_latent_dimension(height: int, width: int, vae_scale_fac
     return cl, latent_height, latent_width
 
 
-def calculate_latent_dimensions(
+def calculate_latent_dimensions_with_frames(
     height: int,
     width: int,
     num_frames: int,
@@ -49,22 +49,27 @@ def calculate_latent_dimensions(
     patch_width: int,
 ) -> int:
     """
-    Calculate the latent dimensions, Compressed latent dimension (cl) for transformer buffer allocation.
+    Calculate the latent dimensions for video generation models.
 
-    This method computes the compressed sequence length (cl) that the transformer
-    will process, based on the target video dimensions, VAE scale factors, and
-    patch sizes. This is crucial for proper buffer allocation in QAIC inference.
+    This method computes the compressed sequence length (cl),
+    Latent height, Latent width , Latent frames based on the
+    target video dimensions, VAE scale factors, and patch sizes.
 
     Args:
         height (int): Target video height in pixels
         width (int): Target video width in pixels
         num_frames (int): Target video frames in pixels
+        vae_scale_factor_spatial (int): spatial vae_scale_factor from model config
+        vae_scale_factor_temporal (int): temporal vae_scale_factor from model config
+        patch_height (int): patch_height from model config
+        patch_width (int): patch_width from model config
 
     Returns:
         tuple: (cl, latent_height, latent_width)
             - cl (int): Compressed latent dimension for transformer input
             - latent_height (int): Height in latent space
             - latent_width (int): Width in latent space
+            - latent_frames (int): frames in latent space
 
     Mathematical Formula:
         latent_height = height // vae_scale_factor_spatial

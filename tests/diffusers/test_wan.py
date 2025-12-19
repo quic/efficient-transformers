@@ -4,6 +4,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+"""
+Test for wan pipeline
+# TODO : 1. Add pytest for call method
+         2. See if we reduce height and width
+        3. Keep test for Sub fn as default once sdk supports
+"""
 
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -21,7 +27,7 @@ from QEfficient import QEffWanPipeline
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
-    calculate_latent_dimensions,
+    calculate_latent_dimensions_with_frames,
     set_module_device_ids,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -57,7 +63,8 @@ def wan_pipeline_call_with_mad_validation(
     callback_on_step_end_tensor_inputs: List[str] = ["latents"],
     max_sequence_length: int = 512,
     custom_config_path: Optional[str] = None,
-    parallel_compile: bool = False,
+    use_onnx_subfunctions: bool = False,
+    parallel_compile: bool = True,
     mad_tolerances: Dict[str, float] = None,
 ):
     """
@@ -73,19 +80,24 @@ def wan_pipeline_call_with_mad_validation(
     device = "cpu"
 
     # Step 1: Compile() (export and compile)
-    pipeline.cl, pipeline.latent_height, pipeline.latent_width, pipeline.latent_frames = calculate_latent_dimensions(
-        height,
-        width,
-        num_frames,
-        pipeline.model.vae.config.scale_factor_spatial,
-        pipeline.model.vae.config.scale_factor_temporal,
-        pipeline.patch_height,
-        pipeline.patch_width,
+    pipeline.cl, pipeline.latent_height, pipeline.latent_width, pipeline.latent_frames = (
+        calculate_latent_dimensions_with_frames(
+            height,
+            width,
+            num_frames,
+            pipeline.model.vae.config.scale_factor_spatial,
+            pipeline.model.vae.config.scale_factor_temporal,
+            pipeline.patch_height,
+            pipeline.patch_width,
+        )
     )
     pipeline.compile(
         compile_config=custom_config_path,
         parallel=parallel_compile,
-        use_onnx_subfunctions=False,
+        height=height,
+        width=width,
+        num_frames=num_frames,
+        use_onnx_subfunctions=use_onnx_subfunctions,
     )
 
     set_module_device_ids(pipeline)
@@ -111,7 +123,7 @@ def wan_pipeline_call_with_mad_validation(
         )
     num_frames = max(num_frames, 1)
 
-    if pipeline.boundary_ratio is not None and guidance_scale_2 is None:
+    if pipeline.model.config.boundary_ratio is not None and guidance_scale_2 is None:
         guidance_scale_2 = guidance_scale
 
     pipeline._guidance_scale = guidance_scale
@@ -129,7 +141,6 @@ def wan_pipeline_call_with_mad_validation(
         batch_size = prompt_embeds.shape[0]
 
     # Step 4: Encode input prompt(using CPU text encoder for now)
-    start_encoder_time = time.perf_counter()
     prompt_embeds, negative_prompt_embeds = pipeline.model.encode_prompt(
         prompt=prompt,
         negative_prompt=negative_prompt,
@@ -140,8 +151,6 @@ def wan_pipeline_call_with_mad_validation(
         max_sequence_length=max_sequence_length,
         device=device,
     )
-    end_encoder_time = time.perf_counter()
-    text_encoder_perf = end_encoder_time - start_encoder_time
 
     # Get PyTorch reference prompt embeddings
     # For standard WAN pipeline, CFG is determined by presence of negative prompts
@@ -201,8 +210,8 @@ def wan_pipeline_call_with_mad_validation(
     transformer_perf = []
 
     # Step 8: Denoising loop with transformer MAD validation
-    if pipeline.boundary_ratio is not None:
-        boundary_timestep = pipeline.boundary_ratio * pipeline.scheduler.config.num_train_timesteps
+    if pipeline.model.config.boundary_ratio is not None:
+        boundary_timestep = pipeline.model.config.boundary_ratio * pipeline.scheduler.config.num_train_timesteps
     else:
         boundary_timestep = None
 
@@ -230,7 +239,7 @@ def wan_pipeline_call_with_mad_validation(
                 model_name = "transformer_low"
 
             latent_model_input = latents.to(transformer_dtype)
-            if pipeline.expand_timesteps:
+            if pipeline.model.config.expand_timesteps:
                 temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
                 timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
             else:
@@ -288,7 +297,7 @@ def wan_pipeline_call_with_mad_validation(
                 noise_pred = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
 
             # Transformer MAD validation
-            print(f"🔍 Performing MAD validation for {model_name} at step {i}...")
+            print(f" Performing MAD validation for {model_name} at step {i}...")
             mad_validator.validate_module_mad(
                 noise_pred_torch.detach().cpu().numpy(),
                 noise_pred.detach().cpu().numpy(),
@@ -316,21 +325,15 @@ def wan_pipeline_call_with_mad_validation(
         ).to(latents.device, latents.dtype)
         latents = latents / latents_std + latents_mean
 
-        start_decode_time = time.time()
         video = pipeline.model.vae.decode(latents, return_dict=False)[0]
-        end_decode_time = time.time()
-        vae_decode_perf = end_decode_time - start_decode_time
 
-        video = pipeline.video_processor.postprocess_video(video.detach())
+        video = pipeline.model.video_processor.postprocess_video(video.detach())
     else:
         video = latents
-        vae_decode_perf = 0.0
 
     # Build performance metrics
     perf_metrics = [
-        ModulePerf(module_name="text_encoder", perf=text_encoder_perf),
         ModulePerf(module_name="transformer", perf=transformer_perf),
-        ModulePerf(module_name="vae_decoder", perf=vae_decode_perf),
     ]
 
     return QEffPipelineOutput(
@@ -492,7 +495,7 @@ def test_wan_pipeline(wan_pipeline):
                 first_frame, expected_size, config["pipeline_params"]["min_video_variance"]
             )
 
-            print("\n✅ VIDEO VALIDATION PASSED")
+            print("\n VIDEO VALIDATION PASSED")
             print(f"   - Frame count: {len(generated_video)}")
             print(f"   - Frame size: {frame_validation['size']}")
             print(f"   - Frame mode: {frame_validation['mode']}")
@@ -502,24 +505,24 @@ def test_wan_pipeline(wan_pipeline):
             # Save result as video
             frames = result.images[0]
             export_to_video(frames, "test_wan_output_t2v.mp4", fps=16)
-            print("\n🎬 VIDEO SAVED: test_wan_output_t2v.mp4")
+            print("\n VIDEO SAVED: test_wan_output_t2v.mp4")
             print(result)
 
         if config["validation_checks"]["onnx_export"]:
             # Check if transformer ONNX file exists
-            print("\n🔍 ONNX Export Validation:")
+            print("\n ONNX Export Validation:")
             if hasattr(pipeline.transformer, "onnx_path") and pipeline.transformer.onnx_path:
                 DiffusersTestUtils.check_file_exists(str(pipeline.transformer.onnx_path), "transformer ONNX")
 
         if config["validation_checks"]["compilation"]:
             # Check if transformer QPC file exists
-            print("\n🔍 Compilation Validation:")
+            print("\n Compilation Validation:")
             if hasattr(pipeline.transformer, "qpc_path") and pipeline.transformer.qpc_path:
                 DiffusersTestUtils.check_file_exists(str(pipeline.transformer.qpc_path), "transformer QPC")
 
         # Print test summary
         print(f"\nTotal execution time: {execution_time:.4f}s")
-        print("✅ WAN TRANSFORMER TEST COMPLETED SUCCESSFULLY")
+        print(" WAN TRANSFORMER TEST COMPLETED SUCCESSFULLY")
 
     except Exception as e:
         print(f"\nTEST FAILED: {e}")

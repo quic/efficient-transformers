@@ -61,7 +61,23 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 ```
 
 
-### 3. Generate video
+### 3. Compile API
+
+To compile the model for desired resolution:
+
+```python
+# Compile with custom configuration
+pipeline.compile(
+    compile_config="examples/diffusers/wan/wan_config.json",
+    parallel=True,
+    height=480,
+    width=832,
+    num_frames=81,
+    use_onnx_subfunctions=False,
+)
+```
+
+### 4. Generate video
 ```python
 output = pipeline(
     prompt="A cat playing in a sunny garden",
@@ -72,6 +88,7 @@ output = pipeline(
     num_inference_steps=4,
     generator=torch.manual_seed(42),
     parallel_compile=True,
+    use_onnx_subfunctions=False,
 )
 
 # Export video

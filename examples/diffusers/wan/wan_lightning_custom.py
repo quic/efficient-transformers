@@ -119,6 +119,7 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # Uncomment to compile with a custom configuration:
 # pipeline.compile(
 #     compile_config="examples/diffusers/wan/wan_config.json",
+#     parallel=True,
 #     height=480,
 #     width=832,
 #     num_frames=81,
@@ -136,10 +137,10 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # Custom prompt for video generation
 prompt = "A cat wearing a hat walking through a magical forest with glowing mushrooms and fireflies dancing around, cinematic lighting, high quality"
 
-# Alternative video dimensions for different use cases:
-# height=192, width=320
-# height=480, width=832
-# height=720, width=1280
+# Alternative video dimensions for different use cases, corresponding default blocking
+# height=192, width=320    # ATTENTION_BLOCKING_MODE=kv head_block_size=16 num_kv_blocks=3 python3  examples/diffusers/wan/wan_lightning.py
+# height=480, width=832    #  ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=21 num_q_blocks=2 python3  examples/diffusers/wan/wan_lightning.py
+# height=720, width=1280   #  ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=48 num_q_blocks=5 python3  examples/diffusers/wan/wan_lightning.py
 
 output = pipeline(
     prompt=prompt,

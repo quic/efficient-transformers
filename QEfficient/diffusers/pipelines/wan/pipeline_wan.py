@@ -21,7 +21,6 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 import torch
 from diffusers import WanPipeline
-from diffusers.video_processor import VideoProcessor
 
 from QEfficient.diffusers.pipelines.pipeline_module import QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
@@ -29,7 +28,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
     QEffWanUnifiedWrapper,
-    calculate_latent_dimensions,
+    calculate_latent_dimensions_with_frames,
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
@@ -64,7 +63,6 @@ class QEffWanPipeline:
         model (WanPipeline): Original HuggingFace WAN model reference
         tokenizer: Text tokenizer for preprocessing
         scheduler: Diffusion scheduler for timestep management
-        video_processor (VideoProcessor): Video post-processing utilities
 
     Example:
         >>> from QEfficient.diffusers.pipelines.wan import QEffWanPipeline
@@ -111,20 +109,13 @@ class QEffWanPipeline:
         self.vae_decode = model.vae
 
         # Store all modules in a dictionary for easy iteration during export/compile
+        # TODO: add text encoder, vae decoder on QAIC
         self.modules = {"transformer": self.transformer}
 
         # Copy tokenizers and scheduler from the original model
         self.tokenizer = model.tokenizer
         self.text_encoder.tokenizer = model.tokenizer
         self.scheduler = model.scheduler
-
-        # Store configuration parameters directly
-        self.boundary_ratio = self.model.config.boundary_ratio
-        self.expand_timesteps = self.model.config.expand_timesteps
-
-        # Initialize video processor for frame handling and post-processing
-        self.video_processor = VideoProcessor(vae_scale_factor=self.model.vae.config.scale_factor_spatial)
-
         # Extract patch dimensions from transformer configuration
         _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
 
@@ -262,6 +253,9 @@ class QEffWanPipeline:
         self,
         compile_config: Optional[str] = None,
         parallel: bool = False,
+        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
+        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
+        num_frames: int = constants.WAN_ONNX_EXPORT_FRAMES,
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """
@@ -277,6 +271,9 @@ class QEffWanPipeline:
             parallel (bool, default=False): Compilation mode selection:
                 - True: Compile modules in parallel using ThreadPoolExecutor for faster processing
                 - False: Compile modules sequentially for lower resource usage
+            height (int, default=192): Target image height in pixels.
+            width (int, default=320): Target image width in pixels.
+            num_frames (int, deafult=81) : Target num of frames in pixel space
             use_onnx_subfunctions (bool, default=False): Whether to export models with ONNX
                 subfunctions before compilation if not already exported.
 
@@ -289,12 +286,15 @@ class QEffWanPipeline:
         Example:
             >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
             >>> # Sequential compilation with default config
-            >>> pipeline.compile(height=480, width=832)
+            >>> pipeline.compile(height=480, width=832, num_frames=81)
             >>>
             >>> # Parallel compilation with custom config
             >>> pipeline.compile(
             ...     compile_config="/path/to/custom_config.json",
-            ...     parallel=True
+            ...     parallel=True,
+            ...     height=480,
+            ...     width=832,
+            ...     num_frames=81
             ... )
         """
         # Ensure all modules are exported to ONNX before compilation
@@ -309,22 +309,32 @@ class QEffWanPipeline:
         # Load compilation configuration
         config_manager(self, config_source=compile_config)
 
+        # Configure pipeline dimensions and calculate compressed latent parameters
+        cl, latent_height, latent_width, latent_frames = calculate_latent_dimensions_with_frames(
+            height,
+            width,
+            num_frames,
+            self.model.vae.config.scale_factor_spatial,
+            self.model.vae.config.scale_factor_temporal,
+            self.patch_height,
+            self.patch_width,
+        )
         # Prepare dynamic specialization updates based on video dimensions
         specialization_updates = {
             "transformer": [
                 # high noise
                 {
-                    "cl": self.cl,  # Compressed latent dimension
-                    "latent_height": self.latent_height,  # Latent space height
-                    "latent_width": self.latent_width,  # Latent space width
-                    "num_frames": self.latent_frames,  # Latent frames
+                    "cl": cl,  # Compressed latent dimension
+                    "latent_height": latent_height,  # Latent space height
+                    "latent_width": latent_width,  # Latent space width
+                    "num_frames": latent_frames,  # Latent frames
                 },
                 # low noise
                 {
-                    "cl": self.cl,  # Compressed latent dimension
-                    "latent_height": self.latent_height,  # Latent space height
-                    "latent_width": self.latent_width,  # Latent space width
-                    "num_frames": self.latent_frames,  # Latent frames
+                    "cl": cl,  # Compressed latent dimension
+                    "latent_height": latent_height,  # Latent space height
+                    "latent_width": latent_width,  # Latent space width
+                    "num_frames": latent_frames,  # Latent frames
                 },
             ]
         }
@@ -427,26 +437,15 @@ class QEffWanPipeline:
             >>> result.images[0].save("cat_garden.mp4")
         """
         device = "cpu"
-        self.height = height
-        self.width = width
-        self.num_frames = num_frames
-
-        # Configure pipeline dimensions and calculate compressed latent parameters
-        self.cl, self.latent_height, self.latent_width, self.latent_frames = calculate_latent_dimensions(
-            self.height,
-            self.width,
-            self.num_frames,
-            self.model.vae.config.scale_factor_spatial,
-            self.model.vae.config.scale_factor_temporal,
-            self.patch_height,
-            self.patch_width,
-        )
 
         # Compile models with custom configuration if needed
         self.compile(
             compile_config=custom_config_path,
             parallel=parallel_compile,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            height=height,
+            width=width,
+            num_frames=num_frames,
         )
 
         # Set device IDs for all modules based on configuration
@@ -475,7 +474,7 @@ class QEffWanPipeline:
             )
         num_frames = max(num_frames, 1)
 
-        if self.boundary_ratio is not None and guidance_scale_2 is None:
+        if self.model.config.boundary_ratio is not None and guidance_scale_2 is None:
             guidance_scale_2 = guidance_scale
 
         # Initialize pipeline state
@@ -495,7 +494,6 @@ class QEffWanPipeline:
 
         # Step 3: Encode input prompts using UMT5 text encoder
         # TODO: Update UMT5 on QAIC
-        start_encoder_time = time.perf_counter()
         prompt_embeds, negative_prompt_embeds = self.model.encode_prompt(
             prompt=prompt,
             negative_prompt=negative_prompt,
@@ -506,8 +504,6 @@ class QEffWanPipeline:
             max_sequence_length=max_sequence_length,
             device=device,
         )
-        end_encoder_time = time.perf_counter()
-        text_encoder_perf = end_encoder_time - start_encoder_time
 
         # Convert embeddings to transformer dtype for compatibility
         transformer_dtype = self.transformer.model.transformer_high.dtype
@@ -541,8 +537,8 @@ class QEffWanPipeline:
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
 
         # Calculate boundary timestep for stage switching in WAN 2.2
-        if self.boundary_ratio is not None:
-            boundary_timestep = self.boundary_ratio * self.scheduler.config.num_train_timesteps
+        if self.model.config.boundary_ratio is not None:
+            boundary_timestep = self.model.config.boundary_ratio * self.scheduler.config.num_train_timesteps
         else:
             boundary_timestep = None
 
@@ -552,11 +548,21 @@ class QEffWanPipeline:
                 str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
             )
 
+        # Calculate compressed latent dimension for transformer buffer allocation
+        cl, _, _, _ = calculate_latent_dimensions_with_frames(
+            height,
+            width,
+            num_frames,
+            self.model.vae.config.scale_factor_spatial,
+            self.model.vae.config.scale_factor_temporal,
+            self.patch_height,
+            self.patch_width,
+        )
         # Allocate output buffer for QAIC inference
         output_buffer = {
             "output": np.random.rand(
                 batch_size,
-                self.cl,  # Compressed latent dimension
+                cl,  # Compressed latent dimension
                 constants.WAN_DIT_OUT_CHANNELS,
             ).astype(np.int32),
         }
@@ -587,7 +593,7 @@ class QEffWanPipeline:
                 latent_model_input = latents.to(transformer_dtype)
 
                 # Handle timestep expansion for temporal consistency
-                if self.expand_timesteps:
+                if self.model.config.expand_timesteps:
                     # Expand timesteps spatially for better temporal modeling
                     temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
                     timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
@@ -731,21 +737,16 @@ class QEffWanPipeline:
 
             # TODO: Enable VAE on QAIC
             # VAE Decode latents to video using CPU (temporary)
-            start_decode_time = time.perf_counter()
             video = self.model.vae.decode(latents, return_dict=False)[0]  # CPU fallback
-            end_decode_time = time.perf_counter()
-            vae_decode_perf = end_decode_time - start_decode_time
 
             # Post-process video for output
-            video = self.video_processor.postprocess_video(video.detach())
+            video = self.model.video_processor.postprocess_video(video.detach())
         else:
             video = latents
 
         # Step 10: Collect performance metrics
         perf_data = {
-            "umt5": text_encoder_perf,  # UMT5 text encoder (CPU)
             "transformer": transformer_perf,  # Unified transformer (QAIC)
-            "vae_decoder": vae_decode_perf,  # VAE decoder (CPU)
         }
 
         # Build performance metrics for output

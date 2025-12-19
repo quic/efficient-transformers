@@ -40,6 +40,7 @@ def apply_head_blocking(
     q: torch.FloatTensor,
     k: torch.FloatTensor,
     v: torch.FloatTensor,
+    head_block_size: int,
     attention_mask: Optional[torch.FloatTensor] = None,
 ) -> torch.FloatTensor:
     """
@@ -62,7 +63,6 @@ def apply_head_blocking(
     scale_factor = 1.0 / math.sqrt(DH)
 
     # Get head blocking configuration
-    _, head_block_size, _, _ = get_attention_blocking_config()
     head_block_size = head_block_size or NH
     num_head_blocks = math.ceil(NH / head_block_size)
 
@@ -107,6 +107,8 @@ def apply_kv_blocking(
     q: torch.FloatTensor,
     k: torch.FloatTensor,
     v: torch.FloatTensor,
+    head_block_size: int,
+    num_kv_blocks: int,
     attention_mask: Optional[torch.FloatTensor] = None,
 ) -> torch.FloatTensor:
     """
@@ -129,7 +131,6 @@ def apply_kv_blocking(
     scale_factor = 1.0 / math.sqrt(DH)
 
     # Get blocking configuration
-    _, head_block_size, num_kv_blocks, _ = get_attention_blocking_config()
     head_block_size = head_block_size or NH
     num_kv_blocks = num_kv_blocks or CL
     num_head_blocks = math.ceil(NH / head_block_size)
@@ -210,6 +211,8 @@ def apply_q_blocking(
     q: torch.FloatTensor,
     k: torch.FloatTensor,
     v: torch.FloatTensor,
+    head_block_size: int,
+    num_q_blocks: int,
     attention_mask: Optional[torch.FloatTensor] = None,
 ) -> torch.FloatTensor:
     """
@@ -232,7 +235,6 @@ def apply_q_blocking(
     scale_factor = 1.0 / math.sqrt(DH)
 
     # Get blocking configuration
-    _, head_block_size, _, num_q_blocks = get_attention_blocking_config()
     head_block_size = head_block_size or NH
     num_q_blocks = num_q_blocks or CL
     num_head_blocks = math.ceil(NH / head_block_size)
@@ -292,6 +294,9 @@ def apply_qkv_blocking(
     q: torch.FloatTensor,
     k: torch.FloatTensor,
     v: torch.FloatTensor,
+    head_block_size: int,
+    num_kv_blocks: int,
+    num_q_blocks: int,
     attention_mask: Optional[torch.FloatTensor] = None,
 ) -> torch.FloatTensor:
     """
@@ -313,7 +318,6 @@ def apply_qkv_blocking(
     scale_factor = 1.0 / math.sqrt(DH)
 
     # Get blocking configuration from environment variables
-    _, head_block_size, num_kv_blocks, num_q_blocks = get_attention_blocking_config()
     head_block_size = head_block_size or NH
     num_kv_blocks = num_kv_blocks or CL
     num_q_blocks = num_q_blocks or CL
@@ -420,6 +424,9 @@ def compute_blocked_attention(
     q: torch.FloatTensor,
     k: torch.FloatTensor,
     v: torch.FloatTensor,
+    head_block_size: int,
+    num_kv_blocks: int,
+    num_q_blocks: int,
     blocking_mode: str = "default",
     attention_mask: Optional[torch.FloatTensor] = None,
 ) -> torch.FloatTensor:
@@ -430,6 +437,9 @@ def compute_blocked_attention(
         q (torch.FloatTensor): Query tensor of shape (BS, NH, CL, DH)
         k (torch.FloatTensor): Key tensor of shape (BS, NH, CL, DH)
         v (torch.FloatTensor): Value tensor of shape (BS, NH, CL, DH)
+        head_block_size (int) : Head blocking size
+        num_kv_blocks (int) : Number of KV blocks
+        num_q_blocks (int) : Number of Q blocks
         blocking_mode (str): Blocking strategy ('kv', 'q', 'qkv', 'default')
         attention_mask (Optional[torch.FloatTensor]): Attention mask tensor
 
@@ -437,10 +447,10 @@ def compute_blocked_attention(
         torch.FloatTensor: Attention output of shape (BS, NH, CL, DH)
     """
     if blocking_mode == "kv":
-        return apply_kv_blocking(q, k, v, attention_mask)
+        return apply_kv_blocking(q, k, v, head_block_size, num_kv_blocks, attention_mask)
     elif blocking_mode == "q":
-        return apply_q_blocking(q, k, v, attention_mask)
+        return apply_q_blocking(q, k, v, head_block_size, num_q_blocks, attention_mask)
     elif blocking_mode == "qkv":
-        return apply_qkv_blocking(q, k, v, attention_mask)
+        return apply_qkv_blocking(q, k, v, head_block_size, num_kv_blocks, num_q_blocks, attention_mask)
     else:  # default
-        return apply_head_blocking(q, k, v, attention_mask)
+        return apply_head_blocking(q, k, v, head_block_size, attention_mask)

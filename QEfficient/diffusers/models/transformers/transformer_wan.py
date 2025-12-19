@@ -26,7 +26,7 @@ from diffusers.models.transformers.transformer_wan import (
 )
 from diffusers.utils import set_weights_and_activate_adapters
 
-from QEfficient.diffusers.pipelines.modeling_utils import (
+from QEfficient.diffusers.models.modeling_utils import (
     compute_blocked_attention,
     get_attention_blocking_config,
 )
@@ -113,12 +113,15 @@ class QEffWanAttnProcessor(WanAttnProcessor):
             key = apply_rotary_emb(key, *rotary_emb)
 
         # Get blocking configuration
-        blocking_mode, _, _, _ = get_attention_blocking_config()
+        blocking_mode, head_block_size, num_kv_blocks, num_q_blocks = get_attention_blocking_config()
         # Apply blocking using pipeline_utils
         hidden_states = compute_blocked_attention(
             query.transpose(1, 2),
             key.transpose(1, 2),
             value.transpose(1, 2),
+            head_block_size,
+            num_kv_blocks,
+            num_q_blocks,
             blocking_mode=blocking_mode,
             attention_mask=attention_mask,
         )

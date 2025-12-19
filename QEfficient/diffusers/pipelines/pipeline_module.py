@@ -26,7 +26,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
 )
 from QEfficient.utils import constants
-from QEfficient.utils.torch_patches import apply_torch_patches
 
 
 class QEffTextEncoder(QEFFBaseModel):
@@ -458,7 +457,10 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         """
 
         if use_onnx_subfunctions:
-            export_kwargs = {"export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock}}
+            export_kwargs = {
+                "export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock},
+                "use_onnx_subfunctions": True,
+            }
 
         # Sort _use_default_values in config to ensure consistent hash generation during export
         self.model.config["_use_default_values"].sort()
@@ -591,7 +593,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = None,
+        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """Export the Wan transformer model to ONNX format.
@@ -607,14 +609,8 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         Returns:
             str: Path to the exported ONNX model
         """
-        if export_kwargs is None:
-            export_kwargs = {}
-
         if use_onnx_subfunctions:
-            export_kwargs = {"export_modules_as_functions": {WanTransformerBlock}}
-
-        # torch patch to export onnx with subfunction
-        apply_torch_patches()  # TODO: Moving to _export is better
+            export_kwargs = {"export_modules_as_functions": {WanTransformerBlock}, "use_onnx_subfunctions": True}
 
         return self._export(
             example_inputs=inputs,
@@ -634,10 +630,3 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
         self._compile(specializations=specializations, **compiler_options)
-
-    @property
-    def model_name(self) -> str:
-        mname = self.model.__class__.__name__
-        if mname.startswith("QEff") or mname.startswith("QEFF"):
-            mname = mname[4:]
-        return mname
