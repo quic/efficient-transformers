@@ -925,4 +925,3 @@ class BlockedKVAttentionTransform:
             elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
                 warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
         return model, transformed
-
