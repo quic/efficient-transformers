@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
+from diffusers.models.transformers.transformer_wan import WanTransformerBlock
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -360,8 +361,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
 
         Args:
             model (nn.Module): The Flux transformer model to wrap
-            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
-                                     for better modularity and potential optimization
         """
         super().__init__(model)
 
@@ -450,13 +449,18 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
             export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
+            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
+                                     for better modularity and potential optimization
 
         Returns:
             str: Path to the exported ONNX model
         """
 
         if use_onnx_subfunctions:
-            export_kwargs = {"export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock}}
+            export_kwargs = {
+                "export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock},
+                "use_onnx_subfunctions": True,
+            }
 
         # Sort _use_default_values in config to ensure consistent hash generation during export
         self.model.config["_use_default_values"].sort()
@@ -471,6 +475,153 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
+        """
+        Compile the ONNX model for Qualcomm AI hardware.
+
+        Args:
+            specializations (List[Dict]): Model specialization configurations
+            **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
+        """
+        self._compile(specializations=specializations, **compiler_options)
+
+
+class QEffWanUnifiedTransformer(QEFFBaseModel):
+    """
+    Wrapper for WAN Unified Transformer with ONNX export and QAIC compilation capabilities.
+
+    This class handles the unified WAN transformer model that combines high and low noise transformers
+    into a single model for efficient deployment. Based on the timestep shape, the model dynamically
+    selects between high and low noise transformers during inference.
+
+    The wrapper applies specific transformations and optimizations for efficient inference on
+    Qualcomm AI hardware, particularly for video diffusion models.
+
+    Attributes:
+        model (nn.Module): The QEffWanUnifiedWrapper model that combines high/low noise transformers
+        _pytorch_transforms (List): PyTorch transformations applied before ONNX export
+        _onnx_transforms (List): ONNX transformations applied after export
+    """
+
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    def __init__(self, unified_transformer):
+        """
+        Initialize the Wan unified transformer.
+
+        Args:
+            model (nn.Module): Wan unified transformer model
+        """
+        super().__init__(unified_transformer)
+        self.model = unified_transformer
+
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying Wan transformer model
+        """
+        return self.model.config.__dict__
+
+    def get_onnx_params(self):
+        """
+        Generate ONNX export configuration for the Wan transformer.
+
+        Creates example inputs for all Wan-specific inputs including hidden states,
+        text embeddings, timestep conditioning,
+        Returns:
+            Tuple containing:
+                - example_inputs (Dict): Sample inputs for ONNX export
+                - dynamic_axes (Dict): Specification of dynamic dimensions
+                - output_names (List[str]): Names of model outputs
+        """
+        batch_size = constants.WAN_ONNX_EXPORT_BATCH_SIZE
+        example_inputs = {
+            # hidden_states = [ bs, in_channels, frames, latent_height, latent_width]
+            "hidden_states": torch.randn(
+                batch_size,
+                self.model.config.in_channels,
+                constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
+                constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P,
+                constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P,
+                dtype=torch.float32,
+            ),
+            # encoder_hidden_states = [BS, seq len , text dim]
+            "encoder_hidden_states": torch.randn(
+                batch_size, constants.WAN_ONNX_EXPORT_SEQ_LEN, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
+            ),
+            # Rotary position embeddings: [2, context_length, 1, rotary_dim]; 2 is from tuple of cos, sin freqs
+            "rotary_emb": torch.randn(
+                2, constants.WAN_ONNX_EXPORT_CL_180P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32
+            ),
+            # Timestep embeddings: [batch_size=1, embedding_dim]
+            "temb": torch.randn(batch_size, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32),
+            # Projected timestep embeddings: [batch_size=1, projection_dim, embedding_dim]
+            "timestep_proj": torch.randn(
+                batch_size,
+                constants.WAN_PROJECTION_DIM,
+                constants.WAN_TEXT_EMBED_DIM,
+                dtype=torch.float32,
+            ),
+            # Timestep parameter: Controls high/low noise transformer selection based on shape
+            "tsp": torch.ones(1, dtype=torch.int64),
+        }
+
+        output_names = ["output"]
+
+        dynamic_axes = {
+            "hidden_states": {
+                0: "batch_size",
+                1: "num_channels",
+                2: "num_frames",
+                3: "latent_height",
+                4: "latent_width",
+            },
+            "timestep": {0: "steps"},
+            "encoder_hidden_states": {0: "batch_size", 1: "sequence_length"},
+            "rotary_emb": {1: "cl"},
+            "tsp": {0: "model_type"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def export(
+        self,
+        inputs: Dict,
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_dir: str = None,
+        export_kwargs: Dict = {},
+        use_onnx_subfunctions: bool = False,
+    ) -> str:
+        """Export the Wan transformer model to ONNX format.
+
+        Args:
+            inputs (Dict): Example inputs for ONNX export
+            output_names (List[str]): Names of model outputs
+            dynamic_axes (Dict): Specification of dynamic dimensions
+            export_dir (str, optional): Directory to save ONNX model
+            export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
+            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
+                                     for better modularity and potential optimization
+        Returns:
+            str: Path to the exported ONNX model
+        """
+        if use_onnx_subfunctions:
+            export_kwargs = {"export_modules_as_functions": {WanTransformerBlock}, "use_onnx_subfunctions": True}
+
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=True,
+            **export_kwargs,
+        )
+
+    def compile(self, specializations, **compiler_options) -> None:
         """
         Compile the ONNX model for Qualcomm AI hardware.
 
