@@ -88,7 +88,7 @@ FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
 SIZE_THRESHOLD_DEFAULT = 1024
 
 
-COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw"]
+COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-compile-only"]
 DEFAULT_AIC_HW_VERSION = "ai100"
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
@@ -151,6 +151,22 @@ FLUX_ADALN_HIDDEN_DIM = 3072
 FLUX_ADALN_DUAL_BLOCK_CHUNKS = 12  # 6 chunks for norm1 + 6 chunks for norm1_context
 FLUX_ADALN_SINGLE_BLOCK_CHUNKS = 3
 FLUX_ADALN_OUTPUT_DIM = 6144  # 2 * FLUX_ADALN_HIDDEN_DIM
+
+# Wan Transformer Constants
+WAN_TEXT_EMBED_DIM = 5120
+WAN_PROJECTION_DIM = 6
+WAN_ONNX_EXPORT_BATCH_SIZE = 1
+WAN_ONNX_EXPORT_FRAMES = 81
+WAN_ONNX_EXPORT_LATENT_FRAMES = 21
+WAN_ONNX_EXPORT_SEQ_LEN = 512
+WAN_ONNX_EXPORT_ROTARY_DIM = 128
+WAN_DIT_OUT_CHANNELS = 64
+# Wan dims for 180p
+WAN_ONNX_EXPORT_CL_180P = 5040
+WAN_ONNX_EXPORT_LATENT_HEIGHT_180P = 24
+WAN_ONNX_EXPORT_LATENT_WIDTH_180P = 40
+WAN_ONNX_EXPORT_HEIGHT_180P = 192
+WAN_ONNX_EXPORT_WIDTH_180P = 320
 
 # For the purpose of automatic CCL lists generation, to limit the number of elements in CCL list, the starting point will be calculated based on context length
 CCL_START_MAP = {
