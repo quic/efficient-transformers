@@ -19,7 +19,9 @@ from diffusers.models.transformers.transformer_flux import (
     _get_qkv_projections,
 )
 
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
 
 
 def qeff_apply_rotary_emb(

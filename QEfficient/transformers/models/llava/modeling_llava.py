@@ -15,7 +15,9 @@ from transformers.models.llava.modeling_llava import (
 )
 
 from QEfficient.utils._utils import IOInfo
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
 
 BS = 1
 FBS = 4
