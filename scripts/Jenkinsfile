@@ -22,7 +22,6 @@ pipeline {
                    . preflight_qeff/bin/activate &&
                    pip install --upgrade pip setuptools &&
                    pip install .[test] &&
-                   pip install .[diffusers] &&
                    pip install junitparser pytest-xdist &&
                    pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 && #packages to load VLMs
@@ -59,7 +58,7 @@ pipeline {
                            mkdir -p $PWD/Non_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic &&
-                           pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log2.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log2.xml &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -68,7 +67,7 @@ pipeline {
                }
            }
        }
-       stage('QAIC MultiModal Tests') {
+        stage('QAIC MultiModal Tests') {
                    steps {
                        timeout(time: 120, unit: 'MINUTES') {
                            sh '''
@@ -78,12 +77,30 @@ pipeline {
                            mkdir -p $PWD/Non_cli_qaic_multimodal &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log6.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log6.xml &&
                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                            deactivate"
                            '''
                        }
                    }
+        }
+        stage('QAIC Diffusion Models Tests') {
+            steps {
+                timeout(time: 120, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_cli_qaic_diffusion &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
+                    export HF_HUB_CACHE=/huggingface_hub &&
+                    pytest tests -m '(not cli) and (on_qaic) and (diffusion_models) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log_diffusion.xml &&
+                    junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
         }
        stage('Inference Tests') {
                    steps {

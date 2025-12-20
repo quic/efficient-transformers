@@ -1,0 +1,63 @@
+{
+    "model_setup": {
+                        "height": 192,
+                        "width": 320,
+                        "num_frames": 81,
+                        "num_transformer_layers_high": 1,
+                        "num_transformer_layers_low": 1,
+                        "use_onnx_subfunctions": false
+                    },
+    "mad_validation": {
+                         "tolerances": {
+                                "transformer_high": 0.3,
+                                "transformer_low": 0.2
+                            }
+                        },
+    "pipeline_params": {
+                            "test_prompt": "A cat walking in a garden",
+                            "num_inference_steps": 2,
+                            "guidance_scale": 1.0,
+                            "guidance_scale_2": 1.0,
+                            "max_sequence_length": 512,
+                            "validate_gen_video": true,
+                            "min_video_variance": 1.0
+                        },
+    "validation_checks": {
+                            "video_generation": true,
+                            "onnx_export": true,
+                            "compilation": true
+                        },
+    "modules": {
+        "transformer": {
+          "specializations": [
+                              {
+                                  "batch_size": "1",
+                                  "num_channels": "16",
+                                  "steps": "1",
+                                  "sequence_length": "512",
+                                  "model_type": 1
+                              },
+                              {
+                                  "batch_size": "1",
+                                  "num_channels": "16",
+                                  "steps": "1",
+                                  "sequence_length": "512",
+                                  "model_type": 2
+                              }
+                          ],
+          "compilation":  {
+                                "onnx_path": null,
+                                "compile_dir": null,
+                                "mdp_ts_num_devices": 1,
+                                "mxfp6_matmul": true,
+                                "convert_to_fp16": true,
+                                "aic_num_cores": 16,
+                                "mos": 1,
+                                "mdts_mos": 1
+                            },
+          "execute":     {
+                                "device_ids": null
+                          }
+        }
+    }
+}
