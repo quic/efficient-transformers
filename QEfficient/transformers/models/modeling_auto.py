@@ -2618,6 +2618,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_cache_shape[2] = seq_len + (
                     self.model.config.sliding_window if hasattr(self.model.config, "sliding_window") else 0
                 )
+                self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
