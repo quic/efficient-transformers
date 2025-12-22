@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -822,6 +822,16 @@ class QEffLlama4EncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
 
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_model.model.layers[0].__class__}
+
     def forward(self, pixel_values):
         vision_feature_layer = self.model.config.vision_config.vision_feature_layer
         vision_feature_select_strategy = self.model.config.vision_config.vision_feature_select_strategy
@@ -848,6 +858,16 @@ class QEffLlama4DecoderWrapper(nn.Module):
         self.model = model
         self.language_model = self.model.language_model
         self.config = self.model.config
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffLlama4TextDecoderLayer}
 
     def forward(
         self,

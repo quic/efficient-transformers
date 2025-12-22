@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Type
 
 import torch
 import torch.nn.functional as F
@@ -371,6 +371,16 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
 
 
 class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffQwen3MoeDecoderLayer}
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,

@@ -7,7 +7,7 @@
 
 """PyTorch Mixtral model."""
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -413,6 +413,16 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model
     """
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QeffMixtralDecoderLayer}
 
     def forward(
         self,
