@@ -38,6 +38,7 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
+from QEfficient.transformers.embeddings.embedding_utils import register_mask_function
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_PREFILL_ONLY_MODEL_ARCH,
@@ -310,6 +311,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
+    @register_mask_function
     def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
