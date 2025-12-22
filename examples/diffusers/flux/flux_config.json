@@ -1,0 +1,99 @@
+{
+  "description": "Default configuration for Flux pipeline",
+
+  "modules": 
+  {
+    "text_encoder": 
+                    {
+                      "specializations":{
+                                          "batch_size": 1,
+                                          "seq_len": 77
+                                        },
+                      "compilation": 
+                                        {
+                                          "onnx_path": null,
+                                          "compile_dir": null,
+                                          "mdp_ts_num_devices": 1,
+                                          "mxfp6_matmul": false,
+                                          "convert_to_fp16": true,
+                                          "aic_num_cores": 16,
+                                          "compile_only":true
+                                        },
+                      "execute":
+                                        {
+                                          "device_ids": null
+                                        }  
+
+                    },
+    "text_encoder_2": 
+                    {
+                      "specializations": 
+                                        {
+                                          "batch_size": 1,
+                                          "seq_len": 256
+                                        },
+                      "compilation": 
+                                        {
+                                          "onnx_path": null,
+                                          "compile_dir": null,
+                                          "mdp_ts_num_devices": 1,
+                                          "mxfp6_matmul": false,
+                                          "convert_to_fp16": true,
+                                          "aic_num_cores": 16,
+                                          "compile_only": true
+                                        },
+                      "execute":
+                                        {
+                                          "device_ids": null
+                                        }
+                    },
+    "transformer": 
+                    {
+                      "specializations": 
+                                        {
+                                          "batch_size": 1,
+                                          "seq_len": 256,
+                                          "steps": 1
+                                        },
+                      "compilation": 
+                                        {
+                                          "onnx_path": null,
+                                          "compile_dir": null,
+                                          "mdp_ts_num_devices": 4,
+                                          "mxfp6_matmul": true,
+                                          "convert_to_fp16": true,
+                                          "aic_num_cores": 16,
+                                          "mos": 1,
+                                          "mdts-mos": 1,
+                                          "compile_only":true
+                                        },
+                      "execute":
+                                        {
+                                          "device_ids": null
+                                        }
+                    },
+    "vae_decoder": 
+                    {
+                      "specializations": 
+                                        {
+                                          "batch_size": 1,
+                                          "channels": 16
+                                        },
+                      "compilation": 
+                                        {
+                                          "onnx_path": null,
+                                          "compile_dir": null,
+                                          "mdp_ts_num_devices": 1,
+                                          "mxfp6_matmul": false,
+                                          "convert_to_fp16": true,
+                                          "aic_num_cores": 16,
+                                          "aic-enable-depth-first": true,
+                                          "compile_only":true
+                                        },
+                      "execute":
+                                        {
+                                          "device_ids": null
+                                        }
+                    }
+  }
+}
