@@ -20,11 +20,11 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformer2DModel,
     FluxTransformerBlock,
 )
-from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
 from diffusers.models.transformers.transformer_qwenimage import (
     QwenDoubleStreamAttnProcessor2_0,
     QwenImageTransformer2DModel,
 )
+from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
 from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
@@ -47,15 +47,15 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxTransformer2DModel,
     QEffFluxTransformerBlock,
 )
-from QEfficient.diffusers.models.transformers.transformer_wan import (
-    QEffWanAttention,
-    QEffWanAttnProcessor,
-    QEffWanTransformer3DModel,
-)
 from QEfficient.diffusers.models.transformers.transformer_qwenimage import (
     QEffQwenDoubleStreamAttnProcessor2_0,
     QEffQwenImageAttention,
     QEffQwenImageTransformer2DModel,
+)
+from QEfficient.diffusers.models.transformers.transformer_wan import (
+    QEffWanAttention,
+    QEffWanAttnProcessor,
+    QEffWanTransformer3DModel,
 )
 
 
