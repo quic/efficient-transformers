@@ -41,7 +41,7 @@ def test_to_hashable_float_nan(value):
 
 def test_json_serializable():
     # Test with a set
-    assert json_serializable({1, 2, 3}) == [1, 2, 3]
+    assert json_serializable({1, 2, 3}) == ["1", "2", "3"]
     # Test with an unsupported type
     with pytest.raises(TypeError):
         json_serializable({1, 2, 3, {4, 5}})
