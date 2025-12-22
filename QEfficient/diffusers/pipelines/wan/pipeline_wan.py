@@ -307,7 +307,7 @@ class QEffWanPipeline:
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Load compilation configuration
-        config_manager(self, config_source=compile_config)
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Configure pipeline dimensions and calculate compressed latent parameters
         cl, latent_height, latent_width, latent_frames = calculate_latent_dimensions_with_frames(
