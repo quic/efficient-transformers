@@ -101,6 +101,7 @@ if __name__ == "__main__":
     num_cores = 16
     num_devices = 4
     ccl_enabled = True
+    # Two optional lists, comp_ctx_lengths_prefill and comp_ctx_lengths_decode, define CCL values for prefilling and decoding. If both are None, the lists will be generated automatically based on the context length.
     comp_ctx_lengths_prefill = [4096]
     comp_ctx_lengths_decode = [6144, ctx_len]
 

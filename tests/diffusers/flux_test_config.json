@@ -1,33 +1,33 @@
 {
     "model_setup": {
-        "height": 256,
-        "width": 256,
-        "num_transformer_layers": 2,
-        "num_single_layers": 2,
-        "use_onnx_subfunctions": false
-    },
+                        "height": 256,
+                        "width": 256,
+                        "num_transformer_layers": 2,
+                        "num_single_layers": 2,
+                        "use_onnx_subfunctions": false
+                    },
     "mad_validation": {
-        "tolerances": {
-            "clip_text_encoder": 0.1,
-            "t5_text_encoder": 5.5,
-            "transformer": 2.0,
-            "vae_decoder": 1.0
-        }
+                        "tolerances": {
+                            "clip_text_encoder": 0.1,
+                            "t5_text_encoder": 5.5,
+                            "transformer": 2.0,
+                            "vae_decoder": 1.0
+                        }
     },
     "pipeline_params": {
-        "test_prompt": "A cat holding a sign that says hello world",
-        "num_inference_steps": 2,
-        "guidance_scale": 0.0,
-        "max_sequence_length": 256,
-        "validate_gen_img": true,
-        "min_image_variance": 1.0,
-        "custom_config_path": null
-    },
+                            "test_prompt": "A cat holding a sign that says hello world",
+                            "num_inference_steps": 2,
+                            "guidance_scale": 0.0,
+                            "max_sequence_length": 256,
+                            "validate_gen_img": true,
+                            "min_image_variance": 1.0,
+                            "custom_config_path": null
+                        },
     "validation_checks": {
-        "image_generation": true,
-        "onnx_export": true,
-        "compilation": true
-    },
+                            "image_generation": true,
+                            "onnx_export": true,
+                            "compilation": true
+                        },
   "modules":
   {
     "text_encoder":
