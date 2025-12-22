@@ -467,6 +467,10 @@ class QEFFBaseModel(ABC):
         else:
             mdp_ts_json = None
 
+        if use_onnx_subfunctions:
+            logger.info("Using ONNX subfunctions for compilation.")
+            command.append("-sub-functions")
+
         compile_hash_params = {
             "command": command,
             "specializations": specializations,
@@ -515,9 +519,6 @@ class QEFFBaseModel(ABC):
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 
-        if use_onnx_subfunctions:
-            logger.info("Using ONNX subfunctions for compilation.")
-            command.append("-sub-functions")
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
