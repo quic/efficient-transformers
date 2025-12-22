@@ -33,14 +33,6 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
   - Disaggregated serving ready
   - [GPT-OSS Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/)
 
-- **Olmo2**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Full CausalLM support with optimizations
-  - Bug fixes included
-
-- **Mistral 3.1 (24B)**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Production-ready deployment
 
 - **Molmo**
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
