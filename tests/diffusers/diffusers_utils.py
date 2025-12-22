@@ -69,7 +69,6 @@ class DiffusersTestUtils:
             bool: True if file exists
         """
         exists = os.path.exists(file_path)
-
         print(f"file exist: {exists}; {file_type}: {file_path}")
         return exists
 
@@ -161,7 +160,6 @@ class MADValidator:
 
         # Always report MAD value
         step_str = f" {step_info}" if step_info else ""
-
         print(f"{module_name.upper()} MAD{step_str}: {mad_value:.8f}")
 
         # Always validate - fail if tolerance exceeded

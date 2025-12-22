@@ -361,7 +361,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
 
         Args:
             model (nn.Module): The Flux transformer model to wrap
-
         """
         super().__init__(model)
 
@@ -452,7 +451,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
-
 
         Returns:
             str: Path to the exported ONNX model

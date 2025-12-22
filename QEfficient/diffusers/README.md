@@ -84,7 +84,6 @@ We welcome contributions! Please see our [Contributing Guide](../../CONTRIBUTING
 ## 🙏 Acknowledgments
 
 - **HuggingFace Diffusers**: For the excellent foundation library
-- **Stability AI**: For the amazing Stable Diffusion models  
 ---
 
 ## 📞 Support

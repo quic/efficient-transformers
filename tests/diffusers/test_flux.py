@@ -123,7 +123,6 @@ def flux_pipeline_call_with_mad_validation(
     pipeline.text_encoder_2.qpc_session.deactivate()
 
     # MAD Validation for Text Encoders
-
     print(" Performing MAD validation for text encoders...")
     mad_validator.validate_module_mad(
         clip_qaic_pooled_prompt_embeds, clip_torch_pooled_prompt_embeds, module_name="clip_text_encoder"
@@ -422,7 +421,6 @@ def test_flux_pipeline(flux_pipeline):
 
         if config["validation_checks"]["onnx_export"]:
             # Check if ONNX files exist (basic check)
-
             print("\n ONNX Export Validation:")
             for module_name in ["text_encoder", "text_encoder_2", "transformer", "vae_decode"]:
                 module_obj = getattr(pipeline, module_name, None)
@@ -431,7 +429,6 @@ def test_flux_pipeline(flux_pipeline):
 
         if config["validation_checks"]["compilation"]:
             # Check if QPC files exist (basic check)
-
             print("\n Compilation Validation:")
             for module_name in ["text_encoder", "text_encoder_2", "transformer", "vae_decode"]:
                 module_obj = getattr(pipeline, module_name, None)
