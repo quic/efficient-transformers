@@ -2604,7 +2604,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 else seq_len
             )
             kv_cache_shape[2] = (
-                seq_len + (0 if self.model.config.sliding_window is None else self.model.config.sliding_window)
+                seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
                 if enable_chunking
                 else seq_len
             )
@@ -2617,7 +2617,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params.pop("chunking", None)
             if kwargs.get("retain_full_kv", False):
                 kv_cache_shape[2] = seq_len + (
-                    0 if self.model.config.sliding_window is None else self.model.config.sliding_window
+                    self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
                 )
                 self.hash_params["retain_full_kv"] = True
 
