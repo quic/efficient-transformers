@@ -2602,7 +2602,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
                 else seq_len
             )
-            kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
+            kv_cache_shape[2] = (
+                seq_len + (self.model.config.sliding_window if hasattr(self.model.config, "sliding_window") else 0)
+                if enable_chunking
+                else seq_len
+            )
         else:
             self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
             self.hash_params.pop("prefill_only", None)
@@ -2611,7 +2615,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params.pop("ENABLE_OPT_SWA", None)
             self.hash_params.pop("chunking", None)
             if kwargs.get("retain_full_kv", False):
-                kv_cache_shape[2] = seq_len + self.model.config.sliding_window
+                kv_cache_shape[2] = seq_len + (
+                    self.model.config.sliding_window if hasattr(self.model.config, "sliding_window") else 0
+                )
                 self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
