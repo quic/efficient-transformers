@@ -39,7 +39,7 @@ decode_qpc_path = qeff_model.compile(
 )
 
 # Following command errors out by default, the user is supposed to run the printed command and provide the generated qpc path as prefill_qpc_path commenting out lines 55-68
-# prefill_qpc_path = "/home/dipankar/.cache/qeff_models/Qwen3MoeForCausalLM/Qwen3MoeForCausalLM-d6bec77055bbf321/qpc-6d69cd128947ac31/qpc"
+# prefill_qpc_path = ""
 
 prefill_qpc_path = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
