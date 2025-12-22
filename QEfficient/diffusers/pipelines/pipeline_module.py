@@ -9,7 +9,6 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
-
 from diffusers.models.transformers.transformer_wan import WanTransformerBlock
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
@@ -460,12 +459,10 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         """
 
         if use_onnx_subfunctions:
-
             export_kwargs = {
                 "export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock},
                 "use_onnx_subfunctions": True,
             }
-
 
         # Sort _use_default_values in config to ensure consistent hash generation during export
         self.model.config["_use_default_values"].sort()
@@ -488,7 +485,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
         self._compile(specializations=specializations, **compiler_options)
-
 
 
 class QEffWanUnifiedTransformer(QEFFBaseModel):

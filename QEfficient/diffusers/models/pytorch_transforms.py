@@ -13,7 +13,6 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformer2DModel,
     FluxTransformerBlock,
 )
-
 from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
 from torch import nn
 
@@ -31,7 +30,6 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxTransformer2DModel,
     QEffFluxTransformerBlock,
 )
-
 from QEfficient.diffusers.models.transformers.transformer_wan import (
     QEffWanAttention,
     QEffWanAttnProcessor,

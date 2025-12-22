@@ -13,10 +13,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import PIL.Image
-
 import torch
 import torch.nn as nn
-
 from tqdm import tqdm
 
 from QEfficient.utils._utils import load_json
@@ -39,7 +37,6 @@ def calculate_compressed_latent_dimension(height: int, width: int, vae_scale_fac
     # cl = compressed latent dimension (divided by 4 for Flux's 2x2 packing)
     cl = (latent_height * latent_width) // 4
     return cl, latent_height, latent_width
-
 
 
 def calculate_latent_dimensions_with_frames(
@@ -145,7 +142,6 @@ def compile_modules_parallel(
         specializations = config["modules"][module_name]["specializations"].copy()
         compile_kwargs = config["modules"][module_name]["compilation"]
 
-
         if (
             specialization_updates and module_name in specialization_updates
         ):  # Apply specialization updates if available
@@ -196,7 +192,6 @@ def compile_modules_sequential(
         module_config = config["modules"]
         specializations = module_config[module_name]["specializations"].copy()
         compile_kwargs = module_config[module_name]["compilation"]
-
 
         if (
             specialization_updates and module_name in specialization_updates
@@ -287,7 +282,6 @@ class QEffPipelineOutput:
 # List of module name that require special handling during export
 # when use_onnx_subfunctions is enabled
 ONNX_SUBFUNCTION_MODULE = ["transformer"]
-
 
 
 class QEffWanUnifiedWrapper(nn.Module):

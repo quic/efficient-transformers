@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.transformers.transformer_flux import (
     FluxAttention,
@@ -90,7 +89,6 @@ class QEffFluxAttnProcessor(FluxAttnProcessor):
             query = qeff_apply_rotary_emb(query, image_rotary_emb)
             key = qeff_apply_rotary_emb(key, image_rotary_emb)
 
-
         # Get blocking configuration
         blocking_mode, head_block_size, num_kv_blocks, num_q_blocks = get_attention_blocking_config()
         # Apply blocking using pipeline_utils
@@ -106,7 +104,6 @@ class QEffFluxAttnProcessor(FluxAttnProcessor):
         )
 
         hidden_states = hidden_states.transpose(1, 2)
-
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)
 

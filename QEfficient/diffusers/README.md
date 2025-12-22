@@ -62,7 +62,6 @@ pip install dist/qefficient-0.0.1.dev0-py3-none-any.whl
 
 ## 🎯 Supported Models
 - ✅ [`black-forest-labs/FLUX.1-schnell`](https://huggingface.co/black-forest-labs/FLUX.1-schnell)
-
 - ✅ [`lightx2v/Wan2.2-Lightning`](https://huggingface.co/lightx2v/Wan2.2-Lightning)
 
 ---
@@ -86,7 +85,6 @@ We welcome contributions! Please see our [Contributing Guide](../../CONTRIBUTING
 
 - **HuggingFace Diffusers**: For the excellent foundation library
 - **Stability AI**: For the amazing Stable Diffusion models  
-
 ---
 
 ## 📞 Support
