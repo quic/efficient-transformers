@@ -96,13 +96,29 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
 | **Whisper**  | Whisper      | [openai/whisper-tiny](https://huggingface.co/openai/whisper-tiny)<br>[openai/whisper-base](https://huggingface.co/openai/whisper-base)<br>[openai/whisper-small](https://huggingface.co/openai/whisper-small)<br>[openai/whisper-medium](https://huggingface.co/openai/whisper-medium)<br>[openai/whisper-large](https://huggingface.co/openai/whisper-large)<br>[openai/whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) | ✔️          |
+| **Wav2Vec2** | Wav2Vec2     | [facebook/wav2vec2-base](https://huggingface.co/facebook/wav2vec2-base)<br>[facebook/wav2vec2-large](https://huggingface.co/facebook/wav2vec2-large) | ✔️          |
+
+## Diffusion Models
+
+### Image Generation Models
+**QEff Auto Class:** `QEffFluxPipeline`
+
+| Architecture | Model Family | Representative Models                                                                 | vLLM Support |
+|--------------|--------------|----------------------------------------------------------------------------------------|--------------|
+| **StableDiffusionPipeline**  | Stable Diffusion      | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/stabilityai/stable-diffusion-2-1) |          |
+
+### Video Genration Model
+**QEff Auto Class:** `QEffWanPipeline`
+
+| Architecture | Model Family | Representative Models                                                                 | vLLM Support |
+|--------------|--------------|----------------------------------------------------------------------------------------|--------------|
+| **StableDiffusionPipeline**  | Stable Diffusion      | [Wan-AI/Wan2.2-T2V-A14B-Diffusers](https://huggingface.co/stabilityai/stable-diffusion-2-1) |         |
 
 (models_coming_soon)=
 # Models Coming Soon
 
 | Architecture            | Model Family | Representative Models                      |
 |-------------------------|--------------|--------------------------------------------|
-| **Qwen3MoeForCausalLM** |Qwen3| [Qwen/Qwen3-MoE-15B-A2B]() |
 | **Mistral3ForConditionalGeneration**|Mistral 3.1| [mistralai/Mistral-Small-3.1-24B-Base-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Base-2503) |
 | **BaichuanForCausalLM** | Baichuan2    | [baichuan-inc/Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)             |
 | **CohereForCausalLM**   | Command-R    | [CohereForAI/c4ai-command-r-v01](https://huggingface.co/CohereForAI/c4ai-command-r-v01)             |
