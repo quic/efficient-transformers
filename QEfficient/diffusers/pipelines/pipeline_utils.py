@@ -86,7 +86,7 @@ def calculate_latent_dimensions_with_frames(
     return cl, latent_height, latent_width, latent_frames
 
 
-def config_manager(cls, config_source: Optional[str] = None):
+def config_manager(cls, config_source: Optional[str] = None, use_onnx_subfunctions: bool = False):
     """
     JSON-based compilation configuration manager for diffusion pipelines.
 
@@ -108,6 +108,11 @@ def config_manager(cls, config_source: Optional[str] = None):
         raise FileNotFoundError(f"Configuration file not found: {config_source}")
 
     cls.custom_config = load_json(config_source)
+
+    # Enable ONNX subfunctions for specific modules if requested
+    for module_name, _ in cls.modules.items():
+        if module_name in ONNX_SUBFUNCTION_MODULE:
+            cls.custom_config["modules"][module_name]["compilation"]["use_onnx_subfunctions"] = use_onnx_subfunctions
 
 
 def set_module_device_ids(cls):
