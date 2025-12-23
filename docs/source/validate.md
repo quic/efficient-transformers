@@ -43,9 +43,9 @@
 - ** set "trust-remote-code" flag to True for e2e inference with vLLM
 - *** pass "disable-sliding-window" flag for e2e inference of Gemma-2 family of models with vLLM
 
-**Note:**
+```{NOTE}
 Intern-VL, Molmo models are Vision Language Model but they use `QEFFAutoModelForCausalLM` for inference to make it compatible with the huggingface transformers' inference pipeline in the model's source codebase.
-
+```
 ---
 
 ## Embedding Models
@@ -98,10 +98,10 @@ In the single QPC(Qualcomm Program Container) setup, the entire model—includin
 
 
 
-**Note:**
+```{NOTE}
 The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
 If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
-
+```
 ---
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
@@ -121,7 +121,7 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
 | **FluxPipeline**  | FLUX.1     | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/stabilityai/stable-diffusion-2-1) |          |
 
-### Video Genration Model
+### Video Generation Models
 **QEff Auto Class:** `QEffWanPipeline`
 
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
@@ -133,6 +133,7 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 
 | Architecture            | Model Family | Representative Models                      |
 |-------------------------|--------------|--------------------------------------------|
-| **BaichuanForCausalLM** | Baichuan2    | [baichuan-inc/Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)             |
-| **CohereForCausalLM**   | Command-R    | [CohereForAI/c4ai-command-r-v01](https://huggingface.co/CohereForAI/c4ai-command-r-v01)             |
-| **DbrxForCausalLM**     | DBRX         | [databricks/dbrx-base](https://huggingface.co/databricks/dbrx-base)                       |
+| **NemotronHForCausalLM** | NVIDIA Nemotron v3   | [NVIDIA Nemotron v3](https://huggingface.co/collections/nvidia/nvidia-nemotron-v3)             |
+| **Sam3Model**   | facebook/sam3   | [facebook/sam3](https://huggingface.co/facebook/sam3)             |
+| **StableDiffusionModel**     | HiDream-ai         | [HiDream-ai/HiDream-I1-Full](https://huggingface.co/HiDream-ai/HiDream-I1-Full)                       |
+| **MistralLarge3Model**    | Mistral Large 3   | [mistralai/mistral-large-3](https://huggingface.co/collections/mistralai/mistral-large-3) |
