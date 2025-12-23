@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from QEfficient.transformers.modeling_utils import SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
 import onnx
 import torch
 
@@ -240,7 +241,7 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-            if prefill_only:
+            if prefill_only and self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
                 self.prefill_onnx_path = onnx_path
             else:
                 self.onnx_path = onnx_path
@@ -322,7 +323,7 @@ class QEFFBaseModel(ABC):
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
-        if prefill_only:
+        if prefill_only and self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             self.prefill_onnx_path = onnx_path
         else:
             self.onnx_path = onnx_path
@@ -342,15 +343,16 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
         }
-        if prefill_only:
-            if self.prefill_onnx_path is None:
-                kwargs.update(
-                    {
-                        "prefill_only": prefill_only,
-                        "prefill_seq_len": specializations[0].get("seq_len"),
-                        "enable_chunking": enable_chunking,
-                    }
-                )
+
+        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+            kwargs.update(
+                {
+                    "prefill_only": prefill_only,
+                    "prefill_seq_len": specializations[0].get("seq_len"),
+                    "enable_chunking": enable_chunking,
+                }
+            )
+            if prefill_only and self.prefill_onnx_path is None:
                 self.export(**kwargs)
             return self.prefill_onnx_path
         else:
