@@ -286,7 +286,7 @@ class QEffVAE(QEFFBaseModel):
         }
 
         return example_inputs, dynamic_axes, output_names
-    
+
     def get_video_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
         """
         Generate ONNX export configuration for the VAE decoder.
@@ -305,7 +305,7 @@ class QEffVAE(QEFFBaseModel):
 
         # VAE decoder takes latent representation as input
         example_inputs = {
-            "latent_sample": torch.randn(bs, 16, 21, 24, 40),
+            "latent_sample": torch.randn(bs, 16, 21, 12, 16),
             "return_dict": False,
         }
 
