@@ -48,12 +48,14 @@
                                         {
                                           "onnx_path": null,
                                           "compile_dir": null,
-                                          "mdp_ts_num_devices": 4,
+                                          "mdp_ts_num_devices": 8,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
                                           "aic_num_cores": 16,
                                           "aic-enable-depth-first": true,
-                                          "compile_only":true
+                                          "compile_only":true,
+                                          "mos": 1,
+                                          "mdts_mos": 1
                                         },
                       "execute":
                                         {

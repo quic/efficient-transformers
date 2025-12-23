@@ -753,7 +753,7 @@ class QEffWanPipeline:
                 self.vae_decoder.qpc_session = QAICInferenceSession(
                     str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
                 )
-            
+
             # Allocate output buffer for VAE decoder
             output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
 
