@@ -40,7 +40,7 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
-    SPECIALIZED_PREFILL_ONLY_MODEL_ARCH,
+    SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -2522,7 +2522,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
         if num_q_blocks is None:
-            block_size = 128
+            block_size = 256
             if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
                 raise ValueError(
                     f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
@@ -2588,31 +2588,28 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
-        if prefill_only:
-            if not enable_chunking and self.continuous_batching:
-                raise NotImplementedError(
-                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                )
-            self.prefill(enable=True, enable_chunking=enable_chunking)
-            self.hash_params.pop("retain_full_kv", None)
-            seq_len = (
-                self.get_seq_len_and_handle_specialized_prefill_model(
+
+        # TODO: move this to a DA Serving utility class
+        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+            if prefill_only:
+                if self.continuous_batching and not enable_chunking:
+                    raise NotImplementedError("Can't enable prefix-caching without chunking")
+                self.prefill(enable=True, enable_chunking=enable_chunking)
+                self.hash_params.pop("retain_full_kv", None)
+                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                     prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                 )
-                if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
-                else seq_len
-            )
-            kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
-        else:
-            self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-            self.hash_params.pop("prefill_only", None)
-            self.hash_params.pop("NUM_Q_BLOCKS", None)
-            self.hash_params.pop("NUM_FFN_BLOCKS", None)
-            self.hash_params.pop("ENABLE_OPT_SWA", None)
-            self.hash_params.pop("chunking", None)
-            if kwargs.get("retain_full_kv", False):
-                kv_cache_shape[2] = seq_len + self.model.config.sliding_window
-                self.hash_params["retain_full_kv"] = True
+                kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
+            else:
+                self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+                self.hash_params.pop("prefill_only", None)
+                self.hash_params.pop("NUM_Q_BLOCKS", None)
+                self.hash_params.pop("NUM_FFN_BLOCKS", None)
+                self.hash_params.pop("ENABLE_OPT_SWA", None)
+                self.hash_params.pop("chunking", None)
+                if kwargs.get("retain_full_kv", False):
+                    kv_cache_shape[2] = seq_len + self.model.config.sliding_window
+                    self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
@@ -2933,20 +2930,23 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
+            logger.warning(
+                "`kv_cache_batch_size` or `full_batch_size` is being passed"
+                "This will be ignored as `continuous_batching` is set to `False` in `from_pretrained`"
+            )
+
         if prefill_only is None or not prefill_only:
             if self.continuous_batching and full_batch_size is None:
                 raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-            if kv_cache_batch_size and not full_batch_size:
-                raise ValueError(
-                    "KV caching requires continuous batching. Please set `full_batch_size` and "
-                    "enable `continuous_batching=True` in `from_pretrained`."
-                )
         else:
-            if self.continuous_batching:
-                if not isinstance(kv_cache_batch_size, int):
-                    raise ValueError(
-                        "Please pass valid integer for kv_cache_batch_size as continuous_batching is enabled for prefill-only model"
-                    )
+            if self.continuous_batching and kv_cache_batch_size is None and full_batch_size is None:
+                raise ValueError(
+                    "Please pass valid integer for kv_cache_batch_size or full_batch_size, both have same meaning, as continuous_batching is enabled for prefill-only model"
+                )
+
+        # Infer kv_cache_batch_size if not provided
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -2988,14 +2988,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             and num_speculative_tokens > 0
         ):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
-
-        if kv_cache_batch_size and prefill_only is not None and prefill_only:
-            logger.warning(
-                "kv_cache_batch_size will be ignored as prefill_only is set to True unless this is GPTOSS model"
-            )
-
-        # Infer kv_cache_batch_size if not provided
-        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
         # --- Specializations ---
         specializations = []
