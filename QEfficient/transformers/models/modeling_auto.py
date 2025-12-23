@@ -40,7 +40,7 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
-    SPECIALIZED_PREFILL_ONLY_MODEL_ARCH,
+    SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -2588,31 +2588,26 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
-        if prefill_only:
-            if not enable_chunking and self.continuous_batching:
-                raise NotImplementedError(
-                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                )
-            self.prefill(enable=True, enable_chunking=enable_chunking)
-            self.hash_params.pop("retain_full_kv", None)
-            seq_len = (
-                self.get_seq_len_and_handle_specialized_prefill_model(
+
+        # TODO: move this to a DA Serving utility class
+        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+            if prefill_only:
+                self.prefill(enable=True, enable_chunking=enable_chunking)
+                self.hash_params.pop("retain_full_kv", None)
+                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                     prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                 )
-                if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
-                else seq_len
-            )
-            kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
-        else:
-            self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-            self.hash_params.pop("prefill_only", None)
-            self.hash_params.pop("NUM_Q_BLOCKS", None)
-            self.hash_params.pop("NUM_FFN_BLOCKS", None)
-            self.hash_params.pop("ENABLE_OPT_SWA", None)
-            self.hash_params.pop("chunking", None)
-            if kwargs.get("retain_full_kv", False):
-                kv_cache_shape[2] = seq_len + self.model.config.sliding_window
-                self.hash_params["retain_full_kv"] = True
+                kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
+            else:
+                self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+                self.hash_params.pop("prefill_only", None)
+                self.hash_params.pop("NUM_Q_BLOCKS", None)
+                self.hash_params.pop("NUM_FFN_BLOCKS", None)
+                self.hash_params.pop("ENABLE_OPT_SWA", None)
+                self.hash_params.pop("chunking", None)
+                if kwargs.get("retain_full_kv", False):
+                    kv_cache_shape[2] = seq_len + self.model.config.sliding_window
+                    self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
@@ -2942,7 +2937,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if prefill_only is None or not prefill_only:
             if self.continuous_batching and full_batch_size is None:
                 raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-
         else:
             if self.continuous_batching and kv_cache_batch_size is None and full_batch_size is None:
                 raise ValueError(
