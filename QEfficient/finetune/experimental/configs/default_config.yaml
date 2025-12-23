@@ -1,0 +1,105 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+# Model configuration
+model:
+  model_type: "hf"  # Hugging Face model
+  auto_class_name: "AutoModelForCausalLM"
+  model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
+  use_peft: true
+  peft_config:
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.1
+    target_modules: ["q_proj", "v_proj"]
+    bias: "none"  # Options: none, all, lora_only
+    task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
+    peft_type: "LORA"  # Options: LORA, IA3, etc.
+
+# Dataset configuration
+dataset:
+  tokenizer_name: "HuggingFaceTB/SmolLM-135M"
+  dataset_type: "seq_completion"
+  # dataset_name: "Arthur-LAGACHERIE/very-smollm-corpus-0.5M"
+  dataset_name: "knkarthick/samsum"
+  train_split: "train"
+  max_seq_length: 512
+  split_ratio: 0.8  # Ratio for train/test split, used when only train_split is provided
+  test_split: "test"
+  group_by_length: True
+  num_workers: 4
+  pin_memory: True
+  persistent_workers: True
+  prefetch_factor: 1
+  drop_last: False
+
+# Training configuration
+training:
+  type: "sft"
+  output_dir: "./training_results"
+  eval_strategy: "epoch"
+  # eval_steps: 100 # If 'eval_strategy' is 'steps' then it will be used.
+  gradient_accumulation_steps: 1
+  num_train_epochs: 1
+  max_steps: -1
+  log_level: "info"
+  log_on_each_node: True
+  logging_strategy: "steps"
+  logging_steps: 10
+  save_strategy: "epoch"
+  # save_steps: 100   # If 'save_strategy' is 'steps' then it will be used.
+  save_total_limit: 5
+  metric_for_best_model: "eval_loss"
+  dtype: "fp16"
+
+  # Uncomment if running in Notebook
+  # disable_tqdm: True
+
+  # Uncomment below fsdp block to enable FSDP training
+  # fsdp: "full_shard"
+  # fsdp_config: "./configs/accelerate/fsdp_config.yaml"
+  # fsdp_config: "./configs/accelerate/fsdp_tp_parallelism_config.yaml"
+
+  # Uncomment below deepspeed block to enable DeepSpeed training
+  # deepspeed_config: "./configs/accelerate/deepSpeed_config.yaml"
+
+  # Uncomment below DDP block to enable DDP training and configure DDP params
+  # ddp_config:
+  #   ddp_backend: "qccl"
+  #   ddp_find_unused_parameters: False
+  #   ddp_bucket_cap_mb: 25
+  #   ddp_broadcast_buffers: null
+  #   ddp_timeout: 1800
+
+  # Uncomment and populate to resume training
+  # resume_from_checkpoint: "./abc"
+  # restore_callback_states_from_checkpoint: True
+
+  gradient_checkpointing: False
+  gradient_checkpointing_kwargs:
+    preserve_rng_state : True
+    use_reenrant: False
+
+  torch_compile: True
+
+# Optimizer configuration
+optimizers:
+  optimizer_name: "adamw"
+  lr: 5e-5
+  weight_decay: 0.01
+
+scheduler:
+  scheduler_name: "cosine"
+  warmup_steps: 100   # warmup_steps or warmup_ratio
+  warmup_ratio: 0.1
+
+callbacks:
+  early_stopping:
+    early_stopping_patience: 3
+    early_stopping_threshold: 0.001
+  tensorboard:
+
