@@ -11,7 +11,7 @@ Supported Features
    * - `Disaggregated Serving for GPT-OSS <https://github.com/quic/efficient-transformers/tree/main/examples/disagg_serving>`_
      - Enabled for GPT-OSS models, allowing for flexible deployment of large language models across different hardware configurations.
    * - `ONNX Sub-Functions <https://github.com/quic/efficient-transformers/pull/621>`_
-     - New ONNX sub-function export feature for AutoModelForCausalLM and AutoModelForSeq2SeqLM classes, enabling modular and reusable model components. Refer `sample script <>`_ for more **details**.
+     - New ONNX sub-function export feature for AutoModelForCausalLM and AutoModelForSeq2SeqLM classes, enabling modular and reusable model components.
    * - `Continuous Batching (VLMs) <https://github.com/quic/efficient-transformers/pull/610>`_
      - Extended to Vision Language Models with multi-image handling capabilities, optimizing throughput and latency by dynamically batching requests with varying image counts. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/granite_vision/continuous_batching.py>`_ for more **details**.
    * - `Compute Context Length (CCL) <https://github.com/quic/efficient-transformers/blob/main/examples/performance/compute_context_length/README.md>`_

@@ -2,7 +2,7 @@
 
 Welcome to the official release of **Efficient Transformer Library v1.21.0**! This release introduces advanced attention mechanisms, expanded model support, optimized serving capabilities, and significant improvements to fine-tuning and deployment workflows.
 
-> ✅ All features and models listed below are available on the [`release/1.21.0`](https://github.com/quic/efficient-transformers/tree/release/v1.21.0) branch and [`mainline`](https://github.com/quic/efficient-transformers/tree/main).
+> ✅ All features and models listed below are available on the [`release/v1.21.0`](https://github.com/quic/efficient-transformers/tree/release/v1.21.0) branch and [`mainline`](https://github.com/quic/efficient-transformers/tree/main).
 
 ---
 
@@ -10,46 +10,53 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 
 - **Flux (Diffusers - Image Generation)**
   - Diffusion-based image generation model
-  - Blocking support for optimized attention patterns
-  - Full integration with diffusers pipeline
-  - [Flux Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/flux/)
+  - [Flux.1 Schnell Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/flux/flux_1_schnell.py)
 
 - **WAN (Diffusers - Video Generation)**
   - Wide-Area Network Lightning support for distributed inference
-  - Enhanced serving capabilities for large-scale deployments
-  - Full diffusers integration
-  - [WAN Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/)
+  - [Wan_lightning Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_lightning.py)
 
 - **Qwen2.5-VL (Vision Language)**
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
   - Multi-image prompt support
   - Continuous batching enabled
-  - [Qwen2.5-VL Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/qwen2_5_vl/)
+  - [Qwen2.5-VL Usage Guide](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen_vl)
 
+- **Mistral 3.1 (24B)**
+  - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
+  - [Mistral-3.1 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/mistral_vision/mistral3_example.py)
 
 - **GPT-OSS (Decode-Only)**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Separate prefill and decode compilation supported
   - Disaggregated serving ready
-  - [GPT-OSS Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/)
+  - [GPT-OSS Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/gpt_oss_disagg_mode.py)
 
+- **Olmo2**
+  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
+  - Full CausalLM support with optimizations
+  - Refer to [Text generation Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/text_generation) for usage details.
 
 - **Molmo**
-  - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
+  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Multi-modal capabilities
+  - [Molmo Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/molmo/molmo_example.py)
 
 - **InternVL 3.5 Series**
-  - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
+  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Full Vision-Language support
   - Multi-image handling with continuous batching
+  - Refer to [InternVL 3.5 Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/internvl) for usage details.
 
 - **Qwen3-MOE (Mixture of Experts)**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Efficient expert routing
+  - [Qwen3-MOE Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/moe_inference.py)
 
 - **Wav2Vec2 (Audio)**
+  - Executable via [`QEFFAutoModelForCTC`](#QEFFAutoModelForCTC)
   - Speech recognition and audio feature extraction
-  - On-device audio processing support
+  - [Wav2Vec2 Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/audio/wav2vec2_inference.py)
 
 ---
 
@@ -96,7 +103,7 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 
 Welcome to the official release of **Efficient Transformer Library v1.20.0**! This release introduces advanced attention mechanisms, expanded model support, optimized serving capabilities, and significant improvements to fine-tuning and deployment workflows.
 
-> ✅ All features and models listed below are available on the [`release/1.20.0`](https://github.com/quic/efficient-transformers/tree/release/v1.20.0) branch and [`mainline`](https://github.com/quic/efficient-transformers/tree/main).
+> ✅ All features and models listed below are available on the [`release/v1.20.0`](https://github.com/quic/efficient-transformers/tree/release/v1.20.0) branch and [`mainline`](https://github.com/quic/efficient-transformers/tree/main).
 
 ---
 
