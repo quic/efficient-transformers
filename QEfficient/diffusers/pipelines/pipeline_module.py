@@ -214,6 +214,122 @@ class QEffUNet(QEFFBaseModel):
         self._compile(specializations=specializations, **compiler_options)
 
 
+class QEffAutoencoderKLWan(QEFFBaseModel):
+    """
+    Wrapper for Variational Autoencoder (VAE) models with ONNX export and QAIC compilation.
+
+    This class handles VAE models with specific transformations and optimizations
+    for efficient inference on Qualcomm AI hardware. VAE models are used in diffusion
+    pipelines for encoding images to latent space and decoding latents back to images.
+
+    Attributes:
+        model (nn.Module): The wrapped VAE model (deep copy of original)
+        type (str): VAE operation type ("encoder" or "decoder")
+        _pytorch_transforms (List): PyTorch transformations applied before ONNX export
+        _onnx_transforms (List): ONNX transformations applied after export
+    """
+
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying VAE model
+        """
+        return self.model.config.__dict__
+
+    def __init__(self, model: nn.Module, type: str) -> None:
+        """
+        Initialize the VAE wrapper.
+
+        Args:
+            model (nn.Module): The pipeline model containing the VAE
+            type (str): VAE operation type ("encoder" or "decoder")
+        """
+        super().__init__(model)
+        self.model = model
+
+        # To have different hashing for encoder/decoder
+        self.model.config["type"] = type
+
+    def get_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
+        """
+        Generate ONNX export configuration for the VAE decoder.
+
+        Args:
+            latent_height (int): Height of latent representation (default: 32)
+            latent_width (int): Width of latent representation (default: 32)
+
+        Returns:
+            Tuple containing:
+                - example_inputs (Dict): Sample inputs for ONNX export
+                - dynamic_axes (Dict): Specification of dynamic dimensions
+                - output_names (List[str]): Names of model outputs
+        """
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+
+        # VAE decoder takes latent representation as input
+        example_inputs = {
+            "latent_sample": torch.randn(bs, 16, 21, 24, 40),
+            "return_dict": False,
+        }
+
+        output_names = ["sample"]
+
+        # All dimensions except channels can be dynamic
+        dynamic_axes = {
+            "latent_sample": {2: "num_frames", 3: "latent_height", 4: "latent_width"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def export(
+        self,
+        inputs: Dict,
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_dir: str = None,
+        export_kwargs: Dict = {},
+    ) -> str:
+        """
+        Export the VAE model to ONNX format.
+
+        Args:
+            inputs (Dict): Example inputs for ONNX export
+            output_names (List[str]): Names of model outputs
+            dynamic_axes (Dict): Specification of dynamic dimensions
+            export_dir (str, optional): Directory to save ONNX model
+            export_kwargs (Dict, optional): Additional export arguments
+
+        Returns:
+            str: Path to the exported ONNX model
+        """
+
+        self.model.config["_use_default_values"].sort()
+
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            **export_kwargs,
+        )
+
+    def compile(self, specializations: List[Dict], **compiler_options) -> None:
+        """
+        Compile the ONNX model for Qualcomm AI hardware.
+
+        Args:
+            specializations (List[Dict]): Model specialization configurations
+            **compiler_options: Additional compiler options
+        """
+        self._compile(specializations=specializations, **compiler_options)
+
+
 class QEffVAE(QEFFBaseModel):
     """
     Wrapper for Variational Autoencoder (VAE) models with ONNX export and QAIC compilation.
