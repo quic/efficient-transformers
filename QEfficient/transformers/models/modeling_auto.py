@@ -2522,7 +2522,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
         if num_q_blocks is None:
-            block_size = 128
+            block_size = 256
             if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
                 raise ValueError(
                     f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
@@ -2933,20 +2933,24 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
+            logger.warning(
+                "`kv_cache_batch_size` or `full_batch_size` is being passed"
+                "This will be ignored as `continuous_batching` is set to `False` in `from_pretrained`"
+            )
+
         if prefill_only is None or not prefill_only:
             if self.continuous_batching and full_batch_size is None:
                 raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-            if kv_cache_batch_size and not full_batch_size:
-                raise ValueError(
-                    "KV caching requires continuous batching. Please set `full_batch_size` and "
-                    "enable `continuous_batching=True` in `from_pretrained`."
-                )
+
         else:
-            if self.continuous_batching:
-                if not isinstance(kv_cache_batch_size, int):
-                    raise ValueError(
-                        "Please pass valid integer for kv_cache_batch_size as continuous_batching is enabled for prefill-only model"
-                    )
+            if self.continuous_batching and kv_cache_batch_size is None and full_batch_size is None:
+                raise ValueError(
+                    "Please pass valid integer for kv_cache_batch_size or full_batch_size, both have same meaning, as continuous_batching is enabled for prefill-only model"
+                )
+
+        # Infer kv_cache_batch_size if not provided
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -2988,14 +2992,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             and num_speculative_tokens > 0
         ):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
-
-        if kv_cache_batch_size and prefill_only is not None and prefill_only:
-            logger.warning(
-                "kv_cache_batch_size will be ignored as prefill_only is set to True unless this is GPTOSS model"
-            )
-
-        # Infer kv_cache_batch_size if not provided
-        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
         # --- Specializations ---
         specializations = []
