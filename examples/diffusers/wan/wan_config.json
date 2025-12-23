@@ -32,6 +32,34 @@
           "execute":     {
                               "device_ids": null
                           }
-    }
+    },
+    "vae_decoder": 
+                    {
+                      "specializations": [ 
+                                          {
+                                            "batch_size": 1,
+                                            "num_channels": 16,
+                                            "num_frames": 21,
+                                            "latent_height": 60,
+                                            "latent_width": 104
+                                          }
+                                      ],
+                      "compilation": 
+                                        {
+                                          "onnx_path": null,
+                                          "compile_dir": null,
+                                          "mdp_ts_num_devices": 4,
+                                          "mxfp6_matmul": false,
+                                          "convert_to_fp16": true,
+                                          "aic_num_cores": 16,
+                                          "aic-enable-depth-first": true,
+                                          "compile_only":true
+                                        },
+                      "execute":
+                                        {
+                                          "device_ids": null
+                                        }
+                    }
+
   }
 }
