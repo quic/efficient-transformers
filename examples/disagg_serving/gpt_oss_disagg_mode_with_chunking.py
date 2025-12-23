@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import time
 
 import numpy as np
@@ -14,7 +15,11 @@ from transformers import AutoConfig, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
+dir_path = os.path.dirname(os.path.realpath(__file__))
+subfunc_npi_file_path = os.path.join(dir_path, "subfunction_120b_npi.yaml")
+non_subfunc_npi_file_path = os.path.join(dir_path, "non_subfunction_120b_npi.yaml")
+
+model_id = "openai/gpt-oss-120b"  # weights are not required to convert to fp32
 
 prompt = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
@@ -27,7 +32,7 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 128
-CTX_LEN = 128 * 3
+CTX_LEN = 8192
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 
@@ -43,6 +48,8 @@ decode_qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
     retain_full_kv=True,
+    # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
+    node_precision_info=non_subfunc_npi_file_path,
 )
 
 
@@ -61,6 +68,8 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     use_onnx_subfunctions=True,
+    # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
+    node_precision_info=subfunc_npi_file_path,
 )
 
 
