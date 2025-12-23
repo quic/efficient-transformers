@@ -175,7 +175,9 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
     # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
-    kwargs["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
+    decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
+    if decoder_layer_classes:
+        kwargs["export_modules_as_functions"] = decoder_layer_classes
     return args, kwargs
 
 
