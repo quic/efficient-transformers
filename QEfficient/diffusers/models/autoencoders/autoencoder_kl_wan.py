@@ -202,20 +202,3 @@ class QEffWanDecoder3d(WanDecoder3d):
             x = self.conv_out(x)
         return x
 
-
-class QEffAutoencoderKLWan(AutoencoderKLWan):
-    def forward(
-        self,
-        latent_sample: torch.Tensor,
-        sample_posterior: bool = False,
-        return_dict: bool = True,
-        generator=None,
-    ):
-        """
-        Args:
-            sample (`torch.Tensor`): Input sample.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`DecoderOutput`] instead of a plain tuple.
-        """
-
-        return self.decode(latent_sample)

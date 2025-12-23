@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
-    AutoencoderKLWan,
     WanDecoder3d,
     WanEncoder3d,
     WanResample,
@@ -26,7 +25,6 @@ from torch import nn
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
 from QEfficient.diffusers.models.autoencoders.autoencoder_kl_wan import (
-    QEffAutoencoderKLWan,
     QEffWanDecoder3d,
     QEffWanEncoder3d,
     QEffWanResample,
@@ -72,7 +70,6 @@ class AttentionTransform(ModuleMappingTransform):
         WanEncoder3d: QEffWanEncoder3d,
         WanResidualBlock: QEffWanResidualBlock,
         WanResample: QEffWanResample,
-        AutoencoderKLWan: QEffAutoencoderKLWan,
     }
 
 
