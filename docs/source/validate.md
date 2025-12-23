@@ -8,6 +8,8 @@
 
 | Architecture            | Model Family       | Representative Models                                                                 | [vLLM Support](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/vLLM/vLLM/index.html) |
 |-------------------------|--------------------|--------------------------------------------------------------------------------------|--------------|
+| **MolmoForCausalLM** | Molmo | [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924) | ✕           |
+| **Olmo2ForCausalLM**   |       OLMo-2       | [allenai/OLMo-2-0425-1B](https://huggingface.co/allenai/OLMo-2-0425-1B)                                                               | ✕          |
 | **FalconForCausalLM**   | Falcon**             | [tiiuae/falcon-40b](https://huggingface.co/tiiuae/falcon-40b)                                                                | ✔️          |
 | **Qwen3MoeForCausalLM**   | Qwen3Moe             | [Qwen/Qwen3-30B-A3B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507)                                                                | ✕          |
 | **GemmaForCausalLM**    | CodeGemma          | [google/codegemma-2b](https://huggingface.co/google/codegemma-2b)<br>[google/codegemma-7b](https://huggingface.co/google/codegemma-7b)                                           | ✔️          |
@@ -37,8 +39,15 @@
 |                         | Qwen2, Qwen2.5     | [Qwen/Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)                                                            | ✔️          |
 | **LlamaSwiftKVForCausalLM**  | swiftkv            | [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)                                                  | ✔️          |
 | **Grok1ModelForCausalLM**  |  grok-1          | [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)                                                  | ✕          |
+
 - ** set "trust-remote-code" flag to True for e2e inference with vLLM
 - *** pass "disable-sliding-window" flag for e2e inference of Gemma-2 family of models with vLLM
+
+**Note:**
+Intern-VL, Molmo models are Vision Language Model but they use `QEFFAutoModelForCausalLM` for inference to make it compatible with the huggingface transformers' inference pipeline in the model's source codebase.
+
+---
+
 ## Embedding Models
 
 ### Text Embedding Task
@@ -68,7 +77,7 @@
 | **Llama4ForConditionalGeneration** | Llama-4-Scout | [Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)  | ✔️                       | ✔️                      | ✔️                       | ✔️                      |
 | **Gemma3ForConditionalGeneration** | Gemma3***       | [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)  | ✔️               | ✔️                       | ✔️                      | ✕                      |
 | **Qwen2_5_VLForConditionalGeneration** | Qwen2.5-VL | [Qwen/Qwen2.5-VL-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)  | ✔️               | ✔️                       | ✔️                      | ✔️                      |
-|**Mistral3ForConditionalGeneration** | Mistral3| [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)||||
+| **Mistral3ForConditionalGeneration** | Mistral3| [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)||||
 
 
 - *** pass "disable-sliding-window" flag for e2e inference with vLLM
@@ -110,14 +119,14 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
-| **StableDiffusionPipeline**  | Stable Diffusion      | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/stabilityai/stable-diffusion-2-1) |          |
+| **FluxPipeline**  | FLUX.1     | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/stabilityai/stable-diffusion-2-1) |          |
 
 ### Video Genration Model
 **QEff Auto Class:** `QEffWanPipeline`
 
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
-| **StableDiffusionPipeline**  | Stable Diffusion      | [Wan-AI/Wan2.2-T2V-A14B-Diffusers](https://huggingface.co/stabilityai/stable-diffusion-2-1) |         |
+| **WanPipeline**  | Wan2.2     | [Wan-AI/Wan2.2-T2V-A14B-Diffusers](https://huggingface.co/stabilityai/stable-diffusion-2-1) |         |
 
 (models_coming_soon)=
 # Models Coming Soon

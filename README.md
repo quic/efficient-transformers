@@ -6,11 +6,13 @@
 ---
 
 *Latest news* :fire: <br>
+- [12/2025] Enabled [disaggregated serving](examples/disagg_serving) for GPT-OSS model
 - [12/2025] Added support for wav2vec2 Audio Model [facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h)
-- [12/2025] Added support for [WAN 2.2 Model Card](https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers)
-- [12/2025] Added support for [FLUX.1 Model Card](https://huggingface.co/black-forest-labs/FLUX.1-schnell)
+- [12/2025] Added support for diffuser video generation model [WAN 2.2 Model Card](https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers)
+- [12/2025] Added support for diffuser image generation model [FLUX.1 Model Card](https://huggingface.co/black-forest-labs/FLUX.1-schnell)
 - [12/2025] Added support for [openai/gpt-oss-20b](https://huggingface.co/openai/gpt-oss-20b)
 - [12/2025] Added support for [OpenGVLab/InternVL3_5-1B](https://huggingface.co/OpenGVLab/InternVL3_5-1B)
+- [12/2025] Added support for Olmo Model [allenai/OLMo-2-0425-1B](https://huggingface.co/allenai/OLMo-2-0425-1B)
 - [10/2025] Added support for Qwen3 MOE Model [Qwen/Qwen3-30B-A3B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507)
 - [10/2025] Added support for Qwen2.5VL Multi-Model [Qwen/Qwen2.5-VL-32B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct)
 - [10/2025] Added support for Mistral3 Multi-Model [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)
