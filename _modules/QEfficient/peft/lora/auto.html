@@ -44,7 +44,8 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../../source/release_docs.html">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/release_docs.html">Efficient Transformer Library - 1.21.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/release_docs.html#efficient-transformer-library-1-20-0-release-notes">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
@@ -67,6 +68,7 @@
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/qeff_autoclasses.html">QEfficient Auto Classes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/diffuser_classes.html">Diffuser Classes</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html">CLI API Reference</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
@@ -444,7 +446,7 @@
         <span class="c1"># load_weight to model</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_load_adapter_weights_to_model</span><span class="p">()</span>
 
-<div class="viewcode-block" id="QEffAutoLoraModelForCausalLM.export"><a class="viewcode-back" href="../../../../source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<div class="viewcode-block" id="QEffAutoLoraModelForCausalLM.export"><a class="viewcode-back" href="../../../../source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Export the model with all loaded adapters to ONNX format using ``torch.onnx.export``.</span>
 
@@ -504,6 +506,7 @@
             <span class="n">output_names</span><span class="p">,</span>
             <span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
         <span class="p">)</span></div>
 
 <div class="viewcode-block" id="QEffAutoLoraModelForCausalLM.generate"><a class="viewcode-back" href="../../../../source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.generate">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span>
@@ -594,6 +597,9 @@
       <dl>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
+        <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
+
       </dl>
     </div>
 </div><script>
