@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import time
 
 import numpy as np
@@ -13,6 +14,10 @@ from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+
+dir_path = os.path.dirname(os.path.realpath(__file__))
+subfunc_npi_file_path = os.path.join(dir_path, "subfunction_120b_npi.yaml")
+without_subfunc_npi_file_path = os.path.join(dir_path, "without_subfunction_120b_npi.yaml")
 
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
@@ -43,6 +48,8 @@ decode_qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
     retain_full_kv=True,
+    split_retained_state_io=True,
+    node_precision_info=without_subfunc_npi_file_path,
 )
 
 
@@ -61,6 +68,8 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     use_onnx_subfunctions=True,
+    split_retained_state_io=True,
+    node_precision_info=subfunc_npi_file_path,
 )
 
 
