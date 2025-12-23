@@ -1,4 +1,4 @@
-# Diffusion API
+# Diffuser Classes
 
 
 ## Pipeline API
@@ -7,8 +7,8 @@
 ### `QEffTextEncoder`
 
 ```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipeline.pipeline_module.QEffTextEncoder
-   :noindex:
+.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffTextEncoder
+   :members:
    :no-show-inheritance:
 ```
 
@@ -18,8 +18,8 @@
 ### `QEffUNet`
 
 ```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipeline.pipeline_module.QEffUNet
-   :noindex:
+.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffUNet
+   :members:
    :no-show-inheritance:
 ```
 
@@ -29,8 +29,8 @@
 ### `QEffVAE`
 
 ```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipeline.pipeline_module.QEffVAE
-   :noindex:
+.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffVAE
+   :members:
    :no-show-inheritance:
 ```
 
@@ -40,8 +40,8 @@
 ### `QEffFluxTransformerModel`
 
 ```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipeline.pipeline_module.QEffFluxTransformerModel
-   :noindex:
+.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffFluxTransformerModel
+   :members:
    :no-show-inheritance:
 ```
 
@@ -51,8 +51,8 @@
 ### `QEffWanUnifiedTransformer`
 
 ```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipeline.pipeline_module.QEffWanUnifiedTransformer
-   :noindex:
+.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffWanUnifiedTransformer
+   :members:
    :no-show-inheritance:
 ```
 
@@ -65,8 +65,8 @@
 ### `QEffWanPipeline`
 
 ```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipeline.wan.pipeline_wan.QEffWanPipeline
-   :noindex:
+.. autoclass:: QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline
+   :members:
    :no-show-inheritance:
 ```
 
@@ -76,8 +76,8 @@
 ### `QEffFluxPipeline`
 
 ```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipeline.flux.pipeline_flux.QEffFluxPipeline
-   :noindex:
+.. autoclass:: QEfficient.diffusers.pipelines.flux.pipeline_flux.QEffFluxPipeline
+   :members:
    :no-show-inheritance:
 ```
 

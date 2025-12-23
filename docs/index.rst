@@ -38,7 +38,7 @@ Welcome to Efficient-Transformers Documentation!
    :maxdepth: 4
 
    source/qeff_autoclasses
-   source/diffusers_api
+   source/diffuser_classes
    source/cli_api
 
 .. toctree::

@@ -23,7 +23,7 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ***Latest news*** : <br>
 
 - [coming soon] Support for more popular [models](models_coming_soon)<br>
-- [12/2025] Enabled [disaggregated serving](examples/disagg_serving) for GPT-OSS model
+- [12/2025] Enabled [disaggregated serving](https://github.com/quic/efficient-transformers/tree/main/examples/disagg_serving) for GPT-OSS model
 - [12/2025] Added support for wav2vec2 Audio Model [facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h)
 - [12/2025] Added support for diffuser video generation model [WAN 2.2 Model Card](https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers)
 - [12/2025] Added support for diffuser image generation model [FLUX.1 Model Card](https://huggingface.co/black-forest-labs/FLUX.1-schnell)
