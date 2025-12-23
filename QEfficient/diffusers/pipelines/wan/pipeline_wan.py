@@ -22,7 +22,7 @@ import numpy as np
 import torch
 from diffusers import WanPipeline
 
-from QEfficient.diffusers.pipelines.pipeline_module import QEffAutoencoderKLWan, QEffWanUnifiedTransformer
+from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
@@ -106,7 +106,7 @@ class QEffWanPipeline:
         self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper)
 
         # VAE decoder for latent-to-video conversion
-        self.vae_decoder = QEffAutoencoderKLWan(model.vae, "decoder")
+        self.vae_decoder = QEffVAE(model.vae, "decoder")
         # Store all modules in a dictionary for easy iteration during export/compile
         # TODO: add text encoder on QAIC
         self.modules = {"transformer": self.transformer, "vae_decoder": self.vae_decoder}
@@ -115,6 +115,13 @@ class QEffWanPipeline:
         self.tokenizer = model.tokenizer
         self.text_encoder.tokenizer = model.tokenizer
         self.scheduler = model.scheduler
+
+        self.vae_decoder.model.forward = lambda latent_sample, return_dict: self.vae_decoder.model.decode(
+            latent_sample, return_dict
+        )
+
+        self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
+        self.vae_decoder.model.config["_use_default_values"].sort()
         # Extract patch dimensions from transformer configuration
         _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
 
@@ -554,11 +561,6 @@ class QEffWanPipeline:
                 str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
             )
 
-        if self.vae_decoder.qpc_session is None:
-            self.vae_decoder.qpc_session = QAICInferenceSession(
-                str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
-            )
-
         # Calculate compressed latent dimension for transformer buffer allocation
         cl, _, _, _ = calculate_latent_dimensions_with_frames(
             height,
@@ -733,29 +735,38 @@ class QEffWanPipeline:
         # Step 9: Decode latents to video
         if not output_type == "latent":
             # Prepare latents for VAE decoding
-            latents = latents.to(self.model.vae.dtype)
+            latents = latents.to(self.vae_decoder.model.dtype)
 
             # Apply VAE normalization (denormalization)
             latents_mean = (
-                torch.tensor(self.model.vae.config.latents_mean)
-                .view(1, self.model.vae.config.z_dim, 1, 1, 1)
+                torch.tensor(self.vae_decoder.model.config.latents_mean)
+                .view(1, self.vae_decoder.model.config.z_dim, 1, 1, 1)
                 .to(latents.device, latents.dtype)
             )
-            latents_std = 1.0 / torch.tensor(self.model.vae.config.latents_std).view(
-                1, self.model.vae.config.z_dim, 1, 1, 1
+            latents_std = 1.0 / torch.tensor(self.vae_decoder.model.config.latents_std).view(
+                1, self.vae_decoder.model.config.z_dim, 1, 1, 1
             ).to(latents.device, latents.dtype)
             latents = latents / latents_std + latents_mean
 
-            inputs_aic = {"latent_sample": latents.detach().numpy()}
+            # Initialize VAE decoder inference session
+            if self.vae_decoder.qpc_session is None:
+                self.vae_decoder.qpc_session = QAICInferenceSession(
+                    str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
+                )
+            
+            # Allocate output buffer for VAE decoder
+            output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
+
+            inputs = {"latent_sample": latents.numpy()}
 
             start_decode_time = time.perf_counter()
-            video = self.vae_decoder.qpc_session.run(inputs_aic)  # CPU fallback
+            video = self.vae_decoder.qpc_session.run(inputs)  # CPU fallback
             end_decode_time = time.perf_counter()
-
             vae_decoder_perf = end_decode_time - start_decode_time
 
             # Post-process video for output
-            video = self.model.video_processor.postprocess_video(torch.tensor(video["sample"]))
+            video_tensor = torch.from_numpy(video["sample"])
+            video = self.model.video_processor.postprocess_video(video_tensor)
         else:
             video = latents
 
