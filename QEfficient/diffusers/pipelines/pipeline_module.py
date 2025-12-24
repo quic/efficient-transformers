@@ -229,7 +229,7 @@ class QEffVAE(QEFFBaseModel):
         _onnx_transforms (List): ONNX transformations applied after export
     """
 
-    _pytorch_transforms = [CustomOpsTransform]
+    _pytorch_transforms = [CustomOpsTransform, AttentionTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     @property
@@ -283,6 +283,37 @@ class QEffVAE(QEFFBaseModel):
         # All dimensions except channels can be dynamic
         dynamic_axes = {
             "latent_sample": {0: "batch_size", 1: "channels", 2: "latent_height", 3: "latent_width"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def get_video_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
+        """
+        Generate ONNX export configuration for the VAE decoder.
+
+        Args:
+            latent_height (int): Height of latent representation (default: 32)
+            latent_width (int): Width of latent representation (default: 32)
+
+        Returns:
+            Tuple containing:
+                - example_inputs (Dict): Sample inputs for ONNX export
+                - dynamic_axes (Dict): Specification of dynamic dimensions
+                - output_names (List[str]): Names of model outputs
+        """
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+
+        # VAE decoder takes latent representation as input
+        example_inputs = {
+            "latent_sample": torch.randn(bs, 16, 21, 12, 16),
+            "return_dict": False,
+        }
+
+        output_names = ["sample"]
+
+        # All dimensions except channels can be dynamic
+        dynamic_axes = {
+            "latent_sample": {0: "batch_size", 2: "num_frames", 3: "latent_height", 4: "latent_width"},
         }
 
         return example_inputs, dynamic_axes, output_names
