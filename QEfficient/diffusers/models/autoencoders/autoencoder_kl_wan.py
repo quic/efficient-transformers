@@ -18,9 +18,14 @@ CACHE_T = 2
 
 modes = []
 
+# Used max(0, x.shape[2] - CACHE_T) instead of CACHE_T because x.shape[2] is either 1 or 4,
+# and CACHE_T = 2. This ensures the value never goes negative
+
 
 class QEffWanResample(WanResample):
     def __qeff_init__(self):
+        # Changed upsampling mode from "nearest-exact" to "nearest" for ONNX compatibility.
+        # Since the scale factor is an integer, both modes behave the
         if self.mode in ("upsample2d", "upsample3d"):
             self.resample[0] = WanUpsample(scale_factor=(2.0, 2.0), mode="nearest")
 
