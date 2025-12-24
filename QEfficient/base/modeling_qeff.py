@@ -25,7 +25,6 @@ from QEfficient.base.onnx_transforms import (
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.modeling_utils import SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
 from QEfficient.utils import (
     constants,
     create_json,
@@ -61,7 +60,6 @@ class QEFFBaseModel(ABC):
         super().__init__()
         self.model = model
         self.hash_params = create_model_params(self, **kwargs)
-        self.prefill_onnx_path: Optional[str] = None
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
@@ -241,10 +239,7 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-            if prefill_only and self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
-                self.prefill_onnx_path = onnx_path
-            else:
-                self.onnx_path = onnx_path
+            self.onnx_path = onnx_path
             return onnx_path
 
         # check if the model is in meta state or weights are offloaded
@@ -323,10 +318,7 @@ class QEFFBaseModel(ABC):
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
-        if prefill_only and self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
-            self.prefill_onnx_path = onnx_path
-        else:
-            self.onnx_path = onnx_path
+        self.onnx_path = onnx_path
         return onnx_path
 
     def get_onnx_path(
@@ -344,7 +336,7 @@ class QEFFBaseModel(ABC):
             "retain_full_kv": retain_full_kv,
         }
 
-        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+        if prefill_only:
             kwargs.update(
                 {
                     "prefill_only": prefill_only,
@@ -352,13 +344,9 @@ class QEFFBaseModel(ABC):
                     "enable_chunking": enable_chunking,
                 }
             )
-            if prefill_only and self.prefill_onnx_path is None:
-                self.export(**kwargs)
-            return self.prefill_onnx_path
-        else:
-            if self.onnx_path is None:
-                self.export(**kwargs)
-            return self.onnx_path
+
+        self.export(**kwargs)
+        return self.onnx_path
 
     @dump_qconfig
     def _compile(
