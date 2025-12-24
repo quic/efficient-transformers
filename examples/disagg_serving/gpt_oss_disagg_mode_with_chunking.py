@@ -16,7 +16,6 @@ from transformers import AutoConfig, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-
 dir_path = os.path.dirname(os.path.realpath(__file__))
 subfunc_npi_file_path = os.path.join(dir_path, "subfunction_120b_npi.yaml")
 non_subfunc_npi_file_path = os.path.join(dir_path, "non_subfunction_120b_npi.yaml")
