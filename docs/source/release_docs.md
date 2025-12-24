@@ -26,6 +26,7 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
   - [Mistral-3.1 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/mistral_vision/mistral3_example.py)
 
+
 - **GPT-OSS (Decode-Only)**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Separate prefill and decode compilation supported
@@ -58,6 +59,11 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
   - Speech recognition and audio feature extraction
   - [Wav2Vec2 Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/audio/wav2vec2_inference.py)
 
+- **Multilingual-e5-Large (Embedding Model)**
+  - Executable via [`QEffAutoModel`](#QEffAutoModel)
+  - Multilingual text embedding capabilities
+  - Refer [usage details](https://github.com/quic/efficient-transformers/tree/main/examples/embeddings) here.
+
 ---
 
 ## Key Features & Enhancements
@@ -66,16 +72,19 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 - **Python Support**: Now requires Python `>=3.9`
 - **ONNX Opset**: Updated to version `17` for broader operator support
 - **Advanced Attention**: Flux blocking support, BlockedKV attention for CausalLM models
-- **Diffusers Integration**: Full support for diffuser-based image generation models
-- **WAN Lightning Support**: Enhanced distributed serving across wide-area networks
-- **Automatic CCL Generation**: Automatic Compute-Context-Length list generation for prefill/decode phases
-- **Prefill/Decode Separation**: Independent compilation and optimization for disaggregated serving
+- **Diffusers Integration**: Full support for diffuser-based image generation and video generation models
+- **Compute-Context-Length (CCL) support**: To optimize the throughput when handling very large context lengths
+- **Prefill/Decode Separation**: Support for GPT OSS using disaggregate serving models
 - **Continuous Batching (VLMs)**: Extended to Vision Language Models with multi-image handling
-- **ONNX Sub-Functions**: New ONNX sub-function export feature for AutoModelForCausalLM
-- **Guided Decoding**: Constrained generation support for on-device sampling
+- **ONNX Sub-Functions**: Feature enabling more efficient model compilation and execution on hardware
 - **Memory Profiling**: Built-in utilities for optimization analysis
-- **KV Cache Optimization**: Improved cache handling for long sequences
-- **Checkpoint Resume**: Resume fine-tuning from specific epochs with corrected loss tracking
+- **Extend on-device Sampling**: Extend on-device sampling to dual QPC VLMs and Guided decoding for on-device sampling
+- **ONNX transform, memory & time optimizations**: Optimizations for faster ONNX Transform and reduced memory footprint
+- **Removed platform SDK dependency**: Support QPC generation on systems without the Platform SDK
+- **Example Scripts Revamp**: New example scripts for audio, embeddings, and image-text-to-text tasks
+- **Onboarding Guide**: Simplified setup and deployment process for new users
+
+
 
 ---
 
@@ -83,7 +92,6 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 
 - **Multi-Sequence Length Support**: Auto-selects optimal graph at runtime
 - **Enhanced Pooling**: Flexible pooling strategies for various embedding tasks
-- **On-Device Execution**: Improved on-device inference for embedding models
 
 ---
 
@@ -92,7 +100,6 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 - **Checkpoint Management**: Resume from epochs with proper state restoration
 - **Enhanced Loss Tracking**: Corrected data type handling for accurate loss computation
 - **Custom Dataset Support**: Improved handling with better tokenization
-- **Gradient Checkpointing**: Memory-efficient training for large models
 - **Device-Aware Scaling**: Optimized GradScaler for multi-device training
 - **Comprehensive Testing**: Unit tests for fine-tuning workflows
 

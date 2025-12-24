@@ -62,7 +62,7 @@ Intern-VL, Molmo models are Vision Language Model but they use `QEFFAutoModelFor
 | **Qwen2ForCausalLM** | Qwen2 | [stella_en_1.5B_v5](https://huggingface.co/NovaSearch/stella_en_1.5B_v5) | ✔️          |
 | **RobertaModel**     | RoBERTa |  [ibm-granite/granite-embedding-30m-english](https://huggingface.co/ibm-granite/granite-embedding-30m-english)<br> [ibm-granite/granite-embedding-125m-english](https://huggingface.co/ibm-granite/granite-embedding-125m-english) | ✔️          |
 | **XLMRobertaForSequenceClassification** | XLM-RoBERTa | [bge-reranker-v2-m3bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) | ✕          |
-| **XLMRobertaModel**    | XLM-RoBERTa  |[ibm-granite/granite-embedding-107m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual)<br> [ibm-granite/granite-embedding-278m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual)  | ✔️          |
+| **XLMRobertaModel**    | XLM-RoBERTa  |[ibm-granite/granite-embedding-107m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual)<br> [ibm-granite/granite-embedding-278m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual) <br> [intfloat/multilingual-e5-large](https://huggingface.co/intfloat/multilingual-e5-large) | ✔️          |
 
 ## Multimodal Language Models
 
@@ -105,6 +105,7 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 ---
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
+
 **QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`
 
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
