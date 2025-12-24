@@ -15,7 +15,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from QEfficient.transformers.modeling_utils import SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
 import onnx
 import torch
 
@@ -26,6 +25,7 @@ from QEfficient.base.onnx_transforms import (
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.modeling_utils import SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
 from QEfficient.utils import (
     constants,
     create_json,
