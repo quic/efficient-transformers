@@ -8,12 +8,12 @@
 
 | Architecture            | Model Family       | Representative Models                                                                 | [vLLM Support](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/vLLM/vLLM/index.html) |
 |-------------------------|--------------------|--------------------------------------------------------------------------------------|--------------|
-| **MolmoForCausalLM** | Molmo | [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924) | ✕           |
+| **MolmoForCausalLM** | Molmo① | [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924) | ✕           |
 | **Olmo2ForCausalLM**   |       OLMo-2       | [allenai/OLMo-2-0425-1B](https://huggingface.co/allenai/OLMo-2-0425-1B)                                                               | ✕          |
-| **FalconForCausalLM**   | Falcon**             | [tiiuae/falcon-40b](https://huggingface.co/tiiuae/falcon-40b)                                                                | ✔️          |
+| **FalconForCausalLM**   | Falcon②            | [tiiuae/falcon-40b](https://huggingface.co/tiiuae/falcon-40b)                                                                | ✔️          |
 | **Qwen3MoeForCausalLM**   | Qwen3Moe             | [Qwen/Qwen3-30B-A3B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507)                                                                | ✕          |
 | **GemmaForCausalLM**    | CodeGemma          | [google/codegemma-2b](https://huggingface.co/google/codegemma-2b)<br>[google/codegemma-7b](https://huggingface.co/google/codegemma-7b)                                           | ✔️          |
-|                         | Gemma***              | [google/gemma-2b](https://huggingface.co/google/gemma-2b)<br>[google/gemma-7b](https://huggingface.co/google/gemma-7b)<br>[google/gemma-2-2b](https://huggingface.co/google/gemma-2-2b)<br>[google/gemma-2-9b](https://huggingface.co/google/gemma-2-9b)<br>[google/gemma-2-27b](https://huggingface.co/google/gemma-2-27b)        | ✔️          |
+|                         | Gemma③             | [google/gemma-2b](https://huggingface.co/google/gemma-2b)<br>[google/gemma-7b](https://huggingface.co/google/gemma-7b)<br>[google/gemma-2-2b](https://huggingface.co/google/gemma-2-2b)<br>[google/gemma-2-9b](https://huggingface.co/google/gemma-2-9b)<br>[google/gemma-2-27b](https://huggingface.co/google/gemma-2-27b)        | ✔️          |
 | **GptOssForCausalLM** | GPT-OSS            | [openai/gpt-oss-20b](https://huggingface.co/openai/gpt-oss-20b)                                                   | ✔️          |
 | **GPTBigCodeForCausalLM** | Starcoder1.5      | [bigcode/starcoder](https://huggingface.co/bigcode/starcoder)                                                                   | ✔️          |
 |                         | Starcoder2         | [bigcode/starcoder2-15b](https://huggingface.co/bigcode/starcoder2-15b)                                                              | ✔️          |
@@ -21,7 +21,7 @@
 | **GPT2LMHeadModel**     | GPT-2              | [openai-community/gpt2](https://huggingface.co/openai-community/gpt2)                                                               | ✔️          |
 | **GraniteForCausalLM**  | Granite 3.1        | [ibm-granite/granite-3.1-8b-instruct](https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)<br>[ibm-granite/granite-guardian-3.1-8b](https://huggingface.co/ibm-granite/granite-guardian-3.1-8b)          | ✔️          |
 |                         | Granite 20B        | [ibm-granite/granite-20b-code-base-8k](https://huggingface.co/ibm-granite/granite-20b-code-base-8k)<br>[ibm-granite/granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k)    | ✔️          |
-| **InternVLChatModel**   | Intern-VL          | [OpenGVLab/InternVL2_5-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B) <br> [OpenGVLab/InternVL3_5-1B](https://huggingface.co/OpenGVLab/InternVL3_5-1B)  | ✔️          |                                                         |            |
+| **InternVLChatModel**   | Intern-VL①         | [OpenGVLab/InternVL2_5-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B) <br> [OpenGVLab/InternVL3_5-1B](https://huggingface.co/OpenGVLab/InternVL3_5-1B)  | ✔️          |                                                         |            |
 | **LlamaForCausalLM**    | CodeLlama          | [codellama/CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf)<br>[codellama/CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf)<br>[codellama/CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) | ✔️          |
 |                         | DeepSeek-R1-Distill-Llama | [deepseek-ai/DeepSeek-R1-Distill-Llama-70B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B)                                      | ✔️          |
 |                         | InceptionAI-Adapted | [inceptionai/jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b)<br>[inceptionai/jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat)<br>[inceptionai/jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b) | ✔️          |
@@ -34,18 +34,13 @@
 | **MistralForCausalLM**  | Mistral            | [mistralai/Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1)                                                  | ✔️          |
 | **MixtralForCausalLM**  | Codestral<br>Mixtral | [mistralai/Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)<br>[mistralai/Mixtral-8x7B-v0.1](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1)                        | ✔️          |
 | **MPTForCausalLM**      | MPT                | [mosaicml/mpt-7b](https://huggingface.co/mosaicml/mpt-7b)                                                                     | ✔️          |
-| **Phi3ForCausalLM**     | Phi-3**, Phi-3.5**     | [microsoft/Phi-3-mini-4k-instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)                                                    | ✔️          |
+| **Phi3ForCausalLM**     | Phi-3②, Phi-3.5②     | [microsoft/Phi-3-mini-4k-instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)                                                    | ✔️          |
 | **QwenForCausalLM**     | DeepSeek-R1-Distill-Qwen | [DeepSeek-R1-Distill-Qwen-32B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)                                                   | ✔️          |
 |                         | Qwen2, Qwen2.5     | [Qwen/Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)                                                            | ✔️          |
 | **LlamaSwiftKVForCausalLM**  | swiftkv            | [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)                                                  | ✔️          |
-| **Grok1ModelForCausalLM**  |  grok-1          | [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)                                                  | ✕          |
+| **Grok1ModelForCausalLM**  |  grok-1②          | [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)                                                  | ✕          |
 
-- ** set "trust-remote-code" flag to True for e2e inference with vLLM
-- *** pass "disable-sliding-window" flag for e2e inference of Gemma-2 family of models with vLLM
 
-```{NOTE}
-Intern-VL, Molmo models are Vision Language Model but they use `QEFFAutoModelForCausalLM` for inference to make it compatible with the huggingface transformers' inference pipeline in the model's source codebase.
-```
 ---
 
 ## Embedding Models
@@ -57,12 +52,14 @@ Intern-VL, Molmo models are Vision Language Model but they use `QEFFAutoModelFor
 |--------------|--------------|---------------------------------|--------------|
 | **BertModel** | BERT-based   | [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5)<br> [BAAI/bge-large-en-v1.5](https://huggingface.co/BAAI/bge-large-en-v1.5)<br>[BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) <br>[e5-large-v2](https://huggingface.co/intfloat/e5-large-v2) | ✔️          |
 | **MPNetForMaskedLM** | MPNet | [sentence-transformers/multi-qa-mpnet-base-cos-v1](https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-cos-v1) | ✕          |
-| **MistralModel** | Mistral | [e5-mistral-7b-instruct](https://huggingface.co/intfloat/e5-mistral-7b-instruct) | ✕          |
-| **NomicBertModel** | NomicBERT | [nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | ✕          |
-| **Qwen2ForCausalLM** | Qwen2 | [stella_en_1.5B_v5](https://huggingface.co/NovaSearch/stella_en_1.5B_v5) | ✔️          |
+| **MistralModel** | Mistral | [intfloat/e5-mistral-7b-instruct](https://huggingface.co/intfloat/e5-mistral-7b-instruct) | ✕          |
+| **NomicBertModel** | NomicBERT② | [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | ✕          |
+| **Qwen2ForCausalLM** | Qwen2 | [NovaSearch/stella_en_1.5B_v5](https://huggingface.co/NovaSearch/stella_en_1.5B_v5) | ✔️          |
 | **RobertaModel**     | RoBERTa |  [ibm-granite/granite-embedding-30m-english](https://huggingface.co/ibm-granite/granite-embedding-30m-english)<br> [ibm-granite/granite-embedding-125m-english](https://huggingface.co/ibm-granite/granite-embedding-125m-english) | ✔️          |
 | **XLMRobertaForSequenceClassification** | XLM-RoBERTa | [bge-reranker-v2-m3bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) | ✕          |
 | **XLMRobertaModel**    | XLM-RoBERTa  |[ibm-granite/granite-embedding-107m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual)<br> [ibm-granite/granite-embedding-278m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual) <br> [intfloat/multilingual-e5-large](https://huggingface.co/intfloat/multilingual-e5-large) | ✔️          |
+
+---
 
 ## Multimodal Language Models
 
@@ -75,12 +72,10 @@ Intern-VL, Molmo models are Vision Language Model but they use `QEFFAutoModelFor
 | **MllamaForConditionalGeneration** | Llama 3.2   | [meta-llama/Llama-3.2-11B-Vision Instruct](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)<br>[meta-llama/Llama-3.2-90B-Vision-Instruct](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision-Instruct)           | ✔️                       | ✔️                      | ✔️                      | ✔️                      |
 | **LlavaNextForConditionalGeneration** | Granite Vision | [ibm-granite/granite-vision-3.2-2b](https://huggingface.co/ibm-granite/granite-vision-3.2-2b)  | ✕                       | ✔️                      | ✕                       | ✔️                      |
 | **Llama4ForConditionalGeneration** | Llama-4-Scout | [Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)  | ✔️                       | ✔️                      | ✔️                       | ✔️                      |
-| **Gemma3ForConditionalGeneration** | Gemma3***       | [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)  | ✔️               | ✔️                       | ✔️                      | ✕                      |
-| **Qwen2_5_VLForConditionalGeneration** | Qwen2.5-VL | [Qwen/Qwen2.5-VL-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)  | ✔️               | ✔️                       | ✔️                      | ✔️                      |
-| **Mistral3ForConditionalGeneration** | Mistral3| [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)||||
+| **Gemma3ForConditionalGeneration** | Gemma3③       | [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)  | ✔️               | ✔️                       |                       |                       |
+| **Qwen2_5_VLForConditionalGeneration** | Qwen2.5-VL | [Qwen/Qwen2.5-VL-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)  | ✔️               | ✔️                       |                       |                       |
+| **Mistral3ForConditionalGeneration** | Mistral3| [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)| ✔️ | ✔️ | | |
 
-
-- *** pass "disable-sliding-window" flag for e2e inference with vLLM
 
 
 **Dual QPC:**
@@ -102,7 +97,7 @@ In the single QPC(Qualcomm Program Container) setup, the entire model—includin
 The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
 If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
 ```
----
+
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
 
@@ -111,7 +106,9 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
 | **Whisper**  | Whisper      | [openai/whisper-tiny](https://huggingface.co/openai/whisper-tiny)<br>[openai/whisper-base](https://huggingface.co/openai/whisper-base)<br>[openai/whisper-small](https://huggingface.co/openai/whisper-small)<br>[openai/whisper-medium](https://huggingface.co/openai/whisper-medium)<br>[openai/whisper-large](https://huggingface.co/openai/whisper-large)<br>[openai/whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) | ✔️          |
-| **Wav2Vec2** | Wav2Vec2     | [facebook/wav2vec2-base](https://huggingface.co/facebook/wav2vec2-base)<br>[facebook/wav2vec2-large](https://huggingface.co/facebook/wav2vec2-large) | ✔️          |
+| **Wav2Vec2** | Wav2Vec2     | [facebook/wav2vec2-base](https://huggingface.co/facebook/wav2vec2-base)<br>[facebook/wav2vec2-large](https://huggingface.co/facebook/wav2vec2-large) |           |
+
+---
 
 ## Diffusion Models
 
@@ -128,6 +125,15 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
 | **WanPipeline**  | Wan2.2     | [Wan-AI/Wan2.2-T2V-A14B-Diffusers](https://huggingface.co/stabilityai/stable-diffusion-2-1) |         |
+
+---
+
+```{NOTE}
+① Intern-VL and Molmo models are Vision-Language Models but use `QEFFAutoModelForCausalLM` for inference to stay compatible with HuggingFace Transformers.
+② Set `trust_remote_code=True` for end-to-end inference with vLLM.
+③ Pass `disable_sliding_window` for Gemma-2 family models when using vLLM.
+```
+---
 
 (models_coming_soon)=
 # Models Coming Soon
