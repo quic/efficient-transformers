@@ -156,7 +156,7 @@
 </thead>
 <tbody>
 <tr class="row-even"><td><p><strong>MolmoForCausalLM</strong></p></td>
-<td><p>Molmo</p></td>
+<td><p>Molmo①</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/allenai/Molmo-7B-D-0924">allenai/Molmo-7B-D-0924</a></p></td>
 <td><p>✕</p></td>
 </tr>
@@ -166,7 +166,7 @@
 <td><p>✕</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>FalconForCausalLM</strong></p></td>
-<td><p>Falcon**</p></td>
+<td><p>Falcon②</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/tiiuae/falcon-40b">tiiuae/falcon-40b</a></p></td>
 <td><p>✔️</p></td>
 </tr>
@@ -181,7 +181,7 @@
 <td><p>✔️</p></td>
 </tr>
 <tr class="row-odd"><td><p></p></td>
-<td><p>Gemma***</p></td>
+<td><p>Gemma③</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/google/gemma-2b">google/gemma-2b</a><br><a class="reference external" href="https://huggingface.co/google/gemma-7b">google/gemma-7b</a><br><a class="reference external" href="https://huggingface.co/google/gemma-2-2b">google/gemma-2-2b</a><br><a class="reference external" href="https://huggingface.co/google/gemma-2-9b">google/gemma-2-9b</a><br><a class="reference external" href="https://huggingface.co/google/gemma-2-27b">google/gemma-2-27b</a></p></td>
 <td><p>✔️</p></td>
 </tr>
@@ -221,7 +221,7 @@
 <td><p>✔️</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>InternVLChatModel</strong></p></td>
-<td><p>Intern-VL</p></td>
+<td><p>Intern-VL①</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/OpenGVLab/InternVL2_5-1B">OpenGVLab/InternVL2_5-1B</a> <br> <a class="reference external" href="https://huggingface.co/OpenGVLab/InternVL3_5-1B">OpenGVLab/InternVL3_5-1B</a></p></td>
 <td><p>✔️</p></td>
 </tr>
@@ -286,7 +286,7 @@
 <td><p>✔️</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Phi3ForCausalLM</strong></p></td>
-<td><p>Phi-3**, Phi-3.5**</p></td>
+<td><p>Phi-3②, Phi-3.5②</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/microsoft/Phi-3-mini-4k-instruct">microsoft/Phi-3-mini-4k-instruct</a></p></td>
 <td><p>✔️</p></td>
 </tr>
@@ -306,20 +306,12 @@
 <td><p>✔️</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Grok1ModelForCausalLM</strong></p></td>
-<td><p>grok-1</p></td>
+<td><p>grok-1②</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/hpcai-tech/grok-1">hpcai-tech/grok-1</a></p></td>
 <td><p>✕</p></td>
 </tr>
 </tbody>
 </table>
-<ul class="simple">
-<li><p>** set “trust-remote-code” flag to True for e2e inference with vLLM</p></li>
-<li><p>*** pass “disable-sliding-window” flag for e2e inference of Gemma-2 family of models with vLLM</p></li>
-</ul>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>Intern-VL, Molmo models are Vision Language Model but they use <code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code> for inference to make it compatible with the huggingface transformers’ inference pipeline in the model’s source codebase.</p>
-</div>
 </section>
 </section>
 <hr class="docutils" />
@@ -349,17 +341,17 @@
 </tr>
 <tr class="row-even"><td><p><strong>MistralModel</strong></p></td>
 <td><p>Mistral</p></td>
-<td><p><a class="reference external" href="https://huggingface.co/intfloat/e5-mistral-7b-instruct">e5-mistral-7b-instruct</a></p></td>
+<td><p><a class="reference external" href="https://huggingface.co/intfloat/e5-mistral-7b-instruct">intfloat/e5-mistral-7b-instruct</a></p></td>
 <td><p>✕</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>NomicBertModel</strong></p></td>
-<td><p>NomicBERT</p></td>
-<td><p><a class="reference external" href="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5">nomic-embed-text-v1.5</a></p></td>
+<td><p>NomicBERT②</p></td>
+<td><p><a class="reference external" href="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5">nomic-ai/nomic-embed-text-v1.5</a></p></td>
 <td><p>✕</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Qwen2ForCausalLM</strong></p></td>
 <td><p>Qwen2</p></td>
-<td><p><a class="reference external" href="https://huggingface.co/NovaSearch/stella_en_1.5B_v5">stella_en_1.5B_v5</a></p></td>
+<td><p><a class="reference external" href="https://huggingface.co/NovaSearch/stella_en_1.5B_v5">NovaSearch/stella_en_1.5B_v5</a></p></td>
 <td><p>✔️</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>RobertaModel</strong></p></td>
@@ -374,13 +366,14 @@
 </tr>
 <tr class="row-odd"><td><p><strong>XLMRobertaModel</strong></p></td>
 <td><p>XLM-RoBERTa</p></td>
-<td><p><a class="reference external" href="https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual">ibm-granite/granite-embedding-107m-multilingual</a><br> <a class="reference external" href="https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual">ibm-granite/granite-embedding-278m-multilingual</a></p></td>
+<td><p><a class="reference external" href="https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual">ibm-granite/granite-embedding-107m-multilingual</a><br> <a class="reference external" href="https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual">ibm-granite/granite-embedding-278m-multilingual</a> <br> <a class="reference external" href="https://huggingface.co/intfloat/multilingual-e5-large">intfloat/multilingual-e5-large</a></p></td>
 <td><p>✔️</p></td>
 </tr>
 </tbody>
 </table>
 </section>
 </section>
+<hr class="docutils" />
 <section id="multimodal-language-models">
 <h2>Multimodal Language Models<a class="headerlink" href="#multimodal-language-models" title="Permalink to this heading"></a></h2>
 <section id="vision-language-models-text-image-generation">
@@ -431,34 +424,31 @@
 <td><p>✔️</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Gemma3ForConditionalGeneration</strong></p></td>
-<td><p>Gemma3***</p></td>
+<td><p>Gemma3③</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/google/gemma-3-4b-it">google/gemma-3-4b-it</a></p></td>
 <td><p>✔️</p></td>
 <td><p>✔️</p></td>
-<td><p>✔️</p></td>
-<td><p>✕</p></td>
+<td><p></p></td>
+<td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Qwen2_5_VLForConditionalGeneration</strong></p></td>
 <td><p>Qwen2.5-VL</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct">Qwen/Qwen2.5-VL-3B-Instruct</a></p></td>
 <td><p>✔️</p></td>
 <td><p>✔️</p></td>
-<td><p>✔️</p></td>
-<td><p>✔️</p></td>
+<td><p></p></td>
+<td><p></p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Mistral3ForConditionalGeneration</strong></p></td>
 <td><p>Mistral3</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503">mistralai/Mistral-Small-3.1-24B-Instruct-2503</a></p></td>
-<td><p></p></td>
-<td><p></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
 <td><p></p></td>
 <td><p></p></td>
 </tr>
 </tbody>
 </table>
-<ul class="simple">
-<li><p>*** pass “disable-sliding-window” flag for e2e inference with vLLM</p></li>
-</ul>
 <p><strong>Dual QPC:</strong>
 In the Dual QPC(Qualcomm Program Container) setup, the model is split across two  configurations:</p>
 <ul class="simple">
@@ -475,11 +465,10 @@ In the single QPC(Qualcomm Program Container) setup, the entire model—includin
 If the <code class="docutils literal notranslate"><span class="pre">kv_offload</span></code> is set to <code class="docutils literal notranslate"><span class="pre">True</span></code> it runs in dual QPC and if its set to <code class="docutils literal notranslate"><span class="pre">False</span></code> model runs in single QPC mode.</p>
 </div>
 </section>
-<hr class="docutils" />
 <section id="audio-models">
 <h3>Audio Models<a class="headerlink" href="#audio-models" title="Permalink to this heading"></a></h3>
-<p>(Automatic Speech Recognition) - Transcription Task
-<strong>QEff Auto Class:</strong> <code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq</span></code></p>
+<p>(Automatic Speech Recognition) - Transcription Task</p>
+<p><strong>QEff Auto Class:</strong> <code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq</span></code></p>
 <table class="docutils align-default">
 <thead>
 <tr class="row-odd"><th class="head"><p>Architecture</p></th>
@@ -497,12 +486,13 @@ If the <code class="docutils literal notranslate"><span class="pre">kv_offload</
 <tr class="row-odd"><td><p><strong>Wav2Vec2</strong></p></td>
 <td><p>Wav2Vec2</p></td>
 <td><p><a class="reference external" href="https://huggingface.co/facebook/wav2vec2-base">facebook/wav2vec2-base</a><br><a class="reference external" href="https://huggingface.co/facebook/wav2vec2-large">facebook/wav2vec2-large</a></p></td>
-<td><p>✔️</p></td>
+<td><p></p></td>
 </tr>
 </tbody>
 </table>
 </section>
 </section>
+<hr class="docutils" />
 <section id="diffusion-models">
 <h2>Diffusion Models<a class="headerlink" href="#diffusion-models" title="Permalink to this heading"></a></h2>
 <section id="image-generation-models">
@@ -544,6 +534,14 @@ If the <code class="docutils literal notranslate"><span class="pre">kv_offload</
 </tr>
 </tbody>
 </table>
+<hr class="docutils" />
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>① Intern-VL and Molmo models are Vision-Language Models but use <code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code> for inference to stay compatible with HuggingFace Transformers.</p>
+<p>② Set <code class="docutils literal notranslate"><span class="pre">trust_remote_code=True</span></code> for end-to-end inference with vLLM.</p>
+<p>③ Pass <code class="docutils literal notranslate"><span class="pre">disable_sliding_window</span></code> for few family models when using vLLM.</p>
+</div>
+<hr class="docutils" />
 </section>
 </section>
 </section>

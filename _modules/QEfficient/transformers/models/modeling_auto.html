@@ -2641,7 +2641,7 @@
 
         <span class="n">num_q_blocks</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;NUM_Q_BLOCKS&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">num_q_blocks</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">block_size</span> <span class="o">=</span> <span class="mi">128</span>
+            <span class="n">block_size</span> <span class="o">=</span> <span class="mi">256</span>
             <span class="k">if</span> <span class="n">prefill_seq_len</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">prefill_seq_len</span> <span class="o">%</span> <span class="n">block_size</span> <span class="o">!=</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">prefill_seq_len</span> <span class="o">&lt;</span> <span class="mi">128</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
                     <span class="sa">f</span><span class="s2">&quot;When prefill_only=True, &#39;prefill_seq_len&#39; must be explicitly set and divisible by block_size=</span><span class="si">{</span><span class="n">block_size</span><span class="si">}</span><span class="s2">. &quot;</span>
@@ -3052,20 +3052,24 @@
 <span class="sd">            If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.</span>
 
 <span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">kv_cache_batch_size</span> <span class="ow">or</span> <span class="n">full_batch_size</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;`kv_cache_batch_size` or `full_batch_size` is being passed&quot;</span>
+                <span class="s2">&quot;This will be ignored as `continuous_batching` is set to `False` in `from_pretrained`&quot;</span>
+            <span class="p">)</span>
+
         <span class="k">if</span> <span class="n">prefill_only</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">prefill_only</span><span class="p">:</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="ow">and</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;`full_batch_size` is required when `continuous_batching=True`.&quot;</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">kv_cache_batch_size</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">full_batch_size</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                    <span class="s2">&quot;KV caching requires continuous batching. Please set `full_batch_size` and &quot;</span>
-                    <span class="s2">&quot;enable `continuous_batching=True` in `from_pretrained`.&quot;</span>
-                <span class="p">)</span>
+
         <span class="k">else</span><span class="p">:</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span><span class="p">:</span>
-                <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">kv_cache_batch_size</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
-                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                        <span class="s2">&quot;Please pass valid integer for kv_cache_batch_size as continuous_batching is enabled for prefill-only model&quot;</span>
-                    <span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="ow">and</span> <span class="n">kv_cache_batch_size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">&quot;Please pass valid integer for kv_cache_batch_size or full_batch_size, both have same meaning, as continuous_batching is enabled for prefill-only model&quot;</span>
+                <span class="p">)</span>
+
+        <span class="c1"># Infer kv_cache_batch_size if not provided</span>
+        <span class="n">kv_cache_batch_size</span> <span class="o">=</span> <span class="n">kv_cache_batch_size</span> <span class="ow">or</span> <span class="n">full_batch_size</span> <span class="ow">or</span> <span class="n">batch_size</span>
 
         <span class="c1"># if ccl_enabled is True read Compute-Context-Length lists</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ccl_enabled</span><span class="p">:</span>
@@ -3107,14 +3111,6 @@
             <span class="ow">and</span> <span class="n">num_speculative_tokens</span> <span class="o">&gt;</span> <span class="mi">0</span>
         <span class="p">):</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Currently, sampler does not support `num_speculative_tokens` &gt; 0.&quot;</span><span class="p">)</span>
-
-        <span class="k">if</span> <span class="n">kv_cache_batch_size</span> <span class="ow">and</span> <span class="n">prefill_only</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">prefill_only</span><span class="p">:</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
-                <span class="s2">&quot;kv_cache_batch_size will be ignored as prefill_only is set to True unless this is GPTOSS model&quot;</span>
-            <span class="p">)</span>
-
-        <span class="c1"># Infer kv_cache_batch_size if not provided</span>
-        <span class="n">kv_cache_batch_size</span> <span class="o">=</span> <span class="n">kv_cache_batch_size</span> <span class="ow">or</span> <span class="n">full_batch_size</span> <span class="ow">or</span> <span class="n">batch_size</span>
 
         <span class="c1"># --- Specializations ---</span>
         <span class="n">specializations</span> <span class="o">=</span> <span class="p">[]</span>

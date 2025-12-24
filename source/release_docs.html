@@ -211,6 +211,13 @@
 <li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/audio/wav2vec2_inference.py">Wav2Vec2 Example Scripts</a></p></li>
 </ul>
 </li>
+<li><p><strong>Multilingual-e5-Large (Embedding Model)</strong></p>
+<ul>
+<li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodel"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEffAutoModel</span></code></span></a></p></li>
+<li><p>Multilingual text embedding capabilities</p></li>
+<li><p>Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/embeddings">usage details</a> here.</p></li>
+</ul>
+</li>
 </ul>
 </section>
 <hr class="docutils" />
@@ -221,16 +228,17 @@
 <li><p><strong>Python Support</strong>: Now requires Python <code class="docutils literal notranslate"><span class="pre">&gt;=3.9</span></code></p></li>
 <li><p><strong>ONNX Opset</strong>: Updated to version <code class="docutils literal notranslate"><span class="pre">17</span></code> for broader operator support</p></li>
 <li><p><strong>Advanced Attention</strong>: Flux blocking support, BlockedKV attention for CausalLM models</p></li>
-<li><p><strong>Diffusers Integration</strong>: Full support for diffuser-based image generation models</p></li>
-<li><p><strong>WAN Lightning Support</strong>: Enhanced distributed serving across wide-area networks</p></li>
-<li><p><strong>Automatic CCL Generation</strong>: Automatic Compute-Context-Length list generation for prefill/decode phases</p></li>
-<li><p><strong>Prefill/Decode Separation</strong>: Independent compilation and optimization for disaggregated serving</p></li>
+<li><p><strong>Diffusers Integration</strong>: Full support for diffuser-based image generation and video generation models</p></li>
+<li><p><strong>Compute-Context-Length (CCL) support</strong>: To optimize the throughput when handling very large context lengths</p></li>
+<li><p><strong>Prefill/Decode Separation</strong>: Support for GPT OSS using disaggregate serving models</p></li>
 <li><p><strong>Continuous Batching (VLMs)</strong>: Extended to Vision Language Models with multi-image handling</p></li>
-<li><p><strong>ONNX Sub-Functions</strong>: New ONNX sub-function export feature for AutoModelForCausalLM</p></li>
-<li><p><strong>Guided Decoding</strong>: Constrained generation support for on-device sampling</p></li>
+<li><p><strong>ONNX Sub-Functions</strong>: Feature enabling more efficient model compilation and execution on hardware</p></li>
 <li><p><strong>Memory Profiling</strong>: Built-in utilities for optimization analysis</p></li>
-<li><p><strong>KV Cache Optimization</strong>: Improved cache handling for long sequences</p></li>
-<li><p><strong>Checkpoint Resume</strong>: Resume fine-tuning from specific epochs with corrected loss tracking</p></li>
+<li><p><strong>Extend on-device Sampling</strong>: Extend on-device sampling to dual QPC VLMs and Guided decoding for on-device sampling</p></li>
+<li><p><strong>ONNX transform, memory &amp; time optimizations</strong>: Optimizations for faster ONNX Transform and reduced memory footprint</p></li>
+<li><p><strong>Removed platform SDK dependency</strong>: Support QPC generation on systems without the Platform SDK</p></li>
+<li><p><strong>Example Scripts Revamp</strong>: New example scripts for audio, embeddings, and image-text-to-text tasks</p></li>
+<li><p><strong>Onboarding Guide</strong>: Simplified setup and deployment process for new users</p></li>
 </ul>
 </section>
 <hr class="docutils" />
@@ -239,7 +247,6 @@
 <ul class="simple">
 <li><p><strong>Multi-Sequence Length Support</strong>: Auto-selects optimal graph at runtime</p></li>
 <li><p><strong>Enhanced Pooling</strong>: Flexible pooling strategies for various embedding tasks</p></li>
-<li><p><strong>On-Device Execution</strong>: Improved on-device inference for embedding models</p></li>
 </ul>
 </section>
 <hr class="docutils" />
@@ -249,7 +256,6 @@
 <li><p><strong>Checkpoint Management</strong>: Resume from epochs with proper state restoration</p></li>
 <li><p><strong>Enhanced Loss Tracking</strong>: Corrected data type handling for accurate loss computation</p></li>
 <li><p><strong>Custom Dataset Support</strong>: Improved handling with better tokenization</p></li>
-<li><p><strong>Gradient Checkpointing</strong>: Memory-efficient training for large models</p></li>
 <li><p><strong>Device-Aware Scaling</strong>: Optimized GradScaler for multi-device training</p></li>
 <li><p><strong>Comprehensive Testing</strong>: Unit tests for fine-tuning workflows</p></li>
 </ul>
