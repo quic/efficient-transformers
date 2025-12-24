@@ -18,7 +18,7 @@ Supported Features
      - Implements a blocked K/V cache layout so attention reads/processes the cache blockbyblock, improving longcontext decode performance.
    * - `Memory Profiling Tool <https://github.com/quic/efficient-transformers/pull/674>`_
      - Adds scripts to profile memory during export/compile/infer (peak usage, cache footprint) for quicker diagnosis. Refer `sample scripts <https://github.com/quic/efficient-transformers/tree/main/scripts/memory_profiling>`_ for more **details**.
-   * - `ONNX transform, memory & time optimizations<https://github.com/quic/efficient-transformers/pull/640>`_
+   * - `ONNX transform, memory & time optimizations <https://github.com/quic/efficient-transformers/pull/640>`_
      - Adds periodic memory cleanup (e.g., to FP16ClipTransform / SplitTensorsTransform) during largetensor processing, and avoids redundant external data loading when already present
    * - Onboarding Guide
      - Onboarding Guide for adding new Causal models, new Custom ops in QEff. Refer `guide <https://github.com/quic/efficient-transformers/tree/main/examples/onboarding_guide>`_ for more **details**.
