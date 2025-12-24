@@ -130,8 +130,10 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 
 ```{NOTE}
 ① Intern-VL and Molmo models are Vision-Language Models but use `QEFFAutoModelForCausalLM` for inference to stay compatible with HuggingFace Transformers.
+
 ② Set `trust_remote_code=True` for end-to-end inference with vLLM.
-③ Pass `disable_sliding_window` for Gemma-2 family models when using vLLM.
+
+③ Pass `disable_sliding_window` for few family models when using vLLM.
 ```
 ---
 
