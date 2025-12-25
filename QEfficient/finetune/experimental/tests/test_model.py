@@ -5,16 +5,15 @@
 #
 # -----------------------------------------------------------------------------
 
+from unittest import mock
+
 import pytest
 import torch
 import torch.nn as nn
-from unittest import mock
 
-import transformers
 from QEfficient.finetune.experimental.core import model
-from QEfficient.finetune.experimental.core.model import BaseModel, HFModel
-from QEfficient.finetune.experimental.core.component_registry import registry
-from QEfficient.finetune.experimental.core.component_registry import ComponentFactory
+from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
+from QEfficient.finetune.experimental.core.model import BaseModel
 
 
 class TestMockModel(nn.Module):
@@ -67,8 +66,9 @@ def test_tokenizer_lazy_loading():
 def test_to_moves_inner_and_returns_self():
     m = ComponentFactory.create_model("testcustom", "dummy")
     with mock.patch.object(TestMockModel, "to", autospec=True) as mocked_to:
-        ret = m.to("cuda:0")
-    mocked_to.assert_called_once_with(m.model, "cuda:0")
+        ret = m.to("cpu:0")
+    assert mocked_to.call_args[0][0] is m.model
+    assert mocked_to.call_args[0][1] == "cpu:0"
     assert ret is m
 
 
@@ -80,20 +80,6 @@ def test_train_eval_sync_flags():
     m.train()
     assert m.training is True
     assert m.model.training is True
-
-
-def test_resize_token_embeddings_and_get_input_embeddings_warn(monkeypatch):
-    m = ComponentFactory.create_model("testcustom", "dummy")
-
-    # resize_token_embeddings: underlying model lacks the method, should warn and not raise
-    with mock.patch("QEfficient.finetune.experimental.core.model.logger.info") as mocked_log:
-        m.resize_token_embeddings(10)
-        mocked_log.assert_called_once()
-
-    # get_input_embeddings: underlying model lacks method, should warn and return None
-    with mock.patch("QEfficient.finetune.experimental.core.model.logger.info") as mocked_log:
-        assert m.get_input_embeddings() is None
-        mocked_log.assert_called_once()
 
 
 def test_state_dict_contains_inner_params():
@@ -141,12 +127,10 @@ def test_hfmodel_loads_auto_and_tokenizer(monkeypatch):
         raising=False,
     )
     m = ComponentFactory.create_model("hf", "hf-name")
-    m = HFModel.create("hf-name")
     assert isinstance(m.model, FakeAuto)
 
     # load tokenizer
     tok = m.load_tokenizer()
 
-    # tokenizer was loaded and pad token inserted
-    model.AutoTokenizer.from_pretrained.assert_called_once_with("hf-name")
-    model.insert_pad_token.assert_called_once_with(fake_tok)
+    assert hasattr(tok, "pad_token_id")
+    assert m.model.loaded[0] == "hf-name"

@@ -5,19 +5,19 @@
 #
 # -----------------------------------------------------------------------------
 
-import logging
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Type
 
 import torch.nn as nn
-from transformers import AutoTokenizer
 import transformers
-from transformers.utils.logging import get_logger
+from transformers import AutoTokenizer
 
 from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.utils.dataset_utils import insert_pad_token
 
-logger = get_logger(__name__)
+logger = Logger(__name__)
 
 
 class BaseModel(nn.Module, ABC):
@@ -48,7 +48,8 @@ class BaseModel(nn.Module, ABC):
 
     def load_tokenizer(self) -> Any:
         """Override if the model exposes a tokenizer."""
-        raise NotImplementedError(f"{type(self).__name__} does not provide a tokenizer.")
+        warnings.warn(f"{type(self).__name__} does not provide a tokenizer.", category=UserWarning)
+        return None
 
     # Lazy accessors
     @property
@@ -67,19 +68,6 @@ class BaseModel(nn.Module, ABC):
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
-    def get_input_embeddings(self):
-        if hasattr(self.model, "get_input_embeddings"):
-            return self.model.get_input_embeddings()
-        logger.info(f"Model {self.model_name} does not expose input embeddings", logging.WARNING)
-        return None
-
-    def resize_token_embeddings(self, new_num_tokens: int) -> None:
-        if hasattr(self.model, "resize_token_embeddings"):
-            self.model.resize_token_embeddings(new_num_tokens)
-        else:
-            logger.info(f"Model {self.model_name} cannot resize token embeddings", logging.WARNING)
-
-    # optional
     def to(self, *args, **kwargs):
         self.model.to(*args, **kwargs)
         return self
@@ -129,12 +117,13 @@ class HFModel(BaseModel):
 
     def configure_model_kwargs(self) -> Dict[str, Any]:
         """Hook for subclasses to tweak HF `.from_pretrained` kwargs."""
+
         extra = dict(self.model_kwargs)
         # extra["quantization_config"] = self._build_quant_config()
         return extra
 
     def load_model(self) -> nn.Module:
-        logger.info(f"Loading HuggingFace model '{self.model_name}' via {self.auto_class.__name__}")
+        logger.log_rank_zero(f"Loading HuggingFace model '{self.model_name}' via {self.auto_class.__name__}")
 
         return self.auto_class.from_pretrained(
             self.model_name,
@@ -143,7 +132,7 @@ class HFModel(BaseModel):
 
     def load_tokenizer(self) -> AutoTokenizer:
         """Load Hugging Face tokenizer."""
-        logger.info(f"Loading tokenizer '{self.tokenizer_name}'")
+        logger.log_rank_zero(f"Loading tokenizer '{self.tokenizer_name}'")
         tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         insert_pad_token(tokenizer)
         return tokenizer
