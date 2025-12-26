@@ -12,16 +12,8 @@ Supported Features
      - Enabled for GPT-OSS models, allowing for flexible deployment of large language models across different hardware configurations.
    * - `ONNX Sub-Functions <https://github.com/quic/efficient-transformers/pull/621>`_
      - Feature enabling more efficient model compilation and execution on hardware.
-   * - `Continuous Batching (VLMs) <https://github.com/quic/efficient-transformers/pull/610>`_
-     - Extended to Vision Language Models with multi-image handling capabilities, optimizing throughput and latency by dynamically batching requests with varying image counts. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/granite_vision/continuous_batching.py>`_ for more **details**.
    * - `BlockedKV attention in CausalLM <https://github.com/quic/efficient-transformers/pull/618>`_
      - Implements a blocked K/V cache layout so attention reads/processes the cache blockbyblock, improving longcontext decode performance.
-   * - `Memory Profiling Tool <https://github.com/quic/efficient-transformers/pull/674>`_
-     - Adds scripts to profile memory during export/compile/infer (peak usage, cache footprint) for quicker diagnosis. Refer `sample scripts <https://github.com/quic/efficient-transformers/tree/main/scripts/memory_profiling>`_ for more **details**.
-   * - `ONNX transform, memory & time optimizations <https://github.com/quic/efficient-transformers/pull/640>`_
-     - Adds periodic memory cleanup (e.g., to FP16ClipTransform / SplitTensorsTransform) during largetensor processing, and avoids redundant external data loading when already present
-   * - Onboarding Guide
-     - Onboarding Guide for adding new Causal models, new Custom ops in QEff. Refer `guide <https://github.com/quic/efficient-transformers/tree/main/examples/onboarding_guide>`_ for more **details**.
    * - `Compute Context Length (CCL) <https://github.com/quic/efficient-transformers/blob/main/examples/performance/compute_context_length/README.md>`_
      - Optimizes inference by using different context lengths during prefill and decode phases, reducing memory footprint and computation for shorter sequences while maintaining support for longer contexts. Supports both text-only and vision-language models. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/performance/compute_context_length/basic_inference.py>`_ for more **details**.
    * - Sentence embedding, Flexible Pooling configuration and compilation with multiple sequence lengths

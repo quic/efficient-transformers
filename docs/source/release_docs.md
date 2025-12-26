@@ -69,7 +69,7 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 ## Key Features & Enhancements
 
 - **Framework Upgrades**: Transformers `4.55`, PyTorch `2.7.0+cpu`, Torchvision `0.22.0+cpu`
-- **Python Support**: Now requires Python `>=3.9`
+- **Python Support**:  Requires Python `3.10`
 - **ONNX Opset**: Updated to version `17` for broader operator support
 - **Advanced Attention**: Flux blocking support, BlockedKV attention for CausalLM models
 - **Diffusers Integration**: Full support for diffuser-based image generation and video generation models
