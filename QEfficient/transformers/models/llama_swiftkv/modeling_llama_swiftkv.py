@@ -11,7 +11,7 @@
 """Inference-only LLaMA model compatible with HuggingFace weights."""
 
 import math
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -415,6 +415,16 @@ class QEffLlamaSwiftKVForCausalLM(PreTrainedModel):
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.config = config
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffLlamaSwiftKVDecoderLayer}
 
     def forward(
         self,

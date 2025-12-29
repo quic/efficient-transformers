@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -396,6 +396,16 @@ class QEffGrok1ModelForCausalLM(nn.Module):
     """
     Grok model for causal language modeling.
     """
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffGrok1DecoderLayer}
 
     def forward(
         self,
