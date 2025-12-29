@@ -14,6 +14,7 @@ from typing import Dict
 
 from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
+from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger

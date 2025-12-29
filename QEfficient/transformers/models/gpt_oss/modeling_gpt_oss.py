@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from typing import Callable, Optional, Type, Union
+from typing import Callable, Optional, Union
 
 import torch
 from torch import nn

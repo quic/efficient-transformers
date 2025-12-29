@@ -58,10 +58,6 @@ def run_model(
     """
     print(f"Loading model: {model_name}")
     print(f"KV offload (Dual QPC mode): {kv_offload}")
-    print("CCL Configuration:")
-    print(f"  - Prefill context lengths: {comp_ctx_lengths_prefill}")
-    print(f"  - Decode context lengths: {comp_ctx_lengths_decode}")
-    print(f"  - Max context length: {ctx_len}")
 
     ## STEP 1: Load the Processor and Model
 
@@ -186,13 +182,13 @@ def main():
     parser.add_argument(
         "--comp-ctx-lengths-prefill",
         type=lambda x: [int(i) for i in x.split(",")],
-        default="4096",
+        default=None,
         help="Comma-separated list of context lengths for prefill phase (e.g., '4096')",
     )
     parser.add_argument(
         "--comp-ctx-lengths-decode",
         type=lambda x: [int(i) for i in x.split(",")],
-        default="6144,8192",
+        default=None,
         help="Comma-separated list of context lengths for decode phase (e.g., '6144,8192')",
     )
     parser.add_argument(

@@ -11,7 +11,7 @@ from typing import Optional
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from QEfficient import QEFFAutoModelForCausalLM, export
+from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers, undo_transformers_quantizers
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
@@ -160,11 +160,8 @@ def replicate_kv_heads(
 
     # Export the modified model
     q_model = QEFFAutoModelForCausalLM(model, continuous_batching=(True if full_batch_size else False))
-    export(
-        model_name,
-        q_model,
-        tokenizer=tokenizer,
-        onnx_dir_path=f"{model_base_name}-{new_kv_heads}kvheads",
+    q_model.export(
+        export_dir=f"{model_base_name}-{new_kv_heads}kvheads",
         full_batch_size=(full_batch_size if full_batch_size else None),
     )
 

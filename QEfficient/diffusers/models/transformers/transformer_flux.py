@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.transformers.transformer_flux import (
     FluxAttention,
@@ -19,6 +18,7 @@ from diffusers.models.transformers.transformer_flux import (
     _get_qkv_projections,
 )
 
+from QEfficient.diffusers.models.modeling_utils import compute_blocked_attention, get_attention_blocking_config
 from QEfficient.utils.logging_utils import logger
 
 
@@ -89,9 +89,21 @@ class QEffFluxAttnProcessor(FluxAttnProcessor):
             query = qeff_apply_rotary_emb(query, image_rotary_emb)
             key = qeff_apply_rotary_emb(key, image_rotary_emb)
 
-        hidden_states = dispatch_attention_fn(
-            query, key, value, attn_mask=attention_mask, backend=self._attention_backend
+        # Get blocking configuration
+        blocking_mode, head_block_size, num_kv_blocks, num_q_blocks = get_attention_blocking_config()
+        # Apply blocking using pipeline_utils
+        hidden_states = compute_blocked_attention(
+            query.transpose(1, 2),
+            key.transpose(1, 2),
+            value.transpose(1, 2),
+            blocking_mode=blocking_mode,
+            head_block_size=head_block_size,
+            num_kv_blocks=num_kv_blocks,
+            num_q_blocks=num_q_blocks,
+            attention_mask=attention_mask,
         )
+
+        hidden_states = hidden_states.transpose(1, 2)
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)
 

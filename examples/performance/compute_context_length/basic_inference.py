@@ -54,13 +54,13 @@ def main():
     parser.add_argument(
         "--comp-ctx-lengths-prefill",
         type=lambda x: [int(i) for i in x.split(",")],
-        default="256,500",
+        default=None,
         help="Comma-separated list of context lengths for prefill phase (e.g., '256,500')",
     )
     parser.add_argument(
         "--comp-ctx-lengths-decode",
         type=lambda x: [int(i) for i in x.split(",")],
-        default="512,1024",
+        default=None,
         help="Comma-separated list of context lengths for decode phase (e.g., '512,1024')",
     )
     parser.add_argument(
@@ -107,11 +107,7 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading model: {args.model_name}")
-    print("CCL Configuration:")
-    print(f"  - Prefill context lengths: {args.comp_ctx_lengths_prefill}")
-    print(f"  - Decode context lengths: {args.comp_ctx_lengths_decode}")
-    print(f"  - Max context length: {args.ctx_len}")
-    print(f"  - Continuous batching: {args.continuous_batching}")
+    print(f"Continuous batching: {args.continuous_batching}")
 
     # Load model with CCL configuration
     model = QEFFAutoModelForCausalLM.from_pretrained(
