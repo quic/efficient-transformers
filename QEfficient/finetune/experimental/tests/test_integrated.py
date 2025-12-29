@@ -17,6 +17,7 @@ import tempfile
 import pytest
 import torch
 from datasets import load_dataset
+from peft import LoraConfig
 
 from QEfficient.finetune.experimental.core.config_manager import (
     ConfigManager,
@@ -186,31 +187,30 @@ class TestParametrizedConfigurations:
         model_config_kwargs = {}
         model_config_kwargs["num_hidden_layers"] = 2
 
-        # Prepare peft_config_dict only if use_peft is True
-        peft_config_dict = None
-        if use_peft and model_config.peft_config:
-            peft_config_dict = {
-                "lora_r": model_config.peft_config.lora_r,
-                "lora_alpha": model_config.peft_config.lora_alpha,
-                "lora_dropout": model_config.peft_config.lora_dropout,
-                "target_modules": model_config.peft_config.target_modules,
-                "bias": model_config.peft_config.bias,
-            }
-
+        # Create HFModel instance without PEFT config
         hf_model = HFModel(
             model_name=model_config.model_name,
             auto_class_name=model_config.auto_class_name,
-            use_peft=model_config.use_peft,
             use_cache=model_config.use_cache,
             attn_implementation=model_config.attn_implementation,
             device_map=model_config.device_map,
-            peft_config=peft_config_dict,
-            model_config_kwargs=model_config_kwargs,
+            **model_config_kwargs,
         )
 
+        # Load model and tokenizer
         model = hf_model.load_model()
         tokenizer = hf_model.load_tokenizer()
-        peft_config = hf_model.load_peft_config() if use_peft else None
+
+        # Apply PEFT if needed
+        peft_config = None
+        if use_peft and model_config.peft_config:
+            peft_config = LoraConfig(
+                r=model_config.peft_config.lora_r,
+                lora_alpha=model_config.peft_config.lora_alpha,
+                lora_dropout=model_config.peft_config.lora_dropout,
+                target_modules=model_config.peft_config.target_modules,
+                bias=model_config.peft_config.bias,
+            )
 
         logger.warning(f"Model loaded: {model_config.model_name}")
 
@@ -290,7 +290,7 @@ class TestParametrizedConfigurations:
             eval_strategy=training_config.eval_strategy,
             seed=training_config.seed,
             bf16=False,
-            fp16=False,
+            fp16=True,
             report_to="none",
         )
 
@@ -306,7 +306,6 @@ class TestParametrizedConfigurations:
             formatting_func=formatting_func,
         )
         logger.warning("Trainer instantiated")
-
         # Run Training
         logger.warning(f"Starting training for {config_name}...")
         train_result = trainer.train()
