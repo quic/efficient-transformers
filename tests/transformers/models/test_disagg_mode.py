@@ -20,6 +20,7 @@ from QEfficient.transformers.quantizers import replace_transformers_quantizers, 
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 =======
 model_id = [
@@ -30,6 +31,12 @@ model_names_blocking = [
     "openai/gpt-oss-20b",
 ]  # weights are not required to convert to fp32
 >>>>>>> 28c1743 (Cleaning test for dissagg)
+=======
+model_id = [
+    # "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "openai/gpt-oss-20b",
+]  # weights are not required to convert to fp32
+>>>>>>> 28d3f78 (Adding qwen3moe to test)
 
 model_names_chunking = [
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
@@ -59,7 +66,9 @@ prompt1 = "Once upon a time"
 prompts = [prompt1, prompt2]
 
 
+@pytest.mark.skip(reason="only works for gpt-oss right now")
 @pytest.mark.on_qaic
+<<<<<<< HEAD
 <<<<<<< HEAD
 @pytest.mark.llm_model
 <<<<<<< HEAD
@@ -70,6 +79,9 @@ prompts = [prompt1, prompt2]
 =======
 @pytest.mark.parametrize("model_id", model_id_blocking)
 >>>>>>> 493cc0f (Test Added for Qwen3Moe)
+=======
+@pytest.mark.parametrize("model_id", model_id)
+>>>>>>> 28d3f78 (Adding qwen3moe to test)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill(model_id, prompt):
     # Run prefill
@@ -104,7 +116,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     past_key_values = []
     for i in range(config.num_hidden_layers):
         cache_len = 128 if i % 2 == 0 else PREFILL_SEQ_LEN
-        pad_shape = (1, 8, cache_len, 64)
+        pad_shape = (1, config.num_key_value_heads, cache_len, config.head_dim)
         past_key = torch.zeros((pad_shape), dtype=torch.float32)
         past_value = torch.zeros((pad_shape), dtype=torch.float32)
         pkv = (past_key, past_value)
@@ -112,7 +124,6 @@ def test_disagg_mode_prefill(model_id, prompt):
     inputs["past_key_values"] = past_key_values
 
     qeff_out = qeff_model.model(**inputs)
-
     # Check our pytorch implementation
     assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
@@ -142,6 +153,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
 
 
+<<<<<<< HEAD
 @pytest.mark.on_qaic
 <<<<<<< HEAD
 @pytest.mark.llm_model
@@ -153,6 +165,11 @@ def test_disagg_mode_prefill(model_id, prompt):
 =======
 @pytest.mark.parametrize("model_id", model_id_chunking)
 >>>>>>> 493cc0f (Test Added for Qwen3Moe)
+=======
+# @pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("model_id", model_id)
+>>>>>>> 28d3f78 (Adding qwen3moe to test)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill_chunked(model_id, prompt):
     # Run prefill
@@ -203,6 +220,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
         inputs["past_key_values"] = qeff_out["past_key_values"]
 
     # Check our pytorch implementation
+
     assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
     prefill_qpc_path = qeff_model.compile(
