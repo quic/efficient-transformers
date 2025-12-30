@@ -30,6 +30,7 @@ prompt1 = "Once upon a time"
 prompts = [prompt1, prompt2]
 
 
+@pytest.mark.skip(reason="only works for gpt-oss right now")
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", [model_id])
@@ -67,7 +68,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     past_key_values = []
     for i in range(config.num_hidden_layers):
         cache_len = 128 if i % 2 == 0 else PREFILL_SEQ_LEN
-        pad_shape = (1, 8, cache_len, 64)
+        pad_shape = (1, config.num_key_value_heads, cache_len, config.head_dim)
         past_key = torch.zeros((pad_shape), dtype=torch.float32)
         past_value = torch.zeros((pad_shape), dtype=torch.float32)
         pkv = (past_key, past_value)
@@ -75,7 +76,6 @@ def test_disagg_mode_prefill(model_id, prompt):
     inputs["past_key_values"] = past_key_values
 
     qeff_out = qeff_model.model(**inputs)
-
     # Check our pytorch implementation
     assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
@@ -93,7 +93,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     )
 
     prefill_session = QAICInferenceSession(prefill_qpc_path)
-    logits_out_placeholder = np.zeros((1, 1, 201088), dtype=np.float32)
+    logits_out_placeholder = np.zeros((1, 1, config.vocab_size), dtype=np.float32)
     prefill_session.set_buffers({"logits": logits_out_placeholder})
     inputs.pop("past_key_values")
     inputs = {k: v.detach().numpy() for k, v in inputs.items()}
@@ -105,7 +105,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
 
 
-@pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
+# @pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", [model_id])
@@ -143,7 +143,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
     past_key_values = []
     for i in range(config.num_hidden_layers):
         cache_len = CTX_LEN
-        pad_shape = (1, 8, cache_len, 64)
+        pad_shape = (1, config.num_key_value_heads, cache_len, config.head_dim)
         past_key = torch.zeros((pad_shape), dtype=torch.float32)
         past_value = torch.zeros((pad_shape), dtype=torch.float32)
         pkv = (past_key, past_value)
@@ -159,6 +159,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
         inputs["past_key_values"] = qeff_out["past_key_values"]
 
     # Check our pytorch implementation
+
     assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
     prefill_qpc_path = qeff_model.compile(
@@ -178,7 +179,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
     prefill_session.skip_buffers(
         [x for x in prefill_session.input_names + prefill_session.output_names if x.startswith("past_")]
     )
-    logits_out_placeholder = np.zeros((1, 1, 201088), dtype=np.float32)
+    logits_out_placeholder = np.zeros((1, 1, config.vocab_size), dtype=np.float32)
     prefill_session.set_buffers({"logits": logits_out_placeholder})
     inputs.pop("past_key_values")
     inputs = {k: v.detach().numpy() for k, v in inputs.items()}

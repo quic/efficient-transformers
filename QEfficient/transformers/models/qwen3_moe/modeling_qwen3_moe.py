@@ -125,7 +125,9 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         router_logits = self.gate(x)  # [T, E]
         prob = F.softmax(router_logits, -1, dtype=torch.float)
         top_w, top_i = torch.topk(prob, self.top_k, -1)
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
+        if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
+            top_w /= top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(hidden_states.dtype)
         masked_logits = torch.zeros_like(router_logits)
         masked_logits.scatter_(1, top_i, top_w)
         # Routing weights for each expert [T, E]
