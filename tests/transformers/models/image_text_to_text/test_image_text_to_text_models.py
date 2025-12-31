@@ -33,7 +33,7 @@ from QEfficient.utils.test_utils import InternProcessor
 
 NEW_GENERATION_TOKENS = 10
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "test_model_configs.json")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../test_model_configs.json")
 
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
@@ -41,6 +41,7 @@ with open(CONFIG_PATH, "r") as f:
 
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
+
 
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
