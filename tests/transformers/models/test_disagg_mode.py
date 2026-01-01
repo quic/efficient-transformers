@@ -17,7 +17,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
 model_id = [
-    # "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "openai/gpt-oss-20b",
 ]  # weights are not required to convert to fp32
 
