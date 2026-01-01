@@ -33,7 +33,7 @@ model_names_blocking = [
 >>>>>>> 28c1743 (Cleaning test for dissagg)
 =======
 model_id = [
-    # "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "openai/gpt-oss-20b",
 ]  # weights are not required to convert to fp32
 >>>>>>> 28d3f78 (Adding qwen3moe to test)
