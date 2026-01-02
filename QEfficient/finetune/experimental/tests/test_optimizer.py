@@ -15,8 +15,8 @@ from QEfficient.finetune.experimental.core.component_registry import registry
 from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
 
 OPTIMIZER_CONFIGS = {
-    "Adam": {
-        "optimizer_name": "Adam",
+    "adam": {
+        "optimizer_name": "adam",
         "opt_cls": optim.Adam,
         "lr": 1e-4,
         "weight_decay": 0.01,
@@ -24,8 +24,8 @@ OPTIMIZER_CONFIGS = {
         "eps": 1e-8,
         "amsgrad": False,
     },
-    "AdamW": {
-        "optimizer_name": "AdamW",
+    "adamw": {
+        "optimizer_name": "adamw",
         "opt_cls": optim.AdamW,
         "lr": 1e-4,
         "weight_decay": 0.01,
@@ -33,8 +33,8 @@ OPTIMIZER_CONFIGS = {
         "eps": 1e-8,
         "amsgrad": False,
     },
-    "SGD": {
-        "optimizer_name": "SGD",
+    "sgd": {
+        "optimizer_name": "sgd",
         "opt_cls": optim.SGD,
         "lr": 1e-4,
         "momentum": 0.9,
@@ -42,15 +42,15 @@ OPTIMIZER_CONFIGS = {
         "dampening": 0.0,
         "nesterov": False,
     },
-    "RMSprop": {
-        "optimizer_name": "RMSprop",
+    "rmsprop": {
+        "optimizer_name": "rmsprop",
         "opt_cls": optim.RMSprop,
     },
 }
 
 REGISTRY_CONFIG = {
-    "RMSprop": {
-        "optimizer_name": "RMSprop",
+    "rmsprop": {
+        "optimizer_name": "rmsprop",
         "opt_cls": optim.RMSprop,
     },
 }
