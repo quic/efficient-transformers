@@ -73,6 +73,10 @@ class DatasetConfig:
         default="knkarthick/samsum",
         metadata={"help": "The name or path of the dataset."},
     )
+    json_file_path: str = field(
+        default=None,
+        metadata={"help": "Path to a custom JSON file containing the dataset."},
+    )
     dataset_subset: str = field(
         default="default",
         metadata={"help": "The subset of the dataset to use, if applicable."},
@@ -412,7 +416,7 @@ class TrainingConfig:
         metadata={"help": "DDP configuration dictionary."},
     )
     use_cpu: Optional[bool] = field(
-        default=None,
+        default=False,
         metadata={"help": "Whether to explicitly run training on CPU."},
     )
     resume_from_checkpoint: Optional[str] = field(
@@ -724,30 +728,4 @@ class ConfigManager:
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
 
-def create_trainer_config(name: str, **dependencies) -> tuple:
-    """
-    Create trainer configuration based on registered trainer modules.
 
-    Args:
-        name: Name of the trainer type
-        **dependencies: Any dependencies needed to configure the trainer
-
-    Returns:
-        tuple: (trainer_class, args_class, additional_kwargs)
-    """
-    config = registry.get_trainer_module(name)
-
-    # Process required kwargs based on available dependencies
-    additional_kwargs = {}
-    for kwarg, default in config["required_kwargs"].items():
-        if kwarg in dependencies:
-            additional_kwargs[kwarg] = dependencies[kwarg]
-        elif default != "REQUIRED":
-            additional_kwargs[kwarg] = default
-
-    # Check for missing required arguments
-    for kwarg, default in config["required_kwargs"].items():
-        if kwarg not in additional_kwargs and default == "REQUIRED":
-            raise ValueError(f"Required argument '{kwarg}' not provided for trainer '{name}'")
-
-    return config["trainer_cls"], config["args_cls"], additional_kwargs
