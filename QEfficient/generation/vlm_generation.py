@@ -37,7 +37,9 @@ from QEfficient.generation.text_generation_inference import (
 )
 from QEfficient.utils import LRUCache
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 
 class VisionLanguageGeneration(QEffTextGenerationBase):

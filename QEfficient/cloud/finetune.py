@@ -29,10 +29,12 @@ from QEfficient.finetune.utils.config_utils import (
 from QEfficient.finetune.utils.dataset_utils import get_dataloader, get_longest_seq_length
 from QEfficient.finetune.utils.device_map import get_device_map
 from QEfficient.finetune.utils.helper import Task_Mode, get_world_size
-from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import print_model_size, print_trainable_parameters, train
 from QEfficient.utils._utils import hf_download
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("FT", loglevel="INFO")
 
 # Try importing QAIC-specific module, proceed without it if unavailable
 try:

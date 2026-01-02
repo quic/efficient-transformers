@@ -10,7 +10,9 @@ from pathlib import Path
 from datasets import load_dataset
 from torch.utils.data import Dataset
 
-from QEfficient.finetune.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("FT", loglevel="INFO")
 
 
 class grammar(Dataset):
