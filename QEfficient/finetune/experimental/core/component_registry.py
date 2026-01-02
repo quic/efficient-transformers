@@ -208,7 +208,11 @@ class ComponentFactory:
             raise ValueError(f"Unknown model: {model_type}. Available: {registry.list_models()}")
         model_instance = model_class.create(model_name, **kwargs)
         return model_instance
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 86e642a (Changing Readme.md)
     def create_trainer_config(name: str, **dependencies) -> tuple:
         """
         Create trainer configuration based on registered trainer modules.

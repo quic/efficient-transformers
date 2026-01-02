@@ -80,6 +80,10 @@ class DatasetConfig:
         default="yahma/alpaca-cleaned",
         metadata={"help": "The name or path of the dataset."},
     )
+    json_file_path: str = field(
+        default=None,
+        metadata={"help": "Path to a custom JSON file containing the dataset."},
+    )
     dataset_subset: str = field(
         default="default",
         metadata={"help": "The subset of the dataset to use, if applicable."},
@@ -778,3 +782,9 @@ class ConfigManager:
         if hasattr(self.config, name):
             return getattr(self.config, name)
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+<<<<<<< HEAD
+=======
+
+
+
+>>>>>>> 86e642a (Changing Readme.md)

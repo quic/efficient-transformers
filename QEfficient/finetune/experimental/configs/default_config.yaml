@@ -24,7 +24,6 @@ model:
 dataset:
   tokenizer_name: "HuggingFaceTB/SmolLM-135M"
   dataset_type: "seq_completion"
-  # dataset_name: "Arthur-LAGACHERIE/very-smollm-corpus-0.5M"
   dataset_name: "knkarthick/samsum"
   train_split: "train"
   max_seq_length: 512
@@ -59,14 +58,6 @@ training:
   # Uncomment if running in Notebook
   # disable_tqdm: True
 
-  # Uncomment below fsdp block to enable FSDP training
-  # fsdp: "full_shard"
-  # fsdp_config: "./configs/accelerate/fsdp_config.yaml"
-  # fsdp_config: "./configs/accelerate/fsdp_tp_parallelism_config.yaml"
-
-  # Uncomment below deepspeed block to enable DeepSpeed training
-  # deepspeed_config: "./configs/accelerate/deepSpeed_config.yaml"
-
   # Uncomment below DDP block to enable DDP training and configure DDP params
   # ddp_config:
   #   ddp_backend: "qccl"
@@ -95,7 +86,6 @@ optimizers:
 scheduler:
   scheduler_name: "cosine"
   warmup_steps: 100   # warmup_steps or warmup_ratio
-  warmup_ratio: 0.1
 
 callbacks:
   early_stopping:
