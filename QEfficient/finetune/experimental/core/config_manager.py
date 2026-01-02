@@ -19,10 +19,13 @@ from typing import Any, Dict, List, Optional, Union
 import yaml
 from transformers.hf_argparser import HfArgumentParser
 
+<<<<<<< HEAD
 from QEfficient.finetune.experimental.core.logger import Logger
 
 logger = Logger(__name__)
 
+=======
+>>>>>>> 2df8976 (Changing Readme.md)
 
 @dataclass
 class OptimizerConfig:
@@ -783,8 +786,11 @@ class ConfigManager:
             return getattr(self.config, name)
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 
 
 
 >>>>>>> 86e642a (Changing Readme.md)
+=======
+>>>>>>> 2df8976 (Changing Readme.md)
