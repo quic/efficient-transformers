@@ -326,27 +326,65 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
     def __qeff_init__(
         self,
     ):
-        self.all_gate_proj = torch.nn.Parameter(torch.cat([exp.gate_proj.unsqueeze(0) for exp in self.experts], dim=0))
-        self.all_up_proj = torch.nn.Parameter(torch.cat([exp.up_proj.unsqueeze(0) for exp in self.experts], dim=0))
-        self.all_down_proj = torch.nn.Parameter(torch.cat([exp.down_proj.unsqueeze(0) for exp in self.experts], dim=0))
+        self.all_gate_proj = torch.nn.Parameter(
+            torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+        )
+        self.all_up_proj = torch.nn.Parameter(
+            torch.cat([exp.up_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+        )
+        self.all_down_proj = torch.nn.Parameter(
+            torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+        )
         self.act_fn = self.experts[0].act_fn
 
-    def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, topk_indices: torch.Tensor):
+    def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
+        r"""
+        CALL FOR CONTRIBUTION! I don't have time to optimise this right now, but expert weights need to be fused
+        to not have to do a loop here (deepseek has 256 experts soooo yeah).
+        """
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
+        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
+        expert_mask = expert_mask.permute(2, 0, 1)
+
+        for expert_idx in range(len(self.experts)):
+            expert = self.experts[expert_idx]
+            mask = expert_mask[expert_idx]
+            token_indices, weight_indices = torch.where(mask)
+
+            if token_indices.numel() > 0:
+                expert_weights = topk_weights[token_indices, weight_indices]
+                expert_input = hidden_states[token_indices]
+                expert_output = expert(expert_input)
+                weighted_output = expert_output * expert_weights.unsqueeze(-1)
+                final_hidden_states.index_add_(0, token_indices, weighted_output)
+
+        # in original deepseek, the output of the experts are gathered once we leave this module
+        # thus the moe module is itelsf an IsolatedParallel module
+        # and all expert are "local" meaning we shard but we don't gather
+        return final_hidden_states.type(hidden_states.dtype)
+
+    def moe(
+        self,
+        hidden_states: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ):
+        bs, seq_len, _ = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
         gate_proj = self.all_gate_proj[topk_indices.flatten()]
         up_proj = self.all_up_proj[topk_indices.flatten()]
         down_proj = self.all_down_proj[topk_indices.flatten()]
         expert_in = (
-            hidden_states.unsqueeze(1)
-            .expand(-1, self.router.top_k, -1)
-            .contiguous()
-            .view(-1, 1, self.experts.hidden_size)
+            hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.config.hidden_size)
         )
         gate_out = torch.bmm(expert_in, gate_proj)
         up_out = torch.bmm(expert_in, up_proj)
         hidden = self.act_fn(gate_out) * up_out
         expert_output = torch.bmm(hidden, down_proj)
-        experts_out = expert_output * topk_weights.unsqueeze(-1)
+        experts_out = expert_output.view(bs * seq_len, self.gate.top_k, self.config.hidden_size)
+        experts_out = experts_out * topk_weights.unsqueeze(-1)
         final_hidden_states = experts_out.sum(dim=1)
 
         return final_hidden_states.type(hidden_states.dtype)
@@ -358,8 +396,11 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         residuals = hidden_states
         orig_shape = hidden_states.shape
         topk_indices, topk_weights = self.gate(hidden_states)
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        hidden_states = self.moe(hidden_states, topk_weights, topk_indices).view(*orig_shape)
+
+        # orig_hs = self.orig_moe(hidden_states, topk_indices, topk_weights)
+
+        hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
+        # import ipdb; ipdb.set_trace()
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
 
