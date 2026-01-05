@@ -36,7 +36,9 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
 
 
 class QEffWanPipeline:

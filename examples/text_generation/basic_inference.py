@@ -10,6 +10,7 @@ import argparse
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.utils.logging_utils import QEFFLogger
 
 
 def main():
@@ -51,6 +52,7 @@ def main():
 
     print(f"\nPrompt: {args.prompt}")
     print(f"Generated: {exec_info.generated_texts[0]}")
+    QEFFLogger.print_table()
 
 
 if __name__ == "__main__":

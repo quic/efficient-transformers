@@ -13,8 +13,10 @@ import pytest
 from transformers import AutoConfig
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.test_utils import ModelConfig
+
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 
 def get_custom_model_config_dict(configs):

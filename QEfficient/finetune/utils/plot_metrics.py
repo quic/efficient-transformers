@@ -11,7 +11,9 @@ import os
 
 import matplotlib.pyplot as plt
 
-from QEfficient.finetune.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("FT", loglevel="INFO")
 
 
 def plot_metric(data, metric_name, x_label, y_label, title, colors):
