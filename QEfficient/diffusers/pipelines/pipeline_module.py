@@ -9,10 +9,7 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
-<<<<<<< HEAD
-=======
 from diffusers.models.transformers.transformer_wan import WanTransformerBlock
->>>>>>> upstream/main
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -364,11 +361,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
 
         Args:
             model (nn.Module): The Flux transformer model to wrap
-<<<<<<< HEAD
-            use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
-                                     for better modularity and potential optimization
-=======
->>>>>>> upstream/main
         """
         super().__init__(model)
 
@@ -457,25 +449,18 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
             export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
-<<<<<<< HEAD
-=======
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
->>>>>>> upstream/main
 
         Returns:
             str: Path to the exported ONNX model
         """
 
         if use_onnx_subfunctions:
-<<<<<<< HEAD
-            export_kwargs = {"export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock}}
-=======
             export_kwargs = {
                 "export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock},
                 "use_onnx_subfunctions": True,
             }
->>>>>>> upstream/main
 
         # Sort _use_default_values in config to ensure consistent hash generation during export
         self.model.config["_use_default_values"].sort()
@@ -498,8 +483,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
         self._compile(specializations=specializations, **compiler_options)
-<<<<<<< HEAD
-=======
 
 
 class QEffWanUnifiedTransformer(QEFFBaseModel):
@@ -647,4 +630,3 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
         self._compile(specializations=specializations, **compiler_options)
->>>>>>> upstream/main

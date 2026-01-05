@@ -5,10 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-<<<<<<< HEAD
-=======
 import math
->>>>>>> upstream/main
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -16,11 +13,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import PIL.Image
-<<<<<<< HEAD
-=======
 import torch
 import torch.nn as nn
->>>>>>> upstream/main
 from tqdm import tqdm
 
 from QEfficient.utils._utils import load_json
@@ -45,9 +39,6 @@ def calculate_compressed_latent_dimension(height: int, width: int, vae_scale_fac
     return cl, latent_height, latent_width
 
 
-<<<<<<< HEAD
-def config_manager(cls, config_source: Optional[str] = None):
-=======
 def calculate_latent_dimensions_with_frames(
     height: int,
     width: int,
@@ -96,7 +87,6 @@ def calculate_latent_dimensions_with_frames(
 
 
 def config_manager(cls, config_source: Optional[str] = None, use_onnx_subfunctions: bool = False):
->>>>>>> upstream/main
     """
     JSON-based compilation configuration manager for diffusion pipelines.
 
@@ -119,14 +109,11 @@ def config_manager(cls, config_source: Optional[str] = None, use_onnx_subfunctio
 
     cls.custom_config = load_json(config_source)
 
-<<<<<<< HEAD
-=======
     # Enable ONNX subfunctions for specific modules if requested
     for module_name, _ in cls.modules.items():
         if module_name in ONNX_SUBFUNCTION_MODULE:
             cls.custom_config["modules"][module_name]["compilation"]["use_onnx_subfunctions"] = use_onnx_subfunctions
 
->>>>>>> upstream/main
 
 def set_module_device_ids(cls):
     """
@@ -160,12 +147,6 @@ def compile_modules_parallel(
         specializations = config["modules"][module_name]["specializations"].copy()
         compile_kwargs = config["modules"][module_name]["compilation"]
 
-<<<<<<< HEAD
-        if specialization_updates and module_name in specialization_updates:
-            specializations.update(specialization_updates[module_name])
-
-        module_obj.compile(specializations=[specializations], **compile_kwargs)
-=======
         if (
             specialization_updates and module_name in specialization_updates
         ):  # Apply specialization updates if available
@@ -179,7 +160,6 @@ def compile_modules_parallel(
             specializations = [specializations]
         # Compile with prepared specializations
         module_obj.compile(specializations=specializations, **compile_kwargs)
->>>>>>> upstream/main
 
     # Execute compilations in parallel
     with ThreadPoolExecutor(max_workers=len(modules)) as executor:
@@ -218,14 +198,6 @@ def compile_modules_sequential(
         specializations = module_config[module_name]["specializations"].copy()
         compile_kwargs = module_config[module_name]["compilation"]
 
-<<<<<<< HEAD
-        # Apply dynamic specialization updates if provided
-        if specialization_updates and module_name in specialization_updates:
-            specializations.update(specialization_updates[module_name])
-
-        # Compile the module to QPC format
-        module_obj.compile(specializations=[specializations], **compile_kwargs)
-=======
         if (
             specialization_updates and module_name in specialization_updates
         ):  # Apply specialization updates if available
@@ -239,7 +211,6 @@ def compile_modules_sequential(
             specializations = [specializations]
         # Compile with prepared specializations
         module_obj.compile(specializations=specializations, **compile_kwargs)
->>>>>>> upstream/main
 
 
 @dataclass(frozen=True)
@@ -316,8 +287,6 @@ class QEffPipelineOutput:
 # List of module name that require special handling during export
 # when use_onnx_subfunctions is enabled
 ONNX_SUBFUNCTION_MODULE = ["transformer"]
-<<<<<<< HEAD
-=======
 
 
 class QEffWanUnifiedWrapper(nn.Module):
@@ -384,4 +353,3 @@ class QEffWanUnifiedWrapper(nn.Module):
         # Select based on timestep condition
         noise_pred = torch.where(is_high_noise, noise_pred_high, noise_pred_low)
         return noise_pred
->>>>>>> upstream/main

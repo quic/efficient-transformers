@@ -151,8 +151,6 @@ FLUX_ADALN_HIDDEN_DIM = 3072
 FLUX_ADALN_DUAL_BLOCK_CHUNKS = 12  # 6 chunks for norm1 + 6 chunks for norm1_context
 FLUX_ADALN_SINGLE_BLOCK_CHUNKS = 3
 FLUX_ADALN_OUTPUT_DIM = 6144  # 2 * FLUX_ADALN_HIDDEN_DIM
-<<<<<<< HEAD
-=======
 
 # Wan Transformer Constants
 WAN_TEXT_EMBED_DIM = 5120
@@ -179,7 +177,6 @@ CCL_START_MAP = {
 # Limitation in the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists during automatic lists generation process.
 CCL_MAX_ELEMENTS_LISTS = 5
 CCL_START_CTX_LEN = 4096
->>>>>>> upstream/main
 
 
 class Constants:
