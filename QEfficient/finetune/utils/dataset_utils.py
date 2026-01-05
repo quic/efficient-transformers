@@ -16,9 +16,7 @@ from transformers.data import DataCollatorForSeq2Seq
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATALOADER_COLLATE_FUNC, DATASET_PREPROC
 from QEfficient.finetune.utils.helper import get_world_size
-from QEfficient.utils.logging_utils import QEFFLogger
-
-logger = QEFFLogger.get_logger("FT", loglevel="INFO")
+from QEfficient.finetune.utils.logging_utils import logger
 
 
 def get_preprocessed_dataset(

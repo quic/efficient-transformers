@@ -9,9 +9,7 @@ import importlib
 import logging
 from pathlib import Path
 
-from QEfficient.utils.logging_utils import QEFFLogger
-
-logger = QEFFLogger.get_logger("FT", loglevel="INFO")
+from QEfficient.finetune.utils.logging_utils import logger
 
 
 def load_module_from_py_file(py_file: str) -> object:
