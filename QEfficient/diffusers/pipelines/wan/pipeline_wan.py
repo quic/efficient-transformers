@@ -760,7 +760,7 @@ class QEffWanPipeline:
             inputs = {"latent_sample": latents.numpy()}
 
             start_decode_time = time.perf_counter()
-            video = self.vae_decoder.qpc_session.run(inputs)  # CPU fallback
+            video = self.vae_decoder.qpc_session.run(inputs)
             end_decode_time = time.perf_counter()
             vae_decoder_perf = end_decode_time - start_decode_time
 
