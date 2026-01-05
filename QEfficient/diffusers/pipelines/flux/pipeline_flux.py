@@ -305,7 +305,11 @@ class QEffFluxPipeline:
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Load compilation configuration
+<<<<<<< HEAD
         config_manager(self, config_source=compile_config)
+=======
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
+>>>>>>> upstream/main
 
         # Calculate compressed latent dimension using utility function
         cl, latent_height, latent_width = calculate_compressed_latent_dimension(

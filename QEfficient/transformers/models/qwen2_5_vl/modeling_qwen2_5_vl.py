@@ -992,7 +992,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
 
         inputs = {}
         if kv_offload:

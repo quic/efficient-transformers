@@ -313,7 +313,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         chunk_image_idx = None
 
         if self.comp_ctx_lengths_prefill is not None:
-            self.list_of_comp_ctx_lengths_prefill = [np.zeros(length) for length in self.comp_ctx_lengths_prefill]
+            self.list_of_comp_ctx_lengths_prefill = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+            ]
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 

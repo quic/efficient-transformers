@@ -123,7 +123,7 @@ def flux_pipeline_call_with_mad_validation(
     pipeline.text_encoder_2.qpc_session.deactivate()
 
     # MAD Validation for Text Encoders
-    print("🔍 Performing MAD validation for text encoders...")
+    print(" Performing MAD validation for text encoders...")
     mad_validator.validate_module_mad(
         clip_qaic_pooled_prompt_embeds, clip_torch_pooled_prompt_embeds, module_name="clip_text_encoder"
     )
@@ -405,7 +405,7 @@ def test_flux_pipeline(flux_pipeline):
                 generated_image, expected_size, config["pipeline_params"]["min_image_variance"]
             )
 
-            print("\n✅ IMAGE VALIDATION PASSED")
+            print("\n IMAGE VALIDATION PASSED")
             print(f"   - Size: {image_validation['size']}")
             print(f"   - Mode: {image_validation['mode']}")
             print(f"   - Variance: {image_validation['variance']:.2f}")
@@ -421,7 +421,7 @@ def test_flux_pipeline(flux_pipeline):
 
         if config["validation_checks"]["onnx_export"]:
             # Check if ONNX files exist (basic check)
-            print("\n🔍 ONNX Export Validation:")
+            print("\n ONNX Export Validation:")
             for module_name in ["text_encoder", "text_encoder_2", "transformer", "vae_decode"]:
                 module_obj = getattr(pipeline, module_name, None)
                 if module_obj and hasattr(module_obj, "onnx_path") and module_obj.onnx_path:
@@ -429,7 +429,7 @@ def test_flux_pipeline(flux_pipeline):
 
         if config["validation_checks"]["compilation"]:
             # Check if QPC files exist (basic check)
-            print("\n🔍 Compilation Validation:")
+            print("\n Compilation Validation:")
             for module_name in ["text_encoder", "text_encoder_2", "transformer", "vae_decode"]:
                 module_obj = getattr(pipeline, module_name, None)
                 if module_obj and hasattr(module_obj, "qpc_path") and module_obj.qpc_path:
