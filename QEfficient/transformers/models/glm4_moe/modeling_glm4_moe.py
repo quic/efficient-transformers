@@ -8,7 +8,6 @@
 from typing import Callable, List, Optional, Union
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
@@ -20,7 +19,6 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeModel,
     Glm4MoeMoE,
     Glm4MoeRotaryEmbedding,
-    Glm4MoeTopkRouter,
     repeat_kv,
     rotate_half,
 )
@@ -320,26 +318,53 @@ class QEffGlm4MoeModel(Glm4MoeModel):
         )
 
 
-class QEffGlm4MoeTopkRouter(Glm4MoeTopkRouter):
-    def forward(self, hidden_states):
-        hidden_states = hidden_states.view(-1, self.config.hidden_size)
-        router_logits = F.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
-        scores = router_logits.sigmoid()
-        topk_indices = self.get_topk_indices(scores)
-        topk_weights = scores.gather(1, topk_indices)
-        if self.norm_topk_prob:
-            denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
-            topk_weights /= denominator
-        topk_weights = topk_weights * self.routed_scaling_factor
-
-        # Create expert mask similar to Granite
-        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=self.n_routed_experts)
-        expert_mask = expert_mask.permute(2, 0, 1)  # [num_experts, batch*seq, top_k]
-
-        return topk_weights, expert_mask, router_logits, self.n_routed_experts
-
-
 class QEffGlm4MoeMoE(Glm4MoeMoE):
+    """
+    MoE Block
+    """
+
+    def __qeff_init__(
+        self,
+    ):
+        self.all_gate_proj = torch.nn.Parameter(torch.cat([exp.gate_proj.unsqueeze(0) for exp in self.experts], dim=0))
+        self.all_up_proj = torch.nn.Parameter(torch.cat([exp.up_proj.unsqueeze(0) for exp in self.experts], dim=0))
+        self.all_down_proj = torch.nn.Parameter(torch.cat([exp.down_proj.unsqueeze(0) for exp in self.experts], dim=0))
+        self.act_fn = self.experts[0].act_fn
+
+    def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, topk_indices: torch.Tensor):
+        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
+        gate_proj = self.all_gate_proj[topk_indices.flatten()]
+        up_proj = self.all_up_proj[topk_indices.flatten()]
+        down_proj = self.all_down_proj[topk_indices.flatten()]
+        expert_in = (
+            hidden_states.unsqueeze(1)
+            .expand(-1, self.router.top_k, -1)
+            .contiguous()
+            .view(-1, 1, self.experts.hidden_size)
+        )
+        gate_out = torch.bmm(expert_in, gate_proj)
+        up_out = torch.bmm(expert_in, up_proj)
+        hidden = self.act_fn(gate_out) * up_out
+        expert_output = torch.bmm(hidden, down_proj)
+        experts_out = expert_output * topk_weights.unsqueeze(-1)
+        final_hidden_states = experts_out.sum(dim=1)
+
+        return final_hidden_states.type(hidden_states.dtype)
+
+    def forward(self, hidden_states):
+        """
+        Forward pass of MoE block.
+        """
+        residuals = hidden_states
+        orig_shape = hidden_states.shape
+        topk_indices, topk_weights = self.gate(hidden_states)
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        hidden_states = self.moe(hidden_states, topk_weights, topk_indices).view(*orig_shape)
+        hidden_states = hidden_states + self.shared_experts(residuals)
+        return hidden_states
+
+
+class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
     """
     MoE Block
     """
@@ -366,12 +391,13 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         """
         residuals = hidden_states
         orig_shape = hidden_states.shape
-
-        topk_weights, expert_mask, router_logits, num_experts = self.gate(hidden_states)
+        topk_indices, topk_weights = self.gate(hidden_states)
+        # Create expert mask similar to Granite
+        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=self.n_routed_experts)
+        expert_mask = expert_mask.permute(2, 0, 1)  # [num_experts, batch*seq, top_k]
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        hidden_states = self.moe(hidden_states, topk_weights, expert_mask, num_experts).view(*orig_shape)
+        hidden_states = self.moe(hidden_states, topk_weights, expert_mask, self.gate.top_k).view(*orig_shape)
         hidden_states = hidden_states + self.shared_experts(residuals)
-
         return hidden_states
 
 
