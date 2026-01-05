@@ -53,7 +53,6 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeMoE,
     Glm4MoeRMSNorm,
     Glm4MoeRotaryEmbedding,
-    Glm4MoeTopkRouter,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
@@ -264,7 +263,7 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeModel,
     QEffGlm4MoeMoE,
     QEffGlm4MoeRotaryEmbedding,
-    QEffGlm4MoeTopkRouter,
+    QEffPrefillOnlyGlm4MoeMoE,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -589,7 +588,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Glm4MoeDecoderLayer: QEffGlm4MoeDecoderLayer,
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
         Glm4MoeMoE: QEffGlm4MoeMoE,
-        Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
@@ -686,6 +684,7 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        QEffGlm4MoeMoE: QEffPrefillOnlyGlm4MoeMoE,
     }
 
 
@@ -704,6 +703,7 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+        QEffPrefillOnlyGlm4MoeMoE: QEffGlm4MoeMoE,
     }
 
 
