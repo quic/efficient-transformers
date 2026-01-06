@@ -168,6 +168,9 @@ WAN_ONNX_EXPORT_LATENT_WIDTH_180P = 40
 WAN_ONNX_EXPORT_HEIGHT_180P = 192
 WAN_ONNX_EXPORT_WIDTH_180P = 320
 
+# WAN I2V
+WAN_DIT_I2V_IN_CHANNELS = 36
+
 # For the purpose of automatic CCL lists generation, to limit the number of elements in CCL list, the starting point will be calculated based on context length
 CCL_START_MAP = {
     32768: (4096, 4000),
