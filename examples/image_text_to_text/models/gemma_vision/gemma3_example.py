@@ -17,8 +17,8 @@ model_id = "google/gemma-3-4b-it"
 config = AutoConfig.from_pretrained(model_id)
 
 # For Testing Purpose Only
-config.text_config.num_hidden_layers = 1
-config.vision_config.num_hidden_layers = 2
+# config.text_config.num_hidden_layers = 1
+# config.vision_config.num_hidden_layers = 2
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
