@@ -367,7 +367,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-exec`
+        this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -393,7 +393,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             Additional compiler options for QAIC or QNN compilers. These are passed directly
             to the underlying compilation command.
 
-            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -2865,7 +2865,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-exec`
+        this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -2905,7 +2905,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
-            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -3331,7 +3331,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-exec`
+        this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -3371,7 +3371,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         **compiler_options : dict
             Additional compiler options for QAIC.
 
-            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -3698,9 +3698,9 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         **compiler_options,
     ) -> str:
         """
-        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-compile`` and generates a ``qpc`` package.
         If the model has not been exported yet, this method will handle the export process.
-        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+        You can pass any other arguments that the `qaic-compile` takes as extra kwargs.
 
         ``Optional`` Args:
             :onnx_path (str, optional): Path to pre-exported onnx model.
@@ -3713,7 +3713,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
             :compiler_options (dict, optional): Additional compiler options.
 
-                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
+                For QAIC Compiler: Extra arguments for qaic-compile can be passed.
                     :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
                     :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
 
