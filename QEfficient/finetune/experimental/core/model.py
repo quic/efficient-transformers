@@ -35,9 +35,7 @@ class BaseModel(nn.Module, ABC):
         # load model after __init__ finishes
         module = obj.load_model()
         if not isinstance(module, nn.Module):
-            raise TypeError(
-                f"load_model() must return nn.Module, got {type(module)}"
-            )
+            raise TypeError(f"load_model() must return nn.Module, got {type(module)}")
         obj._model = module
         return obj
 
@@ -105,12 +103,9 @@ class HFModel(BaseModel):
     @staticmethod
     def _resolve_auto_class(auto_class_name: str) -> Type:
         if not hasattr(transformers, auto_class_name):
-            candidates = sorted(
-                name for name in dir(transformers) if name.startswith("AutoModel")
-            )
+            candidates = sorted(name for name in dir(transformers) if name.startswith("AutoModel"))
             raise ValueError(
-                f"Unsupported Auto class '{auto_class_name}'. "
-                f"Available candidates: {', '.join(candidates)}"
+                f"Unsupported Auto class '{auto_class_name}'. Available candidates: {', '.join(candidates)}"
             )
         return getattr(transformers, auto_class_name)
 
@@ -150,9 +145,7 @@ class HFModel(BaseModel):
         Returns:
             nn.Module: The loaded model.
         """
-        logger.log_rank_zero(
-            f"Loading HuggingFace model '{self.model_name}' via {self.auto_class.__name__}"
-        )
+        logger.log_rank_zero(f"Loading HuggingFace model '{self.model_name}' via {self.auto_class.__name__}")
         return self.auto_class.from_pretrained(
             self.model_name,
             **self.configure_model_kwargs(),

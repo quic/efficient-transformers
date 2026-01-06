@@ -138,12 +138,14 @@ def test_hfmodel_loads_auto_and_tokenizer(monkeypatch):
 
 # Config Loading Tests - Partial Loading of Meta Llama Model
 
+
 def test_hfmodel_partial_loading_meta_llama_with_direct_config_params(monkeypatch):
     """
     Test partial loading of meta-llama model using direct config parameters.
     Loads meta-llama model with reduced layers (2 layers) for faster testing
     using direct config parameters (HuggingFace standard pattern).
     """
+
     # Mock model that respects num_hidden_layers parameter
     def create_partial_model(name, config=None, num_hidden_layers=None, **kwargs):
         model_instance = nn.Module()
@@ -160,11 +162,10 @@ def test_hfmodel_partial_loading_meta_llama_with_direct_config_params(monkeypatc
             model_instance.config.num_hidden_layers = 32
             model_instance.config.hidden_size = 4096
             n_layers = 32
-        
-        model_instance.layers = nn.ModuleList([
-            nn.Linear(model_instance.config.hidden_size, model_instance.config.hidden_size)
-            for _ in range(n_layers)
-        ])
+
+        model_instance.layers = nn.ModuleList(
+            [nn.Linear(model_instance.config.hidden_size, model_instance.config.hidden_size) for _ in range(n_layers)]
+        )
         return model_instance
 
     class MockAutoModelForCausalLM:
@@ -179,9 +180,7 @@ def test_hfmodel_partial_loading_meta_llama_with_direct_config_params(monkeypatc
     )
     monkeypatch.setattr(
         "QEfficient.finetune.experimental.core.model.AutoTokenizer",
-        type('MockTokenizer', (), {
-            'from_pretrained': lambda *args, **kwargs: mock.Mock(pad_token_id=0)
-        }),
+        type("MockTokenizer", (), {"from_pretrained": lambda *args, **kwargs: mock.Mock(pad_token_id=0)}),
         raising=False,
     )
     monkeypatch.setattr(
@@ -194,9 +193,9 @@ def test_hfmodel_partial_loading_meta_llama_with_direct_config_params(monkeypatc
     partial_model = ComponentFactory.create_model(
         "hf",
         "meta-llama/Llama-3.2-1B",
-        num_hidden_layers=2  # Load only 2 layers (partial loading)
+        num_hidden_layers=2,  # Load only 2 layers (partial loading)
     )
-    
+
     # Verify partial model was loaded with reduced layers
     assert partial_model.model.config.num_hidden_layers == 2
     assert len(partial_model.model.layers) == 2
@@ -207,6 +206,7 @@ def test_hfmodel_partial_loading_meta_llama_for_fast_testing(monkeypatch):
     """
     Test partial loading of meta-llama model for fast testing.
     """
+
     # Mock model that respects num_hidden_layers parameter
     def create_partial_model(name, config=None, num_hidden_layers=None, **kwargs):
         model_instance = nn.Module()
@@ -223,11 +223,10 @@ def test_hfmodel_partial_loading_meta_llama_for_fast_testing(monkeypatch):
             model_instance.config.num_hidden_layers = 32
             model_instance.config.hidden_size = 4096
             n_layers = 32
-        
-        model_instance.layers = nn.ModuleList([
-            nn.Linear(model_instance.config.hidden_size, model_instance.config.hidden_size)
-            for _ in range(n_layers)
-        ])
+
+        model_instance.layers = nn.ModuleList(
+            [nn.Linear(model_instance.config.hidden_size, model_instance.config.hidden_size) for _ in range(n_layers)]
+        )
         # Track parameter count (fewer layers = fewer parameters)
         model_instance.param_count = sum(p.numel() for p in model_instance.layers.parameters())
         return model_instance
@@ -244,9 +243,7 @@ def test_hfmodel_partial_loading_meta_llama_for_fast_testing(monkeypatch):
     )
     monkeypatch.setattr(
         "QEfficient.finetune.experimental.core.model.AutoTokenizer",
-        type('MockTokenizer', (), {
-            'from_pretrained': lambda *args, **kwargs: mock.Mock(pad_token_id=0)
-        }),
+        type("MockTokenizer", (), {"from_pretrained": lambda *args, **kwargs: mock.Mock(pad_token_id=0)}),
         raising=False,
     )
     monkeypatch.setattr(
@@ -255,17 +252,13 @@ def test_hfmodel_partial_loading_meta_llama_for_fast_testing(monkeypatch):
         raising=False,
     )
 
-    # Load partial meta-llama model (2 layers) 
-    test_model = ComponentFactory.create_model(
-        "hf",
-        "meta-llama/Llama-3.2-1B",
-        num_hidden_layers=2  
-    )
-    
+    # Load partial meta-llama model (2 layers)
+    test_model = ComponentFactory.create_model("hf", "meta-llama/Llama-3.2-1B", num_hidden_layers=2)
+
     # Verify partial model was loaded with reduced layers
     assert test_model.model.config.num_hidden_layers == 2
     assert len(test_model.model.layers) == 2
-    
+
     # Verify model still works (can do forward pass)
     test_input = torch.randn(1, 10, test_model.model.config.hidden_size)
     output = test_model.model.layers[0](test_input)
