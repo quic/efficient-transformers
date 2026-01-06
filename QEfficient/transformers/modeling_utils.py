@@ -189,7 +189,7 @@ qeff_supported_architectures = ModelArchitectures(
 DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "llama4", "gemma3_text", "llama4_text"}
 
 # This is for supporting different modelling classes specially written for prefill-only model
-SPECIALIZED_PREFILL_ONLY_MODEL_ARCH = {"gpt_oss"}
+SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss"}
 
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.
