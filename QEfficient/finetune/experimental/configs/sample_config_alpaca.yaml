@@ -28,7 +28,7 @@ dataset:
   dataset_type: "sft_dataset"
   dataset_name: "yahma/alpaca-cleaned"
   train_split: "train"
-  prompt_func: "LightningLLM.preprocessing.alpaca_func:create_alpaca_prompt"
+  prompt_func: "Path:create_alpaca_prompt"
   completion_template: "{output}"    # Model will be trained on this part.
 
 # Training configuration
