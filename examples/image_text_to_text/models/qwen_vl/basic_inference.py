@@ -15,7 +15,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 
 ## For AWQ model update pytorch version to 2.8.*
 # model_id = "Qwen/Qwen2.5-VL-32B-Instruct"
-model_id ="Qwen/Qwen2.5-VL-7B-Instruct"
+model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 2
 

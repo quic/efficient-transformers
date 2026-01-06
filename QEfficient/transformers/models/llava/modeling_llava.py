@@ -403,7 +403,6 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
 
-
     def get_onnx_dynamic_shapes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         """
         - Handles past_key_values as a list of (key, value) pairs per layer.

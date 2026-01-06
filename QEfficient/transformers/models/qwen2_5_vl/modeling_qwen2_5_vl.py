@@ -1225,7 +1225,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
-    
+
     def get_onnx_dynamic_shapes(
         self,
         comp_ctx_lengths: Optional[List[int]] = None,
@@ -1233,6 +1233,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         continuous_batching: bool = False,
     ):
         from torch.export import Dim
+
         num_layers = self.config.text_config.num_hidden_layers
 
         # Registry of Dim objects so that dims with the same name share the same Dim
@@ -1259,7 +1260,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             elif dim_name == "grid_h":
                 d = Dim(dim_name, min=5)
             elif dim_name == "grid_w":
-                d = Dim(dim_name, min =5)
+                d = Dim(dim_name, min=5)
             elif "vision_size" in dim_name:
                 d = Dim(dim_name, min=1, max=65536)
             elif "comp_ctx_lengths" in dim_name:
@@ -1400,8 +1401,6 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         }
 
         return dynamic_shapes
-
-
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

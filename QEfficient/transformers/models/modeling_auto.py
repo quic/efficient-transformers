@@ -316,6 +316,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes):
         from torch.export import Dim
+
         dim_registry: Dict[str, any] = {}
         dynamic_shapes: Dict[str, Dict[int, any]] = {}
         for input_name, axes_map in dynamic_axes.items():
@@ -325,7 +326,7 @@ class QEFFAutoModel(QEFFTransformersBase):
                     if dim_name == "batch_size":
                         dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
                     elif "seq_len" in dim_name:
-                        dim_registry[dim_name] = Dim(dim_name, min=1, max=513) 
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=513)
                     else:
                         dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
                 input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
@@ -2709,7 +2710,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         if dim_name == "batch_size":
                             dim_registry[dim_name] = Dim("batch_size")
                         elif "seq_len" in dim_name:
-                            dim_registry[dim_name] = Dim("seq_len", min=2, max=131071) 
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=131071)
                         elif "ctx_len" in dim_name:
                             dim_registry[dim_name] = Dim("ctx_len", min=2, max=4095)
                         else:
@@ -2729,7 +2730,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         elif "ctx_len" in dim_name:
                             dim_registry[dim_name] = Dim("ctx_len", min=2, max=4095)
                         else:
-                            dim_registry[dim_name] = Dim.DYNAMIC 
+                            dim_registry[dim_name] = Dim.DYNAMIC
                     layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
                 past_values[layer_idx] = layer_dynamic_shapes
 

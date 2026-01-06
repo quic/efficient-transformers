@@ -5,12 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Union, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from torch.export import Dim
 import torch.utils.checkpoint
+from torch.export import Dim
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutput
 from transformers.models.mistral3.modeling_mistral3 import (
@@ -481,7 +481,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
-    
+
     def get_onnx_dynamic_shapes(
         self,
         comp_ctx_lengths: Optional[List[int]] = None,
@@ -615,7 +615,6 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
                 0: get_dim("comp_ctx_lengths"),
             }
         return dynamic_shapes
-
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

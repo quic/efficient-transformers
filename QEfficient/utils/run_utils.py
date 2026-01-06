@@ -340,7 +340,7 @@ class ApiRunnerVlm:
         generated_ids = torch.full((self.batch_size, generation_len), self.processor.tokenizer.pad_token_id)
         inputs = self.input_handler_vlm.prepare_pytorch_inputs()
         inputs["image_idx"] = torch.tensor([[0]])
-        
+
         outputs = model(**inputs)
         inputs["input_ids"] = outputs[0].argmax(2)
         inputs["image_idx"] = outputs[2]

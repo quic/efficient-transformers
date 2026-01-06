@@ -305,7 +305,6 @@ class QEFFBaseModel(ABC):
         example_inputs = ordered_example_inputs
         dynamic_shapes = ordered_dynamic_shapes
 
-
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
             export_kwargs["dynamo"] = use_dynamo
@@ -319,7 +318,6 @@ class QEFFBaseModel(ABC):
                     torch.ops.qefficient.ctx_scatter.default: CtxScatter,
                 }
 
-            
             op = torch.onnx.export(
                 self.model,
                 args=(),
