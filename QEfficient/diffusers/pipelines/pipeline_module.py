@@ -302,13 +302,13 @@ class QEffVAE(QEFFBaseModel):
                 - output_names (List[str]): Names of model outputs
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        num_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
+        latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
         latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P
         latent_width = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P
 
         # VAE decoder takes latent representation as input
         example_inputs = {
-            "latent_sample": torch.randn(bs, 16, num_frames, latent_height, latent_width),
+            "latent_sample": torch.randn(bs, 16, latent_frames, latent_height, latent_width),
             "return_dict": False,
         }
 
@@ -316,7 +316,7 @@ class QEffVAE(QEFFBaseModel):
 
         # All dimensions except channels can be dynamic
         dynamic_axes = {
-            "latent_sample": {0: "batch_size", 2: "num_frames", 3: "latent_height", 4: "latent_width"},
+            "latent_sample": {0: "batch_size", 2: "latent_frames", 3: "latent_height", 4: "latent_width"},
         }
 
         return example_inputs, dynamic_axes, output_names
@@ -611,7 +611,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             "hidden_states": {
                 0: "batch_size",
                 1: "num_channels",
-                2: "num_frames",
+                2: "latent_frames",
                 3: "latent_height",
                 4: "latent_width",
             },

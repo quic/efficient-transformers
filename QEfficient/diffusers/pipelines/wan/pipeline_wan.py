@@ -334,24 +334,25 @@ class QEffWanPipeline:
                     "cl": cl,  # Compressed latent dimension
                     "latent_height": latent_height,  # Latent space height
                     "latent_width": latent_width,  # Latent space width
-                    "num_frames": latent_frames,  # Latent frames
+                    "latent_frames": latent_frames,  # Latent frames
                 },
                 # low noise
                 {
                     "cl": cl,  # Compressed latent dimension
                     "latent_height": latent_height,  # Latent space height
                     "latent_width": latent_width,  # Latent space width
-                    "num_frames": latent_frames,  # Latent frames
+                    "latent_frames": latent_frames,  # Latent frames
                 },
             ],
             "vae_decoder": {
-                "num_frames": latent_frames,
+                "latent_frames": latent_frames,
                 "latent_height": latent_height,
                 "latent_width": latent_width,
             },
         }
 
         # Use generic utility functions for compilation
+        logger.warning('For VAE compilation use QAIC_COMPILER_OPTS_UNSUPPORTED="-aic-hmx-conv3d" ')
         if parallel:
             compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
         else:
