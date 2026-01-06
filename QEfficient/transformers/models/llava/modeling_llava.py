@@ -18,7 +18,7 @@ from transformers.models.llava.modeling_llava import (
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
 
-BS = 1
+BS = 4
 FBS = 4
 NUM_CHANNEL = 3
 SEQ_LEN = 592
@@ -193,7 +193,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             (BS, vision_size, self.language_model.config.hidden_size),
             dtype=torch.float32,
         )
-
+        lang_inputs = {}
         # Optional comp_ctx_lengths
         comp_ctx_lengths_tensor = None
         if comp_ctx_lengths is not None:
@@ -201,7 +201,6 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(BS).view(BS, 1)
-        inputs = {}
 
         # ------------------------------------------------------------------
         # kv_offload = True

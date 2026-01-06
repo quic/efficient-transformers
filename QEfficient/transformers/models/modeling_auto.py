@@ -9,7 +9,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -312,8 +312,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-
-
     def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes):
         from torch.export import Dim
 
@@ -333,13 +331,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             dynamic_shapes[input_name] = input_dynamic_shapes
         return dynamic_shapes
 
-    def export(
-        self,
-        export_dir: Optional[str] = None,
-        use_dynamo: Optional[bool] = False,
-        **kwargs
-    ) -> str:
-
+    def export(self, export_dir: Optional[str] = None, use_dynamo: Optional[bool] = False, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -383,7 +375,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
             use_dynamo=use_dynamo,
             dynamic_shapes=dynamic_shapes,
-            **kwargs
+            **kwargs,
         )
 
     def compile(
@@ -635,7 +627,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-
     def export(
         self,
         inputs,
@@ -645,7 +636,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         export_dir=None,
         offload_pt_weights=True,
         use_dynamo: Optional[bool] = False,
-        **kwargs
+        **kwargs,
     ):
         """
         Exports the vision encoder component to ONNX format.
@@ -679,7 +670,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
             use_dynamo=use_dynamo,
-            **kwargs
+            **kwargs,
         )
 
     def compile(
@@ -796,7 +787,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
             BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
-
     def export(
         self,
         inputs,
@@ -806,9 +796,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         export_dir=None,
         offload_pt_weights=True,
         use_dynamo: Optional[bool] = False,
-        **kwargs
+        **kwargs,
     ):
-
         """
         Exports the language decoder component to ONNX format.
 
@@ -841,8 +830,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
             use_dynamo=use_dynamo,
-            **kwargs
-
+            **kwargs,
         )
 
     def compile(
@@ -2611,7 +2599,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-
     def get_seq_len_and_handle_specialized_prefill_model(
         self, prefill_seq_len: Optional[int] = None, enable_chunking=False
     ) -> int:
@@ -2657,7 +2644,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
             else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         )
-
 
     def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
         """
@@ -2756,14 +2742,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_shapes["past_key_values"] = past_kv_shapes
 
         return dynamic_shapes
-            
+
     def export(
-        self, 
-        export_dir: Optional[str] = None, 
+        self,
+        export_dir: Optional[str] = None,
         prefill_only: Optional[bool] = False,
-        prefill_seq_len: Optional[int] = None, 
-        use_dynamo: bool = False, 
-        **kwargs
+        prefill_seq_len: Optional[int] = None,
+        use_dynamo: bool = False,
+        **kwargs,
     ) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.

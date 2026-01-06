@@ -381,7 +381,7 @@ class QEFFBaseModel(ABC):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
-            "use_dynamo": use_dynamo, 
+            "use_dynamo": use_dynamo,
             "retain_full_kv": retain_full_kv,
         }
 
@@ -453,7 +453,7 @@ class QEFFBaseModel(ABC):
                 specializations,
                 offload_pt_weights,
                 use_onnx_subfunctions,
-                use_dynamo, 
+                use_dynamo,
                 retain_full_kv,
             )
         )
