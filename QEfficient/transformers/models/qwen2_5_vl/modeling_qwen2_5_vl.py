@@ -12,7 +12,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.export import Dim
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLModel
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
@@ -239,7 +238,7 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
 
         mask = (index_padded == -100).to(torch.int32)
 
-        if torch.jit.is_tracing():
+        if torch.jit.is_tracing() or torch._dynamo.is_compiling():
             order = torch.argsort(mask)
         else:
             order = torch.argsort(mask, stable=True)
@@ -947,7 +946,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             vision_size,
             self.model.config.hidden_size,
         )
-        inputs_shapes["image_grid_thw"] = (1, 1, 98, 146)
+        # inputs_shapes["image_grid_thw"] = (1, 1, 98, 146)
+        inputs_shapes["image_grid_thw"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1, 98, 146)
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -1225,13 +1225,14 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
-
+    
     def get_onnx_dynamic_shapes(
         self,
         comp_ctx_lengths: Optional[List[int]] = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
     ):
+        from torch.export import Dim
         num_layers = self.config.text_config.num_hidden_layers
 
         # Registry of Dim objects so that dims with the same name share the same Dim
@@ -1242,23 +1243,23 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 return dim_registry[dim_name]
 
             if dim_name == "batch_size":
-                d = Dim(dim_name, min=1, max=1024)
+                d = Dim(dim_name)
             elif dim_name == "vision_batch_size":
                 d = Dim(dim_name, min=1, max=1024)
             elif dim_name == "full_batch_size":
                 d = Dim(dim_name, min=1, max=2048)
             elif "seq_len" in dim_name:
-                d = Dim(dim_name, min=1, max=4096)
+                d = Dim(dim_name, min=2, max=4095)
             elif dim_name == "ctx_len":
-                d = Dim(dim_name, min=1, max=4096)
+                d = Dim(dim_name, min=2, max=4095)
             elif dim_name == "grid_height":
                 d = Dim(dim_name, min=1, max=65536)
             elif dim_name == "grid_width":
-                d = Dim(dim_name, min=1, max=8192)
+                d = Dim(dim_name, min=1, max=65536)
             elif dim_name == "grid_h":
-                d = Dim(dim_name, min=1, max=1024)
+                d = Dim(dim_name, min=5)
             elif dim_name == "grid_w":
-                d = Dim(dim_name, min=1, max=1024)
+                d = Dim(dim_name, min =5)
             elif "vision_size" in dim_name:
                 d = Dim(dim_name, min=1, max=65536)
             elif "comp_ctx_lengths" in dim_name:
@@ -1313,7 +1314,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
             # KV cache for decoder: list of (key, value) per layer:
             #   key/value: (batch_size or full_batch_size, num_heads, ctx_len, head_dim)
-            past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+            past_kv_shapes: List[List[Dict[int, Any], Dict[int, Any]]] = []
             batch_dim_name = "full_batch_size" if continuous_batching else "batch_size"
             for _ in range(num_layers):
                 past_key_shape = {
@@ -1324,7 +1325,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     0: get_dim(batch_dim_name),
                     2: get_dim("ctx_len"),
                 }
-                past_kv_shapes.append((past_key_shape, past_value_shape))
+                past_kv_shapes.append([past_key_shape, past_value_shape])
 
             lang_dynamic_shapes["past_key_values"] = past_kv_shapes
 
@@ -1373,8 +1374,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             2: get_dim("seq_len"),
         }
 
-        # past_key_values: list[(key, value) ...] per layer,
-        # key/value: (batch_size or full_batch_size, num_heads, ctx_len, head_dim)
+        # KV cache for decoder: list of (key, value) per layer:
+        #   key/value: (batch_size or full_batch_size, num_heads, ctx_len, head_dim)
         past_kv_shapes: List[List[Dict[int, Any], Dict[int, Any]]] = []
         batch_dim_name = "full_batch_size" if continuous_batching else "batch_size"
         for _ in range(num_layers):
@@ -1388,6 +1389,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             }
             past_kv_shapes.append([past_key_shape, past_value_shape])
 
+        lang_dynamic_shapes["past_key_values"] = past_kv_shapes
+
         dynamic_shapes["past_key_values"] = past_kv_shapes
         dynamic_shapes["kwargs"] = {
             "image_idx": {
@@ -1397,6 +1400,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         }
 
         return dynamic_shapes
+
+
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

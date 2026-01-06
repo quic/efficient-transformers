@@ -384,6 +384,7 @@ def cloud_ai_100_exec_kv(
         prompt_to_lora_id_mapping = fix_prompt_to_lora_id_mapping(
             prompt_to_lora_id_mapping, batch_size, full_batch_size
         )
+
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
@@ -1009,7 +1010,7 @@ class QEffTextGenerationBase:
                 if cache_index >= self.comp_ctx_lengths_decode[ccl_id] - 1:
                     ccl_id = min(ccl_id + 1, max_ccl_id)
                     decode_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_decode[ccl_id]
-
+            
             if streamer:
                 streamer.put(decode_inputs["input_ids"][0])
             outputs = self._session.run(decode_inputs)
@@ -1253,7 +1254,6 @@ class TextGeneration:
         self._qaic_model.update_decode_input(outputs, position_ids, generation_len)
 
         decode_inputs = self._qaic_model.prepare_decode_inputs()
-
         loop_start = perf_counter()  # Start decode loop timer
         num_token = 0
         for token_id in self._qaic_model.generate_decode_stream(decode_inputs, generation_len, automation):

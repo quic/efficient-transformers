@@ -272,6 +272,7 @@ class InputHandlerVLM:
             num_patches = (vis_cfg.image_size // vis_cfg.patch_size) ** 2 + 1
             image_tokens_len = vis_cfg.max_num_tiles * num_patches
 
+        inputs.pop("token_type_ids", None) #extra added line
         inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
         for i in range(num_hidden_layers):

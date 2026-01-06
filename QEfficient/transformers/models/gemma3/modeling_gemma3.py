@@ -678,6 +678,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
+        # logits = logits.to(torch.int64)
+        pixel_values = pixel_values.clone().to(torch.int64)
         return logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_specializations(

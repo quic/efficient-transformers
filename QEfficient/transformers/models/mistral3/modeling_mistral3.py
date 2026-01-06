@@ -5,12 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict, Any
 
 import torch
 import torch.nn as nn
-import torch.utils.checkpoint
 from torch.export import Dim
+import torch.utils.checkpoint
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutput
 from transformers.models.mistral3.modeling_mistral3 import (
@@ -45,11 +45,6 @@ def qeff_generate_block_attention_mask(patch_embeds_list, tensor):
     block_end_idx = custom_cumsum(torch.tensor(patch_embeds_list))
     block_start_idx = custom_cumsum(torch.tensor([0] + patch_embeds_list[:-1]))
     for start, end in zip(block_start_idx.tolist(), block_end_idx.tolist()):
-        torch._check(start >= 0)
-        torch._check(end >= 0)
-        torch._check(start <= 48400)
-        torch._check(end >= start)
-        torch._check(end <= 48400)
         causal_mask[start:end, start:end] = 0
     causal_mask = causal_mask[None, None, :, :].expand(tensor.shape[0], 1, -1, -1)
     return causal_mask
@@ -71,7 +66,7 @@ class QEffPixtralVisionModel(PixtralVisionModel):
             pixel_values: tensor of token features for
                 all tokens of all images of shape (N_toks, D)
         """
-        # # pass images through initial convolution independently
+        # pass images through initial convolution independently
         patch_embeds = self.patch_conv(pixel_values)
         patch_embeds_list = [
             embed[..., : (size[0] // self.patch_size), : (size[1] // self.patch_size)]
@@ -486,7 +481,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
-
+    
     def get_onnx_dynamic_shapes(
         self,
         comp_ctx_lengths: Optional[List[int]] = None,
@@ -620,6 +615,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
                 0: get_dim("comp_ctx_lengths"),
             }
         return dynamic_shapes
+
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

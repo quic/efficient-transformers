@@ -142,6 +142,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
 
         next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
+        pixel_values = pixel_values.clone()
         return logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_dummy_inputs(
@@ -154,33 +155,47 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         num_layers = self.config.text_config.num_hidden_layers
         num_key_value_heads = self.config.text_config.num_key_value_heads
         head_dim = self.config.text_config.hidden_size // self.config.text_config.num_attention_heads
+
+        # --- Vision image size ---
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 336)
         else:
             img_size = 336
+
         if img_size != 336 and kv_offload:
             raise NotImplementedError("Image Size other than 336 is not supported for Llava models yet.")
+
         vision_size = img_size // self.config.vision_config.patch_size
-        vision_inputs = {
-            "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=torch.float32),
-        }
-        lang_inputs = {
-            "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
-            "vision_embeds": torch.ones((BS, vision_size, self.language_model.config.hidden_size), dtype=torch.float32),
-            "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
-            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
-        }
-        lang_inputs["position_ids"] = lang_inputs.pop("attention_mask").cumsum(1)
-        lang_inputs["past_key_values"] = []
-        for i in range(num_layers):
-            lang_inputs["past_key_values"].append(
+
+        # Vision input
+        pixel_values = torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=torch.float32)
+
+        # Language tokens
+        input_ids = torch.ones((BS, SEQ_LEN), dtype=torch.int64)
+        attention_mask = torch.ones((BS, SEQ_LEN), dtype=torch.int64)
+        position_ids = attention_mask.cumsum(1)
+        position_ids = torch.full(position_ids.shape, CTX_LEN - 1, dtype=position_ids.dtype)
+
+        image_idx = torch.zeros((1, 1), dtype=torch.int64)
+
+        # Past key values: list of (key, value) per layer
+        past_key_values = []
+        for _ in range(num_layers):
+            past_key_values.append(
                 (
                     torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim),
                     torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim),
                 )
             )
-        lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
 
+        # vision_embeds used only in decoder when kv_offload=True
+        vision_embeds = torch.ones(
+            (BS, vision_size, self.language_model.config.hidden_size),
+            dtype=torch.float32,
+        )
+
+        # Optional comp_ctx_lengths
+        comp_ctx_lengths_tensor = None
         if comp_ctx_lengths is not None:
             lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
 
@@ -188,13 +203,53 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             lang_inputs["batch_index"] = torch.arange(BS).view(BS, 1)
         inputs = {}
 
+        # ------------------------------------------------------------------
+        # kv_offload = True
+        #   - Vision path follows QEFFLlavaEncoderWrapper.forward(pixel_values)
+        #   - Lang path follows QEFFLlavaDecoderWrapper.forward(
+        #         input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths=None
+        #     )
+        # ------------------------------------------------------------------
         if kv_offload:
-            inputs["vision"] = vision_inputs
-            inputs["lang"] = lang_inputs
-        else:
-            lang_inputs.pop("vision_embeds")
-            inputs = {**vision_inputs, **lang_inputs}
-        return inputs
+            # Vision inputs in the exact forward order
+            vision_inputs = {
+                "pixel_values": pixel_values,
+            }
+
+            # Lang inputs in the exact forward order of QEFFLlavaDecoderWrapper
+            lang_inputs = {
+                "input_ids": input_ids,
+                "vision_embeds": vision_embeds,
+                "position_ids": position_ids,
+                "image_idx": image_idx,
+                "past_key_values": past_key_values,
+            }
+            if comp_ctx_lengths_tensor is not None:
+                lang_inputs["comp_ctx_lengths"] = comp_ctx_lengths_tensor
+
+            return {
+                "vision": vision_inputs,
+                "lang": lang_inputs,
+            }
+
+        # ------------------------------------------------------------------
+        # kv_offload = False
+        #   Combined forward of QEffLlavaForConditionalGeneration:
+        #     forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values, comp_ctx_lengths=None)
+        #
+        #   We do NOT pass vision_embeds; encoder is inside forward.
+        # ------------------------------------------------------------------
+        ordered_inputs = {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "pixel_values": pixel_values,
+            "image_idx": image_idx,
+            "past_key_values": past_key_values,
+        }
+        if comp_ctx_lengths_tensor is not None:
+            ordered_inputs["comp_ctx_lengths"] = comp_ctx_lengths_tensor
+
+        return ordered_inputs
 
     def get_specializations(
         self,
@@ -348,25 +403,36 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
 
+
     def get_onnx_dynamic_shapes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
         """
-        - Handles past_key_values as a list of (key, value) pairs per layer
+        - Handles past_key_values as a list of (key, value) pairs per layer.
+        - Shapes are ordered to match the corresponding forward signatures:
 
-        For kv_offload=False (combined image_text_to_text forward), it returns a flat dict
-        whose top-level keys match the forward signature:
+          kv_offload=False:
+              QEffLlavaForConditionalGeneration.forward(
+                  input_ids,
+                  position_ids,
+                  pixel_values,
+                  image_idx,
+                  past_key_values,
+                  comp_ctx_lengths=None,
+              )
 
-            forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values)
-
-        For kv_offload=True, it returns:
-            {
-                "vision": { ... dynamic_shapes for vision ... },
-                "lang":   { ... dynamic_shapes for language, including past_key_values ... },
-            }
+          kv_offload=True:
+              QEFFLlavaEncoderWrapper.forward(pixel_values)
+              QEFFLlavaDecoderWrapper.forward(
+                  input_ids,
+                  vision_embeds,
+                  position_ids,
+                  image_idx,
+                  past_key_values,
+                  comp_ctx_lengths=None,
+              )
         """
-
         num_layers = self.config.text_config.num_hidden_layers
 
-        # Registry of Dim objects so that dims with the same name share the same Dim
+        # Registry of Dim objects so dims with the same name share the same Dim
         dim_registry: Dict[str, Dim] = {}
 
         def get_dim(dim_name: str) -> Dim:
@@ -377,7 +443,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             elif "seq_len" in dim_name:
                 d = Dim(dim_name, min=2, max=4095)
             elif "img_size" in dim_name:
-                # Image spatial dims are fixed for Llava(336x336)
+                # Image spatial dims fixed for Llava(336x336)
                 d = Dim.STATIC
             elif "num_images" in dim_name:
                 d = Dim(dim_name, min=1, max=16)
@@ -388,14 +454,20 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                 d = Dim.STATIC
             elif "ctx_len" in dim_name:
                 d = Dim(dim_name, min=2, max=4096)
+            elif "comp_ctx_lengths" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
             else:
                 d = Dim(dim_name, min=1, max=4096)
             dim_registry[dim_name] = d
             return d
 
-        # kv_offload=True  →  separate vision/lang exports
+        # ------------------------------------------------------------------
+        # kv_offload = True
+        #   - vision: forward(pixel_values)
+        #   - lang:   forward(input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths=None)
+        # ------------------------------------------------------------------
         if kv_offload:
-            # Vision: pixel_values: (batch, 3, img_size, img_size)
+            # Vision input in encoder-forward order
             vision_dynamic_shapes: Dict[str, Dict[int, Any]] = {
                 "pixel_values": {
                     0: get_dim("batch_size"),
@@ -404,25 +476,34 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                 }
             }
 
-            # Lang: input_ids, position_ids, vision_embeds, image_idx, past_kv
-            lang_dynamic_shapes: Dict[str, Any] = {
-                "input_ids": {
-                    0: get_dim("batch_size"),
-                    1: get_dim("seq_len"),
-                },
-                "position_ids": {
-                    0: get_dim("batch_size"),
-                    1: get_dim("seq_len"),
-                },
-                "vision_embeds": {
-                    0: get_dim("batch_size"),
-                    1: get_dim("vision_size"),
-                },
-                "image_idx": {
-                    0: get_dim("idx"),
-                    1: get_dim("idx"),
-                },
+            # Language input in decoder-forward order
+            lang_dynamic_shapes: Dict[str, Any] = {}
+
+            # 1. input_ids
+            lang_dynamic_shapes["input_ids"] = {
+                0: get_dim("batch_size"),
+                1: get_dim("seq_len"),
             }
+
+            # 2. vision_embeds
+            lang_dynamic_shapes["vision_embeds"] = {
+                0: get_dim("batch_size"),
+                1: get_dim("vision_size"),
+            }
+
+            # 3. position_ids
+            lang_dynamic_shapes["position_ids"] = {
+                0: get_dim("batch_size"),
+                1: get_dim("seq_len"),
+            }
+
+            # 4. image_idx
+            lang_dynamic_shapes["image_idx"] = {
+                0: get_dim("idx"),
+                1: get_dim("idx"),
+            }
+
+            # 5. past_key_values: list of (key, value) per layer
             past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
             for _ in range(num_layers):
                 past_key_shape = {
@@ -434,60 +515,72 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                     2: get_dim("ctx_len"),
                 }
                 past_kv_shapes.append((past_key_shape, past_value_shape))
-
             lang_dynamic_shapes["past_key_values"] = past_kv_shapes
+
+            # 6. comp_ctx_lengths (optional)
+            if comp_ctx_lengths is not None:
+                lang_dynamic_shapes["comp_ctx_lengths"] = {
+                    0: get_dim("comp_ctx_lengths"),
+                }
 
             return {
                 "vision": vision_dynamic_shapes,
                 "lang": lang_dynamic_shapes,
             }
 
-        else:
-            # Combined image_text_to_text forward:
-            # forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values)
+        # ------------------------------------------------------------------
+        # kv_offload = False
+        #   Combined forward:
+        #     forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values, comp_ctx_lengths=None)
+        # ------------------------------------------------------------------
+        dynamic_shapes: Dict[str, Any] = {}
 
-            dynamic_shapes: Dict[str, Any] = {}
+        # 1. input_ids
+        dynamic_shapes["input_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
 
-            # pixel_values: (batch, 3, img_size, img_size)
-            dynamic_shapes["pixel_values"] = {
+        # 2. position_ids
+        dynamic_shapes["position_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
+
+        # 3. pixel_values
+        dynamic_shapes["pixel_values"] = {
+            0: get_dim("batch_size"),
+            2: get_dim("img_size"),
+            3: get_dim("img_size"),
+        }
+
+        # 4. image_idx
+        dynamic_shapes["image_idx"] = {
+            0: get_dim("idx"),
+            1: get_dim("idx"),
+        }
+
+        # 5. past_key_values
+        past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+        for _ in range(num_layers):
+            past_key_shape = {
                 0: get_dim("batch_size"),
-                2: get_dim("img_size"),
-                3: get_dim("img_size"),
+                2: get_dim("ctx_len"),
             }
-
-            # input_ids: (batch, seq_len)
-            dynamic_shapes["input_ids"] = {
+            past_value_shape = {
                 0: get_dim("batch_size"),
-                1: get_dim("seq_len"),
+                2: get_dim("ctx_len"),
+            }
+            past_kv_shapes.append((past_key_shape, past_value_shape))
+        dynamic_shapes["past_key_values"] = past_kv_shapes
+
+        # 6. comp_ctx_lengths (optional)
+        if comp_ctx_lengths is not None:
+            dynamic_shapes["comp_ctx_lengths"] = {
+                0: get_dim("comp_ctx_lengths"),
             }
 
-            # position_ids: (batch, seq_len)
-            dynamic_shapes["position_ids"] = {
-                0: get_dim("batch_size"),
-                1: get_dim("seq_len"),
-            }
-
-            # image_idx: (1, 1) or (batch, 1); we keep idx dims static
-            dynamic_shapes["image_idx"] = {
-                0: get_dim("idx"),
-                1: get_dim("idx"),
-            }
-
-            past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
-            for _ in range(num_layers):
-                past_key_shape = {
-                    0: get_dim("batch_size"),
-                    2: get_dim("ctx_len"),
-                }
-                past_value_shape = {
-                    0: get_dim("batch_size"),
-                    2: get_dim("ctx_len"),
-                }
-                past_kv_shapes.append((past_key_shape, past_value_shape))
-
-            dynamic_shapes["past_key_values"] = past_kv_shapes
-
-            return dynamic_shapes
+        return dynamic_shapes
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

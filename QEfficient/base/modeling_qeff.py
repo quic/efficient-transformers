@@ -13,7 +13,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, OrderedDict
 
 import onnx
 import torch
@@ -278,19 +278,38 @@ class QEFFBaseModel(ABC):
                 else:
                     input_names.append(param)
 
+        # Rearrange example_inputs and dynamic_shapes to follow model.forward signature
+        sig = inspect.signature(self.model.forward)
+
+        ordered_example_inputs = OrderedDict()
+        ordered_dynamic_shapes = OrderedDict() if dynamic_shapes is not None else None
+
+        # First, add keys that are in the forward signature (in that order)
+        for name, param in sig.parameters.items():
+            if name in example_inputs:
+                ordered_example_inputs[name] = example_inputs[name]
+
+            if dynamic_shapes is not None and name in dynamic_shapes:
+                ordered_dynamic_shapes[name] = dynamic_shapes[name]
+
+        # Optionally, append any extra keys not in the forward signature
+        for name, value in example_inputs.items():
+            if name not in ordered_example_inputs:
+                ordered_example_inputs[name] = value
+
+        if dynamic_shapes is not None:
+            for name, value in dynamic_shapes.items():
+                if name not in ordered_dynamic_shapes:
+                    ordered_dynamic_shapes[name] = value
+
+        example_inputs = ordered_example_inputs
+        dynamic_shapes = ordered_dynamic_shapes
+
+
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
             export_kwargs["dynamo"] = use_dynamo
 
-            # fx_graph = torch.export.export(
-            #         self.model,
-            #         args=(),
-            #         kwargs=example_inputs, #IMPORTANT CHANGE: passing all inputs in kwargs rather than as a rigid tuple in args
-            #         dynamic_shapes=dynamic_shapes,
-            #         **export_kwargs,
-            #         strict=True,
-            #     )
-            # result = fx_graph.module()(**example_inputs)
             if use_dynamo:
                 dynamic_axes = None
                 export_kwargs["report"] = True
@@ -300,11 +319,11 @@ class QEFFBaseModel(ABC):
                     torch.ops.qefficient.ctx_scatter.default: CtxScatter,
                 }
 
-            torch.onnx.export(
+            
+            op = torch.onnx.export(
                 self.model,
                 args=(),
                 kwargs=example_inputs,
-                f=str(tmp_onnx_path),
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -312,6 +331,9 @@ class QEFFBaseModel(ABC):
                 opset_version=18,
                 **export_kwargs,
             )
+            op.save(str(tmp_onnx_path))
+
+            # model_proto = model.model_proto
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(tmp_onnx_path, load_external_data=False)

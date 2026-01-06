@@ -315,7 +315,22 @@ class QEFFAutoModel(QEFFTransformersBase):
 
 
     def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes):
-        pass
+        from torch.export import Dim
+        dim_registry: Dict[str, any] = {}
+        dynamic_shapes: Dict[str, Dict[int, any]] = {}
+        for input_name, axes_map in dynamic_axes.items():
+            input_dynamic_shapes: Dict[int, any] = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=513) 
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+                input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            dynamic_shapes[input_name] = input_dynamic_shapes
+        return dynamic_shapes
 
     def export(
         self,
@@ -1066,7 +1081,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
             )
 
-        dynamic_shapes = None
+        dynamic_shapes = {}
+        dynamic_shapes["vision"] = None
+        dynamic_shapes["lang"] = None
         if use_dynamo:
             dynamic_shapes = self.model.get_onnx_dynamic_shapes(
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
@@ -2593,6 +2610,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
+
     def get_seq_len_and_handle_specialized_prefill_model(
         self, prefill_seq_len: Optional[int] = None, enable_chunking=False
     ) -> int:
@@ -2640,7 +2658,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
 
 
-
     def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
         """
         Convert ONNX dynamic_axes format to torch.export dynamic_shapes format
@@ -2669,9 +2686,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         if dim_name == "batch_size":
                             dim_registry[dim_name] = Dim("batch_size")
                         elif "seq_len" in dim_name:
-                            dim_registry[dim_name] = Dim("seq_len", min=2, max=131071)
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=1023)
                         elif "ctx_len" in dim_name:
-                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=131071)
+                            dim_registry[dim_name] = Dim("ctx_len", min=33, max=1023)
                         else:
                             dim_registry[dim_name] = Dim.DYNAMIC
 
@@ -2692,9 +2709,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         if dim_name == "batch_size":
                             dim_registry[dim_name] = Dim("batch_size")
                         elif "seq_len" in dim_name:
-                            dim_registry[dim_name] = Dim("seq_len", min=2, max=131071)
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=131071) 
                         elif "ctx_len" in dim_name:
-                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=131071)
+                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=4095)
                         else:
                             dim_registry[dim_name] = Dim.DYNAMIC
                     layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
@@ -2710,9 +2727,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         elif "seq_len" in dim_name:
                             dim_registry[dim_name] = Dim("seq_len", min=2, max=131071)
                         elif "ctx_len" in dim_name:
-                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=131071)
+                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=4095)
                         else:
-                            dim_registry[dim_name] = Dim.DYNAMIC
+                            dim_registry[dim_name] = Dim.DYNAMIC 
                     layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
                 past_values[layer_idx] = layer_dynamic_shapes
 
