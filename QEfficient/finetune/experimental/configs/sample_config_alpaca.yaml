@@ -1,0 +1,95 @@
+############################################
+# @ Author: Meet Patel
+# @ Create Time: 2025-08-12 17:20:53
+# @ Modified by: Meet Patel
+# @ Modified time: 2025-08-16 11:44:13
+# @ Description:
+############################################
+
+# Model configuration
+model:
+  model_type: "hf"  # Hugging Face model
+  auto_class_name: "AutoModelForCausalLM"
+  model_name: "meta-llama/Llama-3.2-1B"  # Pretrained model name
+  load_in_4bit: false
+  use_peft: true
+  peft_config:
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    target_modules: ["q_proj", "v_proj","o_proj","k_proj","up_proj","down_proj","gate_proj"]
+    bias: "none"  # Options: none, all, lora_only
+    task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
+    peft_type: "LORA"  # Options: LORA, IA3, etc.
+
+# Dataset configuration
+dataset:
+  tokenizer_name: "meta-llama/Llama-3.2-1B"
+  dataset_type: "sft_dataset"
+  dataset_name: "yahma/alpaca-cleaned"
+  train_split: "train"
+  prompt_func: "LightningLLM.preprocessing.alpaca_func:create_alpaca_prompt"
+  completion_template: "{output}"    # Model will be trained on this part.
+
+# Training configuration
+training:
+  type: "sft"
+  output_dir: "./training_results"
+  do_eval: True
+  fp16 : True
+  eval_strategy: "epoch"
+  # eval_steps: 1
+  gradient_accumulation_steps: 1
+  num_train_epochs: 1
+  max_steps: -1
+
+  log_level: "info"
+  log_on_each_node: True
+  logging_strategy: "steps"
+  logging_steps: 10
+
+  save_strategy: "epoch"
+  # save_steps: 1   # If 'save_strategy' is 'steps' then it will be used.
+  save_total_limit: 5
+  metric_for_best_model: "eval_loss"
+  dtype: "fp16"
+
+  # Uncomment if running in Notebook
+  # disable_tqdm: True
+
+  ddp_config:
+    ddp_backend: "qccl"
+    ddp_find_unused_parameters: False
+    ddp_bucket_cap_mb: 25
+    ddp_broadcast_buffers: True
+    ddp_timeout: 1800
+
+  # Uncomment and populate to resume training
+  # resume_from_checkpoint: "./abc"
+  # restore_callback_states_from_checkpoint: True
+
+
+  gradient_checkpointing: False
+  gradient_checkpointing_kwargs:
+    preserve_rng_state : True
+    use_reenrant: False
+
+  torch_compile: False
+  include_num_input_tokens_seen: False
+
+# Optimizer configuration
+optimizers:
+  optimizer_name: "adamw"
+  lr: 3e-4
+  weight_decay: 0.01
+
+scheduler:
+  scheduler_name: "linear"
+  warmup_steps: 100   # warmup_steps or warmup_ratio
+
+callbacks:
+  early_stopping:
+    early_stopping_patience: 3
+    early_stopping_threshold: 0.001
+  tensorboard:
+
