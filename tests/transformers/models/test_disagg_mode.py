@@ -10,7 +10,7 @@ import time
 import numpy as np
 import pytest
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, HybridCache
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, HybridCache
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -195,8 +195,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_id", [model_id])
 @pytest.mark.parametrize("prompt", [prompt1])
-@pytest.mark.parametrize("retain_full_kv", [False, True], ids=["half_kv", "full_kv"])
-def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt, retain_full_kv):
+def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     # Run prefill for original pytorch model
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     PREFILL_SEQ_LEN = 256
@@ -242,14 +241,11 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt, retain_full_
     undo_transformers_quantizers()
 
     prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
-    prefill_qeff_model.prefill(enable=True, retain_full_kv=retain_full_kv)
+    prefill_qeff_model.prefill(enable=True)
     config = prefill_qeff_model.model.config
     past_key_values = []
     for i in range(config.num_hidden_layers):
-        if retain_full_kv:
-            cache_len = CTX_LEN
-        else:
-            cache_len = 128 if i % 2 == 0 else PREFILL_SEQ_LEN
+        cache_len = 128 if i % 2 == 0 else PREFILL_SEQ_LEN
         pad_shape = (1, 8, cache_len, 64)
         past_key = torch.zeros((pad_shape), dtype=torch.float32)
         past_value = torch.zeros((pad_shape), dtype=torch.float32)
@@ -262,10 +258,8 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt, retain_full_
     # Check our pytorch implementation
     assert (prefill_qeff_out.logits - orig_out.logits[:, -1, :]).abs().max() < 1e-4
 
-    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_id, num_hidden_layers=2
-    )  # , continuous_batching=False)
-    decode_qeff_model.prefill(enable=False, retain_full_kv=retain_full_kv)
+    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+    decode_qeff_model.prefill(enable=False)
     qeff_out = prefill_qeff_out
 
     position_ids = inputs["position_ids"]
@@ -301,7 +295,6 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt, retain_full_
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
         prefill_only=True,
-        retain_full_kv=retain_full_kv,
     )
 
     prefill_session = QAICInferenceSession(prefill_qpc_path)
@@ -325,7 +318,6 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt, retain_full_
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
         offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
-        retain_full_kv=retain_full_kv,
     )
 
     qpc_outputs = []
@@ -369,3 +361,138 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt, retain_full_
     print("Prompt:", repr(prompt))
     print("Completion:", repr(tokenizer.decode(qpc_outputs)))
     assert (qeff_generated_ids == qpc_outputs).all()
+
+
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("prompt", [prompt1])
+def test_disagg_mode_prefix_caching(model_id, prompt):
+    PREFILL_SEQ_LEN = 128
+    CTX_LEN = 128 * 3
+    config = AutoConfig.from_pretrained(model_id, num_hidden_layers=2)
+    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_id, num_hidden_layers=2, continuous_batching=True
+    )
+    prefill_qeff_model.prefill(enable=True, enable_chunking=True)
+    prefill_qpc_path = prefill_qeff_model.compile(
+        prefill_seq_len=PREFILL_SEQ_LEN,
+        ctx_len=CTX_LEN,
+        num_cores=16,
+        mxfp6_matmul=False,
+        mxint8_kv_cache=False,
+        num_devices=1,
+        mos=1,
+        aic_enable_depth_first=True,
+        num_speculative_tokens=None,
+        prefill_only=True,
+        enable_chunking=True,
+        full_batch_size=1,
+        kv_cache_batch_size=2,
+    )
+
+    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_id, num_hidden_layers=2, continuous_batching=True
+    )
+    decode_qeff_model.prefill(enable=False)
+    decode_qpc_path = decode_qeff_model.compile(
+        prefill_seq_len=1,
+        ctx_len=CTX_LEN,
+        num_cores=16,
+        mxfp6_matmul=False,
+        mxint8_kv_cache=False,
+        num_devices=1,
+        mos=1,
+        aic_enable_depth_first=True,
+        num_speculative_tokens=None,
+        offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
+        full_batch_size=1,
+        kv_cache_batch_size=2,
+        retain_full_kv=True,
+    )
+
+    out1, ids1 = prefix_caching_inference(model_id, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id=0)
+    out2, ids2 = prefix_caching_inference(model_id, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id=1)
+
+    for i in range(config.num_hidden_layers):
+        assert (
+            np.abs(
+                out1[f"past_key.{i}_RetainedState"][0, :, :, :] - out2[f"past_key.{i}_RetainedState"][1, :, :, :]
+            ).max()
+            < 5e-2
+        )
+        assert (
+            np.abs(
+                out1[f"past_value.{i}_RetainedState"][0, :, :, :] - out2[f"past_value.{i}_RetainedState"][1, :, :, :]
+            ).max()
+            < 5e-2
+        )
+
+
+def prefix_caching_inference(model_id, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id):
+    PREFILL_SEQ_LEN = 128
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    config = AutoConfig.from_pretrained(model_id, num_hidden_layers=2)
+    inputs = tokenizer(prompt, return_tensors="np", padding=True)
+    padded_len = inputs["input_ids"].shape[1]
+    num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
+    padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
+
+    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+    inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+    inputs.pop("token_type_ids", None)
+    inputs["batch_index"] = np.array([[decode_batch_id]], dtype=np.int64)
+
+    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    logits_out_placeholder = np.zeros((1, 1, 201088), dtype=np.float32)
+    prefill_session.set_buffers({"logits": logits_out_placeholder})
+    for i in range(num_chunks):
+        chunk_inputs = inputs.copy()
+        chunk_inputs["input_ids"] = inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+        chunk_inputs["position_ids"] = inputs["position_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+        qpc_out = prefill_session.run(chunk_inputs)
+    del prefill_session
+
+    qpc_outputs = []
+    decode_inputs = {
+        "input_ids": np.argmax(qpc_out["logits"]).reshape(1, 1),
+        "position_ids": np.max(inputs["position_ids"]).reshape(1, 1) + 1,
+        "batch_index": inputs["batch_index"],
+    }
+    qpc_outputs.append(decode_inputs["input_ids"][0][0])
+
+    decode_session = QAICInferenceSession(decode_qpc_path)
+    decode_session.set_buffers({"logits": logits_out_placeholder})
+    generation_len = 5
+
+    for i in range(config.num_hidden_layers):
+        if i % 2 == 0 and decode_inputs["position_ids"] >= config.sliding_window:
+            k = qpc_out[f"past_key.{i}_RetainedState"]
+            v = qpc_out[f"past_value.{i}_RetainedState"]
+            mod_pos_id = config.sliding_window - decode_inputs["position_ids"][0][0] % config.sliding_window
+            decode_inputs[f"past_key.{i}"] = np.concatenate((k[:, :, mod_pos_id:, :], k[:, :, :mod_pos_id, :]), axis=-2)
+            decode_inputs[f"past_value.{i}"] = np.concatenate(
+                (v[:, :, mod_pos_id:, :], v[:, :, :mod_pos_id, :]), axis=-2
+            )
+        else:
+            decode_inputs[f"past_key.{i}"] = qpc_out[f"past_key.{i}_RetainedState"]
+            decode_inputs[f"past_value.{i}"] = qpc_out[f"past_value.{i}_RetainedState"]
+
+    decode_out = decode_session.run(decode_inputs)
+    pos_id = np.max(decode_inputs["position_ids"]).reshape(1, 1) + 1
+    for i in range(generation_len - 1):
+        loop_decode_inputs = {
+            "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
+            "position_ids": pos_id,
+            "batch_index": inputs["batch_index"],
+        }
+        for i in range(config.num_hidden_layers):
+            loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
+            loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
+        qpc_outputs.append(loop_decode_inputs["input_ids"][0][0])
+        decode_out = decode_session.run(loop_decode_inputs)
+        pos_id += 1
+
+    print("QPC Outputs (AIC): \n")
+    print("Prompt:", repr(prompt))
+    print("Completion:", repr(tokenizer.decode(qpc_outputs)))
+    return qpc_out, qpc_outputs
