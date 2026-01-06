@@ -60,7 +60,6 @@ class QEFFBaseModel(ABC):
         super().__init__()
         self.model = model
         self.hash_params = create_model_params(self, **kwargs)
-        self.prefill_onnx_path: Optional[str] = None
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
@@ -240,10 +239,7 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-            if prefill_only:
-                self.prefill_onnx_path = onnx_path
-            else:
-                self.onnx_path = onnx_path
+            self.onnx_path = onnx_path
             return onnx_path
 
         # check if the model is in meta state or weights are offloaded
@@ -322,10 +318,7 @@ class QEFFBaseModel(ABC):
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
-        if prefill_only:
-            self.prefill_onnx_path = onnx_path
-        else:
-            self.onnx_path = onnx_path
+        self.onnx_path = onnx_path
         return onnx_path
 
     def get_onnx_path(
@@ -342,21 +335,18 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
         }
+
         if prefill_only:
-            if self.prefill_onnx_path is None:
-                kwargs.update(
-                    {
-                        "prefill_only": prefill_only,
-                        "prefill_seq_len": specializations[0].get("seq_len"),
-                        "enable_chunking": enable_chunking,
-                    }
-                )
-                self.export(**kwargs)
-            return self.prefill_onnx_path
-        else:
-            if self.onnx_path is None:
-                self.export(**kwargs)
-            return self.onnx_path
+            kwargs.update(
+                {
+                    "prefill_only": prefill_only,
+                    "prefill_seq_len": specializations[0].get("seq_len"),
+                    "enable_chunking": enable_chunking,
+                }
+            )
+
+        self.export(**kwargs)
+        return self.onnx_path
 
     @dump_qconfig
     def _compile(
@@ -404,6 +394,8 @@ class QEFFBaseModel(ABC):
         onnx_path = Path(
             onnx_path
             if onnx_path
+            else self.onnx_path
+            if self.onnx_path
             else self.get_onnx_path(
                 prefill_only,
                 enable_chunking,
