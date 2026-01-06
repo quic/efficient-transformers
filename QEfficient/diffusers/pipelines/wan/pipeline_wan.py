@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 import torch
 from diffusers import WanPipeline
+from tqdm import tqdm
 
 from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
@@ -121,7 +122,6 @@ class QEffWanPipeline:
         )
 
         self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
-        self.vae_decoder.model.config["_use_default_values"].sort()
         # Extract patch dimensions from transformer configuration
         _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
 
@@ -227,7 +227,7 @@ class QEffWanPipeline:
         """
 
         # Export each module with video-specific parameters
-        for module_name, module_obj in self.modules.items():
+        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration with video dimensions
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
 
@@ -308,6 +308,7 @@ class QEffWanPipeline:
             path is None
             for path in [
                 self.transformer.onnx_path,
+                self.vae_decoder.onnx_path,
             ]
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
@@ -343,13 +344,11 @@ class QEffWanPipeline:
                     "num_frames": latent_frames,  # Latent frames
                 },
             ],
-            "vae_decoder": [
-                {
-                    "num_frames": latent_frames,
-                    "latent_height": latent_height,
-                    "latent_width": latent_width,
-                }
-            ],
+            "vae_decoder": {
+                "num_frames": latent_frames,
+                "latent_height": latent_height,
+                "latent_width": latent_width,
+            },
         }
 
         # Use generic utility functions for compilation

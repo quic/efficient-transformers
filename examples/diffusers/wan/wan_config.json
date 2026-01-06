@@ -35,12 +35,12 @@
     },
     "vae_decoder":
                   {
-                    "specializations": [
+                    "specializations":
                                         {
                                           "batch_size": 1,
                                           "num_channels": 16
                                         }
-                                    ],
+                                    ,
                     "compilation":
                                       {
                                         "onnx_path": null,
