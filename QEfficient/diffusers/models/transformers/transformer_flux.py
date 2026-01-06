@@ -224,6 +224,8 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        image_rotary_emb_cos: Optional[torch.Tensor] = None,
+        image_rotary_emb_sin: Optional[torch.Tensor] = None,
         encoder_hidden_states: torch.Tensor = None,
         pooled_projections: torch.Tensor = None,
         timestep: torch.LongTensor = None,
@@ -286,9 +288,6 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
             )
             img_ids = img_ids[0]
 
-        ids = torch.cat((txt_ids, img_ids), dim=0)
-        image_rotary_emb = self.pos_embed(ids)
-
         if joint_attention_kwargs is not None and "ip_adapter_image_embeds" in joint_attention_kwargs:
             ip_adapter_image_embeds = joint_attention_kwargs.pop("ip_adapter_image_embeds")
             ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
@@ -299,7 +298,7 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 temb=adaln_emb[index_block],
-                image_rotary_emb=image_rotary_emb,
+                image_rotary_emb=(image_rotary_emb_cos, image_rotary_emb_sin),
                 joint_attention_kwargs=joint_attention_kwargs,
             )
 
@@ -320,7 +319,7 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 temb=adaln_single_emb[index_block],
-                image_rotary_emb=image_rotary_emb,
+                image_rotary_emb=(image_rotary_emb_cos, image_rotary_emb_sin),
                 joint_attention_kwargs=joint_attention_kwargs,
             )
 
