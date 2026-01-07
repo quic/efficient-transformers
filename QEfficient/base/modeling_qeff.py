@@ -450,9 +450,6 @@ class QEFFBaseModel(ABC):
             logger.info("Using ONNX subfunctions for compilation.")
             command.append("-sub-functions")
 
-        if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
-
         # Create a dummy mdp_ts_json if mdp-load-partition-config not provided and num_devices > 1
         if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
             mdp_ts_json = load_json(str(mdp_ts_json_path))
