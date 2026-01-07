@@ -153,6 +153,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     config: Optional[AutoConfig] = None,
     pytorch_hf_tokens: Optional[list] = None,
     qaic_config: Optional[dict] = None,
+    retain_full_kv: Optional[bool] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -211,6 +212,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         prefill_only=prefill_only,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        retain_full_kv=retain_full_kv,
     )
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0][
@@ -260,6 +262,24 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
+    compiler_options = {}
+    if prompt_len == 1:
+        prefill_spec = {
+            "batch_size": batch_size,
+            "seq_len": 1,
+            "ctx_len": ctx_len,
+            "full_batch_size": full_batch_size,
+            "sliding_window": 128,
+        }
+        decode_spec = {
+            "batch_size": full_batch_size,
+            "seq_len": 1,
+            "ctx_len": ctx_len,
+            "full_batch_size": full_batch_size,
+            "sliding_window": 128,
+        }
+        compiler_options = {"specializations": [prefill_spec, decode_spec]}
+
     # TODO: add prefill_only tests
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
@@ -267,10 +287,13 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         num_cores=14,
         mxfp6=False,
         aic_enable_depth_first=False,
+        batch_size=batch_size,
         full_batch_size=full_batch_size,
         num_speculative_tokens=num_speculative_tokens,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        retain_full_kv=retain_full_kv,
+        **compiler_options,
     )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
@@ -367,6 +390,24 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name, n_layer=n_layer, pytorch_hf_tokens=pytorch_hf_tokens
+    )
+
+
+@pytest.mark.nightly
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("retain_full_kv", [True, False])
+def test_causal_lm_gpt_oss_pytorch_vs_kv_vs_ort_vs_ai100_pl1(retain_full_kv):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    model_name = "openai/gpt-oss-20b"
+    n_layer = get_custom_n_layers(model_name)
+    prompt_len = 1
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, prompt_len=prompt_len, retain_full_kv=retain_full_kv
     )
 
 
