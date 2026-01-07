@@ -1207,7 +1207,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
 
         # Custom NPI file options
-        if hasattr(self.model, "get_npi_file"):
+        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
             compiler_options = self.model.get_npi_file(self.model.name_or_path)
 
         if not skip_lang:
@@ -1819,7 +1819,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **compiler_options,
         )
 
-        if hasattr(self.model, "get_npi_file"):
+        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
             compiler_options = self.model.get_npi_file(self.model.name_or_path)
 
         custom_io = {}
