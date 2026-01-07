@@ -679,12 +679,12 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
 
     def get_npi_file(self, model_name: str, **compiler_options):
         if model_name == "google/gemma-3-4b-it":
-            compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_4B_NODE_PRECISION_INFO
+            compiler_options["node_precision_info"] = constants.NPI_MAPPING[model_name]
         elif model_name == "google/gemma-3-27b-it":
-            compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_27B_NODE_PRECISION_INFO
+            compiler_options["node_precision_info"] = constants.NPI_MAPPING[model_name]
         else:
             raise ValueError(
-                f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
+                f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added for this particular model. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
             )
         return compiler_options
 
