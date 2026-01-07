@@ -47,13 +47,12 @@ def enum_names(enum_cls: Enum) -> List[str]:
 
 
 def get_rank() -> int:
-    """Get the current rank of the process. In case of DDP use case it returns
-    the process rank and in case of non-DDP use case it returns default value 0.
+    """Get the current global rank of the process.
 
-    Returns:
-        int: Rank of the process in which it is being called from.
+    In DDP, this should correspond to the 'RANK' environment variable set by torchrun.
+    In non-DDP use case, returns 0.
     """
-    return int(os.getenv("LOCAL_RANK", 0))
+    return int(os.getenv("RANK", 0))
 
 
 def is_rank_zero() -> bool:
