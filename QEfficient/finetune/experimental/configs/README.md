@@ -52,11 +52,11 @@ If provided, this takes precedence over dataset_name.
 *   **prompt\_func**: Path to python function to format prompts. Use when you need complex preprocessing or conditional logic to build the final prompt string from a dataset row (e.g alpaca dataset).
 *   **prompt\_template**: Template for formatting prompts from dataset rows.Prompt_template should contain the column names which are available in the dataset.
 
-     **Note** : Prompt_func and prompt_template are mutually exclusive. If both are provided, prompt_func will take precedence.
+     **Note** :prompt_func and prompt_template cannot be used together. Please specify only one of these options at a time.
 *  **completion\_func**: Path to python function to format completions. Use when you need complex preprocessing or conditional logic to build the final completion string from a dataset row.
 *   **completion\_template**: string pattern that tells the fine-tuning pipeline which part of the dataset should be treated as the target output (completion) for the model to learn.
 
-     **Note** : completion_func and completion_template are mutually exclusive. If both are provided, completion_func will take precedence.
+     **Note** : completion_func and completion_template cannot be used together. Please specify only one of these options at a time.
 *   **dataset_subset**: `default = "default"` → The subset of the dataset to use (useful for multi-configuration datasets).
 *   **max_seq_length**: `default = 512` → Maximum sequence length for tokenization. Longer inputs are truncated; shorter inputs may be padded depending on the collation.
 *   **input_columns**: `default = ["text"]` → Column names that contain input text to be tokenized.
