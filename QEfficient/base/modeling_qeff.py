@@ -318,18 +318,19 @@ class QEFFBaseModel(ABC):
                     torch.ops.qefficient.ctx_scatter.default: CtxScatter,
                 }
 
-            op = torch.onnx.export(
+            torch.onnx.export(
                 self.model,
                 args=(),
+                f=tmp_onnx_path,
                 kwargs=example_inputs,
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 dynamic_shapes=dynamic_shapes,
-                opset_version=18,
+                opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
             )
-            op.save(str(tmp_onnx_path))
+            # op.save(str(tmp_onnx_path))
 
             # model_proto = model.model_proto
             logger.info("PyTorch export successful")
