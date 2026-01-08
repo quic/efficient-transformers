@@ -40,7 +40,6 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
-    SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -2599,12 +2598,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
             self.prefill(enable=True, enable_chunking=enable_chunking)
             self.hash_params.pop("retain_full_kv", None)
-            seq_len = (
-                self.get_seq_len_and_handle_specialized_prefill_model(
-                    prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
-                )
-                if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
-                else seq_len
+            seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
+                prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
             )
             kv_cache_shape[2] = (
                 seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
