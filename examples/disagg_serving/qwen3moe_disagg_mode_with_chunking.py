@@ -55,7 +55,7 @@ prefill_qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     prefill_only=True,
     enable_chunking=True,
-    use_onnx_subfunctions=True,
+    # use_onnx_subfunctions=True,
 )
 
 
