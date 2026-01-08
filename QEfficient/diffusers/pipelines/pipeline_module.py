@@ -342,7 +342,9 @@ class QEffVAE(QEFFBaseModel):
         Returns:
             str: Path to the exported ONNX model
         """
-        self.model.config["_use_default_values"].sort()
+
+        if hasattr(self.model.config, "_use_default_values"):
+            self.model.config["_use_default_values"].sort()
 
         return self._export(
             example_inputs=inputs,
