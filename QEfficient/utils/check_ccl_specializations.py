@@ -129,6 +129,12 @@ def automatic_ccl_generation(
 
 
 def validate_ccl_lists(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len):
+    # Check CCL values are not negative and more than the CCL minimum context length = constants.CCL_MIN_CTX_LEN
+    if ccl_prefill:
+        ccl_prefill = [x if x >= constants.CCL_MIN_CTX_LEN else constants.CCL_MIN_CTX_LEN for x in ccl_prefill]
+    if ccl_decode:
+        ccl_decode = [x if x >= constants.CCL_MIN_CTX_LEN else constants.CCL_MIN_CTX_LEN for x in ccl_decode]
+
     # Check the last element of ccl_prefill and ccl_decode to make sure it's not less than ctx_len
     if ccl_prefill[-1] < ctx_len - 1:
         ccl_prefill.append(ctx_len)
@@ -196,7 +202,7 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
     ccl_prefill, ccl_decode = validate_ccl_lists(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len)
 
     logger.info("CCL Configuration:")
-    logger.info(f"  - Prefill CCL list: {ccl_prefill}")
-    logger.info(f"  - Decode CCL list: {ccl_decode}")
+    logger.info(f"  - Prefill context lengths: {ccl_prefill}")
+    logger.info(f"  - Decode context lengths: {ccl_decode}")
     logger.info(f"  - Max context length: {ctx_len}")
     return ccl_prefill, ccl_decode, ctx_len
