@@ -314,7 +314,10 @@ class QEffFluxPipeline:
 
         # Prepare dynamic specialization updates based on image dimensions
         specialization_updates = {
-            "transformer": {"cl": cl},
+            "transformer": {
+                "cl": cl,
+                "image_seq_len": cl + 256,
+            },
             "vae_decoder": {
                 "latent_height": latent_height,
                 "latent_width": latent_width,
@@ -718,6 +721,11 @@ class QEffFluxPipeline:
             latents,
         )
 
+        # Create latent position IDs for transformer
+        ids = torch.cat((text_ids, latent_image_ids), dim=0)
+        # Compute image rotary embeddings for transformer
+        image_rotary_emb_cos, image_rotary_emb_sin = self.transformer.model.pos_embed(ids)
+
         # Step 6: Calculate compressed latent dimension for transformer buffer allocation
         cl, _, _ = calculate_compressed_latent_dimension(height, width, self.model.vae_scale_factor)
 
@@ -779,6 +787,8 @@ class QEffFluxPipeline:
                     "adaln_emb": adaln_dual_emb.detach().numpy(),
                     "adaln_single_emb": adaln_single_emb.detach().numpy(),
                     "adaln_out": adaln_out.detach().numpy(),
+                    "image_rotary_emb_cos": image_rotary_emb_cos.detach().numpy(),
+                    "image_rotary_emb_sin": image_rotary_emb_sin.detach().numpy(),
                 }
 
                 # Run transformer inference and measure time
