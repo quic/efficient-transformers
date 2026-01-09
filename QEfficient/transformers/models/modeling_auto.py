@@ -2741,10 +2741,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Dict[str, Union[int, str]]
             A dictionary defining the prefill specialization.
         """
-        if prefill_seq_len == 1 and self.continuous_batching:
+        if not self.continuous_batching:
+            exec_batch_size = batch_size
+        elif prefill_seq_len == 1:
             exec_batch_size = full_batch_size
         else:
-            exec_batch_size = 1 if self.continuous_batching else batch_size
+            exec_batch_size = 1
 
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
@@ -2755,7 +2757,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )[0]
         else:
             spec = {
-                "batch_size": 1 if self.continuous_batching else batch_size,
+                "batch_size": exec_batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
             }
@@ -2766,8 +2768,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
+        # TODO: remove this; not required
         if full_batch_size:
-            spec["full_batch_exec_size"] = full_batch_size
+            spec["full_batch_exec_size"] = exec_batch_size
         return {k: v for k, v in spec.items() if v is not None}
 
     def build_decode_specialization(
@@ -2805,9 +2808,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             A dictionary defining the decode specialization, or None if it would be a duplicate
             of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
         """
-        if prefill_seq_len == 1 and not self.continuous_batching:
-            return None  # Avoid duplication with prefill
-
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
                 batch_size=full_batch_size if self.continuous_batching else batch_size,
@@ -3025,7 +3025,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 )
 
-        if prefill_only is None or not prefill_only:
+        if (prefill_only is None or not prefill_only) and prefill_seq_len != 1:
             if self.comp_ctx_lengths_decode is not None:
                 # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
                 for i in range(0, len(self.comp_ctx_lengths_decode)):
@@ -3054,6 +3054,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if decode_spec:
                     specializations.append(decode_spec)
 
+        if kw_spec := compiler_options.pop("specializations", None):
+            specializations = kw_spec
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
