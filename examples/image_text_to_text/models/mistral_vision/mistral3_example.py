@@ -35,6 +35,8 @@ def run_model(
 
     config = AutoConfig.from_pretrained(model_name)
     config.vision_config._attn_implementation = "eager"
+    # config.text_config.num_hidden_layers = 2
+    # config.vision_config.num_hidden_layers = 2
 
     model = QEFFAutoModelForImageTextToText.from_pretrained(model_name, kv_offload=kv_offload, config=config)
 
@@ -47,6 +49,7 @@ def run_model(
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
+        use_dynamo=False,
     )
 
     ## STEP - 3 Load and process the inputs for Inference

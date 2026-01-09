@@ -5,11 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
+from torch.export import Dim
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutput
 from transformers.models.mistral3.modeling_mistral3 import (
@@ -480,6 +481,140 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
+
+    def get_onnx_dynamic_shapes(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+    ) -> Dict[str, Any]:
+        num_layers = self.config.text_config.num_hidden_layers
+
+        # Registry so that dims with the same name share a single Dim instance
+        dim_registry: Dict[str, Dim] = {}
+
+        def get_dim(dim_name: str) -> Dim:
+            if dim_name in dim_registry:
+                return dim_registry[dim_name]
+
+            if dim_name == "batch_size":
+                d = Dim(dim_name, min=1, max=1024)
+            elif dim_name == "seq_len":
+                d = Dim(dim_name, min=2, max=4096)
+            elif dim_name == "ctx_len":
+                d = Dim(dim_name, min=2, max=4096)
+            elif dim_name == "image_size":
+                d = Dim(dim_name, min=2, max=4096)
+            elif dim_name == "vision_size":
+                d = Dim(dim_name, min=1, max=65536)
+            elif "idx" in dim_name:
+                d = Dim.STATIC
+            elif "comp_ctx_lengths" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            else:
+                d = Dim(dim_name, min=1, max=4096)
+
+            dim_registry[dim_name] = d
+            return d
+
+        def build_past_kv_shapes() -> list[list[Dict[int, Any]]]:
+            pkv_shapes: list[list[Dict[int, Any]]] = []
+            for _ in range(num_layers):
+                key_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("ctx_len"),
+                }
+                value_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("ctx_len"),
+                }
+                pkv_shapes.append([key_shape, value_shape])
+            return pkv_shapes
+
+        # kv_offload=True: separate vision/lang exports
+        if kv_offload:
+            # Vision encoder wrapper:
+            # QEFFMistral3EncoderWrapper.forward(self, pixel_values)
+            vision_dynamic_shapes: Dict[str, Dict[int, Any]] = {
+                "pixel_values": {
+                    0: get_dim("batch_size"),
+                    2: get_dim("image_size"),
+                    3: get_dim("image_size"),
+                }
+            }
+
+            # Language decoder wrapper:
+            # QEFFMistral3DecoderWrapper.forward(
+            #   self, input_ids, vision_embeds, position_ids, image_idx, past_key_values, comp_ctx_lengths=None
+            # )
+            lang_dynamic_shapes: Dict[str, Any] = {
+                "input_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "vision_embeds": {
+                    0: get_dim("vision_size"),
+                },
+                "position_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "image_idx": {
+                    0: get_dim("idx"),
+                    1: get_dim("idx"),
+                },
+                # Nested list[num_layers] of [key_shape, value_shape]
+                "past_key_values": build_past_kv_shapes(),
+            }
+
+            if comp_ctx_lengths is not None:
+                lang_dynamic_shapes["comp_ctx_lengths"] = {
+                    0: get_dim("comp_ctx_lengths"),
+                }
+
+            return {
+                "vision": vision_dynamic_shapes,
+                "lang": lang_dynamic_shapes,
+            }
+
+        # kv_offload=False: combined forward
+        # Combined forward of QEffMistral3ForConditionalGeneration:
+        # forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values, comp_ctx_lengths=None)
+
+        dynamic_shapes: Dict[str, Any] = {}
+
+        # pixel_values: (batch_size, 3, image_size, image_size)
+        dynamic_shapes["pixel_values"] = {
+            0: get_dim("batch_size"),
+            2: get_dim("image_size"),
+            3: get_dim("image_size"),
+        }
+
+        # input_ids: (batch_size, seq_len)
+        dynamic_shapes["input_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
+
+        # position_ids: (batch_size, seq_len)
+        dynamic_shapes["position_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
+
+        # image_idx: currently (1,1); keep static dims
+        dynamic_shapes["image_idx"] = {
+            0: get_dim("idx"),
+            1: get_dim("idx"),
+        }
+
+        # past_key_values: list[num_layers] of [key, value], each (batch_size, num_heads, ctx_len, head_dim)
+        dynamic_shapes["past_key_values"] = build_past_kv_shapes()
+
+        if comp_ctx_lengths is not None:
+            dynamic_shapes["comp_ctx_lengths"] = {
+                0: get_dim("comp_ctx_lengths"),
+            }
+        return dynamic_shapes
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

@@ -10,10 +10,14 @@
 import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
+from torch.onnx._internal.torchscript_exporter import utils as ts_utils
 
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
+_original_track_scope_attrs = getattr(_C, "_jit_pass_onnx_track_scope_attributes", None)
+_original_ts_setup_trace_module_map = ts_utils._setup_trace_module_map
+_original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes", None)
 
 
 def _setup_trace_module_map_patched(
@@ -87,6 +91,13 @@ def _get_module_attributes(module):
 
     import torch.nn
 
+    def _is_safe_value(value):
+        if isinstance(value, (int, float, bool, str, torch.Tensor)) or value is None:
+            return True
+        if isinstance(value, (list, tuple)):
+            return all(_is_safe_value(item) for item in value)
+        return False
+
     annotations = typing.get_type_hints(type(module))
     base_m_annotations = typing.get_type_hints(torch.nn.Module)
     [annotations.pop(k, None) for k in base_m_annotations]
@@ -94,11 +105,26 @@ def _get_module_attributes(module):
     attrs = {}
     for k in annotations:
         try:
-            attrs[k] = getattr(module, k)
+            value = getattr(module, k)
+            if _is_safe_value(value):
+                attrs[k] = value
         except AttributeError:
             _C._jit_onnx_log(f"Skipping module attribute '{k}'")
             continue
     return attrs
+
+
+def _track_scope_attributes_patched(graph, attrs):
+    """Ensure scope attributes passed to ONNX are IValue-compatible."""
+    safe_attrs = {}
+    for key, value in attrs.items():
+        if isinstance(value, (int, float, bool, str, torch.Tensor)) or value is None:
+            safe_attrs[key] = value
+        elif isinstance(value, (list, tuple)) and all(
+            isinstance(item, (int, float, bool, str, torch.Tensor)) or item is None for item in value
+        ):
+            safe_attrs[key] = value
+    return _original_track_scope_attrs(graph, safe_attrs)
 
 
 def apply_torch_patches():
@@ -106,6 +132,11 @@ def apply_torch_patches():
     onnx_utils._setup_trace_module_map = _setup_trace_module_map_patched
     if hasattr(onnx_utils, "_get_module_attributes"):
         onnx_utils._get_module_attributes = _get_module_attributes
+    ts_utils._setup_trace_module_map = _setup_trace_module_map_patched
+    if hasattr(ts_utils, "_get_module_attributes"):
+        ts_utils._get_module_attributes = _get_module_attributes
+    if _original_track_scope_attrs is not None:
+        _C._jit_pass_onnx_track_scope_attributes = _track_scope_attributes_patched
 
 
 def undo_torch_patches():
@@ -113,3 +144,8 @@ def undo_torch_patches():
     onnx_utils._setup_trace_module_map = _original_setup_trace_module_map
     if _original_get_module_attributes:
         onnx_utils._get_module_attributes = _original_get_module_attributes
+    ts_utils._setup_trace_module_map = _original_ts_setup_trace_module_map
+    if _original_ts_get_module_attributes:
+        ts_utils._get_module_attributes = _original_ts_get_module_attributes
+    if _original_track_scope_attrs is not None:
+        _C._jit_pass_onnx_track_scope_attributes = _original_track_scope_attrs
