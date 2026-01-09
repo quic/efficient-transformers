@@ -321,7 +321,7 @@ class QEFFBaseModel(ABC):
             torch.onnx.export(
                 self.model,
                 args=(),
-                f=tmp_onnx_path,
+                f=str(tmp_onnx_path),
                 kwargs=example_inputs,
                 input_names=input_names,
                 output_names=output_names,
