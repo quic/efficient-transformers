@@ -191,9 +191,6 @@ CCL_MIN_CTX_LEN = 1024
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256
 
-# used for gpt-oss prefill-only model Q-blocking
-GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256
-
 
 class Constants:
     # Export Constants.
