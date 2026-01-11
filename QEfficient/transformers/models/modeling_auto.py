@@ -1030,6 +1030,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             offload_pt_weights=False,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
+
         self.lang_model.export(
             inputs["lang"],
             output_names["lang"],
