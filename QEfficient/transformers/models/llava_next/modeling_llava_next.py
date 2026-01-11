@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 
-from typing import List, Optional
+from typing import List, Optional, Type
 
 import numpy as np
 import torch
@@ -29,6 +29,15 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.model.vision_model = self.model.vision_tower
+
+    def get_repeated_layer_class(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
 
     def forward(self, pixel_values, image_sizes):
         if pixel_values.dim() == constants.GRANITEVISION_PIXEL_VALUE_DIM:
