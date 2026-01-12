@@ -71,7 +71,7 @@ QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.fin
 
 ### Multi Node(across multiple servers) finetuning on QAIC
 
-Use servers with compatible/same ethernet.
+Use servers with compatible/same network interface(eg:ethernet).
 
 PYTHONUNBUFFERED: make python prints unbuffered, especially useful to identify progress (or lack thereof) for distributed tasks
 GLOO_SOCKET_IFNAME: specify which network interface gloo (and indirectly qccl) uses for inter-host communication (eg: eno1, eth0 etc)
