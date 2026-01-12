@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import logging
-import os
 import random
 import warnings
 from typing import Any, Optional, Union
@@ -29,7 +28,7 @@ from QEfficient.finetune.utils.config_utils import (
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader, get_longest_seq_length
 from QEfficient.finetune.utils.device_map import get_device_map
-from QEfficient.finetune.utils.helper import Task_Mode, get_world_size
+from QEfficient.finetune.utils.helper import Task_Mode, get_local_rank, get_local_world_size, get_rank, get_world_size
 from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import print_model_size, print_trainable_parameters, train
@@ -92,13 +91,10 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     assert torch_device.index is None, f"DDP requires only device type (qaic/cuda), got: {torch_device}"
 
     # Torchrun-provided env vars
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    rank = int(os.environ.get("RANK", "0"))
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", "1"))
-
-    # Sanity check vs helper
-    assert world_size == get_world_size(), f"WORLD_SIZE={world_size} but get_world_size()={get_world_size()}"
+    world_size = get_world_size()
+    rank = get_rank()
+    local_rank = get_local_rank()
+    local_world_size = get_local_world_size()
 
     # Per-node device validation
     num_available_devices = getattr(torch, torch_device.type).device_count()

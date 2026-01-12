@@ -55,6 +55,15 @@ def get_rank() -> int:
     return int(os.getenv("RANK", 0))
 
 
+def get_local_rank() -> int:
+    """Get the current local rank of the process.
+
+    In DDP, this should correspond to the 'LOCAL_RANK' environment variable set by torchrun.
+    In non-DDP use case, returns 0.
+    """
+    return int(os.getenv("LOCAL_RANK", 0))
+
+
 def is_rank_zero() -> bool:
     """Checks whether the current process is in rank-0 in case of DDP. For
     non-DDP use case it will always return True.
@@ -75,6 +84,18 @@ def get_world_size() -> int:
         int: Number of DDP devices.
     """
     return int(os.getenv("WORLD_SIZE", 1))
+
+
+def get_local_world_size() -> int:
+    """Get total multiprocesses invoked for DDP setting for that node. For pure DDP use case,
+    this will correlate with number of devices being used. For PP+DDP use case,
+    this will give number of processes initiated (i.e. number of model replicas).
+    In case of non-DDP use case, this will return 1.
+
+    Returns:
+        int: Number of DDP devices available on that node.
+    """
+    return int(os.getenv("LOCAL_WORLD_SIZE", 1))
 
 
 def get_autocast_ctx(use_autocast: bool, device_type: str, dtype: torch.dtype = torch.float16) -> ContextManager:
