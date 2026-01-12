@@ -442,12 +442,14 @@ class QEFFBaseModel(ABC):
         mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
         mdp_ts_json = None
+        user_provided_load_config = False
 
         if mdp_dump_json_path:
             command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
         elif mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
+            user_provided_load_config = True
         elif mdp_ts_num_devices > 1:
             # Generate mdp config only if neither dump nor load is provided and num_devices > 1
             mdp_ts_json = generate_mdp_partition_config(
@@ -488,8 +490,8 @@ class QEFFBaseModel(ABC):
             # Probably compilation failure last time, delete directory to start over
             shutil.rmtree(qpc_path)
 
-        # write the MDP partition config file if not provided
-        if mdp_ts_json is not None:
+        # Write the generated MDP partition config file (not if user provided it)
+        if mdp_ts_json is not None and not user_provided_load_config:
             mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
