@@ -450,17 +450,27 @@ class QEFFBaseModel(ABC):
             logger.info("Using ONNX subfunctions for compilation.")
             command.append("-sub-functions")
 
-        # Create a dummy mdp_ts_json if mdp-load-partition-config not provided and num_devices > 1
-        if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
+        # MDP partition config: prioritize dump over load
+        mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
+        mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        mdp_ts_json = None
+        user_provided_load_config = False
+
+        if mdp_dump_json_path:
+            if mdp_ts_json_path:
+                logger.warning(
+                    "Loading and Dumping partition is not supported at the same time. Prioritizing dump config over load config!"
+                )
+            command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
+        elif mdp_ts_json_path:
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
+            user_provided_load_config = True
         elif mdp_ts_num_devices > 1:
+            # Generate mdp config only if neither dump nor load is provided and num_devices > 1
             mdp_ts_json = generate_mdp_partition_config(
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )
-            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            create_json(str(mdp_ts_json_path), mdp_ts_json)
-        else:
-            mdp_ts_json = None
 
         compile_hash_params = {
             "command": command,
@@ -484,6 +494,12 @@ class QEFFBaseModel(ABC):
             # Probably compilation failure last time, delete directory to start over
             shutil.rmtree(qpc_path)
 
+        # Write the generated MDP partition config file (not if user provided it)
+        if mdp_ts_json is not None and not user_provided_load_config:
+            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+            create_json(str(mdp_ts_json_path), mdp_ts_json)
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
@@ -492,9 +508,6 @@ class QEFFBaseModel(ABC):
             }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
-
-        if mdp_ts_json_path is not None:
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         # Write custom_io.yaml file
         if custom_io is not None:
