@@ -40,7 +40,7 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
-    SPECIALIZED_PREFILL_ONLY_MODEL_ARCH,
+    SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -2522,15 +2522,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
         if num_q_blocks is None:
-            block_size = 256
-            if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
+            if (
+                prefill_seq_len is None
+                or prefill_seq_len % constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE != 0
+                or prefill_seq_len < constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE
+            ):
                 raise ValueError(
-                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
+                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE}. "
                     f"Or set `NUM_Q_BLOCKS` ENV variable"
                     f"Received: prefill_seq_len={prefill_seq_len}"
                 )
 
-            num_q_blocks = prefill_seq_len // block_size
+            num_q_blocks = prefill_seq_len // constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE
             logger.warning(
                 f"Setting NUM_Q_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_Q_BLOCKS` to override"
             )
@@ -2588,31 +2591,28 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
-        if prefill_only:
-            if not enable_chunking and self.continuous_batching:
-                raise NotImplementedError(
-                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                )
-            self.prefill(enable=True, enable_chunking=enable_chunking)
-            self.hash_params.pop("retain_full_kv", None)
-            seq_len = (
-                self.get_seq_len_and_handle_specialized_prefill_model(
+
+        # TODO: move this to a DA Serving utility class
+        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+            if prefill_only:
+                if self.continuous_batching and not enable_chunking:
+                    raise NotImplementedError("Can't enable prefix-caching without chunking")
+                self.prefill(enable=True, enable_chunking=enable_chunking)
+                self.hash_params.pop("retain_full_kv", None)
+                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                     prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                 )
-                if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
-                else seq_len
-            )
-            kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
-        else:
-            self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-            self.hash_params.pop("prefill_only", None)
-            self.hash_params.pop("NUM_Q_BLOCKS", None)
-            self.hash_params.pop("NUM_FFN_BLOCKS", None)
-            self.hash_params.pop("ENABLE_OPT_SWA", None)
-            self.hash_params.pop("chunking", None)
-            if kwargs.get("retain_full_kv", False):
-                kv_cache_shape[2] = seq_len + self.model.config.sliding_window
-                self.hash_params["retain_full_kv"] = True
+                kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
+            else:
+                self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+                self.hash_params.pop("prefill_only", None)
+                self.hash_params.pop("NUM_Q_BLOCKS", None)
+                self.hash_params.pop("NUM_FFN_BLOCKS", None)
+                self.hash_params.pop("ENABLE_OPT_SWA", None)
+                self.hash_params.pop("chunking", None)
+                if kwargs.get("retain_full_kv", False):
+                    kv_cache_shape[2] = seq_len + self.model.config.sliding_window
+                    self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
@@ -2741,10 +2741,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Dict[str, Union[int, str]]
             A dictionary defining the prefill specialization.
         """
-        if prefill_seq_len == 1 and self.continuous_batching:
+        if not self.continuous_batching:
+            exec_batch_size = batch_size
+        elif prefill_seq_len == 1:
             exec_batch_size = full_batch_size
         else:
-            exec_batch_size = 1 if self.continuous_batching else batch_size
+            exec_batch_size = 1
 
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
@@ -2755,7 +2757,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )[0]
         else:
             spec = {
-                "batch_size": 1 if self.continuous_batching else batch_size,
+                "batch_size": exec_batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
             }
@@ -2766,8 +2768,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
+        # TODO: remove this; not required
         if full_batch_size:
-            spec["full_batch_exec_size"] = full_batch_size
+            spec["full_batch_exec_size"] = exec_batch_size
         return {k: v for k, v in spec.items() if v is not None}
 
     def build_decode_specialization(
@@ -2805,9 +2808,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             A dictionary defining the decode specialization, or None if it would be a duplicate
             of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
         """
-        if prefill_seq_len == 1 and not self.continuous_batching:
-            return None  # Avoid duplication with prefill
-
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
                 batch_size=full_batch_size if self.continuous_batching else batch_size,
@@ -2942,7 +2942,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if prefill_only is None or not prefill_only:
             if self.continuous_batching and full_batch_size is None:
                 raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-
         else:
             if self.continuous_batching and kv_cache_batch_size is None and full_batch_size is None:
                 raise ValueError(
@@ -3026,7 +3025,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 )
 
-        if prefill_only is None or not prefill_only:
+        if (prefill_only is None or not prefill_only) and prefill_seq_len != 1:
             if self.comp_ctx_lengths_decode is not None:
                 # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
                 for i in range(0, len(self.comp_ctx_lengths_decode)):
@@ -3055,6 +3054,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if decode_spec:
                     specializations.append(decode_spec)
 
+        if kw_spec := compiler_options.pop("specializations", None):
+            specializations = kw_spec
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
