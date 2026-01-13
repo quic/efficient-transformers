@@ -66,7 +66,7 @@ def train(
     """
     device = train_config.device
     device_type = torch.device(device).type
-    local_rank = get_rank()
+    rank = get_rank()
 
     train_metric = []
     train_loss = []
@@ -77,7 +77,7 @@ def train(
         if not os.path.exists(train_config.output_dir):
             os.makedirs(train_config.output_dir, exist_ok=True)
         metrics_filename = (
-            f"{train_config.output_dir}/metrics_data_{local_rank}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
+            f"{train_config.output_dir}/metrics_data_{rank}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
         )
         train_step_metric = []
         train_step_loss = []
