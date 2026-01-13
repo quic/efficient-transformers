@@ -275,7 +275,7 @@ class QEffStarcoder2ForCausalLM(Starcoder2ForCausalLM):
     - update the hidden_states, and fix for onnx model
     """
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:

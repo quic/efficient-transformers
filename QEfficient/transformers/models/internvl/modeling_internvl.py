@@ -21,7 +21,7 @@ class QEffInternEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:
@@ -45,7 +45,7 @@ class QEffInternDecoderWrapper(nn.Module):
         self.config = self.model.language_model.config
         self.language_model = self.model.language_model
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of  class used as the repeated layer across the model for subfunction extraction.
         Notes:

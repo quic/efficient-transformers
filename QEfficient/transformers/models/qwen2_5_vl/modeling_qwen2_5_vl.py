@@ -870,7 +870,7 @@ class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.visual
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:
@@ -894,7 +894,7 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         self.model = model
         self.language_model = self.model.model.language_model
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:

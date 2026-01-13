@@ -589,7 +589,7 @@ class QEffGemma3EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.vision_tower
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:
@@ -611,7 +611,7 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.config = self.model.config
         self.lm_head = self.model.lm_head
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:

@@ -493,7 +493,7 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
     Copied from GraniteForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/granite/modeling_granite.py
     """
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:

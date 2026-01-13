@@ -822,7 +822,7 @@ class QEffLlama4EncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:
@@ -858,7 +858,7 @@ class QEffLlama4DecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
         self.config = self.model.config
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:

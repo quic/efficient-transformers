@@ -397,7 +397,7 @@ class QEffGrok1ModelForCausalLM(nn.Module):
     Grok model for causal language modeling.
     """
 
-    def get_repeated_layer_class(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
         Notes:
