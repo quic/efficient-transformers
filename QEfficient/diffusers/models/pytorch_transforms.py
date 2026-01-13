@@ -5,7 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
-from diffusers.models.attention_processor import Attention
+from diffusers.models.autoencoders.autoencoder_kl_wan import (
+    WanDecoder3d,
+    WanEncoder3d,
+    WanResample,
+    WanResidualBlock,
+)
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero, AdaLayerNormZeroSingle, RMSNorm
 from diffusers.models.transformers.transformer_flux import (
     FluxAttention,
@@ -23,6 +28,12 @@ from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
+from QEfficient.diffusers.models.autoencoders.autoencoder_kl_wan import (
+    QEffWanDecoder3d,
+    QEffWanEncoder3d,
+    QEffWanResample,
+    QEffWanResidualBlock,
+)
 from QEfficient.diffusers.models.normalization import (
     QEffAdaLayerNormContinuous,
     QEffAdaLayerNormZero,
@@ -67,6 +78,10 @@ class AttentionTransform(ModuleMappingTransform):
         QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
         QwenDoubleStreamAttnProcessor2_0: QEffQwenDoubleStreamAttnProcessor2_0,
         Attention: QEffQwenImageAttention,
+        WanDecoder3d: QEffWanDecoder3d,
+        WanEncoder3d: QEffWanEncoder3d,
+        WanResidualBlock: QEffWanResidualBlock,
+        WanResample: QEffWanResample,
     }
 
 
