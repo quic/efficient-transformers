@@ -37,7 +37,8 @@ class InstructionDataset(Dataset):
                 FileNotFoundError,
             )
         # Use 5% of the dataset for evaluation
-        eval_length = int(len(self.ann) / 20)
+        total_len = len(self.ann)
+        eval_length = max(1, int(total_len / 20))
         if partition == "train":
             self.ann = self.ann[eval_length:]
         else:
