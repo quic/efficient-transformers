@@ -71,6 +71,8 @@ QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.fin
 
 ### Multi Node(across multiple servers) finetuning on QAIC
 
+This enables scaling training across multiple nodes.
+
 Use servers with compatible/same network interface(eg:ethernet).
 
 PYTHONUNBUFFERED: make python prints unbuffered, especially useful to identify progress (or lack thereof) for distributed tasks.This is optional and not compulsory
