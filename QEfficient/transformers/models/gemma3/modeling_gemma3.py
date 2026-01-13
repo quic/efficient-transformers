@@ -678,9 +678,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         return logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_npi_file(self, model_name: str, **compiler_options):
-        if model_name == "google/gemma-3-4b-it":
-            compiler_options["node_precision_info"] = constants.NPI_MAPPING[model_name]
-        elif model_name == "google/gemma-3-27b-it":
+        if constants.NPI_MAPPING[model_name] is not None:
             compiler_options["node_precision_info"] = constants.NPI_MAPPING[model_name]
         else:
             raise ValueError(
