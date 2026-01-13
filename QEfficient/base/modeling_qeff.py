@@ -445,6 +445,10 @@ class QEFFBaseModel(ABC):
         user_provided_load_config = False
 
         if mdp_dump_json_path:
+            if mdp_ts_json_path:
+                logger.warning(
+                    "Loading and Dumping partition is not supported at the same time. Prioritizing dump config over load config!"
+                )
             command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
         elif mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
