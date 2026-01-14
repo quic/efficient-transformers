@@ -7,7 +7,7 @@
 
 """PyTorch Codegen model."""
 
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -295,6 +295,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model
     """
+
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
@@ -303,7 +304,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
         return {QEffCodeGenBlock}
-    
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
