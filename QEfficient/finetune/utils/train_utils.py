@@ -22,6 +22,7 @@ from QEfficient.finetune.utils.helper import (
     Task_Mode,
     get_autocast_ctx,
     get_grad_scaler,
+    get_node_rank,
     get_op_verifier_ctx,
     get_rank,
     get_world_size,
@@ -66,7 +67,12 @@ def train(
     """
     device = train_config.device
     device_type = torch.device(device).type
+
+    node_rank = get_node_rank()
     rank = get_rank()
+
+    # Update output_dir to include the node rank suffix
+    train_config.output_dir = f"{train_config.output_dir}_node_rank_{node_rank}"
 
     train_metric = []
     train_loss = []
