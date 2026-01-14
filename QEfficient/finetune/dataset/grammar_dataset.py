@@ -23,7 +23,7 @@ class grammar(Dataset):
             )
         except FileNotFoundError:
             logger.raise_error(
-                "Loading of grammar dataset failed! Please check (https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb) for details on how to download the dataset.",
+                "Loading of grammar dataset failed! Please check (https://github.com/meta-llama/llama-cookbook/blob/main/src/llama_cookbook/datasets/grammar_dataset/grammar_dataset_process.ipynb) for details on how to download the dataset.",
                 FileNotFoundError,
             )
 
