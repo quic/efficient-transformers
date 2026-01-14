@@ -138,6 +138,7 @@ def main(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     trust_remote_code: Optional[bool] = False,
+    ccl_enabled: Optional[bool] = False,
     **kwargs,
 ) -> None:
     """
@@ -237,7 +238,6 @@ def main(
         if args.mxint8:
             logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
 
-    ccl_enabled = kwargs.pop("ccl_enabled", False)
     qaic_config = {"ccl_enabled": True} if ccl_enabled else None
 
     qeff_model = QEFFCommonLoader.from_pretrained(
