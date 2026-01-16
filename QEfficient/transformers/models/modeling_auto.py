@@ -57,7 +57,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     SpDTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
-    GenericModelTransform
+    GenericModelTransform,
 )
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
@@ -843,7 +843,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
         inputs_np = dict(input_ids=input_ids, attention_mask=attention_mask)
         outputs = self.qpc_session.run(inputs_np)
-        
+
         return {"logits": torch.from_numpy(outputs["logits"])}
 
     def pytorch_classification_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> dict:

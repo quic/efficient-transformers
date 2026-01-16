@@ -26,30 +26,29 @@ from transformers.models.deberta_v2.modeling_deberta_v2 import (
 
 # ONNX-compatible helper functions (without @torch.jit.script)
 
+
 def make_log_bucket_position_onnx(relative_pos, bucket_size: int, max_position: int):
     """
     ONNX-compatible version of make_log_bucket_position.
-    
+
     Removes @torch.jit.script decorator and rewrites conditional logic
     to avoid dynamic branching that creates non-constant If operators in ONNX.
     """
     sign = torch.sign(relative_pos)
     mid = bucket_size // 2
     abs_pos = torch.abs(relative_pos)
-    
+
     # Instead of torch.where with complex conditions, use mask-based approach
     # Original: torch.where((relative_pos < mid) & (relative_pos > -mid), mid-1, abs_pos)
     is_in_mid_range = abs_pos < mid
     abs_pos_clamped = torch.where(is_in_mid_range, torch.tensor(mid - 1).type_as(relative_pos), abs_pos)
-    
+
     # Compute log position
     log_pos = (
-        torch.ceil(
-            torch.log(abs_pos_clamped / mid) / torch.log(torch.tensor((max_position - 1) / mid)) * (mid - 1)
-        )
+        torch.ceil(torch.log(abs_pos_clamped / mid) / torch.log(torch.tensor((max_position - 1) / mid)) * (mid - 1))
         + mid
     )
-    
+
     # Select between relative_pos and log_pos based on whether abs_pos <= mid
     bucket_pos = torch.where(abs_pos <= mid, relative_pos.type_as(log_pos), log_pos * sign)
     return bucket_pos
@@ -58,7 +57,7 @@ def make_log_bucket_position_onnx(relative_pos, bucket_size: int, max_position: 
 def build_relative_position_onnx(query_layer, key_layer, bucket_size: int = -1, max_position: int = -1):
     """
     ONNX-compatible version of build_relative_position.
-    
+
     Build relative position according to the query and key.
     """
     query_size = query_layer.size(-2)
@@ -67,10 +66,10 @@ def build_relative_position_onnx(query_layer, key_layer, bucket_size: int = -1, 
     q_ids = torch.arange(query_size, dtype=torch.long, device=query_layer.device)
     k_ids = torch.arange(key_size, dtype=torch.long, device=key_layer.device)
     rel_pos_ids = q_ids[:, None] - k_ids[None, :]
-    
+
     if bucket_size > 0 and max_position > 0:
         rel_pos_ids = make_log_bucket_position_onnx(rel_pos_ids, bucket_size, max_position)
-    
+
     rel_pos_ids = rel_pos_ids.to(torch.long)
     rel_pos_ids = rel_pos_ids[:query_size, :]
     rel_pos_ids = rel_pos_ids.unsqueeze(0)
@@ -100,7 +99,7 @@ def scaled_size_sqrt_onnx(query_layer: torch.Tensor, scale_factor: int):
 def build_rpos_onnx(query_layer, key_layer, relative_pos, position_buckets: int, max_relative_positions: int):
     """
     ONNX-compatible version of build_rpos.
-    
+
     Removes @torch.jit.script and conditional logic that depends on tensor sizes.
     Instead, we always compute the relative position to avoid dynamic branching.
     """
@@ -121,7 +120,7 @@ def build_rpos_onnx(query_layer, key_layer, relative_pos, position_buckets: int,
 class QEffDisentangledSelfAttention(DisentangledSelfAttention):
     """
     ONNX-compatible version of DisentangledSelfAttention.
-    
+
     Overrides methods to use ONNX-compatible helper functions without @torch.jit.script.
     """
 
@@ -262,7 +261,7 @@ class QEffDisentangledSelfAttention(DisentangledSelfAttention):
 class QEffDebertaV2ForSequenceClassification(DebertaV2ForSequenceClassification):
     """
     ONNX-compatible version of DebertaV2ForSequenceClassification.
-    
+
     This class ensures that the DisentangledSelfAttention modules are replaced
     with QEffDisentangledSelfAttention during initialization.
     """
@@ -278,8 +277,6 @@ class QEffDebertaV2ForSequenceClassification(DebertaV2ForSequenceClassification)
         Replace all DisentangledSelfAttention modules with QEffDisentangledSelfAttention.
         """
         for module in self.modules():
-            if isinstance(module, DisentangledSelfAttention) and not isinstance(
-                module, QEffDisentangledSelfAttention
-            ):
+            if isinstance(module, DisentangledSelfAttention) and not isinstance(module, QEffDisentangledSelfAttention):
                 # Replace the class of the module
                 module.__class__ = QEffDisentangledSelfAttention
