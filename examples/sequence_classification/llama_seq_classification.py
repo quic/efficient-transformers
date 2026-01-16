@@ -1,5 +1,5 @@
-import torch
 from transformers import AutoTokenizer
+
 from QEfficient import QEFFAutoModelForSequenceClassification
 
 model_id = "meta-llama/Llama-Prompt-Guard-2-22M"

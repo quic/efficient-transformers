@@ -46,6 +46,7 @@ from QEfficient.transformers.modeling_utils import (
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
     CustomOpsTransform,
+    GenericModelTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
@@ -57,7 +58,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     SpDTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
-    GenericModelTransform,
 )
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
