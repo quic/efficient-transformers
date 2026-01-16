@@ -677,14 +677,13 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         logits = logits.float()
         return logits, pixel_values, image_idx, outputs.past_key_values
 
-    def get_npi_file(self, model_name: str)-> str:
+    def get_npi_file(self, model_name: str) -> str:
         if constants.NPI_MAPPING[model_name] is not None:
             return constants.NPI_MAPPING[model_name]
         else:
             raise ValueError(
                 f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added for this particular model. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
             )
-        
 
     def get_specializations(
         self,
