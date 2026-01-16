@@ -22,9 +22,9 @@ from QEfficient.finetune.utils.helper import (
     Task_Mode,
     get_autocast_ctx,
     get_grad_scaler,
+    get_local_rank,
     get_node_rank,
     get_op_verifier_ctx,
-    get_rank,
     get_world_size,
     init_qaic_profiling,
     is_rank_zero,
@@ -69,7 +69,7 @@ def train(
     device_type = torch.device(device).type
 
     node_rank = get_node_rank()
-    rank = get_rank()
+    local_rank = get_local_rank()
 
     # Update output_dir to include the node rank suffix
     train_config.output_dir = f"{train_config.output_dir}_node_rank_{node_rank}"
@@ -82,9 +82,7 @@ def train(
     if train_config.save_metrics:
         if not os.path.exists(train_config.output_dir):
             os.makedirs(train_config.output_dir, exist_ok=True)
-        metrics_filename = (
-            f"{train_config.output_dir}/metrics_data_{rank}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
-        )
+        metrics_filename = f"{train_config.output_dir}/metrics_data_node_{node_rank}_rank_{local_rank}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
         train_step_metric = []
         train_step_loss = []
         eval_step_loss = []
