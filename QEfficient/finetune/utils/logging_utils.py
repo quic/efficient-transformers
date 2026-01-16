@@ -9,7 +9,7 @@ import logging
 import os
 from datetime import datetime
 
-from QEfficient.finetune.utils.helper import is_rank_zero
+from QEfficient.finetune.utils.helper import get_node_rank, is_rank_zero
 
 
 class FTLogger:
@@ -31,6 +31,8 @@ class FTLogger:
         def prepare_for_logs(output_path, dump_logs=False, level=logging.INFO):
             self.logger.setLevel(level)
             if dump_logs:
+                node_rank = get_node_rank()
+                output_path = f"{output_path}_node_rank_{node_rank}"
                 logs_path = os.path.join(output_path, "logs")
                 if not os.path.exists(logs_path):
                     os.makedirs(logs_path, exist_ok=True)
