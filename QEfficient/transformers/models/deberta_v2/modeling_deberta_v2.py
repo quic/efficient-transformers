@@ -5,35 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 
-"""
-ONNX-compatible DeBERTa-v2 model implementations.
-
-This module provides QEfficient versions of DeBERTa-v2 models that are compatible
-with ONNX export and compilation. The main changes are:
-
-1. Removed @torch.jit.script decorators that cause non-constant condition tensor errors
-2. Rewrote conditional logic to avoid dynamic branching in ONNX graph
-3. Replaced torch.where with mask-based operations where possible
-"""
-
 import torch
 from torch import nn
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
-    DebertaV2ForSequenceClassification,
     DisentangledSelfAttention,
 )
 
 
-# ONNX-compatible helper functions (without @torch.jit.script)
-
-
 def make_log_bucket_position_onnx(relative_pos, bucket_size: int, max_position: int):
-    """
-    ONNX-compatible version of make_log_bucket_position.
-
-    Removes @torch.jit.script decorator and rewrites conditional logic
-    to avoid dynamic branching that creates non-constant If operators in ONNX.
-    """
     sign = torch.sign(relative_pos)
     mid = bucket_size // 2
     abs_pos = torch.abs(relative_pos)
@@ -56,8 +35,6 @@ def make_log_bucket_position_onnx(relative_pos, bucket_size: int, max_position: 
 
 def build_relative_position_onnx(query_layer, key_layer, bucket_size: int = -1, max_position: int = -1):
     """
-    ONNX-compatible version of build_relative_position.
-
     Build relative position according to the query and key.
     """
     query_size = query_layer.size(-2)
@@ -77,22 +54,18 @@ def build_relative_position_onnx(query_layer, key_layer, bucket_size: int = -1, 
 
 
 def c2p_dynamic_expand_onnx(c2p_pos, query_layer, relative_pos):
-    """ONNX-compatible version without @torch.jit.script"""
     return c2p_pos.expand([query_layer.size(0), query_layer.size(1), query_layer.size(2), relative_pos.size(-1)])
 
 
 def p2c_dynamic_expand_onnx(c2p_pos, query_layer, key_layer):
-    """ONNX-compatible version without @torch.jit.script"""
     return c2p_pos.expand([query_layer.size(0), query_layer.size(1), key_layer.size(-2), key_layer.size(-2)])
 
 
 def pos_dynamic_expand_onnx(pos_index, p2c_att, key_layer):
-    """ONNX-compatible version without @torch.jit.script"""
     return pos_index.expand(p2c_att.size()[:2] + (pos_index.size(-2), key_layer.size(-2)))
 
 
 def scaled_size_sqrt_onnx(query_layer: torch.Tensor, scale_factor: int):
-    """ONNX-compatible version without @torch.jit.script"""
     return torch.sqrt(torch.tensor(query_layer.size(-1), dtype=torch.float) * scale_factor)
 
 
@@ -256,27 +229,3 @@ class QEffDisentangledSelfAttention(DisentangledSelfAttention):
         if not output_attentions:
             return (context_layer, None)
         return (context_layer, attention_probs)
-
-
-class QEffDebertaV2ForSequenceClassification(DebertaV2ForSequenceClassification):
-    """
-    ONNX-compatible version of DebertaV2ForSequenceClassification.
-
-    This class ensures that the DisentangledSelfAttention modules are replaced
-    with QEffDisentangledSelfAttention during initialization.
-    """
-
-    def __init__(self, config):
-        super().__init__(config)
-        # The parent class initialization will create the model structure
-        # We need to replace DisentangledSelfAttention with QEffDisentangledSelfAttention
-        self._replace_attention_modules()
-
-    def _replace_attention_modules(self):
-        """
-        Replace all DisentangledSelfAttention modules with QEffDisentangledSelfAttention.
-        """
-        for module in self.modules():
-            if isinstance(module, DisentangledSelfAttention) and not isinstance(module, QEffDisentangledSelfAttention):
-                # Replace the class of the module
-                module.__class__ = QEffDisentangledSelfAttention

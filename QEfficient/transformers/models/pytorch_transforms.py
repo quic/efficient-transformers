@@ -18,7 +18,6 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenModel,
 )
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
-    DebertaV2ForSequenceClassification,
     DisentangledSelfAttention,
 )
 from transformers.models.falcon.modeling_falcon import (
@@ -225,7 +224,6 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenModel,
 )
 from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
-    QEffDebertaV2ForSequenceClassification,
     QEffDisentangledSelfAttention,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
@@ -881,7 +879,6 @@ class GenericModelTransform(ModuleMappingTransform):
         T5Attention: QEffT5Attention,
         T5LayerNorm: QEffT5LayerNorm,
         # DebertaV2
-        DebertaV2ForSequenceClassification: QEffDebertaV2ForSequenceClassification,
         DisentangledSelfAttention: QEffDisentangledSelfAttention,
     }
 
