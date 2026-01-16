@@ -64,6 +64,15 @@ def get_local_rank() -> int:
     return int(os.getenv("LOCAL_RANK", 0))
 
 
+def get_node_rank() -> int:
+    """Get the node rank of the process.
+
+    In DDP, this should correspond to the 'GROUP_RANK' environment variable set by torchrun.
+    In non-DDP use case, returns 0.
+    """
+    return int(os.getenv("GROUP_RANK", 0))
+
+
 def is_rank_zero() -> bool:
     """Checks whether the current process is in rank-0 in case of DDP. For
     non-DDP use case it will always return True.
