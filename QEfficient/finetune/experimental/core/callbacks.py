@@ -203,3 +203,36 @@ def create_callbacks(name: str, **kwargs) -> Any:
     if callback_class is None:
         raise ValueError(f"Unknown callback: {name}. Available: {registry.list_callbacks()}")
     return callback_class(**kwargs)
+
+
+def replace_progress_callback(trainer: Any, callbacks: list[Any], logger: Any = None) -> None:
+    """
+    Replace default ProgressCallback with EnhancedProgressCallback if not already present.
+
+    Args:
+        trainer: Trainer instance
+        callbacks: List of callbacks already added
+        logger: Optional logger instance for warning messages
+    """
+    # Check if EnhancedProgressCallback is already in callbacks
+    has_enhanced = any(callback.__class__.__name__ == "EnhancedProgressCallback" for callback in callbacks)
+
+    if not has_enhanced:
+        try:
+            # Remove default ProgressCallback if present
+            trainer.remove_callback(ProgressCallback)
+        except (AttributeError, ValueError):
+            # Callback not present or method doesn't exist, continue
+            pass
+
+        try:
+            # Add EnhancedProgressCallback
+            enhanced_callback = create_callbacks("enhanced_progressbar")
+            trainer.add_callback(enhanced_callback)
+        except Exception as e:
+            if logger:
+                logger.log_rank_zero(f"Warning: Could not add enhanced progress callback: {e}", level="warning")
+            else:
+                import warnings
+
+                warnings.warn(f"Could not add enhanced progress callback: {e}")
