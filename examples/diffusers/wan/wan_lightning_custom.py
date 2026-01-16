@@ -85,8 +85,8 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # Uncomment the following lines to use only a subset of transformer layers:
 #
 # # Configure for 2-layer model (faster inference)
-# pipeline.transformer.model.transformer_high.config.num_layers = 1
-# pipeline.transformer.model.transformer_low.config.num_layers = 1
+# pipeline.transformer.model.transformer_high.config['num_layers'] = 2
+# pipeline.transformer.model.transformer_low.config['num_layers']= 2
 #
 # # Reduce high noise transformer blocks
 # original_blocks = pipeline.transformer.model.transformer_high.blocks
