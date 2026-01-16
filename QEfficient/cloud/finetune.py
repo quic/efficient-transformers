@@ -414,12 +414,7 @@ def main(**kwargs) -> None:
         # which will further reduce the tensor exchange across devices.
         torch.nn.parallel.DistributedDataParallel._set_params_and_buffers_to_ignore_for_model(model, ignore_names)
 
-        ddp_kwargs = {}
-        # Only set device_ids for non-CPU devices
-        if device.type != "cpu" and not train_config.enable_pp:
-            ddp_kwargs["device_ids"] = [device]
-
-        model = nn.parallel.DistributedDataParallel(model, **ddp_kwargs)
+        model = nn.parallel.DistributedDataParallel(model)
 
     results = train(
         model,
