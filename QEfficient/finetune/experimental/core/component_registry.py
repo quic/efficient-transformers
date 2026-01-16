@@ -208,3 +208,24 @@ class ComponentFactory:
             raise ValueError(f"Unknown model: {model_type}. Available: {registry.list_models()}")
         model_instance = model_class.create(model_name, **kwargs)
         return model_instance
+
+    @staticmethod
+    def create_dataset(dataset_type: str, dataset_name: str, split: str, seed: int = 42, **kwargs) -> any:
+        """
+        Create a dataset instance.
+
+        Args:
+            dataset_type: Type of dataset to create (e.g., 'sft_dataset')
+            dataset_name: Name of the dataset to load
+            split: Dataset split ("train", "test", etc.)
+            seed: Random seed for reproducibility
+            **kwargs: Additional dataset configuration parameters
+
+        Returns:
+            Dataset instance
+        """
+        dataset_class = registry.get_dataset(dataset_type)
+        if dataset_class is None:
+            raise ValueError(f"Unknown dataset type: {dataset_type}. Available: {registry.list_datasets()}")
+        dataset_instance = dataset_class(dataset_name=dataset_name, split=split, seed=seed, **kwargs)
+        return dataset_instance
