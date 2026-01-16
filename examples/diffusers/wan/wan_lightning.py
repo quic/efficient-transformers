@@ -56,6 +56,7 @@ output = pipeline(
     width=832,
     use_onnx_subfunctions=True,
     parallel_compile=True,
+    skip_compile=False,
 )
 frames = output.images[0]
 export_to_video(frames, "output_t2v.mp4", fps=16)

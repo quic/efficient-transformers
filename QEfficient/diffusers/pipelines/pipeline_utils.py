@@ -126,6 +126,11 @@ def set_module_device_ids(cls):
     for module_name, module_obj in cls.modules.items():
         module_obj.device_ids = config_modules[module_name]["execute"]["device_ids"]
 
+def set_module_qpc_path_to_skip_compile(cls):
+    """ Set qpc path for each module based on the custom configuration to skip compilation."""
+    config_modules = cls.custom_config["modules"]
+    for module_name, module_obj in cls.modules.items():
+        module_obj.qpc_path = config_modules[module_name]["execute"]["qpc_path"]
 
 def compile_modules_parallel(
     modules: Dict[str, Any],

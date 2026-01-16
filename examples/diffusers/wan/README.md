@@ -209,8 +209,16 @@ The configuration includes dual specializations for WAN's high and low noise mod
 - **`generator`** (torch.Generator): Random seed for reproducibility
 - **`parallel_compile`** (bool): Enable parallel compilation of modules
 - **`use_onnx_subfunctions`** (bool): Enable ONNX modular export
+- **`skip_compile`** (bool): To skip compilation, if we qpcs available for all modules
 
-
+**Note**: if **skip_compile=True**, update qpc_path for each module in config.json
+```
+"execute":
+          {
+           "device_ids": null,
+           "qpc_path" : "<QPC_PATH>"
+          }
+```
 ## Output
 
 The pipeline returns an output object containing:

@@ -34,6 +34,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     compile_modules_sequential,
     config_manager,
     set_module_device_ids,
+    set_module_qpc_path_to_skip_compile,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -313,8 +314,6 @@ class QEffWanPipeline:
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
-        # Load compilation configuration
-        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Configure pipeline dimensions and calculate compressed latent parameters
         cl, latent_height, latent_width, latent_frames = calculate_latent_dimensions_with_frames(
@@ -382,6 +381,7 @@ class QEffWanPipeline:
         custom_config_path: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
         parallel_compile: bool = True,
+        skip_compile: bool = False,
     ):
         """
         Generate videos from text prompts using the QEfficient-optimized WAN pipeline on QAIC hardware.
@@ -451,15 +451,21 @@ class QEffWanPipeline:
         """
         device = "cpu"
 
-        # Compile models with custom configuration if needed
-        self.compile(
-            compile_config=custom_config_path,
-            parallel=parallel_compile,
-            use_onnx_subfunctions=use_onnx_subfunctions,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-        )
+        # Load compilation configuration
+        config_manager(self, config_source=custom_config_path, use_onnx_subfunctions=use_onnx_subfunctions)
+
+        if skip_compile: # if qpc is available
+            set_module_qpc_path_to_skip_compile(self)
+        else:
+            # Compile models with custom configuration if needed
+            self.compile(
+                compile_config=custom_config_path,
+                parallel=parallel_compile,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+            )
 
         # Set device IDs for all modules based on configuration
         set_module_device_ids(self)
