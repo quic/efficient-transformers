@@ -1,7 +1,17 @@
-#############################################################################################
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+
+# -------------------------------------------------------------------------------
+#
 # This code is a modified version of code available at:
 #  https://github.com/meta-llama/llama-cookbook/blob/main/src/llama_cookbook/datasets/grammar_dataset/grammar_dataset_process.ipynb
-#############################################################################################
+#
+# -------------------------------------------------------------------------------
 
 import csv
 from pathlib import Path
