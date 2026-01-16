@@ -242,7 +242,7 @@ def set_num_layers(config, n_layer=1):
     return config
 
 
-def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+def test_image_text_to_text_subfunction_core(
     model_name: str,
     img_size: int,
     img_url: str,
@@ -317,6 +317,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         mxfp6=False,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        offload_pt_weights=True,
         onnx_path=with_sub_func_onnx,
     )
 
@@ -341,3 +342,30 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     assert (tokens_sub == tokens_no_sub).all(), "Tokens don't match for pytorch HF output and QPC output"
     return
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
+)
+def test_image_text_to_text_subfunction(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
+):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    test_image_text_to_text_subfunction_core(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+    )
