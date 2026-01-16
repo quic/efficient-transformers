@@ -885,6 +885,7 @@ class GenericModelTransform(ModuleMappingTransform):
         DisentangledSelfAttention: QEffDisentangledSelfAttention,
     }
 
+
 class PoolingTransform:
     """
     Apply a pooling transformation to the model. This transformation appends a pooling layer to the model, allowing for the reduction of spatial dimensions in the output.
