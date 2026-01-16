@@ -23,7 +23,7 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxTransformerBlock,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
-    T5ModelTransform,
+    GenericModelTransform,
 )
 from QEfficient.utils import constants
 
@@ -42,7 +42,7 @@ class QEffTextEncoder(QEFFBaseModel):
         _onnx_transforms (List): ONNX transformations applied after export
     """
 
-    _pytorch_transforms = [CustomOpsTransform, T5ModelTransform]
+    _pytorch_transforms = [CustomOpsTransform, GenericModelTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     @property
