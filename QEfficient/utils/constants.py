@@ -24,6 +24,15 @@ ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
 
+NPI_MAPPING = {
+    "google/gemma-3-4b-it": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
+    ),
+    "google/gemma-3-27b-it": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_27b.yaml"
+    ),
+}
+
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
