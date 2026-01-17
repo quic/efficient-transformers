@@ -20,9 +20,10 @@ classifiers = [
 requires-python = ">=3.8,<3.11"
 dependencies = [
     "transformers==4.55.0",
+    "diffusers== 0.35.1",
     "huggingface-hub==0.34.0",
     "hf_transfer==0.1.9",
-    "peft==0.13.2",
+    "peft==0.17.0",
     "datasets==2.20.0",
     "fsspec==2023.6.0",
     "multidict==6.0.4",
@@ -39,18 +40,22 @@ dependencies = [
     "fire",
     "py7zr",
     "torchmetrics==1.7.0",
+    "ftfy==6.3.1",
+    "imageio==2.37.2",
+    "imageio-ffmpeg==0.6.0",
     "torch==2.7.0; platform_machine=='aarch64'",
     # Specifying torch cpu package URL per python version, update the list once pytorch releases whl for python>3.11
     "torch@https://download.pytorch.org/whl/cpu/torch-2.4.1%2Bcpu-cp38-cp38-linux_x86_64.whl ; python_version=='3.8' and platform_machine=='x86_64'",
     "torch@https://download.pytorch.org/whl/cpu/torch-2.7.0%2Bcpu-cp39-cp39-manylinux_2_28_x86_64.whl ; python_version=='3.9' and platform_machine=='x86_64'",
     "torch@https://download.pytorch.org/whl/cpu/torch-2.7.0%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
+    "torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.22.0%2Bcpu-cp39-cp39-manylinux_2_28_x86_64.whl ; python_version=='3.9' and platform_machine=='x86_64'",
+    "torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.22.0%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
 ]
 
 [project.optional-dependencies]
 test = ["pytest","pytest-mock"]
 docs = ["Sphinx==7.1.2","sphinx-rtd-theme==2.0.0","myst-parser==3.0.1","sphinx-multiversion"]
 quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
-
 [build-system]
 requires = ["setuptools>=62.0.0"]
 build-backend = "setuptools.build_meta"
@@ -72,3 +77,16 @@ target-version = "py310"
 addopts = "-W ignore -s -v"
 junit_logging = "all"
 doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
+markers = [
+    "on_qaic: marks tests as requiring QAIC hardware",
+    "diffusion_models: marks tests for diffusion models",
+    "wan: marks tests for WAN model",
+    "flux: marks tests for Flux model",
+    "regular: marks regular tests",
+    "nightly: marks nightly tests",
+    "multimodal: marks multimodal tests",
+    "qnn: marks QNN tests",
+    "cli: marks CLI tests",
+    "finetune: marks finetune tests",
+    "vllm: marks vLLM tests"
+]

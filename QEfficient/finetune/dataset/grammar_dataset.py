@@ -23,7 +23,7 @@ class grammar(Dataset):
             )
         except FileNotFoundError:
             logger.raise_error(
-                "Loading of grammar dataset failed! Please check (https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb) for details on how to download the dataset.",
+                "Loading of grammar dataset failed! Please check (https://drive.google.com/drive/folders/1kKlGcinD_FhGXC0LztN4Ts605YXzMEVA) to download the c4_200m_550k.csv. Copy-paste the path of this downloaded csv in the grammar_dataset_preprocess.py and run this file",
                 FileNotFoundError,
             )
 
@@ -44,17 +44,23 @@ class grammar(Dataset):
         target_ = example_batch["target"]
 
         prompt = f"Correct this to standard English: {input_}\n---\nCorrected: "
+
+        if self.context_length is not None:
+            padding_type = "max_length"
+        else:
+            padding_type = True
+
         prompt_ids = self.tokenizer.encode(
             self.tokenizer.bos_token + prompt,
             add_special_tokens=False,
             max_length=self.context_length,
-            pad_to_max_length=True,
+            padding=padding_type,
         )
         label_ids = self.tokenizer.encode(
             target_ + self.tokenizer.eos_token,
             add_special_tokens=False,
             max_length=self.context_length,
-            pad_to_max_length=True,
+            padding=padding_type,
         )
 
         sample = {

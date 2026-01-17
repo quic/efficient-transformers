@@ -185,7 +185,11 @@ qeff_supported_architectures = ModelArchitectures(
     ]
 )
 
+# This is for supporting different seq_len for different layers for Sliding window attn, chunked attn etc.
 DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "llama4", "gemma3_text", "llama4_text"}
+
+# This is for supporting different modelling classes specially written for prefill-only model
+SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss"}
 
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.

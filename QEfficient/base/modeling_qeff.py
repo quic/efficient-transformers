@@ -18,7 +18,10 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import (
+    BaseOnnxTransform,
+    OnnxTransformPipeline,
+)
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -27,11 +30,11 @@ from QEfficient.utils import (
     create_json,
     create_model_params,
     dump_qconfig,
-    export_wrapper,
     generate_mdp_partition_config,
     hash_dict_params,
     load_json,
 )
+from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,7 @@ class QEFFBaseModel(ABC):
     """
 
     _pytorch_transforms: List[PytorchTransform]
-    _onnx_transforms: List[OnnxTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     @classmethod
     def _transform_names(cls) -> List[str]:
@@ -78,26 +81,26 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _offload_model_weights(self, offload_pt_weights) -> bool:
-        """
-        Clear PyTorch weights after export if offload_pt_weights is set to True
-
-        Returns:
-            bool: True if weights were successfully offloaded, False otherwise
-        """
-        # Check if offloading is enabled and weights are not already offloaded
+    def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
+        """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
-                self.model = self.model.to_empty(device="meta")
-                self._is_weights_offloaded = True
-                logger.info("Model weights offloaded to meta device")
+                for param in self.model.parameters():
+                    if param.storage():
+                        param.storage().resize_(0)
+                for buffer in self.model.buffers():
+                    if buffer.storage():
+                        buffer.storage().resize_(0)
 
+                meta_model = self.model.to("meta")
+                del self.model
                 gc.collect()
-                logger.info("PyTorch weights cleared after export")
-                return True
 
+                self.model = meta_model
+                self._is_weights_offloaded = True
+                return True
             except Exception as e:
-                logger.error(f"Failed to offload model weights: {e}")
+                logger.warning(f"Weight clearing failed, continuing: {e}")
                 return False
         return False
 
@@ -117,8 +120,34 @@ class QEFFBaseModel(ABC):
             raise RuntimeError(error_msg)
 
     @property
+    def model_name(self) -> str:
+        """
+        Get the model class name without QEff/QEFF prefix.
+
+        This property extracts the underlying model's class name and removes
+        any QEff or QEFF prefix that may have been added during wrapping.
+
+        Returns:
+            str: Model class name (e.g., "CLIPTextModel" instead of "QEffCLIPTextModel")
+        """
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname
+
+    @property
     @abstractmethod
-    def model_name(self) -> str: ...
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        This is an abstract property that must be implemented by all subclasses.
+        Typically returns: self.model.config.__dict__
+
+        Returns:
+            Dict: The configuration dictionary of the underlying model
+        """
+        pass
 
     @abstractmethod
     def export(self, export_dir: Optional[str] = None) -> Path:
@@ -175,10 +204,11 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
+        prefill_only: Optional[bool] = False,
+        **export_kwargs,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
@@ -203,6 +233,8 @@ class QEFFBaseModel(ABC):
             instance using from_pretrained() for re-export.
 
         """
+        # TODO: Hack for retain_full_kv, handle this outside
+        export_kwargs.pop("retain_full_kv", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
@@ -243,7 +275,6 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
-            export_kwargs = {} if export_kwargs is None else export_kwargs
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -255,10 +286,10 @@ class QEFFBaseModel(ABC):
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
-
             _ = self._offload_model_weights(offload_pt_weights)
-
             model = onnx.load(tmp_onnx_path, load_external_data=False)
+
+            # Clear temporary references
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
@@ -266,15 +297,18 @@ class QEFFBaseModel(ABC):
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
 
-            for transform in self._onnx_transforms:
-                model, transformed = transform.apply(model, **transform_kwargs)
+            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+            model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
+            # Add metadata to the model
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
 
             onnx.save(model, onnx_path)
+            del model
+            gc.collect()
             logger.info("Transformed ONNX saved")
 
         except Exception as e:
@@ -286,6 +320,33 @@ class QEFFBaseModel(ABC):
 
         self.onnx_path = onnx_path
         return onnx_path
+
+    def get_onnx_path(
+        self,
+        prefill_only: Optional[bool] = False,
+        enable_chunking: Optional[bool] = False,
+        specializations: Optional[List[Dict[str, int]]] = None,
+        offload_pt_weights: Optional[bool] = True,
+        use_onnx_subfunctions: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
+    ):
+        kwargs = {
+            "offload_pt_weights": offload_pt_weights,
+            "use_onnx_subfunctions": use_onnx_subfunctions,
+            "retain_full_kv": retain_full_kv,
+        }
+
+        if prefill_only:
+            kwargs.update(
+                {
+                    "prefill_only": prefill_only,
+                    "prefill_seq_len": specializations[0].get("seq_len"),
+                    "enable_chunking": enable_chunking,
+                }
+            )
+
+        self.export(**kwargs)
+        return self.onnx_path
 
     @dump_qconfig
     def _compile(
@@ -300,6 +361,11 @@ class QEFFBaseModel(ABC):
         num_speculative_tokens: Optional[int] = None,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
+        use_onnx_subfunctions: bool = False,
+        prefill_only: Optional[str] = None,
+        offload_pt_weights: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = None,
         **compiler_options,
     ) -> str:
         """
@@ -325,10 +391,20 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-        if onnx_path is None and self.onnx_path is None:
-            self.export()
-
-        onnx_path = Path(onnx_path or self.onnx_path)
+        onnx_path = Path(
+            onnx_path
+            if onnx_path
+            else self.onnx_path
+            if self.onnx_path
+            else self.get_onnx_path(
+                prefill_only,
+                enable_chunking,
+                specializations,
+                offload_pt_weights,
+                use_onnx_subfunctions,
+                retain_full_kv,
+            )
+        )
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():
@@ -362,8 +438,27 @@ class QEFFBaseModel(ABC):
             + [f"-m={onnx_path}"]
         )
 
-        if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
+        # MDP partition config: prioritize dump over load
+        mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
+        mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        mdp_ts_json = None
+        user_provided_load_config = False
+
+        if mdp_dump_json_path:
+            if mdp_ts_json_path:
+                logger.warning(
+                    "Loading and Dumping partition is not supported at the same time. Prioritizing dump config over load config!"
+                )
+            command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
+        elif mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+            mdp_ts_json = load_json(str(mdp_ts_json_path))
+            user_provided_load_config = True
+        elif mdp_ts_num_devices > 1:
+            # Generate mdp config only if neither dump nor load is provided and num_devices > 1
+            mdp_ts_json = generate_mdp_partition_config(
+                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            )
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
@@ -373,15 +468,9 @@ class QEFFBaseModel(ABC):
                 continue
             command.append(f"{option}={value}")
 
-        # Create a dummy mdp_ts_json if mdp-load-partition-config not provided and num_devices > 1
-        if mdp_ts_json_path is not None:
-            mdp_ts_json = load_json(str(mdp_ts_json_path))
-        elif mdp_ts_num_devices > 1:
-            mdp_ts_json = generate_mdp_partition_config(
-                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
-            )
-        else:
-            mdp_ts_json = None
+        if use_onnx_subfunctions:
+            logger.info("Using ONNX subfunctions for compilation.")
+            command.append("-sub-functions")
 
         compile_hash_params = {
             "command": command,
@@ -390,6 +479,7 @@ class QEFFBaseModel(ABC):
             "mdp_ts_num_devices": mdp_ts_num_devices,
             "mdp_ts_json": mdp_ts_json,
             "num_speculative_tokens": num_speculative_tokens,
+            "prefill_only": prefill_only,
         }
         compile_hash = hash_dict_params(compile_hash_params)
 
@@ -404,8 +494,8 @@ class QEFFBaseModel(ABC):
             # Probably compilation failure last time, delete directory to start over
             shutil.rmtree(qpc_path)
 
-        # write the MDP partition config file if not provided
-        if mdp_ts_json is not None:
+        # Write the generated MDP partition config file (not if user provided it)
+        if mdp_ts_json is not None and not user_provided_load_config:
             mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
@@ -429,6 +519,7 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
+
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
@@ -449,5 +540,4 @@ class QEFFBaseModel(ABC):
         logger.info("Hashed parameters exported successfully.")
 
         self.qpc_path = qpc_path
-
         return qpc_path

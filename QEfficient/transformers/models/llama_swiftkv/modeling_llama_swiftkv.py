@@ -89,6 +89,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         hidden_states: torch.Tensor,
         position_ids: torch.LongTensor,
         past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: torch.Tensor = None,
         batch_index: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
@@ -98,6 +99,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         # Reshape the query, key, and value tensors.
         query_states = query.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
 
+        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         if past_key_value is not None:
             if self.layer_idx is None:
                 raise ValueError(
@@ -105,8 +107,10 @@ class QEffLlamaSwiftKVAttention(nn.Module):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
-        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
@@ -155,6 +159,7 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         position_ids: torch.Tensor,
         past_key_values,
+        comp_ctx_lengths,
         causal_mask,
         batch_index: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -166,6 +171,7 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
             hidden_states=hidden_states,
             position_ids=position_ids,
             past_key_value=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=causal_mask,
             batch_index=batch_index,
         )
@@ -201,11 +207,19 @@ class QEffLlamaSwiftKVModel(nn.Module):
         self.norm_swiftkv = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def _run_swiftkv_layers(
-        self, hidden_states: torch.Tensor, position_ids: torch.Tensor, past_key_values, causal_mask, batch_index
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        past_key_values,
+        comp_ctx_lengths,
+        causal_mask,
+        batch_index,
     ) -> torch.Tensor:
         for layer_idx in range(self.config.num_key_value_layers, self.config.num_hidden_layers):
             layer = self.layers[layer_idx]
-            hidden_states = layer(hidden_states, position_ids, past_key_values, causal_mask, batch_index)
+            hidden_states = layer(
+                hidden_states, position_ids, past_key_values, comp_ctx_lengths, causal_mask, batch_index
+            )
 
         hidden_states = self.norm(hidden_states)
         return hidden_states, past_key_values
@@ -289,6 +303,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
         input_ids: Optional[torch.Tensor],
         position_ids: torch.Tensor,
         past_key_values: List[torch.Tensor],
+        comp_ctx_lengths: Optional[torch.LongTensor],
         batch_index: Optional[torch.LongTensor] = None,
     ):
         inputs_embeds = self.embed_tokens(input_ids)
@@ -328,6 +343,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 output_attentions=False,
                 use_cache=True,
@@ -373,7 +389,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
             causal_mask = causal_mask[torch.arange(bsz).reshape(-1, 1), :, last_pos_id, :]
 
         hidden_states, next_decoder_cache = self._run_swiftkv_layers(
-            hidden_states, position_ids, past_key_values, causal_mask, batch_index
+            hidden_states, position_ids, past_key_values, comp_ctx_lengths, causal_mask, batch_index
         )
         # We can fill the orig_hidden_states with the processed hidden_states here but it's not needed as for next token prediction
         # we only need the last valid pos_indices hidden_states.
@@ -405,9 +421,12 @@ class QEffLlamaSwiftKVForCausalLM(PreTrainedModel):
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         past_key_values: Optional[Union[List[torch.FloatTensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
     ):
-        hidden_states, output_past_key_values = self.model(input_ids, position_ids, past_key_values, batch_index)
+        hidden_states, output_past_key_values = self.model(
+            input_ids, position_ids, past_key_values, comp_ctx_lengths, batch_index
+        )
         logits = self.lm_head(hidden_states)
         return CausalLMOutputWithPast(
             loss=None,

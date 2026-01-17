@@ -125,10 +125,10 @@ You can pass input prompts in single string but separate with pipe (|) symbol". 
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
 ```
 
-You can also pass path of txt file with input prompts when you want to run inference on lot of prompts, Example below, sample txt file(prompts.txt) is present in examples folder.
+You can also pass path of txt file with input prompts when you want to run inference on lot of prompts, Example below, sample txt file(prompts.txt) is present in examples/sample_prompts folder.
 
 ```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/sample_prompts/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first
 ```
 **QNN CLI Inference Command**
 
@@ -220,5 +220,27 @@ Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/s
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 qeff_model.generate(prompts=["My name is"],tokenizer=tokenizer)
+```
+
+### Local Model Execution
+If the model and tokenizer are already downloaded, we can directly load them from local path.
+
+```python
+from QEfficient import QEFFAutoModelForCausalLM
+from transformers import AutoTokenizer
+
+# Local path to the downloaded model. You can find downloaded HF models in:
+# - Default location: ~/.cache/huggingface/hub/models--{model_name}/snapshots/{snapshot_id}/
+local_model_repo = "~/.cache/huggingface/hub/models--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e"
+
+# Load model from local path
+model = QEFFAutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=local_model_repo)
+
+model.compile(num_cores=16)
+
+# Load tokenizer from the same local path
+tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=local_model_repo)
+
+model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
 ```
 End to End demo examples for various models are available in [**notebooks**](https://github.com/quic/efficient-transformers/tree/main/notebooks) directory. Please check them out.

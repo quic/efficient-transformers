@@ -7,6 +7,9 @@
 
 *Latest news* :fire: <br>
 
+- [10/2025] Added support for Qwen2.5VL Multi-Model [Qwen/Qwen2.5-VL-32B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct)
+- [10/2025] Added support for Mistral3 Multi-Model [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)
+- [10/2025] Added support for Molmo Multi-Model [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924)
 - [06/2025] Added support for Llama4 Multi-Model [meta-llama/Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)
 - [06/2025] Added support for Gemma3 Multi-Modal-Model [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
 - [06/2025] Added support of model `hpcai-tech/grok-1` [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)
@@ -90,8 +93,12 @@ python3.10 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
-# Clone and Install the QEfficient Repo.
+# Clone and Install the QEfficient repository from the mainline branch
 pip install git+https://github.com/quic/efficient-transformers
+
+# Clone and Install the QEfficient repository from a specific branch, tag or commit by appending @ref
+# Release branch (e.g., release/v1.20.0):
+pip install "git+https://github.com/quic/efficient-transformers@release/v1.20.0"
 
 # Or build wheel package using the below command.
 pip install build wheel
@@ -105,8 +112,8 @@ For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Li
 
 ## Documentation
 
-* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
-* [Python API](https://quic.github.io/efficient-transformers/source/hl_api.html)
+* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)
+* [QEFF API](https://quic.github.io/efficient-transformers/source/qeff_autoclasses.html)
 * [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html)
 * [Models coming soon](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon)
 

@@ -37,7 +37,8 @@ class InstructionDataset(Dataset):
                 FileNotFoundError,
             )
         # Use 5% of the dataset for evaluation
-        eval_length = int(len(self.ann) / 20)
+        total_len = len(self.ann)
+        eval_length = max(1, int(total_len / 20))
         if partition == "train":
             self.ann = self.ann[eval_length:]
         else:
@@ -58,10 +59,15 @@ class InstructionDataset(Dataset):
         else:
             prompt = PROMPT_DICT["prompt_input"].format_map(ann)
         example = prompt + ann["output"]
+
+        if self.context_length is not None:
+            padding_type = "max_length"
+        else:
+            padding_type = True
         prompt = torch.tensor(
-            self.tokenizer.encode(prompt, max_length=self.context_length, pad_to_max_length=True), dtype=torch.int64
+            self.tokenizer.encode(prompt, max_length=self.context_length, padding=padding_type), dtype=torch.int64
         )
-        example = self.tokenizer.encode(example, max_length=self.context_length, pad_to_max_length=True)
+        example = self.tokenizer.encode(example, max_length=self.context_length, padding=padding_type)
         example.append(self.tokenizer.eos_token_id)
         example = torch.tensor(example, dtype=torch.int64)
         labels = copy.deepcopy(example)
