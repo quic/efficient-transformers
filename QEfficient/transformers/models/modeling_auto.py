@@ -53,6 +53,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PoolingTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
+    QBlockingAttentionTransform,
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyTransform,
     SamplerTransform,
