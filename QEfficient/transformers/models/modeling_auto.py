@@ -1031,12 +1031,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
+        offload_pt_weights = kwargs.get("offload_pt_weights", True)
         self.lang_model.export(
             inputs["lang"],
             output_names["lang"],
             dynamic_axes["lang"],
             export_dir=export_dir,
-            offload_pt_weights=True,
+            offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
 

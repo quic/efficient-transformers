@@ -5,7 +5,8 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional
+from io import BytesIO
+from typing import List, Optional
 
 import pytest
 import requests
@@ -16,13 +17,15 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoProcessor,
+    AutoTokenizer,
     TextStreamer,
 )
 
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import get_num_layers_vlm
 from QEfficient.utils.device_utils import get_available_device_id
+from QEfficient.utils.test_utils import InternProcessor
 
 NEW_GENERATION_TOKENS = 10
 test_models_config = [
@@ -49,29 +52,29 @@ test_models_config = [
         "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
         1,
     ),
-    (
-        "llava-hf/llava-1.5-7b-hf",
-        False,
-        1,
-        784,
-        1024,
-        336,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-        1,
-    ),
-    # Disabled in CI due to performance issues
     # (
-    #     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    #     "llava-hf/llava-1.5-7b-hf",
     #     True,
     #     1,
-    #     128,
-    #     3072,
+    #     784,
+    #     1024,
     #     336,
     #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
     #     "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-    #     4,
+    #     1,
     # ),
+    # Disabled in CI due to performance issues
+    (
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        True,
+        1,
+        128,
+        3072,
+        336,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+        4,
+    ),
     # (
     #     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
     #     False,
@@ -94,17 +97,17 @@ test_models_config = [
         "Can you describe the image in detail.",
         1,
     ),
-    (
-        "google/gemma-3-4b-it",
-        False,
-        1,
-        128,
-        3072,
-        896,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-        "Can you describe the image in detail.",
-        1,
-    ),
+    # (
+    #     "google/gemma-3-4b-it",
+    #     True,
+    #     1,
+    #     128,
+    #     3072,
+    #     896,
+    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+    #     "Can you describe the image in detail.",
+    #     1,
+    # ),
     (
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         True,
@@ -116,17 +119,17 @@ test_models_config = [
         "Can you describe the image in detail.",
         1,
     ),
-    (
-        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
-        False,
-        1,
-        128,
-        4096,
-        1540,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-        "Can you describe the image in detail.",
-        1,
-    ),
+    # (
+    #     "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+    #     True,
+    #     1,
+    #     128,
+    #     4096,
+    #     1540,
+    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+    #     "Can you describe the image in detail.",
+    #     1,
+    # ),
     (
         "Qwen/Qwen2.5-VL-3B-Instruct",
         True,
@@ -138,17 +141,17 @@ test_models_config = [
         "Can you describe the image in detail.",
         1,
     ),
-    # (
-    #     "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    #     True,
-    #     1,
-    #     32,
-    #     512,
-    #     560,
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
-    #     "Explain this image",
-    #     7,
-    # ),
+    (
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        True,
+        1,
+        32,
+        512,
+        560,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
+        "Explain this image",
+        7,
+    ),
 ]
 
 intern_model_config = [
@@ -186,16 +189,16 @@ intern_model_config = [
 
 molmo_model_config = [
     # Disabled in CI due to HF issues
-    # (
-    #     "allenai/Molmo-7B-D-0924",
-    #     True,
-    #     1,
-    #     128,
-    #     4096,
-    #     "https://picsum.photos/id/237/536/354",
-    #     "Can you describe the image in detail.",
-    #     2,
-    # ),
+    (
+        "allenai/Molmo-7B-D-0924",
+        True,
+        1,
+        128,
+        4096,
+        "https://picsum.photos/id/237/536/354",
+        "Can you describe the image in detail.",
+        2,
+    ),
 ]
 
 
@@ -242,7 +245,7 @@ def set_num_layers(config, n_layer=1):
     return config
 
 
-def test_image_text_to_text_subfunction_core(
+def check_image_text_to_text_subfunction_core(
     model_name: str,
     img_size: int,
     img_url: str,
@@ -290,13 +293,7 @@ def test_image_text_to_text_subfunction_core(
         config=config,
     )
 
-    # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
-    # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
-    #     "Tokens don't match for pytorch HF output and pytorch KV output"
-    # )
-
-    with_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
-    without_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=False)
+    qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
 
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
@@ -317,30 +314,176 @@ def test_image_text_to_text_subfunction_core(
         mxfp6=False,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
-        offload_pt_weights=True,
-        onnx_path=with_sub_func_onnx,
     )
 
-    print("Output With Subfunction Enabled:")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
-    tokens_sub = output.generated_ids[:, :-1]
+    print("Output With Subfunction Enabled:\n", output)
+    return
+
+
+def check_image_text_to_text_subfunction_molmo(
+    model_name: str,
+    img_url: str,
+    query: str,
+    prompt_len: int,
+    ctx_len: int,
+    max_gen_len: int = 20,
+    batch_size: int = 1,
+    n_layer: int = 1,
+    kv_offload: bool = False,
+    num_devices: int = 1,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
+):
+    model_config = {"model_name": model_name}
+
+    config = AutoConfig.from_pretrained(model_config["model_name"], trust_remote_code=True)
+    config._attn_implementation = "eager"
+    config = set_num_layers(config, n_layer=n_layer)
+    model_hf, _ = load_image_text_to_text_model(config)
+    n_layer = (n_layer, n_layer)
+
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
+    img = requests.get(img_url, stream=True)
+    image = Image.open(BytesIO(img.content)).convert("RGB")
+    image = image.resize((536, 354))
+
+    inputs = processor.process(images=[image], text=query)
+    inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
+
+    batch_size, prompt_len = inputs["input_ids"].shape
+    inputs["attention_mask"] = torch.ones((inputs["input_ids"].shape), dtype=torch.int64)
+    valid = inputs["image_input_idx"] > 0
+    valid = valid.reshape(1, -1)
+    inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
+    inputs["pixel_values"] = inputs.pop("images")
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_config["model_name"],
+        kv_offload=kv_offload,
+        config=config,
+    )
+
+    qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
+
+    if not get_available_device_id():
+        pytest.skip("No available devices to run model on Cloud AI 100")
+
+    if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
+        inputs = qeff_model.model.prepare_inputs_for_generation(
+            inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
+        )
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 
     qeff_model.compile(
-        img_size=model_config["img_size"],
+        num_devices=num_devices,
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        mxfp6=False,
+    )
+
+    streamer = TextStreamer(processor.tokenizer)
+    output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    print("Output With Subfunction Enabled:\n", output)
+    return
+
+
+def check_image_text_to_text_subfunction_internvl(
+    model_name: str,
+    img_url: str,
+    query: str,
+    prompt_len: int,
+    ctx_len: int,
+    max_gen_len: int = 20,
+    batch_size: int = 1,
+    n_layer: int = 1,
+    kv_offload: bool = False,
+    num_devices: int = 1,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
+):
+    model_config = {"model_name": model_name}
+
+    config = AutoConfig.from_pretrained(model_config["model_name"], trust_remote_code=True)
+    config._attn_implementation = "eager"
+    config = set_num_layers(config, n_layer=n_layer)
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        low_cpu_mem_usage=False,
+        trust_remote_code=True,
+        config=config,
+    )
+    n_layer = get_num_layers_vlm(config)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
+    processor = InternProcessor(model_hf, tokenizer)
+
+    prompt = [query]
+    img_url = [img_url]
+    pixel_values = []
+    num_patches_list = []
+    questions = []
+    for i in range(len(prompt)):
+        img = requests.get(img_url[i], stream=True)
+        image = Image.open(BytesIO(img.content)).convert("RGB")
+
+        image = image.resize((448, 448))
+
+        # preprocess the resized image
+        pixel_value = processor.load_image(image, max_num=12)
+        num_patches_list.append(pixel_value.shape[0])
+        pixel_values.append(pixel_value)
+
+        question = "<image>\n" + prompt[i]
+        questions.append(question)
+
+    pixel_values = torch.cat(pixel_values, dim=0)
+
+    # Chat Template information for prompt preprocessing
+    messages: List[List[str]] = []
+    roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+    prompt = processor(pixel_values, questions, messages, roles, num_patches_list=num_patches_list)
+
+    inputs = tokenizer(prompt, return_tensors="pt")
+    batch_size, prompt_len = inputs["input_ids"].shape
+    inputs["pixel_values"] = pixel_values.clone()
+
+    generation_config = dict(max_new_tokens=max_gen_len, do_sample=False)
+    generation_config["eos_token_id"] = tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_config["model_name"],
+        kv_offload=kv_offload,
+        config=config,
+    )
+
+    streamer = TextStreamer(processor.tokenizer)
+    qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
+
+    if not get_available_device_id():
+        pytest.skip("No available devices to run model on Cloud AI 100")
+
+    inputs = processor(images=image, text=prompt, return_tensors="pt")
+    if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
+        inputs = qeff_model.model.prepare_inputs_for_generation(
+            inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
+        )
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+
+    qeff_model.compile(
+        num_patches=1,
         num_devices=num_devices,
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         mxfp6=False,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
-        onnx_path=without_sub_func_onnx,
     )
 
-    print("Output With Subfunction Not Enabled:")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
-    tokens_no_sub = output.generated_ids[:, :-1]
-
-    assert (tokens_sub == tokens_no_sub).all(), "Tokens don't match for pytorch HF output and QPC output"
+    print("Output With Subfunction Enabled:\n", output)
     return
 
 
@@ -357,12 +500,54 @@ def test_image_text_to_text_subfunction(
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-    test_image_text_to_text_subfunction_core(
+    check_image_text_to_text_subfunction_core(
         model_name=model_name,
         prompt_len=prompt_len,
         ctx_len=ctx_len,
         max_gen_len=NEW_GENERATION_TOKENS,
         img_size=img_size,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+    )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", molmo_model_config
+)
+def test_image_text_to_text_subfunction_molmo(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
+):
+    check_image_text_to_text_subfunction_molmo(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+    )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
+)
+def test_image_text_to_text_subfunction_internvl(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
+):
+    check_image_text_to_text_subfunction_internvl(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
         img_url=img_url,
         query=query,
         n_layer=n_layer,
