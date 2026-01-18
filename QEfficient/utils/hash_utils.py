@@ -7,6 +7,7 @@
 
 import hashlib
 import json
+from dataclasses import asdict, is_dataclass
 from typing import Dict
 
 from QEfficient.utils.constants import HASH_HEXDIGEST_STR_LEN
@@ -16,6 +17,9 @@ def json_serializable(obj):
     if isinstance(obj, set):
         # Convert set to a sorted list of strings for consistent hashing
         return sorted([cls.__name__ if isinstance(cls, type) else str(cls) for cls in obj])
+    if is_dataclass(obj):
+        # Convert dataclass to dict for serialization
+        return asdict(obj)
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 

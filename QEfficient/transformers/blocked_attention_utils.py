@@ -125,7 +125,8 @@ def blocked_kv_attention_forward(
 
         # update running denominator
         prev_denominator = current_denominator
-        current_denominator = prev_denominator * torch.exp(delta_max) + current_exp.sum(axis=-1)
+        curr_exp_sum = torch.einsum("bhqk->bhq", current_exp)
+        current_denominator = prev_denominator * torch.exp(delta_max) + curr_exp_sum
 
         prob = current_exp / current_denominator.unsqueeze(-1)
 
