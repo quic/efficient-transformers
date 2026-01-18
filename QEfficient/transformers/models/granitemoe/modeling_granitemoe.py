@@ -26,7 +26,7 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, generic_blocked_attention_interface
+from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -151,28 +151,28 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
             else:
                 key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-
-        attn_output, attn_weights = generic_blocked_attention_interface(
-            module=self,
-            query=query_states,
-            key=key_states,
-            value=value_states,
-            attention_mask=attention_mask,
-            scaling=self.scaling,
-            layer_idx=self.layer_idx,
-            past_key_value=past_key_value,
-            blocking_config=blocking_config,
-            comp_ctx_lengths=comp_ctx_lengths,
-            batch_index=batch_index,
-            position_ids=position_ids,
-            past_seen_tokens=past_seen_tokens,
-            non_blocked_forward=eager_attention_forward,
-            cos=cos,
-            sin=sin,
-            cache_position=cache_position,
-        )
+        if use_blocked_kv:
+            attn_output, attn_weights = blocked_kv_attention_forward(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                num_kv_blocks=num_kv_blocks,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+            )
+        else:
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                scaling=self.scaling,
+            )
 
         attn_output = attn_output.view(bsz, q_len, -1)
         attn_output = self.o_proj(attn_output)

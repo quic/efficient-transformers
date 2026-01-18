@@ -168,6 +168,8 @@ class QEffQwen3Attention(Qwen3Attention):
         )
         use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
 
+        num_kv_blocks = getattr(self, "num_kv_blocks", None)
+        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
         if past_key_value is not None:
             past_seen_tokens = past_key_value.get_seq_length()
             if use_kv_blocked:

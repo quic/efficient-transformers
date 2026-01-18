@@ -40,6 +40,7 @@ from QEfficient.generation.text_generation_inference import (
     write_io_files,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
+from QEfficient.transformers.attention_blocking_policy import derive_blocking_config
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,

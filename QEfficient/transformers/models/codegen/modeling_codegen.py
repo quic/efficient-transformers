@@ -21,7 +21,7 @@ from transformers.models.codegen.modeling_codegen import (
     apply_rotary_pos_emb,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
+
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -128,10 +128,7 @@ class QEffCodeGenAttention(CodeGenAttention):
         blocking_config = getattr(self, "attn_blocking_config", None)
         if blocking_config is None and num_kv_blocks is not None:
             blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_kv_blocked = (
-            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(layer_past)
-        )
-        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
+        use_blocked_kv = blocking_config is not None and supports_blocked_kv(layer_past)
         if layer_past is not None:
             past_seen_tokens = layer_past.get_seq_length()
             cache_kwargs = {
@@ -142,12 +139,12 @@ class QEffCodeGenAttention(CodeGenAttention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            if use_kv_blocked:
+            if use_blocked_kv:
                 layer_past.write_only(key.to(hidden_states.dtype), value, self.layer_idx, cache_kwargs)
             else:
                 key, value = layer_past.update(key.to(hidden_states.dtype), value, self.layer_idx, cache_kwargs)
 
-        if use_blocking:
+        if use_blocked_kv:
             query_fp32 = query.to(torch.float32)
             key_fp32 = key.to(torch.float32)
             strategy = get_blocking_strategy(blocking_config)
