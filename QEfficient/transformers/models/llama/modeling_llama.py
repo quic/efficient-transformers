@@ -25,6 +25,8 @@ from transformers.models.llama.modeling_llama import (
     rotate_half,
 )
 
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
+from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -134,65 +136,18 @@ def eager_attention_forward_blockedKV(
     past_key_value: Optional[Cache] = None,
     **kwargs,
 ):
-    # Initialize result tensor
-    output = torch.zeros_like(query)
-
-    # Initialize Running Maximum
-    batch_size, num_heads, seq_len, _ = query.shape
-    current_max = torch.full((batch_size, num_heads, seq_len), float(MIN_MASKED_ATTENTION_VALUE))
-
-    # Initialize Denominator
-    current_denominator = torch.zeros(batch_size, num_heads, seq_len)
-
-    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
-    position_ids = cache_kwargs.get("position_ids")
-    block_size = -(-past_seen_tokens // num_kv_blocks)
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
-
-    for j in range(num_kv_blocks):
-        start_index = j * block_size
-        end_index = (j + 1) * block_size
-        K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
-        K_block_states = repeat_kv(K_block, module.num_key_value_groups)
-        V_block_states = repeat_kv(V_block, module.num_key_value_groups)
-        past_seen_tokens_start = start_index
-        past_seen_tokens_end = torch.where(
-            torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-            past_seen_tokens,
-            end_index,
-        )
-        causal_mask_block = _create_causal_mask(
-            position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start
-        )
-
-        # Compute attention scores for the block
-        attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
-        if attention_mask is not None:
-            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
-
-        # Update Running row maximum
-        prev_max = current_max
-        current_max = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
-        delta_max = prev_max - current_max
-
-        current_exp = torch.exp(
-            attn_weights_block - current_max.unsqueeze(-1)
-        )  # Subract current_max from each column of attn_weights_block
-
-        # update running denominator
-        prev_denominator = current_denominator
-        current_denominator = prev_denominator * torch.exp(delta_max) + current_exp.sum(axis=-1)
-
-        prob = current_exp / current_denominator.unsqueeze(-1)
-
-        prev_output = output
-        output = ((prev_denominator / current_denominator).unsqueeze(-1)) * prev_output * torch.exp(
-            delta_max.unsqueeze(-1)
-        ) + torch.matmul(prob, V_block_states)
-    attn_output = output.transpose(1, 2).contiguous()
-    attn_weights = None
-
-    return attn_output, attn_weights
+    return blocked_kv_attention_forward(
+        module=module,
+        query=query,
+        key=key,
+        value=value,
+        attention_mask=attention_mask,
+        scaling=scaling,
+        num_kv_blocks=num_kv_blocks,
+        cache_kwargs=cache_kwargs,
+        layer_idx=layer_idx,
+        past_key_value=past_key_value,
+    )
 
 
 class QEffLlamaAttention(LlamaAttention):
@@ -231,8 +186,13 @@ class QEffLlamaAttention(LlamaAttention):
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
+        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
+        blocking_config = getattr(self, "attn_blocking_config", None)
+        if blocking_config is None and num_kv_blocks is not None:
+            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
         if past_key_value is not None:
-            if num_kv_blocks is not None:
+            if use_blocked_kv:
                 cache_kwargs = {
                     "batch_index": batch_index,
                     "position_ids": position_ids,
@@ -246,24 +206,30 @@ class QEffLlamaAttention(LlamaAttention):
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
                 key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        if num_kv_blocks is not None:
-            attention_interface = eager_attention_forward_blockedKV
+        if blocking_config is not None and use_blocked_kv:
+            strategy = get_blocking_strategy(blocking_config)
+            attn_output, attn_weights = strategy.apply(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+                config=blocking_config,
+            )
         else:
-            attention_interface = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            scaling=self.scaling,
-            num_kv_blocks=num_kv_blocks,
-            cache_kwargs=cache_kwargs,
-            layer_idx=self.layer_idx,
-            past_key_value=past_key_value,
-            **kwargs,
-        )
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                scaling=self.scaling,
+                **kwargs,
+            )
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output, **kwargs)
 

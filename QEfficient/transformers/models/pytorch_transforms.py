@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import warnings
-from functools import partial
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
@@ -213,6 +212,7 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -920,20 +920,26 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
 
 
 class BlockedKVAttentionTransform:
-    _module_mapping = {
-        QEffLlamaAttention,
-        QEffQwen2_5_VLAttention,
+    _skip_classes = {
+        QEffGptOssAttention,
     }
 
     @classmethod
     def apply(cls, model: nn.Module, num_kv_blocks) -> Tuple[nn.Module, bool]:
         transformed = False
+        supported_attention_classes = {
+            qeff_class
+            for qeff_class in KVCacheTransform._module_mapping.values()
+            if qeff_class.__name__.endswith("Attention")
+        }
         for module in model.modules():
-            if type(module) in cls._module_mapping:
-                repl_module = type(module)
-                module.__class__ = repl_module
-                module.forward = MethodType(partial(repl_module.forward, num_kv_blocks=num_kv_blocks), module)
-                transformed = True  # Set to True if at least one transformation occurs
-            elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
+            if type(module) in cls._skip_classes:
+                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
+                continue
+            if type(module) in supported_attention_classes:
+                module.num_kv_blocks = num_kv_blocks
+                module.attn_blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+                transformed = True
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
         return model, transformed

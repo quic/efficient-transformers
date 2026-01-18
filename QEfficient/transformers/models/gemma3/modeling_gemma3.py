@@ -28,6 +28,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
+from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
@@ -245,7 +246,10 @@ class QEffGemma3Attention(Gemma3Attention):
             cos, sin = self.rotary_emb(value_states, seq_len=self.config.max_position_embeddings)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        num_kv_blocks = getattr(self, "num_kv_blocks", None)
+        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
         if past_key_value is not None:
+            past_seen_tokens = past_key_value.get_seq_length()
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
@@ -254,11 +258,41 @@ class QEffGemma3Attention(Gemma3Attention):
                 "position_ids": position_ids,
                 "is_sliding": self.is_sliding,
                 "sliding_window_pattern": self.config.sliding_window_pattern,
+                "past_seen_tokens": past_seen_tokens,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if use_blocked_kv:
+                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+        if use_blocked_kv:
+
+            def score_mod(attn_weights_block, _start, _end, softcapping=self.config.attn_logit_softcapping):
+                if softcapping is None:
+                    return attn_weights_block
+                attn_weights_block = attn_weights_block / softcapping
+                attn_weights_block = torch.tanh(attn_weights_block)
+                return attn_weights_block * softcapping
+
+            attn_output, attn_weights = blocked_kv_attention_forward(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                num_kv_blocks=num_kv_blocks,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+                score_mod=score_mod,
+            )
+            attn_output = attn_output.reshape(bsz, q_len, -1)
+            attn_output = self.o_proj(attn_output)
+            return attn_output, attn_weights
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)

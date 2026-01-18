@@ -24,6 +24,7 @@ from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeModel,
 )
 
+from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -151,27 +152,51 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
                     .split(3 * [self.head_dim], dim=3)
                 )
 
+        num_kv_blocks = getattr(self, "num_kv_blocks", None)
+        use_blocked_kv = (
+            num_kv_blocks is not None and not self.is_cross_attention and supports_blocked_kv(curr_past_key_value)
+        )
         if layer_past is not None:
+            past_seen_tokens = curr_past_key_value.get_seq_length()
             # save all key/value_states to cache to be re-used for fast auto-regressive generation
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+            cache_kwargs = {
+                "position_ids": position_ids,
+                "batch_index": batch_index,
+                "past_seen_tokens": past_seen_tokens,
+            }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key, value = curr_past_key_value.update(key, value, self.layer_idx, cache_kwargs)
+            if use_blocked_kv:
+                curr_past_key_value.write_only(key, value, self.layer_idx, cache_kwargs)
+            else:
+                key, value = curr_past_key_value.update(key, value, self.layer_idx, cache_kwargs)
             # set flag that curr layer for cross-attn is already updated so we can re-use in subsequent calls
             if self.is_cross_attention:
                 layer_past.is_updated[self.layer_idx] = True
 
-        attention_interface = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query,
-            key,
-            value,
-            attention_mask,
-            scaling=self.scaling,
-        )
+        if use_blocked_kv:
+            attn_output, attn_weights = blocked_kv_attention_forward(
+                module=self,
+                query=query,
+                key=key,
+                value=value,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                num_kv_blocks=num_kv_blocks,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=curr_past_key_value,
+            )
+        else:
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query,
+                key,
+                value,
+                attention_mask,
+                scaling=self.scaling,
+            )
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
 
         attn_output = self.c_proj(attn_output)

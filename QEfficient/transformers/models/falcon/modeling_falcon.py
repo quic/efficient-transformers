@@ -29,6 +29,8 @@ from transformers.models.falcon.modeling_falcon import (
     rotate_half,
 )
 
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
+from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -140,24 +142,53 @@ class QEffFalconAttention(FalconAttention):
         cos, sin = self.rotary_emb(value_layer, seq_len=kv_seq_len)
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
 
+        num_kv_blocks = getattr(self, "num_kv_blocks", None)
+        blocking_config = getattr(self, "attn_blocking_config", None)
+        if blocking_config is None and num_kv_blocks is not None:
+            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+        use_blocked_kv = blocking_config is not None and supports_blocked_kv(layer_past)
         if layer_past is not None:
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            past_seen_tokens = layer_past.get_seq_length()
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "past_seen_tokens": past_seen_tokens,
+            }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
+            if use_blocked_kv:
+                layer_past.write_only(key_layer, value_layer, self.layer_idx, cache_kwargs)
+            else:
+                key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
 
         if attention_mask is not None:
             attention_mask = attention_mask[:, :, :, : key_layer.shape[-2]]
 
-        attention_scores = query_layer @ key_layer.transpose(-1, -2)
-        attention_scores /= math.sqrt(self.head_dim)
-        attention_scores = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
-        )
-        attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=hidden_states.dtype)
-        # It is unclear why neither dropout nor head_mask is applied here (while it is with alibi).
-        attn_output = attention_scores @ value_layer
+        if use_blocked_kv:
+            strategy = get_blocking_strategy(blocking_config)
+            attn_output, attention_scores = strategy.apply(
+                module=self,
+                query=query_layer,
+                key=key_layer,
+                value=value_layer,
+                attention_mask=attention_mask,
+                scaling=1.0 / math.sqrt(self.head_dim),
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=layer_past,
+                config=blocking_config,
+            )
+            attn_output = attn_output.transpose(1, 2)
+        else:
+            attention_scores = query_layer @ key_layer.transpose(-1, -2)
+            attention_scores /= math.sqrt(self.head_dim)
+            attention_scores = torch.where(
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
+            )
+            attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=hidden_states.dtype)
+            # It is unclear why neither dropout nor head_mask is applied here (while it is with alibi).
+            attn_output = attention_scores @ value_layer
 
         attn_output = attn_output.view(batch_size, self.num_heads, query_length, self.head_dim)
         attn_output = attn_output.permute(0, 2, 1, 3)

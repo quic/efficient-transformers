@@ -28,6 +28,7 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     rotate_half,
 )
 
+from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -142,7 +143,10 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        num_kv_blocks = getattr(self, "num_kv_blocks", None)
+        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
         if past_key_value is not None:
+            past_seen_tokens = past_key_value.get_seq_length()
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
@@ -150,22 +154,38 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
                 "cache_position": cache_position,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
+                "past_seen_tokens": past_seen_tokens,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if use_blocked_kv:
+                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        attention_interface = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            scaling=self.scaling,
-        )
+        if use_blocked_kv:
+            attn_output, attn_weights = blocked_kv_attention_forward(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                num_kv_blocks=num_kv_blocks,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+            )
+        else:
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                scaling=self.scaling,
+            )
 
         attn_output = attn_output.view(bsz, q_len, -1)
         attn_output = self.o_proj(attn_output)

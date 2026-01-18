@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Callable, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -16,6 +16,8 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
+from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -116,33 +118,62 @@ class QEffGPT2Attention(GPT2Attention):
         shape_q = (*query_states.shape[:-1], -1, self.head_dim)
         query_states = query_states.view(shape_q).transpose(1, 2)
 
+        num_kv_blocks = getattr(self, "num_kv_blocks", None)
+        blocking_config = getattr(self, "attn_blocking_config", None)
+        if blocking_config is None and num_kv_blocks is not None:
+            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+        use_blocked_kv = (
+            blocking_config is not None and not is_cross_attention and supports_blocked_kv(curr_past_key_value)
+        )
         if (past_key_value is not None and not is_cross_attention) or (
             past_key_value is not None and is_cross_attention and not is_updated
         ):
             # save all key/value_layer to cache to be re-used for fast auto-regressive generation
             # Update the cache_kwargs with position_ids for Cloud AI 100
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+            past_seen_tokens = curr_past_key_value.get_seq_length()
+            cache_kwargs = {
+                "position_ids": position_ids,
+                "batch_index": batch_index,
+                "past_seen_tokens": past_seen_tokens,
+            }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-
-            key_states, value_states = curr_past_key_value.update(
-                key_states, value_states, self.layer_idx, cache_kwargs
-            )
+            if use_blocked_kv:
+                curr_past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                key_states, value_states = curr_past_key_value.update(
+                    key_states, value_states, self.layer_idx, cache_kwargs
+                )
             # set flag that curr layer for cross-attn is already updated so we can re-use in subsequent calls
             if is_cross_attention:
                 past_key_value.is_updated[self.layer_idx] = True
-
-        attention_interface: Callable = eager_attention_forward
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            head_mask=head_mask,
-            **kwargs,
-        )
+        if use_blocked_kv:
+            scaling = 1.0 / (value_states.size(-1) ** 0.5) if self.scale_attn_weights else 1.0
+            strategy = get_blocking_strategy(blocking_config)
+            attn_output, attn_weights = strategy.apply(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=scaling,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=curr_past_key_value,
+                config=blocking_config,
+                use_causal_mask=True,
+            )
+        else:
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                head_mask=head_mask,
+                **kwargs,
+            )
         attn_output = attn_output.reshape(*attn_output.shape[:-2], -1).contiguous()
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)

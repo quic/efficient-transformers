@@ -38,6 +38,7 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
+from QEfficient.transformers.attention_blocking_policy import derive_blocking_config
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
@@ -2403,7 +2404,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
-        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+        blocking_config = None
+        if self.model.qaic_config is not None:
+            blocking_config = self.model.qaic_config.get("attn_blocking_config")
+            if blocking_config is None and self.model.qaic_config.get("attn_blocking_auto"):
+                blocking_config = derive_blocking_config(
+                    self.model.config,
+                    device_info=self.model.qaic_config.get("device_info"),
+                    compile_params=self.model.qaic_config.get("compile_params"),
+                )
+                self.model.qaic_config["attn_blocking_config"] = blocking_config
+
+        if blocking_config is not None and blocking_config.mode == "kv":
+            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=blocking_config.num_kv_blocks)
+        elif self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
             BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     def __repr__(self) -> str:
