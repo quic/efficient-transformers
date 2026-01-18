@@ -47,8 +47,8 @@ from QEfficient.transformers.modeling_utils import (
     _configure_proxy_for_model,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
-    BlockedKVAttentionTransform,
     CustomOpsTransform,
+    KVBlockingAttentionTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
@@ -1035,7 +1035,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+            KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
         """
@@ -1943,7 +1943,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+            KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     @classmethod
     def from_pretrained(
@@ -2753,11 +2753,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.model.qaic_config["attn_blocking_config"] = blocking_config
 
         if blocking_config is not None and blocking_config.mode == "kv":
-            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=blocking_config.num_kv_blocks)
+            KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=blocking_config.num_kv_blocks)
         elif blocking_config is not None and blocking_config.mode == "q":
             QBlockingAttentionTransform.apply(self.model, num_q_blocks=blocking_config.num_q_blocks)
         elif self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+            KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
