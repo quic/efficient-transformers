@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -26,7 +26,7 @@ from transformers.models.llama.modeling_llama import (
 )
 
 from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
-from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
+from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -121,33 +121,6 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
-
-
-def eager_attention_forward_blockedKV(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    num_kv_blocks: Optional[torch.Tensor] = None,
-    cache_kwargs: Optional[Dict[str, Any]] = None,
-    layer_idx: int = None,
-    past_key_value: Optional[Cache] = None,
-    **kwargs,
-):
-    return blocked_kv_attention_forward(
-        module=module,
-        query=query,
-        key=key,
-        value=value,
-        attention_mask=attention_mask,
-        scaling=scaling,
-        num_kv_blocks=num_kv_blocks,
-        cache_kwargs=cache_kwargs,
-        layer_idx=layer_idx,
-        past_key_value=past_key_value,
-    )
 
 
 class QEffLlamaAttention(LlamaAttention):
