@@ -190,9 +190,12 @@ class QEffLlamaAttention(LlamaAttention):
         blocking_config = getattr(self, "attn_blocking_config", None)
         if blocking_config is None and num_kv_blocks is not None:
             blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
+        use_kv_blocked = (
+            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
+        )
+        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
         if past_key_value is not None:
-            if use_blocked_kv:
+            if use_kv_blocked:
                 cache_kwargs = {
                     "batch_index": batch_index,
                     "position_ids": position_ids,
@@ -206,7 +209,7 @@ class QEffLlamaAttention(LlamaAttention):
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
                 key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        if blocking_config is not None and use_blocked_kv:
+        if use_blocking:
             strategy = get_blocking_strategy(blocking_config)
             attn_output, attn_weights = strategy.apply(
                 module=self,
