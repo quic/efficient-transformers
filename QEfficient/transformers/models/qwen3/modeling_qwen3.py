@@ -28,7 +28,8 @@ from transformers.models.qwen3.modeling_qwen3 import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
+from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -142,8 +143,11 @@ class QEffQwen3Attention(Qwen3Attention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+<<<<<<< HEAD
         cos_cached: Optional[torch.Tensor] = None,
         sin_cached: Optional[torch.Tensor] = None,
+=======
+>>>>>>> 4c15c08 (nit: add kv+q blocking generalize support for qwen3/qwen3_moe/mllama)
         num_kv_blocks: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -168,8 +172,15 @@ class QEffQwen3Attention(Qwen3Attention):
         )
         use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
 
-        num_kv_blocks = getattr(self, "num_kv_blocks", None)
-        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
+        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
+        blocking_config = getattr(self, "attn_blocking_config", None)
+        if blocking_config is None and num_kv_blocks is not None:
+            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+        use_kv_blocked = (
+            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
+        )
+        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
+
         if past_key_value is not None:
             past_seen_tokens = past_key_value.get_seq_length()
             if use_kv_blocked:
