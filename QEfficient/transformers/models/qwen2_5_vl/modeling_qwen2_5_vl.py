@@ -31,6 +31,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     rotate_half,
 )
 
+from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 # from transformers import Qw
@@ -588,8 +589,10 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
             query_states, key_states, cos_cached, sin_cached, position_ids[1:], self.rope_scaling["mrope_section"]
         )
 
-        if past_key_values is not None:
-            if num_kv_blocks is not None:
+        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
+        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
+        if past_key_value is not None:
+            if use_blocked_kv:
                 cache_kwargs = {
                     "sin": sin_cached,
                     "cos": cos_cached,
@@ -621,7 +624,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
             key_states,
             value_states,
             attention_mask,
-            num_kv_blocks=num_kv_blocks,
+            num_kv_blocks=num_kv_blocks if use_blocked_kv else None,
             cache_kwargs=cache_kwargs,
             layer_idx=self.layer_idx,
             past_key_value=past_key_values,
