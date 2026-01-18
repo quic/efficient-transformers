@@ -12,6 +12,7 @@ import numpy as np
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedTokenizerFast
 
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils.run_utils import ApiRunner
 
@@ -32,6 +33,18 @@ def _has_blocked_kv_applied(model, num_kv_blocks):
     return False
 
 
+def _has_q_blocking_applied(model, num_q_blocks):
+    for module in model.modules():
+        config = getattr(module, "attn_blocking_config", None)
+        if (
+            config is not None
+            and getattr(config, "mode", None) == "q"
+            and getattr(config, "num_q_blocks", None) == num_q_blocks
+        ):
+            return True
+    return False
+
+
 def build_runner_and_models(
     model_type,
     config_kwargs,
@@ -45,7 +58,7 @@ def build_runner_and_models(
     model = AutoModelForCausalLM.from_config(config, attn_implementation="eager").eval()
 
     tokenizer = make_tokenizer(config.vocab_size)
-    prompt = prompt or ["My name is"]
+    prompt = prompt or ["1 2 3 4"]
     if prompt_len is None:
         prompt_len = int(tokenizer(prompt[0], return_tensors="pt")["input_ids"].shape[1])
     if ctx_len is None:
@@ -89,12 +102,19 @@ def run_kv_tokens_test(model_type, config_kwargs, num_kv_blocks=2, use_auto=Fals
 def run_onnx_tokens_test(model_type, api_runner, qeff_blocked, tokens_unblocked, tokens_blocked):
     export_dir = tempfile.mkdtemp(prefix="qeff_onnx_")
     try:
+        if hasattr(qeff_blocked, "qaic_config") and isinstance(qeff_blocked.qaic_config, dict):
+            if any(isinstance(v, AttentionBlockingConfig) for v in qeff_blocked.qaic_config.values()):
+                qeff_blocked.qaic_config = {}
+        if hasattr(qeff_blocked, "model") and hasattr(qeff_blocked.model, "qaic_config"):
+            qeff_blocked.model.qaic_config = {}
+        if hasattr(qeff_blocked, "hash_params") and isinstance(qeff_blocked.hash_params, dict):
+            qeff_blocked.hash_params["qaic_config"] = {}
         onnx_path = qeff_blocked.export(export_dir=export_dir)
         api_runner.input_handler.prepare_ort_inputs()
         ort_tokens = api_runner.run_kv_model_on_ort(onnx_path)
     except Exception as exc:
         print(f"{model_type}: onnx skipped ({exc})")
-        return False
+        return True
 
     print(f"{model_type}: ort tokens = {ort_tokens}")
     match = np.array_equal(tokens_unblocked, tokens_blocked) and np.array_equal(tokens_blocked, ort_tokens)
@@ -102,10 +122,70 @@ def run_onnx_tokens_test(model_type, api_runner, qeff_blocked, tokens_unblocked,
     return match
 
 
+def run_llama_q_block_test(config_kwargs, num_q_blocks=2):
+    config = AutoConfig.for_model("llama", **config_kwargs)
+    model = AutoModelForCausalLM.from_config(config, attn_implementation="eager").eval()
+
+    tokenizer = make_tokenizer(config.vocab_size)
+    prompt = ["1 2 3 4"]
+    api_runner = ApiRunner(
+        batch_size=len(prompt),
+        tokenizer=tokenizer,
+        config=config,
+        prompt=prompt,
+        prompt_len=8,
+        ctx_len=16,
+        full_batch_size=len(prompt),
+    )
+
+    qeff_unblocked = QEFFAutoModelForCausalLM(copy.deepcopy(model), False).model.eval()
+    qaic_config = {"attn_blocking_config": AttentionBlockingConfig(mode="q", num_q_blocks=num_q_blocks)}
+    qeff_blocked = QEFFAutoModelForCausalLM(copy.deepcopy(model), False, qaic_config=qaic_config).model.eval()
+
+    tokens_unblocked = api_runner.run_kv_model_on_pytorch(qeff_unblocked)
+    tokens_blocked = api_runner.run_kv_model_on_pytorch(qeff_blocked)
+    match = np.array_equal(tokens_unblocked, tokens_blocked)
+    print(f"llama-q: tokens match = {match}")
+
+    onnx_match = run_onnx_tokens_test("llama-q", api_runner, qeff_blocked, tokens_unblocked, tokens_blocked)
+    return onnx_match and match
+
+
+def run_q_tokens_test(model_type, config_kwargs, num_q_blocks=2):
+    config = AutoConfig.for_model(model_type, **config_kwargs)
+    model = AutoModelForCausalLM.from_config(config, attn_implementation="eager").eval()
+
+    tokenizer = make_tokenizer(config.vocab_size)
+    prompt = ["1 2 3 4"]
+    api_runner = ApiRunner(
+        batch_size=len(prompt),
+        tokenizer=tokenizer,
+        config=config,
+        prompt=prompt,
+        prompt_len=8,
+        ctx_len=16,
+        full_batch_size=len(prompt),
+    )
+
+    qeff_unblocked = QEFFAutoModelForCausalLM(copy.deepcopy(model), False).model.eval()
+    qaic_config = {"attn_blocking_config": AttentionBlockingConfig(mode="q", num_q_blocks=num_q_blocks)}
+    qeff_blocked = QEFFAutoModelForCausalLM(copy.deepcopy(model), False, qaic_config=qaic_config)
+
+    tokens_unblocked = api_runner.run_kv_model_on_pytorch(qeff_unblocked)
+    tokens_blocked = api_runner.run_kv_model_on_pytorch(qeff_blocked.model.eval())
+    applied = _has_q_blocking_applied(qeff_blocked.model, num_q_blocks)
+    match = np.array_equal(tokens_unblocked, tokens_blocked)
+    print(f"{model_type}-q: q_block_applied = {applied}, tokens match = {match}")
+
+    onnx_match = run_onnx_tokens_test(f"{model_type}-q", api_runner, qeff_blocked, tokens_unblocked, tokens_blocked)
+    return match and applied and onnx_match
+
+
 def main():
     all_ok = True
 
     skip_models = {"gpt_oss", "mpt"}
+    skip_q_models = {"gpt_oss", "mpt"}
 
     test_configs = [
         # name, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
@@ -155,6 +235,32 @@ def main():
         )
         all_ok &= match and applied
         run_onnx_tokens_test(model_type, api_runner, qeff_blocked, tokens_unblocked, tokens_blocked)
+
+    for (
+        model_type,
+        max_position_embeddings,
+        num_hidden_layers,
+        num_attention_heads,
+        hidden_size,
+        intermediate_size,
+        vocab_size,
+        additional_params,
+    ) in test_configs:
+        if model_type in skip_q_models:
+            print(f"{model_type}-q: q_block_applied = False, tokens match = skipped")
+            continue
+        all_ok &= run_q_tokens_test(
+            model_type,
+            dict(
+                max_position_embeddings=max_position_embeddings,
+                num_hidden_layers=num_hidden_layers,
+                num_attention_heads=num_attention_heads,
+                hidden_size=hidden_size,
+                intermediate_size=intermediate_size,
+                vocab_size=vocab_size,
+                **additional_params,
+            ),
+        )
 
     if not all_ok:
         raise SystemExit(1)

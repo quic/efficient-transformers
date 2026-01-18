@@ -138,3 +138,53 @@ def blocked_kv_attention_forward(
     attn_weights = None
 
     return attn_output, attn_weights
+
+
+def q_blocked_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_q_blocks: int,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """
+    Q-blocked attention that slices the query sequence into blocks and processes each block.
+    """
+    batch_size, num_heads, q_len, _ = query.shape
+    num_q_blocks = max(1, _normalize_int(num_q_blocks))
+    key_states, value_states = _get_kv_states(module, key, value)
+
+    q_block_positions = [(i * q_len) // num_q_blocks for i in range(num_q_blocks)]
+    q_output_blocks = []
+    q_attn_blocks = []
+
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
+
+    for q_block_idx in range(num_q_blocks):
+        q_start = q_block_positions[q_block_idx]
+        if q_block_idx == num_q_blocks - 1:
+            q_len_block = q_len - q_start
+        else:
+            q_len_block = q_block_positions[q_block_idx + 1] - q_start
+
+        q_block = query[:, :, q_start : q_start + q_len_block, :]
+        attn_mask_block = None
+        if attention_mask is not None:
+            attn_mask_block = attention_mask[:, :, q_start : q_start + q_len_block, :]
+
+        attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
+        if attn_mask_block is not None:
+            attn_weights = torch.where(attn_mask_block, masked_tensor, attn_weights)
+
+        attn_weights = torch.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        output_block = torch.matmul(attn_weights, value_states)
+
+        q_output_blocks.append(output_block)
+        q_attn_blocks.append(attn_weights)
+
+    attn_output = torch.cat(q_output_blocks, dim=2).transpose(1, 2).contiguous()
+    attn_weights = torch.cat(q_attn_blocks, dim=2)
+
+    return attn_output, attn_weights
