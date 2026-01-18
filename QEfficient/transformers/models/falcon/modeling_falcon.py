@@ -146,7 +146,10 @@ class QEffFalconAttention(FalconAttention):
         blocking_config = getattr(self, "attn_blocking_config", None)
         if blocking_config is None and num_kv_blocks is not None:
             blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_blocked_kv = blocking_config is not None and supports_blocked_kv(layer_past)
+        use_kv_blocked = (
+            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(layer_past)
+        )
+        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
         if layer_past is not None:
             past_seen_tokens = layer_past.get_seq_length()
             cache_kwargs = {
@@ -157,7 +160,7 @@ class QEffFalconAttention(FalconAttention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            if use_blocked_kv:
+            if use_kv_blocked:
                 layer_past.write_only(key_layer, value_layer, self.layer_idx, cache_kwargs)
             else:
                 key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
@@ -165,7 +168,7 @@ class QEffFalconAttention(FalconAttention):
         if attention_mask is not None:
             attention_mask = attention_mask[:, :, :, : key_layer.shape[-2]]
 
-        if use_blocked_kv:
+        if use_blocking:
             strategy = get_blocking_strategy(blocking_config)
             attn_output, attention_scores = strategy.apply(
                 module=self,

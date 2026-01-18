@@ -51,6 +51,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PoolingTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
+    QBlockingAttentionTransform,
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyTransform,
     SamplerTransform,
@@ -2417,6 +2418,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if blocking_config is not None and blocking_config.mode == "kv":
             BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=blocking_config.num_kv_blocks)
+        elif blocking_config is not None and blocking_config.mode == "q":
+            QBlockingAttentionTransform.apply(self.model, num_q_blocks=blocking_config.num_q_blocks)
         elif self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
             BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 

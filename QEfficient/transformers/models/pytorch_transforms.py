@@ -943,3 +943,55 @@ class BlockedKVAttentionTransform:
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
         return model, transformed
+
+
+class QBlockingAttentionTransform:
+    _skip_classes = {
+        QEffGptOssAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, num_q_blocks) -> Tuple[nn.Module, bool]:
+        transformed = False
+        supported_attention_classes = {
+            qeff_class
+            for qeff_class in KVCacheTransform._module_mapping.values()
+            if qeff_class.__name__.endswith("Attention")
+        }
+        for module in model.modules():
+            if type(module) in cls._skip_classes:
+                warnings.warn(f"Q blocking is not yet supported for {type(module)}.")
+                continue
+            if type(module) in supported_attention_classes:
+                module.num_q_blocks = num_q_blocks
+                module.attn_blocking_config = AttentionBlockingConfig(mode="q", num_q_blocks=int(num_q_blocks))
+                transformed = True
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
+                warnings.warn(f"Q blocking is not yet supported for {type(module)}.")
+        return model, transformed
+
+
+class HeadBlockingAttentionTransform:
+    _skip_classes = {
+        QEffGptOssAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, head_block_size) -> Tuple[nn.Module, bool]:
+        transformed = False
+        supported_attention_classes = {
+            qeff_class
+            for qeff_class in KVCacheTransform._module_mapping.values()
+            if qeff_class.__name__.endswith("Attention")
+        }
+        for module in model.modules():
+            if type(module) in cls._skip_classes:
+                warnings.warn(f"Head blocking is not yet supported for {type(module)}.")
+                continue
+            if type(module) in supported_attention_classes:
+                module.head_block_size = head_block_size
+                module.attn_blocking_config = AttentionBlockingConfig(mode="head", head_block_size=int(head_block_size))
+                transformed = True
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
+                warnings.warn(f"Head blocking is not yet supported for {type(module)}.")
+        return model, transformed

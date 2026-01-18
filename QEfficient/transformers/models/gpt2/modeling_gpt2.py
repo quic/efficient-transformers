@@ -122,8 +122,14 @@ class QEffGPT2Attention(GPT2Attention):
         blocking_config = getattr(self, "attn_blocking_config", None)
         if blocking_config is None and num_kv_blocks is not None:
             blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_blocked_kv = (
-            blocking_config is not None and not is_cross_attention and supports_blocked_kv(curr_past_key_value)
+        use_kv_blocked = (
+            blocking_config is not None
+            and blocking_config.mode == "kv"
+            and not is_cross_attention
+            and supports_blocked_kv(curr_past_key_value)
+        )
+        use_blocking = (
+            blocking_config is not None and not is_cross_attention and (blocking_config.mode != "kv" or use_kv_blocked)
         )
         if (past_key_value is not None and not is_cross_attention) or (
             past_key_value is not None and is_cross_attention and not is_updated
@@ -139,7 +145,7 @@ class QEffGPT2Attention(GPT2Attention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            if use_blocked_kv:
+            if use_kv_blocked:
                 curr_past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
             else:
                 key_states, value_states = curr_past_key_value.update(
@@ -148,7 +154,7 @@ class QEffGPT2Attention(GPT2Attention):
             # set flag that curr layer for cross-attn is already updated so we can re-use in subsequent calls
             if is_cross_attention:
                 past_key_value.is_updated[self.layer_idx] = True
-        if use_blocked_kv:
+        if use_blocking:
             scaling = 1.0 / (value_states.size(-1) ** 0.5) if self.scale_attn_weights else 1.0
             strategy = get_blocking_strategy(blocking_config)
             attn_output, attn_weights = strategy.apply(

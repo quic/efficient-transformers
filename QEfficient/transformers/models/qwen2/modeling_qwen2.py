@@ -172,7 +172,10 @@ class QEffQwen2Attention(Qwen2Attention):
         blocking_config = getattr(self, "attn_blocking_config", None)
         if blocking_config is None and num_kv_blocks is not None:
             blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_blocked_kv = blocking_config is not None and supports_blocked_kv(past_key_value)
+        use_kv_blocked = (
+            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
+        )
+        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
         if past_key_value is not None:
             past_seen_tokens = past_key_value.get_seq_length()
             cache_kwargs = {
@@ -183,12 +186,12 @@ class QEffQwen2Attention(Qwen2Attention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            if use_blocked_kv:
+            if use_kv_blocked:
                 past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
             else:
                 key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        if use_blocked_kv:
+        if use_blocking:
             strategy = get_blocking_strategy(blocking_config)
             attn_output, attn_weights = strategy.apply(
                 module=self,
