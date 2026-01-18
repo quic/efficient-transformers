@@ -60,24 +60,7 @@ pipeline.transformer.model.transformer_low.load_lora_adapter(
 pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 ```
 
-
-### 3. Compile API
-
-To compile the model for desired resolution:
-
-```python
-# Compile with custom configuration
-pipeline.compile(
-    compile_config="examples/diffusers/wan/wan_config.json",
-    parallel=True,
-    height=480,
-    width=832,
-    num_frames=81,
-    use_onnx_subfunctions=False,
-)
-```
-
-### 4. Generate video
+### 3. Generate video
 ```python
 output = pipeline(
     prompt="A cat playing in a sunny garden",
@@ -123,7 +106,34 @@ pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
 )
 ```
 
-### 2. To Run with Blocking
+
+### 2. Compile API
+
+To compile the model for desired resolution:
+
+```python
+# Compile with custom configuration
+pipeline.compile(
+    compile_config="examples/diffusers/wan/wan_config.json",
+    parallel=True,
+    height=480,
+    width=832,
+    num_frames=81,
+    use_onnx_subfunctions=False,
+)
+```
+
+### 3. Skip export, compilation if pre-compiled qpc exist
+Update custom config with qpc in execute of corresponding module.
+```
+"execute":
+          {
+           "device_ids": null,
+           "qpc_path" : "<QPC_PATH>"
+          }
+```
+
+### 4. To Run with Blocking
 
 Use environment variables to enable attention blocking:
 
@@ -195,6 +205,10 @@ The configuration includes dual specializations for WAN's high and low noise mod
 - `mos`: Degree of weight splitting done across cores (1 is recommended)
 - `mdts_mos`: Degree of weight splitting done across multi-device tensor slices (1 is recommended)
 
+#### Execute
+- `device_ids`: List of device IDs to use (null for auto-selection)
+- `qpc_path` : compiled qpc path, to skip recompilation (null by default)
+
 ## Key Parameters
 
 ### Generation Parameters
@@ -209,16 +223,7 @@ The configuration includes dual specializations for WAN's high and low noise mod
 - **`generator`** (torch.Generator): Random seed for reproducibility
 - **`parallel_compile`** (bool): Enable parallel compilation of modules
 - **`use_onnx_subfunctions`** (bool): Enable ONNX modular export
-- **`skip_compile`** (bool): To skip compilation, if we qpcs available for all modules
 
-**Note**: if **skip_compile=True**, update qpc_path for each module in config.json
-```
-"execute":
-          {
-           "device_ids": null,
-           "qpc_path" : "<QPC_PATH>"
-          }
-```
 ## Output
 
 The pipeline returns an output object containing:

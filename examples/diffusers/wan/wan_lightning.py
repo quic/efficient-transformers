@@ -41,7 +41,6 @@ pipeline.transformer.model.transformer_low.load_lora_adapter(
 )
 pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 
-
 prompt = "In a warmly lit living room, an elderly man with gray hair sits in a wooden armchair adorned with a blue cushion. He wears a gray cardigan over a white shirt, engrossed in reading a book. As he turns the pages, he subtly adjusts his posture, ensuring his glasses stay in place. He then removes his glasses, holding them in his hand, and turns his head to the right, maintaining his grip on the book. The soft glow of a bedside lamp bathes the scene, creating a calm and serene atmosphere, with gentle shadows enhancing the intimate setting."
 
 output = pipeline(
@@ -51,12 +50,10 @@ output = pipeline(
     guidance_scale_2=1.0,
     num_inference_steps=4,
     generator=torch.manual_seed(0),
-    custom_config_path="examples/diffusers/wan/wan_config.json",
     height=480,
     width=832,
     use_onnx_subfunctions=True,
     parallel_compile=True,
-    skip_compile=False,
 )
 frames = output.images[0]
 export_to_video(frames, "output_t2v.mp4", fps=16)

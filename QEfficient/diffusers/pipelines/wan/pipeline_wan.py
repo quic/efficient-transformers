@@ -33,8 +33,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
-    set_module_device_ids,
-    set_module_qpc_path_to_skip_compile,
+    set_module_device_ids_and_qpc_paths,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -244,7 +243,8 @@ class QEffWanPipeline:
             if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
                 export_params["use_onnx_subfunctions"] = True
 
-            module_obj.export(**export_params)
+            if module_obj.qpc_path is None:
+                module_obj.export(**export_params)
 
     @staticmethod
     def get_default_config_path():
@@ -254,14 +254,14 @@ class QEffWanPipeline:
         Returns:
             str: Path to the default WAN configuration JSON file.
         """
-        return os.path.join(os.path.dirname(__file__), "wan_config.json")
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/wan_config.json")
 
     def compile(
         self,
         compile_config: Optional[str] = None,
         parallel: bool = False,
-        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
-        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
+        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_90P,
+        width: int = constants.WAN_ONNX_EXPORT_WIDTH_90P,
         num_frames: int = constants.WAN_ONNX_EXPORT_FRAMES,
         use_onnx_subfunctions: bool = False,
     ) -> str:
@@ -313,7 +313,6 @@ class QEffWanPipeline:
             ]
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
-
 
         # Configure pipeline dimensions and calculate compressed latent parameters
         cl, latent_height, latent_width, latent_frames = calculate_latent_dimensions_with_frames(
@@ -454,21 +453,18 @@ class QEffWanPipeline:
         # Load compilation configuration
         config_manager(self, config_source=custom_config_path, use_onnx_subfunctions=use_onnx_subfunctions)
 
-        if skip_compile: # if qpc is available
-            set_module_qpc_path_to_skip_compile(self)
-        else:
-            # Compile models with custom configuration if needed
-            self.compile(
-                compile_config=custom_config_path,
-                parallel=parallel_compile,
-                use_onnx_subfunctions=use_onnx_subfunctions,
-                height=height,
-                width=width,
-                num_frames=num_frames,
-            )
+        # Set device IDs, qpc path if precompiled qpc exist
+        set_module_device_ids_and_qpc_paths(self)
 
-        # Set device IDs for all modules based on configuration
-        set_module_device_ids(self)
+        # Compile models with custom configuration if needed
+        self.compile(
+            compile_config=custom_config_path,
+            parallel=parallel_compile,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+        )
 
         # Step 1: Validate all inputs
         self.model.check_inputs(

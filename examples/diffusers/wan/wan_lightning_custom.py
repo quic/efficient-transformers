@@ -125,12 +125,13 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 #     num_frames=81,
 #     use_onnx_subfunctions=True
 # )
+
 # ============================================================================
-# OPTIONAL: Skip Compilation
+# OPTIONAL: Skip Export, Compilation
 # ============================================================================
 #
 # When to use:
-# - When you want to skip export, compile the model if you have already qpc compiled ahead
+# - When you want to skip export, compile if you already had compiled qpc
 #
 # Changes needed in config.json: update qpc_path for each module
 #
@@ -139,22 +140,7 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 #           "device_ids": null,
 #           "qpc_path" : "<QPC_PATH>"
 #          }
-# Note: As of now to use this option we expect you are having all qpc paths
-#
-# Changes needed  in example.py : skip_compile=True in pipeline call
-# output = pipeline(
-#     prompt=prompt,
-#     num_frames=81,
-#     guidance_scale=1.0,
-#     guidance_scale_2=1.0,
-#     num_inference_steps=4,
-#     generator=torch.manual_seed(0),
-#     custom_config_path="examples/diffusers/wan/wan_config.json",
-#     height=480,
-#     width=832,
-#     skip_compile=True, # set to True
-# )
-#
+
 # ============================================================================
 # VIDEO GENERATION WITH CUSTOM RUNTIME CONFIGURATION
 # ============================================================================

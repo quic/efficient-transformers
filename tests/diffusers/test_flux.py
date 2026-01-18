@@ -19,7 +19,7 @@ from QEfficient import QEffFluxPipeline
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
-    set_module_device_ids,
+    set_module_device_ids_and_qpc_paths,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils._utils import load_json
@@ -76,7 +76,7 @@ def flux_pipeline_call_with_mad_validation(
     pipeline.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
 
     # Set device IDs for all modules based on configuration
-    set_module_device_ids(pipeline)
+    set_module_device_ids_and_qpc_paths(pipeline)
 
     # Validate all inputs
     pipeline.model.check_inputs(
@@ -313,7 +313,6 @@ def flux_pipeline():
 
     pipeline = QEffFluxPipeline.from_pretrained(
         "black-forest-labs/FLUX.1-schnell",
-        use_onnx_subfunctions=config["use_onnx_subfunctions"],
     )
 
     # Reduce to 2 layers for testing

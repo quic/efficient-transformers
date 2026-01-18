@@ -303,8 +303,8 @@ class QEffVAE(QEFFBaseModel):
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
-        latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P
-        latent_width = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P
+        latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_90P
+        latent_width = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_90P
 
         # VAE decoder takes latent representation as input
         example_inputs = {
@@ -582,8 +582,8 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
                 batch_size,
                 self.model.config.in_channels,
                 constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
-                constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P,
-                constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P,
+                constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_90P,
+                constants.WAN_ONNX_EXPORT_LATENT_WIDTH_90P,
                 dtype=torch.float32,
             ),
             # encoder_hidden_states = [BS, seq len , text dim]
@@ -592,7 +592,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             ),
             # Rotary position embeddings: [2, context_length, 1, rotary_dim]; 2 is from tuple of cos, sin freqs
             "rotary_emb": torch.randn(
-                2, constants.WAN_ONNX_EXPORT_CL_180P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32
+                2, constants.WAN_ONNX_EXPORT_CL_90P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32
             ),
             # Timestep embeddings: [batch_size=1, embedding_dim]
             "temb": torch.randn(batch_size, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32),
@@ -617,7 +617,6 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
                 3: "latent_height",
                 4: "latent_width",
             },
-            "timestep": {0: "steps"},
             "encoder_hidden_states": {0: "batch_size", 1: "sequence_length"},
             "rotary_emb": {1: "cl"},
             "tsp": {0: "model_type"},
