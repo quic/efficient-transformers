@@ -20,6 +20,8 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
+from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -51,12 +53,58 @@ class QEffMptAttention(MptAttention):
         key_states = key_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
 
+        num_kv_blocks = getattr(self, "num_kv_blocks", None)
+        blocking_config = getattr(self, "attn_blocking_config", None)
+        if blocking_config is None and num_kv_blocks is not None:
+            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+        use_blocked_kv = blocking_config is not None and supports_blocked_kv(past_key_value)
         if past_key_value is not None:
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+            past_seen_tokens = past_key_value.get_seq_length()
+            cache_kwargs = {
+                "position_ids": position_ids,
+                "batch_index": batch_index,
+                "past_seen_tokens": past_seen_tokens,
+            }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if use_blocked_kv:
+                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+        if use_blocked_kv:
+            score_mod = None
+            if position_bias is not None:
+                if len(position_bias.shape) != 3:
+                    raise ValueError(
+                        f"Expecting position_bias shape to be 3 dimensions, got {len(position_bias.shape)}"
+                    )
+                key_length = past_seen_tokens + seq_length
+                position_bias_query_index = max(0, position_bias.size(1) - seq_length)
+                position_bias_key_index = max(0, position_bias.size(2) - key_length)
+                position_bias = position_bias[:, position_bias_query_index:, position_bias_key_index:]
+
+                def score_mod(attn_weights_block, start_index, end_index, pos_bias=position_bias):
+                    return attn_weights_block + pos_bias[:, :, start_index:end_index]
+
+            strategy = get_blocking_strategy(blocking_config)
+            attn_output, attn_weights = strategy.apply(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.softmax_scale,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+                config=blocking_config,
+                score_mod=score_mod,
+            )
+            context_states = attn_output.contiguous().view(batch_size, seq_length, -1)
+            attn_output = self.out_proj(context_states)
+            return attn_output, attn_weights, past_key_value
 
         attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.softmax_scale
 
