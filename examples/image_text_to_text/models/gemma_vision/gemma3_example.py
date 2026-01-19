@@ -12,13 +12,13 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # Change model_id to "google/gemma-3-27b-it" for 27B model
-model_id = "google/gemma-3-4b-it"
+model_id = "google/gemma-3-27b-it"
 
 config = AutoConfig.from_pretrained(model_id)
 
 # For Testing Purpose Only
-config.text_config.num_hidden_layers = 1
-config.vision_config.num_hidden_layers = 2
+# config.text_config.num_hidden_layers = 1
+# config.vision_config.num_hidden_layers = 2
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -44,7 +44,7 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        node_precision_info="examples/gemma3_example/fp32_nodes_gemma3_4b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
+        node_precision_info="/home/dipankar/gemma_fix/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_27b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
     )
 
     messages = [
@@ -64,7 +64,7 @@ if skip_vision:
         return_tensors="pt",
     )
 
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=1500)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 
@@ -75,25 +75,25 @@ else:
         ctx_len=3072,
         img_size=896,
         num_cores=16,
-        num_devices=1,
+        num_devices=4,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mos=1,
-        node_precision_info="examples/gemma3_example/fp32_nodes_gemma3_4b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
+        node_precision_info="/home/dipankar/gemma_fix/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_27b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
     )
 
     ### IMAGE + TEXT ###
-    image_url = (
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    )
+    # image_url = (
+    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
+    # )
 
     messages = [
         {
             "role": "user",
             "content": [
-                {"type": "image", "url": image_url},
-                {"type": "text", "text": "Can you describe the image in detail."},
+                {"type": "image", "url": "ocr.png"},
+                {"type": "text", "text": "Please OCR this image."},
             ],
         },
     ]
@@ -106,6 +106,7 @@ else:
         return_tensors="pt",
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=1500)
+    breakpoint()
     print(tokenizer.batch_decode(output.generated_ids, skip_special_tokens=True))
     print(output)
