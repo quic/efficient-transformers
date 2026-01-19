@@ -60,7 +60,6 @@ class QEFFBaseModel(ABC):
         super().__init__()
         self.model = model
         self.hash_params = create_model_params(self, **kwargs)
-        self.prefill_onnx_path: Optional[str] = None
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
@@ -240,10 +239,7 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-            if prefill_only:
-                self.prefill_onnx_path = onnx_path
-            else:
-                self.onnx_path = onnx_path
+            self.onnx_path = onnx_path
             return onnx_path
 
         # check if the model is in meta state or weights are offloaded
@@ -322,10 +318,7 @@ class QEFFBaseModel(ABC):
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
-        if prefill_only:
-            self.prefill_onnx_path = onnx_path
-        else:
-            self.onnx_path = onnx_path
+        self.onnx_path = onnx_path
         return onnx_path
 
     def get_onnx_path(
@@ -342,21 +335,18 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
         }
+
         if prefill_only:
-            if self.prefill_onnx_path is None:
-                kwargs.update(
-                    {
-                        "prefill_only": prefill_only,
-                        "prefill_seq_len": specializations[0].get("seq_len"),
-                        "enable_chunking": enable_chunking,
-                    }
-                )
-                self.export(**kwargs)
-            return self.prefill_onnx_path
-        else:
-            if self.onnx_path is None:
-                self.export(**kwargs)
-            return self.onnx_path
+            kwargs.update(
+                {
+                    "prefill_only": prefill_only,
+                    "prefill_seq_len": specializations[0].get("seq_len"),
+                    "enable_chunking": enable_chunking,
+                }
+            )
+
+        self.export(**kwargs)
+        return self.onnx_path
 
     @dump_qconfig
     def _compile(
@@ -404,6 +394,8 @@ class QEFFBaseModel(ABC):
         onnx_path = Path(
             onnx_path
             if onnx_path
+            else self.onnx_path
+            if self.onnx_path
             else self.get_onnx_path(
                 prefill_only,
                 enable_chunking,
@@ -446,8 +438,27 @@ class QEFFBaseModel(ABC):
             + [f"-m={onnx_path}"]
         )
 
-        if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
+        # MDP partition config: prioritize dump over load
+        mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
+        mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        mdp_ts_json = None
+        user_provided_load_config = False
+
+        if mdp_dump_json_path:
+            if mdp_ts_json_path:
+                logger.warning(
+                    "Loading and Dumping partition is not supported at the same time. Prioritizing dump config over load config!"
+                )
+            command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
+        elif mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+            mdp_ts_json = load_json(str(mdp_ts_json_path))
+            user_provided_load_config = True
+        elif mdp_ts_num_devices > 1:
+            # Generate mdp config only if neither dump nor load is provided and num_devices > 1
+            mdp_ts_json = generate_mdp_partition_config(
+                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            )
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
@@ -456,16 +467,6 @@ class QEFFBaseModel(ABC):
                     command.append(option)
                 continue
             command.append(f"{option}={value}")
-
-        # Create a dummy mdp_ts_json if mdp-load-partition-config not provided and num_devices > 1
-        if mdp_ts_json_path is not None:
-            mdp_ts_json = load_json(str(mdp_ts_json_path))
-        elif mdp_ts_num_devices > 1:
-            mdp_ts_json = generate_mdp_partition_config(
-                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
-            )
-        else:
-            mdp_ts_json = None
 
         if use_onnx_subfunctions:
             logger.info("Using ONNX subfunctions for compilation.")
@@ -493,8 +494,8 @@ class QEFFBaseModel(ABC):
             # Probably compilation failure last time, delete directory to start over
             shutil.rmtree(qpc_path)
 
-        # write the MDP partition config file if not provided
-        if mdp_ts_json is not None:
+        # Write the generated MDP partition config file (not if user provided it)
+        if mdp_ts_json is not None and not user_provided_load_config:
             mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")

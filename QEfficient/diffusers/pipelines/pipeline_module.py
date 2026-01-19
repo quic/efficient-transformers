@@ -229,7 +229,7 @@ class QEffVAE(QEFFBaseModel):
         _onnx_transforms (List): ONNX transformations applied after export
     """
 
-    _pytorch_transforms = [CustomOpsTransform]
+    _pytorch_transforms = [CustomOpsTransform, AttentionTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     @property
@@ -287,6 +287,40 @@ class QEffVAE(QEFFBaseModel):
 
         return example_inputs, dynamic_axes, output_names
 
+    def get_video_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
+        """
+        Generate ONNX export configuration for the VAE decoder.
+
+        Args:
+            latent_height (int): Height of latent representation (default: 32)
+            latent_width (int): Width of latent representation (default: 32)
+
+        Returns:
+            Tuple containing:
+                - example_inputs (Dict): Sample inputs for ONNX export
+                - dynamic_axes (Dict): Specification of dynamic dimensions
+                - output_names (List[str]): Names of model outputs
+        """
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
+        latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P
+        latent_width = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P
+
+        # VAE decoder takes latent representation as input
+        example_inputs = {
+            "latent_sample": torch.randn(bs, 16, latent_frames, latent_height, latent_width),
+            "return_dict": False,
+        }
+
+        output_names = ["sample"]
+
+        # All dimensions except channels can be dynamic
+        dynamic_axes = {
+            "latent_sample": {0: "batch_size", 2: "latent_frames", 3: "latent_height", 4: "latent_width"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
     def export(
         self,
         inputs: Dict,
@@ -308,6 +342,10 @@ class QEffVAE(QEFFBaseModel):
         Returns:
             str: Path to the exported ONNX model
         """
+
+        if hasattr(self.model.config, "_use_default_values"):
+            self.model.config["_use_default_values"].sort()
+
         return self._export(
             example_inputs=inputs,
             output_names=output_names,
@@ -575,7 +613,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             "hidden_states": {
                 0: "batch_size",
                 1: "num_channels",
-                2: "num_frames",
+                2: "latent_frames",
                 3: "latent_height",
                 4: "latent_width",
             },

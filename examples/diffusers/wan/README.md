@@ -109,8 +109,8 @@ python wan_lightning.py
 
 ```python
 # Reduce to 2 layers for faster inference
-pipeline.transformer.model.transformer_high.config.num_layers = 2
-pipeline.transformer.model.transformer_low.config.num_layers = 2
+pipeline.transformer.model.transformer_high.config['num_layers'] = 2
+pipeline.transformer.model.transformer_low.config['num_layers']= 2
 
 original_blocks = pipeline.transformer.model.transformer_high.blocks
 org_blocks = pipeline.transformer.model.transformer_low.blocks
@@ -161,26 +161,18 @@ The configuration includes dual specializations for WAN's high and low noise mod
   "transformer": {
     "specializations":[
         {
-            "batch_size":"1",
-            "cl":"5040",
-            "latent_height":"24",
-            "latent_width":"40",
-            "model_type":"1",
-            "num_channels":"16",
-            "num_frames":"21",
-            "sequence_length":"512",
-            "steps":"1"
+            "batch_size": "1",
+            "num_channels": "16",
+            "steps": "1",
+            "sequence_length": "512",
+            "model_type": "1"
         },
         {
-            "batch_size":"1",
-            "cl":"5040",
-            "latent_height":"24",
-            "latent_width":"40",
-            "model_type":"2",
-            "num_channels":"16",
-            "num_frames":"21",
-            "sequence_length":"512",
-            "steps":"1"
+            "batch_size": "1",
+            "num_channels": "16",
+            "steps": "1",
+            "sequence_length": "512",
+            "model_type": "2"
         }
     ]
 }
@@ -192,9 +184,6 @@ The configuration includes dual specializations for WAN's high and low noise mod
 #### Specializations
 - `batch_size`: Batch size for inference
 - `num_channels`: Number of latent channels (16 for WAN)
-- `num_frames`: Number of latent frames (21 for 81 input frames)
-- `latent_height`/`latent_width`: Latent space dimensions
-- `cl`: Compressed latent dimension for transformer
 - `sequence_length` : Sequence length of text encoder 512
 - `model_type`: 1 for high noise model, 2 for low noise model
 
