@@ -19,6 +19,7 @@ from QEfficient import QEffFluxPipeline
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
+    config_manager,
     set_module_device_ids_and_qpc_paths,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -58,6 +59,7 @@ def flux_pipeline_call_with_mad_validation(
     max_sequence_length: int = 512,
     custom_config_path: Optional[str] = None,
     parallel_compile: bool = False,
+    use_onnx_subfunctions: bool = False,
     mad_tolerances: Dict[str, float] = None,
 ):
     """
@@ -72,11 +74,14 @@ def flux_pipeline_call_with_mad_validation(
 
     device = "cpu"
 
-    # Step 1: Load configuration, compile models
-    pipeline.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
+    # Load compilation configuration
+    config_manager(pipeline, config_source=custom_config_path, use_onnx_subfunctions=use_onnx_subfunctions)
 
     # Set device IDs for all modules based on configuration
     set_module_device_ids_and_qpc_paths(pipeline)
+
+    # Step 1: Load configuration, compile models
+    pipeline.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
 
     # Validate all inputs
     pipeline.model.check_inputs(
@@ -386,6 +391,7 @@ def test_flux_pipeline(flux_pipeline):
             generator=generator,
             mad_tolerances=config["mad_validation"]["tolerances"],
             parallel_compile=True,
+            use_onnx_subfunctions=False,
             return_dict=True,
         )
 
