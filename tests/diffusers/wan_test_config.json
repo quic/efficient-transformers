@@ -1,8 +1,8 @@
 {
     "model_setup": {
-                        "height": 192,
-                        "width": 320,
-                        "num_frames": 81,
+                        "height": 96,
+                        "width": 160,
+                        "num_frames": 61,
                         "num_transformer_layers_high": 1,
                         "num_transformer_layers_low": 1,
                         "use_onnx_subfunctions": false
@@ -57,7 +57,8 @@
                                 "mdts_mos": 1
                             },
           "execute":     {
-                                "device_ids": null
+                                "device_ids": null,
+                                "qpc_path" : null
                           }
         }
     }
