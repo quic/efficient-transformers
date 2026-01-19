@@ -72,6 +72,14 @@ Optimization techniques.
 
 [See all performance examples →](performance/)
 
+### Disaggregated Serving
+Distributed inference across multiple devices.
+
+| Example | Description | Script |
+|---------|-------------|--------|
+| Basic Disaggregated Serving | Multi-device serving | [disagg_serving/gpt_oss_disagg_mode.py](disagg_serving/gpt_oss_disagg_mode.py) |
+| Chunking Disaggregated Serving | Multi-device serving | [disagg_serving/gpt_oss_disagg_mode_with_chunking.py](disagg_serving/gpt_oss_disagg_mode_with_chunking.py) |
+
 ## Installation
 
 For installation instructions, see the [Quick Installation guide](../README.md#quick-installation) in the main README.
