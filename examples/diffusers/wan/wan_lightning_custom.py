@@ -86,18 +86,18 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 #
 # # Configure for 2-layer model (faster inference)
 # pipeline.transformer.model.transformer_high.config['num_layers'] = 2
-# pipeline.transformer.model.transformer_low.config['num_layers']= 2
+# pipeline.transformer.model.transformer_low.config['num_layers'] = 2
 #
 # # Reduce high noise transformer blocks
 # original_blocks = pipeline.transformer.model.transformer_high.blocks
 # pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
-#     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config.num_layers)]
+#     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config['num_layers'])]
 # )
 #
 # # Reduce low noise transformer blocks
 # org_blocks = pipeline.transformer.model.transformer_low.blocks
 # pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
-#     [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config.num_layers)]
+#     [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config['num_layers'])]
 # )
 
 # ============================================================================
