@@ -276,6 +276,12 @@ def get_finetune_parser():
         help="Enable pipeline parallel training. This will split the of model layerwise in given number of stages and train the model.",
     )
     parser.add_argument(
+        "--enable_zero_dp",
+        "--enable-zero-dp",
+        action="store_true",
+        help="Enable ZeRO Data Parallelism using FSDP",
+    )
+    parser.add_argument(
         "--num_pp_stages",
         "--num-pp-stages",
         required=False,

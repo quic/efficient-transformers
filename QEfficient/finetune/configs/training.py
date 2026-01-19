@@ -105,6 +105,7 @@ class TrainConfig:
     num_pp_stages: int = 1
     enable_ddp: bool = False
     enable_sorting_for_ddp: bool = True
+    enable_zero_dp: bool = False
     opByOpVerifier: bool = False
 
     dump_logs: bool = True
