@@ -27,7 +27,9 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
   - [Mistral-3.1 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/mistral_vision/mistral3_example.py)
 
 
-- **GPT-OSS (Decode-Only)**
+- **Disaggregated serving ready via vLLM GPT-OSS**
+  > **Note**: If running GPT-OSS models natively via vLLM, PR-685 of the qefficient library is required for Python 3.12 compatibility.
+    
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Separate prefill and decode compilation supported
   - Disaggregated serving ready
@@ -76,13 +78,19 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 - **Compute-Context-Length (CCL) support**: To optimize the throughput when handling very large context lengths
 - **Prefill/Decode Separation**: Support for GPT OSS using disaggregate serving models
 - **Continuous Batching (VLMs)**: Extended to Vision Language Models with multi-image handling
-- **ONNX Sub-Functions**: Feature enabling more efficient model compilation and execution on hardware
+  - Supported models: Llava, Llava_Next, Gemma3, Mistral3, InternVL2_5, InternVL3_5, Molmo
+- **ONNX Sub-Functions**: Feature enabling more efficient model compilation and execution on hardware. Users can enable the feature by passing `use_onnx_subfunctions=True` during export
 - **Memory Profiling**: Built-in utilities for optimization analysis
 - **Extend on-device Sampling**: Extend on-device sampling to dual QPC VLMs and Guided decoding for on-device sampling
 - **ONNX transform, memory & time optimizations**: Optimizations for faster ONNX Transform and reduced memory footprint
 - **Removed platform SDK dependency**: Support QPC generation on systems without the Platform SDK
 - **Example Scripts Revamp**: New example scripts for audio, embeddings, and image-text-to-text tasks
-- **Onboarding Guide**: Simplified setup and deployment process for new users
+- **Onboarding Guide**:
+Simplified setup and deployment process for new users
+  - [CausalLM Onboarding Guide](https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples/onboarding_guide/causallm)
+  - [Custom ops](https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples/onboarding_guide/customop)
+- Organized examples into domain-specific subdirectories [Examples](https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples)
+
 
 
 
