@@ -80,7 +80,7 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
         )
 
     # If DDP is disabled, nothing to initialize here
-    if not train_config.enable_ddp:
+    if not (train_config.enable_ddp or train_config.enable_zero_dp):
         # Non-DDP path: allow explicit device index, just set it if present
         if torch_device.type != "cpu" and torch_device.index is not None:
             getattr(torch, torch_device.type).set_device(torch_device.index)
@@ -388,7 +388,7 @@ def main(**kwargs) -> None:
 
     # Figure out the concrete device for this process
     torch_device = torch.device(train_config.device)
-    if train_config.enable_ddp and torch_device.type != "cpu":
+    if (train_config.enable_ddp or train_config.enable_zero_dp) and torch_device.type != "cpu":
         # setup_distributed_training has already set the current device based on LOCAL_RANK
         current_idx = getattr(torch, torch_device.type).current_device()
         device = torch.device(torch_device.type, current_idx)
@@ -415,6 +415,16 @@ def main(**kwargs) -> None:
         torch.nn.parallel.DistributedDataParallel._set_params_and_buffers_to_ignore_for_model(model, ignore_names)
 
         model = nn.parallel.DistributedDataParallel(model)
+    
+    elif train_config.enable_zero_dp:
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        from torch.distributed.fsdp.fully_sharded_data_parallel import ShardingStrategy
+
+        fsdp_kwargs = {
+            "sharding_strategy": ShardingStrategy.NO_SHARD,  # Use NO_SHARD strategy (similar to DDP)
+            "sync_module_states": True,
+        }
+        model = FSDP(model, **fsdp_kwargs)
 
     results = train(
         model,
