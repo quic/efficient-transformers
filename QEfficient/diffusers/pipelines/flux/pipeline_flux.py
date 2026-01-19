@@ -293,6 +293,12 @@ class QEffFluxPipeline:
             ...     width=512
             ... )
         """
+        # Load compilation configuration
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
+
+        # Set device IDs for all modules based on configuration
+        set_module_device_ids_and_qpc_paths(self)
+
         # Ensure all modules are exported to ONNX before compilation
         if any(
             path is None
@@ -629,12 +635,6 @@ class QEffFluxPipeline:
 
         if height is None or width is None:
             logger.warning("Height or width is None. Setting default values of 512 for both dimensions.")
-
-        # Load compilation configuration
-        config_manager(self, config_source=custom_config_path, use_onnx_subfunctions=use_onnx_subfunctions)
-
-        # Set device IDs for all modules based on configuration
-        set_module_device_ids_and_qpc_paths(self)
 
         self.compile(
             compile_config=custom_config_path,

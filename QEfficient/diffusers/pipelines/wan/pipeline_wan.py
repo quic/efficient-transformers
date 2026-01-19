@@ -304,6 +304,12 @@ class QEffWanPipeline:
             ...     num_frames=81
             ... )
         """
+        # Load compilation configuration
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
+
+        # Set device IDs, qpc path if precompiled qpc exist
+        set_module_device_ids_and_qpc_paths(self)
+
         # Ensure all modules are exported to ONNX before compilation
         if any(
             path is None
@@ -449,12 +455,6 @@ class QEffWanPipeline:
             >>> result.images[0].save("cat_garden.mp4")
         """
         device = "cpu"
-
-        # Load compilation configuration
-        config_manager(self, config_source=custom_config_path, use_onnx_subfunctions=use_onnx_subfunctions)
-
-        # Set device IDs, qpc path if precompiled qpc exist
-        set_module_device_ids_and_qpc_paths(self)
 
         # Compile models with custom configuration if needed
         self.compile(

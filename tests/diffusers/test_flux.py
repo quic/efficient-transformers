@@ -19,8 +19,6 @@ from QEfficient import QEffFluxPipeline
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
-    config_manager,
-    set_module_device_ids_and_qpc_paths,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils._utils import load_json
@@ -73,12 +71,6 @@ def flux_pipeline_call_with_mad_validation(
     mad_validator = MADValidator(tolerances=mad_tolerances)
 
     device = "cpu"
-
-    # Load compilation configuration
-    config_manager(pipeline, config_source=custom_config_path, use_onnx_subfunctions=use_onnx_subfunctions)
-
-    # Set device IDs for all modules based on configuration
-    set_module_device_ids_and_qpc_paths(pipeline)
 
     # Step 1: Load configuration, compile models
     pipeline.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
