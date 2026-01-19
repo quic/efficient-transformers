@@ -115,3 +115,23 @@
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate
 ```
+
+(QEFFAutoModelForCTC)=
+## `QEFFAutoModelForCTC`
+
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
+
+### High-Level API
+
+```{eval-rst}
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.from_pretrained
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.export
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.compile
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.generate
+```

@@ -44,7 +44,6 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        node_precision_info="/home/dipankar/gemma_fix/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_27b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
     )
 
     messages = [
@@ -80,7 +79,6 @@ else:
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mos=1,
-        node_precision_info="/home/dipankar/gemma_fix/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_27b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
     )
 
     ### IMAGE + TEXT ###
