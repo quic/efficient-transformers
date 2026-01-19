@@ -23,7 +23,7 @@ class grammar(Dataset):
             )
         except FileNotFoundError:
             logger.raise_error(
-                "Loading of grammar dataset failed! Please check (https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb) for details on how to download the dataset.",
+                "Loading of grammar dataset failed! Please check (https://drive.google.com/drive/folders/1kKlGcinD_FhGXC0LztN4Ts605YXzMEVA) to download the c4_200m_550k.csv. Copy-paste the path of this downloaded csv in the grammar_dataset_preprocess.py and run this file",
                 FileNotFoundError,
             )
 
