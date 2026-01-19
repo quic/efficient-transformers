@@ -16,10 +16,6 @@ model_id = "google/gemma-3-4b-it"
 
 config = AutoConfig.from_pretrained(model_id)
 
-# For Testing Purpose Only
-config.text_config.num_hidden_layers = 1
-config.vision_config.num_hidden_layers = 2
-
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
 
@@ -29,13 +25,14 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 )
 
 ### use skip_vision=True, if want to run only text, or false ###
-skip_vision = False
+skip_vision = True
 
 if skip_vision:
     ## Only Text ##
+    import ipdb; ipdb.set_trace()
     qeff_model.compile(
         prefill_seq_len=128,
-        ctx_len=3072,
+        ctx_len=8192,
         img_size=896,
         num_cores=16,
         num_devices=1,
@@ -44,14 +41,14 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        node_precision_info="examples/gemma3_example/fp32_nodes_gemma3_4b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
+        node_precision_info="/home/ochougul/r1.21/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_4b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
     )
 
     messages = [
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "Describe the transformers architecture in LLMs."},
+                {"type": "text", "text": "Describe the transformers architecture in LLMs in elaborate way in 8192 words."},
             ],
         },
     ]
@@ -64,7 +61,7 @@ if skip_vision:
         return_tensors="pt",
     )
 
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(inputs=inputs)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 

@@ -647,7 +647,7 @@ class QEffHybridCacheForGPTOSS:
         cache = cls(
             config,
             batch_size=past_key_values[0][0].shape[0],
-            max_cache_len=past_key_values[1][0].shape[2],
+            max_cache_len=past_key_values[5][0].shape[2],
             sliding_window_len=past_key_values[0][0].shape[2],
         )
         if past_key_values is not None:
@@ -727,11 +727,11 @@ class QEffHybridCacheForGPTOSS:
         else:
             position_ids = cache_kwargs.get("position_ids")
             is_sliding_layer = cache_kwargs.get("is_sliding")
-            sliding_window = cache_kwargs.get("sliding_window")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
 
             if is_sliding_layer:
-                kv_position_ids = torch.where(position_ids == -1, position_ids, position_ids % sliding_window)
+                sliding_window_len = self.key_cache[layer_idx].shape[2]
+                kv_position_ids = torch.where(position_ids == -1, position_ids, position_ids % sliding_window_len)
             else:
                 kv_position_ids = position_ids
 
