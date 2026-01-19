@@ -12,7 +12,7 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # Change model_id to "google/gemma-3-27b-it" for 27B model
-model_id = "google/gemma-3-4b-it"
+model_id = "google/gemma-3-27b-it"
 
 config = AutoConfig.from_pretrained(model_id)
 
@@ -29,7 +29,6 @@ skip_vision = True
 
 if skip_vision:
     ## Only Text ##
-    import ipdb; ipdb.set_trace()
     qeff_model.compile(
         prefill_seq_len=128,
         ctx_len=8192,
@@ -103,6 +102,6 @@ else:
         return_tensors="pt",
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=100, device_ids=[4,])
     print(tokenizer.batch_decode(output.generated_ids, skip_special_tokens=True))
     print(output)

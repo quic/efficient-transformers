@@ -275,6 +275,7 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
+            import ipdb; ipdb.set_trace()
             torch.onnx.export(
                 self.model,
                 (example_inputs,),

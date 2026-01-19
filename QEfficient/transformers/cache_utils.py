@@ -713,6 +713,62 @@ class QEffHybridCacheForGPTOSS:
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
         return k_out, v_out
 
+
+    def update_old(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if len(self.key_cache) <= layer_idx:
+            self.key_cache.append(key_states)
+            self.value_cache.append(value_states)
+            k_out, v_out = key_states, value_states
+        else:
+            position_ids = cache_kwargs.get("position_ids")
+            is_sliding_layer = cache_kwargs.get("is_sliding")
+            layer_ctx_len = self.key_cache[layer_idx].shape[2]
+            if is_sliding_layer:
+                sliding_window_len = self.key_cache[layer_idx].shape[2]
+                kv_position_ids = torch.where(position_ids == -1, position_ids, position_ids % sliding_window_len)
+            else:
+                kv_position_ids = position_ids
+
+            self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
+            self.value_cache[layer_idx] = CtxScatterFunc.apply(
+                self.value_cache[layer_idx], kv_position_ids, value_states
+            )
+            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+
+            # Original Gather
+            ctx_len = self.key_cache[layer_idx].shape[2]
+            ctx_indices = torch.arange(ctx_len)[None, None, ...]
+            gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+            invalid_mask = ctx_indices > gather_limit
+            if torch.onnx.is_in_onnx_export():
+                invalid_idx_value = torch.iinfo(torch.int32).max
+            else:
+                invalid_idx_value = 0
+            ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+            all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
+            rolling_indices = torch.where(all_indices > layer_ctx_len - 1, all_indices % layer_ctx_len, all_indices)
+            if is_sliding_layer:
+                print("using worse gather")
+                final_indices = torch.where(
+                    position_ids.max() >= (layer_ctx_len - 1), rolling_indices, ctx_indices
+                )
+            else:
+                final_indices = ctx_indices
+            ctx_len = self.key_cache[layer_idx].shape[2]
+            k_out = CtxGatherFunc.apply(k_out, final_indices, ctx_len)
+            v_out = CtxGatherFunc.apply(v_out, final_indices, ctx_len)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)    
+
+        return k_out, v_out
+
+
     def update(
         self,
         key_states: torch.Tensor,
@@ -774,6 +830,7 @@ class QEffHybridCacheForGPTOSS:
                 k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices, ctx_len)
                 v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices, ctx_len)
             else:
+                print("using better gather")
                 k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
                 v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
 
