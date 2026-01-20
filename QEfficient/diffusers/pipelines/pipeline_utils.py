@@ -128,10 +128,9 @@ def set_execute_params(cls):
         module_obj.qpc_path = config_modules[module_name]["execute"]["qpc_path"]
         if module_obj.qpc_path:
             if not os.path.exists(module_obj.qpc_path):
-                logger.warning(
-                    f"Given qpc path: {module_obj.qpc_path} does not exist, considering {module_name} for compilation"
+                raise FileNotFoundError(
+                    f"Given qpc path: {module_obj.qpc_path} does not exist. Please provide correct path or keep null"
                 )
-                module_obj.qpc_path = None
 
 
 def compile_modules_parallel(

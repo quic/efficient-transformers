@@ -296,7 +296,7 @@ class QEffFluxPipeline:
         # Load compilation configuration
         config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
-        # Set device IDs for all modules based on configuration
+        # Set device IDs, qpc path if precompiled qpc exist
         set_execute_params(self)
 
         # Ensure all modules are exported to ONNX before compilation

@@ -130,10 +130,9 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # OPTIONAL: Skip Export, Compilation
 # ============================================================================
 #
-# When to use:
-# - When you want to skip export, compile if you already had compiled qpc
+# Use this when you want to skip export and compilation if you have already compiled QPC.
 #
-# Changes needed in config.json: update qpc_path for each module
+# Changes needed in config.json: update qpc_path of desired module
 #
 # "execute":
 #          {
