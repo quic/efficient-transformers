@@ -11,7 +11,7 @@ Main entry point for fine-tuning LLMs using the experimental finetune framework.
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from QEfficient.finetune.experimental.core.callbacks import create_callbacks, replace_progress_callback
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
@@ -20,7 +20,6 @@ from QEfficient.finetune.experimental.core.utils.training_config_utils import pr
 from QEfficient.finetune.experimental.core.config_manager import (
     ConfigManager,
     MasterConfig,
-    PeftConfig,
     create_trainer_config,
     parse_arguments,
 )
@@ -74,8 +73,18 @@ class FineTuningPipeline:
             Tuple of (train_dataset, eval_dataset)
         """
         dataset_config = self.config_manager.get_dataset_config()
+        # Convert to dict if it's not already to ensure proper filtering
+        if not isinstance(dataset_config, dict):
+            dataset_config = dict(dataset_config)
+
         dataset_type = dataset_config.get("dataset_type")
+        dataset_name = dataset_config.get("dataset_name")
         seed = self.config.training.seed
+
+        # Create a copy of dataset_config excluding keys that are passed explicitly
+        # to avoid duplicate keyword arguments when unpacking
+        excluded_keys = ("dataset_type", "dataset_name", "split", "seed", "train_split", "test_split")
+        dataset_config_copy = {k: v for k, v in dataset_config.items() if k not in excluded_keys}
 
         # Helper function to create a dataset for a specific split
         def create_dataset_for_split(split: str) -> Any:
@@ -85,10 +94,10 @@ class FineTuningPipeline:
 
             return ComponentFactory.create_dataset(
                 dataset_type=dataset_type,
-                dataset_name=dataset_config["dataset_name"],
+                dataset_name=dataset_name,
                 split=split_name,
                 seed=seed,
-                **dataset_config,
+                **dataset_config_copy,
             )
 
         train_dataset = create_dataset_for_split("train")

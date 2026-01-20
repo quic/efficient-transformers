@@ -10,10 +10,7 @@ Utility functions for preparing training configurations.
 """
 
 import json
-from pathlib import Path
-from typing import Any, Dict, Optional
-
-from transformers import is_accelerate_available
+from typing import Any, Dict
 
 from QEfficient.finetune.experimental.core.config_manager import ConfigManager
 
@@ -28,8 +25,6 @@ def prepare_training_config(
 
     Args:
         config_manager: ConfigManager instance with loaded configuration
-        include_num_input_tokens_seen: Override for include_num_input_tokens_seen (default: False)
-        use_cpu: Override for use_cpu (default: False)
 
     Returns:
         Dictionary of training arguments ready for trainer initialization
@@ -55,32 +50,5 @@ def prepare_training_config(
     if training_config.get("ddp_config") is not None:
         ddp_config = training_config.pop("ddp_config")
         training_config = {**training_config, **ddp_config}
-
-    # Handle accelerator configuration
-    accelerate_config_path = training_config.pop("accelerator_config", None)
-    if accelerate_config_path:
-        try:
-            with open(accelerate_config_path, "r", encoding="utf-8") as file:
-                accelerate_config = json.load(file)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            raise ValueError(f"Failed to load accelerate config from {accelerate_config_path}: {e}")
-
-        parallelism_dict = accelerate_config.get("parallelism_config", None)
-        if parallelism_dict is not None:
-            if is_accelerate_available("1.10.1"):
-                from accelerate.parallelism_config import ParallelismConfig
-            else:
-                raise RuntimeError("Accelerate package with version 1.10.1 or higher is required.")
-            parallelism_config = ParallelismConfig(
-                dp_replicate_size=parallelism_dict.get("dp_replicate_size", 1),
-                dp_shard_size=parallelism_dict.get("dp_shard_size", 1),
-                tp_size=parallelism_dict.get("tp_size", 1),
-                cp_size=parallelism_dict.get("cp_size", 1),
-            )
-            training_config["parallelism_config"] = parallelism_config
-
-        fsdp_config = accelerate_config.get("fsdp_config", None)
-        if fsdp_config is not None:
-            training_config["fsdp_config"] = fsdp_config
 
     return training_config

@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import logging
-from typing import Callable, Dict, Optional, Type
+from typing import Any, Callable, Dict, Optional, Type
 
 # from QEfficient.finetune.experimental.core.logger import get_logger
 
@@ -201,7 +201,7 @@ registry = ComponentRegistry()
 
 class ComponentFactory:
     @staticmethod
-    def create_model(model_type: str, model_name: str, **kwargs) -> any:
+    def create_model(model_type: str, model_name: str, **kwargs) -> Any:
         """Create a model instance."""
         model_class = registry.get_model(model_type)
         if model_class is None:
@@ -210,7 +210,7 @@ class ComponentFactory:
         return model_instance
 
     @staticmethod
-    def create_dataset(dataset_type: str, dataset_name: str, split: str, seed: int = 42, **kwargs) -> any:
+    def create_dataset(dataset_type: str, dataset_name: str, split: str, seed: int = 42, **kwargs) -> Any:
         """
         Create a dataset instance.
 
