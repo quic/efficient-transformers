@@ -127,6 +127,20 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # )
 
 # ============================================================================
+# OPTIONAL: Skip Export, Compilation
+# ============================================================================
+#
+# Use this when you want to skip export and compilation if you have already compiled QPC.
+#
+# Changes needed in config.json: update qpc_path of desired module
+#
+# "execute":
+#          {
+#           "device_ids": null,
+#           "qpc_path" : "<QPC_PATH>"
+#          }
+
+# ============================================================================
 # VIDEO GENERATION WITH CUSTOM RUNTIME CONFIGURATION
 # ============================================================================
 # Generate a video using the configured pipeline.

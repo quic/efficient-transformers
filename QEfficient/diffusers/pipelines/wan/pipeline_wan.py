@@ -33,7 +33,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
-    set_module_device_ids,
+    set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -243,7 +243,8 @@ class QEffWanPipeline:
             if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
                 export_params["use_onnx_subfunctions"] = True
 
-            module_obj.export(**export_params)
+            if module_obj.qpc_path is None:
+                module_obj.export(**export_params)
 
     @staticmethod
     def get_default_config_path():
@@ -253,7 +254,7 @@ class QEffWanPipeline:
         Returns:
             str: Path to the default WAN configuration JSON file.
         """
-        return os.path.join(os.path.dirname(__file__), "wan_config.json")
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/wan_config.json")
 
     def compile(
         self,
@@ -303,6 +304,12 @@ class QEffWanPipeline:
             ...     num_frames=81
             ... )
         """
+        # Load compilation configuration
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
+
+        # Set device IDs, qpc path if precompiled qpc exist
+        set_execute_params(self)
+
         # Ensure all modules are exported to ONNX before compilation
         if any(
             path is None
@@ -312,9 +319,6 @@ class QEffWanPipeline:
             ]
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
-
-        # Load compilation configuration
-        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Configure pipeline dimensions and calculate compressed latent parameters
         cl, latent_height, latent_width, latent_frames = calculate_latent_dimensions_with_frames(
@@ -460,9 +464,6 @@ class QEffWanPipeline:
             width=width,
             num_frames=num_frames,
         )
-
-        # Set device IDs for all modules based on configuration
-        set_module_device_ids(self)
 
         # Step 1: Validate all inputs
         self.model.check_inputs(

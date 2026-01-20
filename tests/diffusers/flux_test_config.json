@@ -47,7 +47,8 @@
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                          "qpc_path" : null
                                         }
 
                     },
@@ -69,7 +70,8 @@
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                          "qpc_path" : null
                                         }
                     },
     "transformer":
@@ -94,7 +96,8 @@
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                          "qpc_path" : null
                                         }
                     },
     "vae_decoder":
@@ -115,7 +118,8 @@
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                          "qpc_path" : null
                                         }
                     }
   }
