@@ -2523,7 +2523,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
         if num_q_blocks is None:
             block_size = 256
-            if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
+            if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 256:
                 raise ValueError(
                     f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
                     f"Or set `NUM_Q_BLOCKS` ENV variable"
@@ -2603,6 +2603,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 else seq_len
             )
             kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
+            self.hash_params["FFN_W_BLOCK_SIZE"] = int(os.environ.get("FFN_W_BLOCK_SIZE", -1))
         else:
             self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
             self.hash_params.pop("prefill_only", None)
@@ -2610,9 +2611,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params.pop("NUM_FFN_BLOCKS", None)
             self.hash_params.pop("ENABLE_OPT_SWA", None)
             self.hash_params.pop("chunking", None)
+            self.hash_params.pop("FFN_W_BLOCK_SIZE", None)
             if kwargs.get("retain_full_kv", False):
                 kv_cache_shape[2] = seq_len + self.model.config.sliding_window
                 self.hash_params["retain_full_kv"] = True
+
+        self.hash_params["NUM_KV_BLOCKS"] = int(os.environ.get("NUM_KV_BLOCKS", -1))
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),

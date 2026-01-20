@@ -243,7 +243,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
 
         # ────────────────── allocate the output tensor ─────
         expert_out = hidden.new_zeros((T, H))  # accumulation buffer
-        target_blocks = int(os.environ.get("NUM_BLOCKS", 1))
+        target_blocks = int(os.environ.get("NUM_FFN_BLOCKS", 1))
         block_positions = []
         for j in range(target_blocks):
             block_positions.append(j * (T // target_blocks))
@@ -272,8 +272,12 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                 # Gate and Up projections
 
                 wg_col_shape = W_g.shape[1]
-                wg_num_blocks = math.ceil(wg_col_shape / 128)
-                last_block_size = wg_col_shape % 128 if wg_col_shape % 128 != 0 else 128
+                w_block_size = os.environ.get("FFN_W_BLOCK_SIZE", wg_col_shape)
+                wg_num_blocks = math.ceil(wg_col_shape / w_block_size)
+                if w_block_size < wg_col_shape:
+                    last_block_size = wg_col_shape % w_block_size if wg_col_shape % w_block_size != 0 else w_block_size
+                else:
+                    last_block_size = wg_col_shape
 
                 intermediates = []
                 for i in range(wg_num_blocks):
@@ -281,8 +285,12 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                         cur_gate = (tgb @ W_g[:, -last_block_size:]) + b_g[-last_block_size:]
                         cur_up = (tgb @ W_u[:, -last_block_size:]) + b_u[-last_block_size:]
                     else:
-                        cur_gate = (tgb @ W_g[:, i * 128 : (i + 1) * 128]) + b_g[i * 128 : (i + 1) * 128]
-                        cur_up = (tgb @ W_u[:, i * 128 : (i + 1) * 128]) + b_u[i * 128 : (i + 1) * 128]
+                        cur_gate = (tgb @ W_g[:, i * w_block_size : (i + 1) * w_block_size]) + b_g[
+                            i * w_block_size : (i + 1) * w_block_size
+                        ]
+                        cur_up = (tgb @ W_u[:, i * w_block_size : (i + 1) * w_block_size]) + b_u[
+                            i * w_block_size : (i + 1) * w_block_size
+                        ]
 
                     cur_gate = cur_gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
                     cur_up = cur_up.clamp(min=-self.experts.limit, max=self.experts.limit)
@@ -297,7 +305,10 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                     if i == wg_num_blocks - 1:
                         downs.append((intermediate @ W_d[:, -last_block_size:]) + b_d[-last_block_size:])
                     else:
-                        downs.append((intermediate @ W_d[:, i * 128 : (i + 1) * 128]) + b_d[i * 128 : (i + 1) * 128])
+                        downs.append(
+                            (intermediate @ W_d[:, i * w_block_size : (i + 1) * w_block_size])
+                            + b_d[i * w_block_size : (i + 1) * w_block_size]
+                        )
 
                 down_out_block = torch.cat(downs, dim=1)
                 outs.append(down_out_block)
