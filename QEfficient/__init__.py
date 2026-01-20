@@ -61,7 +61,7 @@ __all__ = [
 
 
 # Conditionally import QAIC-related modules if the SDK is installed
-__version__ = "1.22.0.dev0"
+__version__ = "mainline"
 
 
 def check_qaic_sdk():
