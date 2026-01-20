@@ -798,7 +798,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
     def cloud_ai_100_classification_generate(
         self,
         inputs: torch.Tensor,
-        device_ids: List[int] = [0],
+        device_ids: List[int],
     ) -> dict:
         """
         Generate classification output using the Cloud AI 100 hardware runtime.
