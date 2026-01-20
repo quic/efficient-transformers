@@ -6,6 +6,14 @@ Supported Features
 
    * - Feature
      - Impact
+   * - `Diffusion Models <https://github.com/quic/efficient-transformers/tree/main/examples/diffusers>`_
+     - Full support for diffuser-based image generation models like Stable Diffusion, Imagen, Videogen enabling efficient image and video synthesis tasks.
+   * - `Disaggregated Serving for GPT-OSS <https://github.com/quic/efficient-transformers/tree/main/examples/disagg_serving>`_
+     - Enabled for GPT-OSS models, allowing for flexible deployment of large language models across different hardware configurations.
+   * - `ONNX Sub-Functions <https://github.com/quic/efficient-transformers/pull/621>`_
+     - Feature enabling more efficient model compilation and execution on hardware.
+   * - `BlockedKV attention in CausalLM <https://github.com/quic/efficient-transformers/pull/618>`_
+     - Implements a blocked K/V cache layout so attention reads/processes the cache blockbyblock, improving longcontext decode performance.
    * - `Compute Context Length (CCL) <https://github.com/quic/efficient-transformers/blob/main/examples/performance/compute_context_length/README.md>`_
      - Optimizes inference by using different context lengths during prefill and decode phases, reducing memory footprint and computation for shorter sequences while maintaining support for longer contexts. Supports both text-only and vision-language models. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/performance/compute_context_length/basic_inference.py>`_ for more **details**.
    * - Sentence embedding, Flexible Pooling configuration and compilation with multiple sequence lengths
@@ -58,5 +66,3 @@ Supported Features
      - A script for computing the perplexity of a model, allowing for the evaluation of model performance and comparison across different models and datasets. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/scripts/perplexity_computation/calculate_perplexity.py>`_ for more **details**.
    * - KV Heads Replication Script
      - A sample script for replicating key-value (KV) heads for the Llama-3-8B-Instruct model, running inference with the original model, replicating KV heads, validating changes, and exporting the modified model to ONNX format. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/scripts/replicate_kv_head/replicate_kv_heads.py>`_ for more **details**.
-   * - Block Attention (in progress)
-     - Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.
