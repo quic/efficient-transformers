@@ -53,6 +53,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyTransform,
     SamplerTransform,
+    SkipSoftmaxTransform,
     SpDTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
@@ -2405,6 +2406,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
             BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+        if self.model.qaic_config is not None and self.model.qaic_config.get("skip_threshold", None) is not None:
+            if self.model.qaic_config.get("num_kv_blocks", None) is None:
+                warnings.warn(f"Skip Softmax require KV blocking be enabled by passing num_kv_blocks")
+            else:
+                SkipSoftmaxTransform.apply(self.model, skip_threshold=self.model.qaic_config.get("skip_threshold"))
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()

@@ -923,6 +923,7 @@ class BlockedKVAttentionTransform:
     _module_mapping = {
         QEffLlamaAttention,
         QEffQwen2_5_VLAttention,
+        QEffGptOssAttention,
     }
 
     @classmethod
@@ -936,4 +937,22 @@ class BlockedKVAttentionTransform:
                 transformed = True  # Set to True if at least one transformation occurs
             elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
                 warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
+        return model, transformed
+
+class SkipSoftmaxTransform:
+    _module_mapping = {
+        QEffGptOssAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, skip_threshold) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in model.modules():
+            if type(module) in cls._module_mapping:
+                repl_module = type(module)
+                module.__class__ = repl_module
+                module.forward = MethodType(partial(repl_module.forward, skip_threshold=skip_threshold), module)
+                transformed = True  # Set to True if at least one transformation occurs
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
+                warnings.warn(f"Skip Softmax is not yet supported for {type(module)}.")
         return model, transformed
