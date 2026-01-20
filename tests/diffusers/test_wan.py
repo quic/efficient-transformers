@@ -28,8 +28,6 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
     calculate_latent_dimensions_with_frames,
-    config_manager,
-    set_module_device_ids_and_qpc_paths,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -79,12 +77,6 @@ def wan_pipeline_call_with_mad_validation(
     mad_validator = MADValidator(tolerances=mad_tolerances)
 
     device = "cpu"
-
-    # Load compilation configuration
-    config_manager(pipeline, config_source=custom_config_path, use_onnx_subfunctions=use_onnx_subfunctions)
-
-    # Set device IDs for all modules based on configuration
-    set_module_device_ids_and_qpc_paths(pipeline)
 
     # Step 1: Compile() (export and compile)
     pipeline.cl, pipeline.latent_height, pipeline.latent_width, pipeline.latent_frames = (

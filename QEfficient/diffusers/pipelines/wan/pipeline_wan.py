@@ -33,7 +33,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
-    set_module_device_ids_and_qpc_paths,
+    set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -260,8 +260,8 @@ class QEffWanPipeline:
         self,
         compile_config: Optional[str] = None,
         parallel: bool = False,
-        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_90P,
-        width: int = constants.WAN_ONNX_EXPORT_WIDTH_90P,
+        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
+        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
         num_frames: int = constants.WAN_ONNX_EXPORT_FRAMES,
         use_onnx_subfunctions: bool = False,
     ) -> str:
@@ -308,7 +308,7 @@ class QEffWanPipeline:
         config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Set device IDs, qpc path if precompiled qpc exist
-        set_module_device_ids_and_qpc_paths(self)
+        set_execute_params(self)
 
         # Ensure all modules are exported to ONNX before compilation
         if any(
@@ -386,7 +386,6 @@ class QEffWanPipeline:
         custom_config_path: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
         parallel_compile: bool = True,
-        skip_compile: bool = False,
     ):
         """
         Generate videos from text prompts using the QEfficient-optimized WAN pipeline on QAIC hardware.

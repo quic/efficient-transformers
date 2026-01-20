@@ -35,7 +35,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
-    set_module_device_ids_and_qpc_paths,
+    set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.logging_utils import logger
@@ -297,7 +297,7 @@ class QEffFluxPipeline:
         config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Set device IDs for all modules based on configuration
-        set_module_device_ids_and_qpc_paths(self)
+        set_execute_params(self)
 
         # Ensure all modules are exported to ONNX before compilation
         if any(

@@ -115,7 +115,7 @@ def config_manager(cls, config_source: Optional[str] = None, use_onnx_subfunctio
             cls.custom_config["modules"][module_name]["compilation"]["use_onnx_subfunctions"] = use_onnx_subfunctions
 
 
-def set_module_device_ids_and_qpc_paths(cls):
+def set_execute_params(cls):
     """
     Set device IDs, qpc_paths for each module based on the custom configuration.
 

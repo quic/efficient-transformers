@@ -57,7 +57,6 @@ def flux_pipeline_call_with_mad_validation(
     max_sequence_length: int = 512,
     custom_config_path: Optional[str] = None,
     parallel_compile: bool = False,
-    use_onnx_subfunctions: bool = False,
     mad_tolerances: Dict[str, float] = None,
 ):
     """
@@ -310,6 +309,7 @@ def flux_pipeline():
 
     pipeline = QEffFluxPipeline.from_pretrained(
         "black-forest-labs/FLUX.1-schnell",
+        use_onnx_subfunctions=config["use_onnx_subfunctions"],
     )
 
     # Reduce to 2 layers for testing
@@ -383,7 +383,6 @@ def test_flux_pipeline(flux_pipeline):
             generator=generator,
             mad_tolerances=config["mad_validation"]["tolerances"],
             parallel_compile=True,
-            use_onnx_subfunctions=False,
             return_dict=True,
         )
 
