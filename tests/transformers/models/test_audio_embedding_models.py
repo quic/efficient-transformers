@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import os
 from typing import List, Optional
 
@@ -23,9 +24,11 @@ from QEfficient.utils._utils import create_json, load_hf_processor
 from QEfficient.utils.constants import WAV2VEC2_MAX_SEQ_LEN, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 
-test_models = [
-    "facebook/wav2vec2-base-960h",
-]
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "test_model_configs.json")
+
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    test_models = config_data["audio_embedding_models"]
 
 
 def load_ctc_model(model_config):
