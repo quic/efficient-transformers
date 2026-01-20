@@ -217,7 +217,7 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-class QEffGlm4MoeAttention(Glm4MoeAttention):
+class QEffGlm4MoePrefillOnlyAttention(Glm4MoeAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __qeff_init__(self):
@@ -299,6 +299,69 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
                     scaling=self.scaling,
                     **kwargs,
                 )
+
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        attn_output = self.o_proj(attn_output)
+        return attn_output, attn_weights
+
+
+class QEffGlm4MoeAttention(Glm4MoeAttention):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffGlm4MoeRotaryEmbedding(config=self.config)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[tuple[torch.Tensor]]]:
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        query_states = self.q_proj(hidden_states).view(hidden_shape)
+        key_states = self.k_proj(hidden_states).view(hidden_shape)
+        value_states = self.v_proj(hidden_states).view(hidden_shape)
+
+        if self.use_qk_norm:  # main diff from Llama
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)
+
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
+        value_states = value_states.transpose(1, 2)
+
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        if past_key_value is not None:
+            # sin and cos are specific to RoPE models; position_ids needed for the static cache
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "cache_position": cache_position,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+            attention_interface: Callable = eager_attention_forward
+            attn_output, attn_weights = attention_interface(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                dropout=0.0 if not self.training else self.attention_dropout,
+                scaling=self.scaling,
+                **kwargs,
+            )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
@@ -497,11 +560,7 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         residuals = hidden_states
         orig_shape = hidden_states.shape
         topk_indices, topk_weights = self.gate(hidden_states)
-
-        # orig_hs = self.orig_moe(hidden_states, topk_indices, topk_weights)
-
         hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
-        # import ipdb; ipdb.set_trace()
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
 
@@ -522,8 +581,6 @@ class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
             block_positions.append(j * (T // target_blocks))
         for expert_idx in range(num_experts):
             expert = self.experts[expert_idx]
-            mask = expert_mask[expert_idx].to(hidden_states.dtype)
-            mask_weight = (topk_weights * mask).sum(dim=1, keepdim=True)
             block_count = 0
             outs = []
             for block_idx in range(target_blocks):
@@ -543,7 +600,7 @@ class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
                 down_out = expert.down_proj(hidden)
                 outs.append(down_out)
             expert_output = torch.cat(outs, dim=0)
-            current_hidden_states = expert_output * mask_weight
+            current_hidden_states = expert_output * expert_mask[:, expert_idx].unsqueeze(-1)
             final_hidden_states += current_hidden_states
 
         return final_hidden_states.type(hidden_states.dtype)
@@ -559,8 +616,6 @@ class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
             block_positions.append(j * (T // target_blocks))
         for expert_idx in range(num_experts):
             expert = self.experts[expert_idx]
-            mask = expert_mask[expert_idx].to(hidden_states.dtype)
-            mask_weight = (topk_weights * mask).sum(dim=1, keepdim=True)
             block_count = 0
             outs = []
             for block_idx in range(target_blocks):
@@ -575,7 +630,7 @@ class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
 
                 tgb = hidden_states[qi : qi + real_q_len, :]
                 wg_col_shape = self.config.moe_intermediate_size
-                w_block_size = os.environ.get("FFN_W_BLOCK_SIZE", wg_col_shape)
+                w_block_size = int(os.environ.get("FFN_W_BLOCK_SIZE", wg_col_shape))
                 wg_num_blocks = math.ceil(wg_col_shape / w_block_size)
                 if w_block_size < wg_col_shape:
                     last_block_size = wg_col_shape % w_block_size if wg_col_shape % w_block_size != 0 else w_block_size
@@ -585,49 +640,81 @@ class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
                 intermediates = []
                 for i in range(wg_num_blocks):
                     if i == wg_num_blocks - 1:
-                        cur_gate = tgb @ expert.gate_proj.weight[:, -last_block_size:]
-                        cur_up = tgb @ expert.up_proj.weight[:, -last_block_size:]
+                        cur_gate = tgb @ expert.gate_proj.weight.T[:, -last_block_size:]
+                        cur_up = tgb @ expert.up_proj.weight.T[:, -last_block_size:]
                     else:
-                        cur_gate = tgb @ expert.gate_proj.weight[:, i * w_block_size : (i + 1) * w_block_size]
-                        cur_up = tgb @ expert.up_proj.weight[:, i * w_block_size : (i + 1) * w_block_size]
+                        cur_gate = tgb @ expert.gate_proj.weight.T[:, i * w_block_size : (i + 1) * w_block_size]
+                        cur_up = tgb @ expert.up_proj.weight.T[:, i * w_block_size : (i + 1) * w_block_size]
 
                     cur_intermediate = expert.act_fn(cur_gate) * cur_up
                     intermediates.append(cur_intermediate)
 
                 intermediate = torch.cat(intermediates, dim=-1)
 
+                wd_col_shape = self.config.hidden_size
+                wd_block_size = int(os.environ.get("FFN_W_BLOCK_SIZE", wd_col_shape))
+                wd_num_blocks = math.ceil(wd_col_shape / wd_block_size)
+                if wd_block_size < wd_col_shape:
+                    last_block_size = (
+                        wd_col_shape % wd_block_size if wd_col_shape % wd_block_size != 0 else wd_block_size
+                    )
+                else:
+                    last_block_size = wd_col_shape
                 downs = []
-                for i in range(wg_num_blocks):
-                    if i == wg_num_blocks - 1:
-                        downs.append((intermediate @ expert.down_proj.weight[:, -last_block_size:]))
+                for i in range(wd_num_blocks):
+                    if i == wd_num_blocks - 1:
+                        downs.append((intermediate @ expert.down_proj.weight.T[:, -last_block_size:]))
                     else:
                         downs.append(
-                            (intermediate @ expert.down_proj.weight[:, i * w_block_size : (i + 1) * w_block_size])
+                            (intermediate @ expert.down_proj.weight.T[:, i * wd_block_size : (i + 1) * wd_block_size])
                         )
 
                 down_out_block = torch.cat(downs, dim=1)
                 outs.append(down_out_block)
 
             expert_output = torch.cat(outs, dim=0)
-            current_hidden_states = expert_output * mask_weight
+            current_hidden_states = expert_output * expert_mask[:, expert_idx].unsqueeze(-1)
             final_hidden_states += current_hidden_states
 
         return final_hidden_states.type(hidden_states.dtype)
 
     def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-
         for expert_idx in range(num_experts):
             expert = self.experts[expert_idx]
-            mask = expert_mask[expert_idx].to(hidden_states.dtype)
-            mask_weight = (topk_weights * mask).sum(dim=1, keepdim=True)
             gate_out = expert.gate_proj(hidden_states)
             up_out = expert.up_proj(hidden_states)
             hidden = expert.act_fn(gate_out) * up_out
             expert_output = expert.down_proj(hidden)
-            current_hidden_states = expert_output * mask_weight
+            current_hidden_states = expert_output * expert_mask[:, expert_idx].unsqueeze(-1)
             final_hidden_states += current_hidden_states
 
+        return final_hidden_states.type(hidden_states.dtype)
+
+    def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
+        r"""
+        CALL FOR CONTRIBUTION! I don't have time to optimise this right now, but expert weights need to be fused
+        to not have to do a loop here (deepseek has 256 experts soooo yeah).
+        """
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
+        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
+        expert_mask = expert_mask.permute(2, 0, 1)
+        for expert_idx in range(len(self.experts)):
+            expert = self.experts[expert_idx]
+            mask = expert_mask[expert_idx]
+            token_indices, weight_indices = torch.where(mask)
+
+            if token_indices.numel() > 0:
+                expert_weights = topk_weights[token_indices, weight_indices]
+                expert_input = hidden_states[token_indices]
+                expert_output = expert(expert_input)
+                weighted_output = expert_output * expert_weights.unsqueeze(-1)
+                final_hidden_states.index_add_(0, token_indices, weighted_output)
+
+        # in original deepseek, the output of the experts are gathered once we leave this module
+        # thus the moe module is itelsf an IsolatedParallel module
+        # and all expert are "local" meaning we shard but we don't gather
         return final_hidden_states.type(hidden_states.dtype)
 
     def forward(self, hidden_states):
@@ -637,20 +724,22 @@ class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
         residuals = hidden_states
         orig_shape = hidden_states.shape
         topk_indices, topk_weights = self.gate(hidden_states)
-        # Create expert mask similar to Granite
-        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=self.n_routed_experts)
-        expert_mask = expert_mask.permute(2, 0, 1)  # [num_experts, batch*seq, top_k]
+        # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
+
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        mask = torch.zeros(hidden_states.shape[0], self.config.n_routed_experts)
+        mask.scatter_(1, topk_indices, topk_weights)
         if os.environ.get("NUM_FFN_BLOCKS", None) is not None and os.environ.get("FFN_W_BLOCK_SIZE", None) is not None:
             hidden_states = self.moe_blocked_weights_forward(
-                hidden_states, topk_weights, expert_mask, self.gate.top_k
+                hidden_states, topk_weights, mask, self.config.n_routed_experts
             ).view(*orig_shape)
         elif os.environ.get("NUM_FFN_BLOCKS", None) is not None:
-            hidden_states = self.moe_blocked_forward(hidden_states, topk_weights, expert_mask, self.gate.top_k).view(
-                *orig_shape
-            )
+            hidden_states = self.moe_blocked_forward(
+                hidden_states, topk_weights, mask, self.config.n_routed_experts
+            ).view(*orig_shape)
         else:
-            hidden_states = self.moe(hidden_states, topk_weights, expert_mask, self.gate.top_k).view(*orig_shape)
+            hidden_states = self.moe(hidden_states, topk_weights, mask, self.config.n_routed_experts).view(*orig_shape)
+
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
 
