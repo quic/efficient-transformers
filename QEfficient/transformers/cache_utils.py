@@ -682,7 +682,7 @@ class QEffHybridCacheForGemma3:
             legacy_cache += ((self.key_cache[layer_idx], self.value_cache[layer_idx]),)
         return legacy_cache
 
-    def update_old(
+    def update(
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,

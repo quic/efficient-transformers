@@ -104,7 +104,7 @@ else:
         return_tensors="pt",
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-    output = qeff_model.generate(inputs=inputs, generation_len=1500)
+    output = qeff_model.generate(inputs=inputs, generation_len=2000)
     breakpoint()
     print(tokenizer.batch_decode(output.generated_ids, skip_special_tokens=True))
     print(output)

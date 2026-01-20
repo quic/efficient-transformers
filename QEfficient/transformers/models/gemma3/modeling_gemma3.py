@@ -259,7 +259,7 @@ class QEffGemma3Attention(Gemma3Attention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update_old(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
