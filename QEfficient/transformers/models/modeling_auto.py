@@ -3096,18 +3096,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         if enable_chunking
                         else seq_len
                     )
-            else:
+                self.hash_params["FFN_W_BLOCK_SIZE"] = int(os.environ.get("FFN_W_BLOCK_SIZE", -1))
+        else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
                 self.hash_params.pop("prefill_only", None)
                 self.hash_params.pop("NUM_Q_BLOCKS", None)
                 self.hash_params.pop("NUM_FFN_BLOCKS", None)
                 self.hash_params.pop("ENABLE_OPT_SWA", None)
                 self.hash_params.pop("chunking", None)
-                if kwargs.get("retain_full_kv", False):
+                self.hash_params.pop("FFN_W_BLOCK_SIZE", None)
+            if kwargs.get("retain_full_kv", False):
                     kv_cache_shape[2] = seq_len + (
                         self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
                     )
                     self.hash_params["retain_full_kv"] = True
+
+        self.hash_params["NUM_KV_BLOCKS"] = int(os.environ.get("NUM_KV_BLOCKS", -1))
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),

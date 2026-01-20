@@ -777,6 +777,7 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+        QEffGlm4MoeMoE: QEffPrefillOnlyGlm4MoeMoE,
         # Qwen3Moe
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         # Qwen3 VL Moe

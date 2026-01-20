@@ -5,7 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Callable, List, Optional, Union
+import math
+import os
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch
 from torch import nn
@@ -113,6 +115,82 @@ def qeff_apply_rotary_pos_emb(
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
+def eager_attention_forward_blocked_kv(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: Optional[torch.Tensor] = None,
+    cache_kwargs: Optional[Dict[str, Any]] = None,
+    layer_idx: int = None,
+    past_key_value: Optional[Cache] = None,
+    **kwargs,
+):
+    # Initialize result tensor
+    output = torch.zeros_like(query)
+
+    # Initialize Running Maximum
+    batch_size, num_heads, seq_len, _ = query.shape
+    current_max = torch.full((batch_size, num_heads, seq_len), float(MIN_MASKED_ATTENTION_VALUE))
+
+    # Initialize Denominator
+    current_denominator = torch.zeros(batch_size, num_heads, seq_len)
+
+    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    position_ids = cache_kwargs.get("position_ids")
+    block_size = -(-past_seen_tokens // num_kv_blocks)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+
+    for j in range(num_kv_blocks):
+        start_index = j * block_size
+        end_index = (j + 1) * block_size
+        K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
+        K_block_states = repeat_kv(K_block, module.num_key_value_groups)
+        V_block_states = repeat_kv(V_block, module.num_key_value_groups)
+        past_seen_tokens_start = start_index
+        past_seen_tokens_end = torch.where(
+            torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+            past_seen_tokens,
+            end_index,
+        )
+        causal_mask_block = _create_causal_mask(
+            position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start
+        )
+
+        # Compute attention scores for the block
+        attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+
+        # Update Running row maximum
+        prev_max = current_max
+        current_max = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
+        delta_max = prev_max - current_max
+
+        current_exp = torch.exp(
+            attn_weights_block - current_max.unsqueeze(-1)
+        )  # Subract current_max from each column of attn_weights_block
+
+        # update running denominator
+        prev_denominator = current_denominator
+        # Replace .sum() to fix the ReduceSum Issuse in subfunction
+        curr_exp_sum = torch.einsum("bhqk->bhq", current_exp)
+        current_denominator = prev_denominator * torch.exp(delta_max) + curr_exp_sum
+
+        prob = current_exp / current_denominator.unsqueeze(-1)
+
+        prev_output = output
+        output = ((prev_denominator / current_denominator).unsqueeze(-1)) * prev_output * torch.exp(
+            delta_max.unsqueeze(-1)
+        ) + torch.matmul(prob, V_block_states)
+    attn_output = output.transpose(1, 2).contiguous()
+    attn_weights = None
+
+    return attn_output, attn_weights
+
+
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -174,30 +252,53 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
-
+        num_kv_blocks = int(os.environ.get("NUM_KV_BLOCKS", 0))
+        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         if past_key_value is not None:
-            # sin and cos are specific to RoPE models; position_ids needed for the static cache
-            cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
-                "cache_position": cache_position,
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-            }
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if num_kv_blocks > 0:
+                cache_kwargs = {
+                    "batch_index": batch_index,
+                    "position_ids": position_ids,
+                    "past_seen_tokens": past_seen_tokens,
+                }
+                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+                attention_interface = eager_attention_forward_blocked_kv
+                attn_output, attn_weights = attention_interface(
+                    self,
+                    query_states,
+                    key_states,
+                    value_states,
+                    attention_mask,
+                    dropout=0.0 if not self.training else self.attention_dropout,
+                    scaling=self.scaling,
+                    num_kv_blocks=num_kv_blocks,
+                    cache_kwargs=cache_kwargs,
+                    layer_idx=self.layer_idx,
+                    past_key_value=past_key_value,
+                    **kwargs,
+                )
+            else:
+                # sin and cos are specific to RoPE models; position_ids needed for the static cache
+                cache_kwargs = {
+                    "sin": sin,
+                    "cos": cos,
+                    "cache_position": cache_position,
+                    "batch_index": batch_index,
+                    "position_ids": position_ids,
+                }
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        attention_interface: Callable = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            dropout=0.0 if not self.training else self.attention_dropout,
-            scaling=self.scaling,
-            **kwargs,
-        )
+                attention_interface: Callable = eager_attention_forward
+                attn_output, attn_weights = attention_interface(
+                    self,
+                    query_states,
+                    key_states,
+                    value_states,
+                    attention_mask,
+                    dropout=0.0 if not self.training else self.attention_dropout,
+                    scaling=self.scaling,
+                    **kwargs,
+                )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
@@ -410,6 +511,109 @@ class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
     MoE Block
     """
 
+    def moe_blocked_forward(
+        self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int
+    ):
+        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
+        target_blocks = int(os.environ.get("NUM_FFN_BLOCKS", 1))
+        block_positions = []
+        T = hidden_states.shape[0]
+        for j in range(target_blocks):
+            block_positions.append(j * (T // target_blocks))
+        for expert_idx in range(num_experts):
+            expert = self.experts[expert_idx]
+            mask = expert_mask[expert_idx].to(hidden_states.dtype)
+            mask_weight = (topk_weights * mask).sum(dim=1, keepdim=True)
+            block_count = 0
+            outs = []
+            for block_idx in range(target_blocks):
+                block_count += 1
+                qi = block_positions[block_idx]
+
+                # Calculate block size (last block should be handled with remainder)
+                if block_idx == target_blocks - 1:
+                    real_q_len = T - qi
+                else:
+                    real_q_len = block_positions[block_idx + 1] - qi
+
+                tgb = hidden_states[qi : qi + real_q_len, :]
+                gate_out = expert.gate_proj(tgb)
+                up_out = expert.up_proj(tgb)
+                hidden = expert.act_fn(gate_out) * up_out
+                down_out = expert.down_proj(hidden)
+                outs.append(down_out)
+            expert_output = torch.cat(outs, dim=0)
+            current_hidden_states = expert_output * mask_weight
+            final_hidden_states += current_hidden_states
+
+        return final_hidden_states.type(hidden_states.dtype)
+
+    def moe_blocked_weights_forward(
+        self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int
+    ):
+        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
+        target_blocks = int(os.environ.get("NUM_FFN_BLOCKS", 1))
+        block_positions = []
+        T = hidden_states.shape[0]
+        for j in range(target_blocks):
+            block_positions.append(j * (T // target_blocks))
+        for expert_idx in range(num_experts):
+            expert = self.experts[expert_idx]
+            mask = expert_mask[expert_idx].to(hidden_states.dtype)
+            mask_weight = (topk_weights * mask).sum(dim=1, keepdim=True)
+            block_count = 0
+            outs = []
+            for block_idx in range(target_blocks):
+                block_count += 1
+                qi = block_positions[block_idx]
+
+                # Calculate block size (last block should be handled with remainder)
+                if block_idx == target_blocks - 1:
+                    real_q_len = T - qi
+                else:
+                    real_q_len = block_positions[block_idx + 1] - qi
+
+                tgb = hidden_states[qi : qi + real_q_len, :]
+                wg_col_shape = self.config.moe_intermediate_size
+                w_block_size = os.environ.get("FFN_W_BLOCK_SIZE", wg_col_shape)
+                wg_num_blocks = math.ceil(wg_col_shape / w_block_size)
+                if w_block_size < wg_col_shape:
+                    last_block_size = wg_col_shape % w_block_size if wg_col_shape % w_block_size != 0 else w_block_size
+                else:
+                    last_block_size = wg_col_shape
+
+                intermediates = []
+                for i in range(wg_num_blocks):
+                    if i == wg_num_blocks - 1:
+                        cur_gate = tgb @ expert.gate_proj.weight[:, -last_block_size:]
+                        cur_up = tgb @ expert.up_proj.weight[:, -last_block_size:]
+                    else:
+                        cur_gate = tgb @ expert.gate_proj.weight[:, i * w_block_size : (i + 1) * w_block_size]
+                        cur_up = tgb @ expert.up_proj.weight[:, i * w_block_size : (i + 1) * w_block_size]
+
+                    cur_intermediate = expert.act_fn(cur_gate) * cur_up
+                    intermediates.append(cur_intermediate)
+
+                intermediate = torch.cat(intermediates, dim=-1)
+
+                downs = []
+                for i in range(wg_num_blocks):
+                    if i == wg_num_blocks - 1:
+                        downs.append((intermediate @ expert.down_proj.weight[:, -last_block_size:]))
+                    else:
+                        downs.append(
+                            (intermediate @ expert.down_proj.weight[:, i * w_block_size : (i + 1) * w_block_size])
+                        )
+
+                down_out_block = torch.cat(downs, dim=1)
+                outs.append(down_out_block)
+
+            expert_output = torch.cat(outs, dim=0)
+            current_hidden_states = expert_output * mask_weight
+            final_hidden_states += current_hidden_states
+
+        return final_hidden_states.type(hidden_states.dtype)
+
     def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
 
@@ -437,7 +641,16 @@ class QEffPrefillOnlyGlm4MoeMoE(Glm4MoeMoE):
         expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=self.n_routed_experts)
         expert_mask = expert_mask.permute(2, 0, 1)  # [num_experts, batch*seq, top_k]
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        hidden_states = self.moe(hidden_states, topk_weights, expert_mask, self.gate.top_k).view(*orig_shape)
+        if os.environ.get("NUM_FFN_BLOCKS", None) is not None and os.environ.get("FFN_W_BLOCK_SIZE", None) is not None:
+            hidden_states = self.moe_blocked_weights_forward(
+                hidden_states, topk_weights, expert_mask, self.gate.top_k
+            ).view(*orig_shape)
+        elif os.environ.get("NUM_FFN_BLOCKS", None) is not None:
+            hidden_states = self.moe_blocked_forward(hidden_states, topk_weights, expert_mask, self.gate.top_k).view(
+                *orig_shape
+            )
+        else:
+            hidden_states = self.moe(hidden_states, topk_weights, expert_mask, self.gate.top_k).view(*orig_shape)
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
 
