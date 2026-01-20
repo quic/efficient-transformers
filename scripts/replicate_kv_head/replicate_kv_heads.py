@@ -51,6 +51,10 @@ def duplicate_weights_for_linear_layer(
             repeat,
             1,
         ).view(hidden_size // layer.group_size, new_kv_heads * head_dim)
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(
+                new_kv_heads * head_dim
+            )
         layer.out_features = layer.out_features * repeat
 
     elif isinstance(layer, FP8DeQuantLinear):
@@ -60,6 +64,10 @@ def duplicate_weights_for_linear_layer(
         layer.weight_scale.data = torch.repeat_interleave(
             layer.weight_scale.data.view(orig_kv_heads, head_dim), repeat, 0
         ).view(new_kv_heads * head_dim, -1)
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(
+                new_kv_heads * head_dim
+            )
 
     else:
         layer.weight.data = torch.repeat_interleave(
