@@ -300,6 +300,7 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeForCausalLM,
     QEffGlm4MoeModel,
     QEffGlm4MoeMoE,
+    QEffGlm4MoePrefillOnlyAttention,
     QEffGlm4MoeRotaryEmbedding,
     QEffPrefillOnlyGlm4MoeMoE,
 )
@@ -768,6 +769,7 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
         QEffGlm4MoeMoE: QEffPrefillOnlyGlm4MoeMoE,
+        QEffGlm4MoeAttention: QEffGlm4MoePrefillOnlyAttention,
     }
 
 
@@ -778,6 +780,7 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
         QEffGlm4MoeMoE: QEffPrefillOnlyGlm4MoeMoE,
+        QEffGlm4MoeAttention: QEffGlm4MoePrefillOnlyAttention,
         # Qwen3Moe
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         # Qwen3 VL Moe
@@ -794,6 +797,7 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyGlm4MoeMoE: QEffGlm4MoeMoE,
+        QEffGlm4MoePrefillOnlyAttention: QEffGlm4MoeAttention,
         # Qwen3Moe
         QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
     }
