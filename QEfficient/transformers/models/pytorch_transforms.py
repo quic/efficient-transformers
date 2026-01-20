@@ -45,6 +45,15 @@ from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3RMSNorm,
     Gemma3TextModel,
 )
+from transformers.models.glm4_moe.modeling_glm4_moe import (
+    Glm4MoeAttention,
+    Glm4MoeDecoderLayer,
+    Glm4MoeForCausalLM,
+    Glm4MoeModel,
+    Glm4MoeMoE,
+    Glm4MoeRMSNorm,
+    Glm4MoeRotaryEmbedding,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -246,6 +255,15 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3ForCausalLMModel,
     QEffGemma3ForConditionalGeneration,
     QEffGemma3TextModel,
+)
+from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
+    QEffGlm4MoeAttention,
+    QEffGlm4MoeDecoderLayer,
+    QEffGlm4MoeForCausalLM,
+    QEffGlm4MoeModel,
+    QEffGlm4MoeMoE,
+    QEffGlm4MoeRotaryEmbedding,
+    QEffPrefillOnlyGlm4MoeMoE,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -473,6 +491,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
         Olmo2RMSNorm: CustomRMSNormAIC,
+        Glm4MoeRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -562,6 +581,13 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
         GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
         GraniteMoeMoE: QEffGraniteMoeMoE,
+        # GLMMoe
+        Glm4MoeModel: QEffGlm4MoeModel,
+        Glm4MoeForCausalLM: QEffGlm4MoeForCausalLM,
+        Glm4MoeAttention: QEffGlm4MoeAttention,
+        Glm4MoeDecoderLayer: QEffGlm4MoeDecoderLayer,
+        Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
+        Glm4MoeMoE: QEffGlm4MoeMoE,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
@@ -658,6 +684,7 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        QEffGlm4MoeMoE: QEffPrefillOnlyGlm4MoeMoE,
     }
 
 
@@ -676,6 +703,7 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+        QEffPrefillOnlyGlm4MoeMoE: QEffGlm4MoeMoE,
     }
 
 
