@@ -5,111 +5,225 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Monkey patches for torch.onnx.utils to fix ONNX export issues."""
+import copy
+import inspect
+import re
+import warnings
+from pathlib import Path
+from typing import Dict
 
-import torch
-import torch.onnx.utils as onnx_utils
-from torch import _C
+from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
+from QEfficient.transformers.cache_utils import InvalidIndexProvider
+from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
+from QEfficient.utils.cache import QEFF_HOME
+from QEfficient.utils.hash_utils import create_export_hash
+from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
 
-# Store original references before patching
-_original_setup_trace_module_map = onnx_utils._setup_trace_module_map
-_original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
+
+def export_wrapper(func):
+    """
+    Decorator for export methods that orchestrates the complete export lifecycle.
+
+    Responsibilities:
+    1. Prepare export directory structure
+    2. Generate reproducible hash for export configuration
+    3. Setup ONNX subfunction environment (if enabled)
+    4. Execute the wrapped export function
+    5. Cleanup subfunction environment (if enabled)
+    6. Save export metadata
+
+    Args:
+        func: The export method to wrap (typically _export)
+
+    Returns:
+        Wrapped function with complete export lifecycle management
+    """
+
+    def wrapper(self, *args, **kwargs):
+        # 1. Setup ONNX subfunctions if requested
+        if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
+            args, kwargs = _setup_onnx_subfunctions(self, args, kwargs)
+
+        # 2. Prepare export directory
+        export_dir = _prepare_export_directory(self, kwargs)
+
+        # 3. Generate hash and finalize export directory path
+        export_hash, filtered_hash_params = _generate_export_hash(self, args, kwargs, func)
+        export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
+        kwargs["export_dir"] = export_dir
+        self.export_hash = export_hash
+
+        # 4. Execute the actual export
+        onnx_path = func(self, *args, **kwargs)
+
+        # 5. Save export metadata
+        _save_export_metadata(export_dir, filtered_hash_params)
+
+        # 6. Always cleanup subfunctions if they were setup
+        if use_onnx_subfunctions:
+            _cleanup_onnx_subfunctions(self)
+
+        return onnx_path
+
+    return wrapper
 
 
-def _setup_trace_module_map_patched(
-    model,
-    export_modules_as_functions,
-):
-    """Patched version of _setup_trace_module_map that fixes onnx_attrs type mismatch."""
+def _prepare_export_directory(qeff_model, kwargs) -> Path:
+    """
+    Prepare and return the base export directory path.
 
-    def __register_attribute_hook():
-        attr_name = "_onnx_attrs"
+    Args:
+        qeff_model: The QEff model instance
+        kwargs: Keyword arguments containing optional export_dir
 
-        def _track_module_attributes_forward_pre_hook(module, input):
-            setattr(module, attr_name, _get_module_attributes(module))
+    Returns:
+        Path object for the base export directory
+    """
+    export_dir = kwargs.get("export_dir", None)
+    parent_dir = qeff_model.model_architecture or qeff_model.model_name
+    return Path(export_dir or (QEFF_HOME / parent_dir / qeff_model.model_name))
 
-        def _track_module_attributes_forward_hook(module, input, output):
-            tracing_state = _C._get_tracing_state()
-            if not tracing_state:
-                return
-            graph = tracing_state.graph()
-            onnx_attrs = {}
-            if hasattr(module, attr_name):
-                onnx_attrs = getattr(module, attr_name)
-                delattr(module, attr_name)
-            # FIX: use empty dict to avoid type mismatch
-            onnx_attrs = {}
-            _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
 
-        for m in model.modules():
-            m.register_forward_hook(_track_module_attributes_forward_hook)
-            m.register_forward_pre_hook(_track_module_attributes_forward_pre_hook)
+def _generate_export_hash(qeff_model, args, kwargs, func):
+    """
+    Generate export hash from model parameters and export arguments.
 
-    def _unqualified_variable_name(qualified_name: str) -> str:
-        name_atoms = qualified_name.split(".")
-        for i, atom in reversed(list(enumerate(name_atoms))):
-            if not atom.isnumeric():
-                return ".".join(name_atoms[i:])
-        return qualified_name
+    The hash ensures reproducibility and prevents conflicts between
+    different export configurations.
 
-    trace_module_map = {
-        _m: torch._C._jit_onnx_create_full_scope_name(torch.typename(type(_m)), _unqualified_variable_name(_n))
-        for _n, _m in model.named_modules()
-    }
-    torch.jit._trace._trace_module_map = trace_module_map
+    Args:
+        qeff_model: The QEff model instance
+        args: Positional arguments to the export function
+        kwargs: Keyword arguments to the export function
+        func: The export function being wrapped
 
-    if isinstance(export_modules_as_functions, bool) and export_modules_as_functions:
-        module_typenames = {torch.typename(type(module)) for module in trace_module_map}
-    elif isinstance(export_modules_as_functions, set) and export_modules_as_functions:
+    Returns:
+        Tuple of (export_hash: str, filtered_hash_params: dict)
+    """
+    # Extract function signature
+    original_sig = inspect.signature(func)
+    params = list(original_sig.parameters.values())[1:]  # Skip 'self'
+    new_sig = inspect.Signature(params)
+    # Bind all arguments
+    bound_args = new_sig.bind(*args, **kwargs)
+    bound_args.apply_defaults()
+    all_args = bound_args.arguments
 
-        def _find_typename(v):
-            if isinstance(v, type):
-                return torch.typename(v)
-            else:
-                raise RuntimeError(
-                    "Only type of the `nn.Module` should be passed in the set for argument `export_modules_as_functions`. "
-                    f"Got `{type(v).__name__}`."
-                )
-
-        module_typenames = {_find_typename(v) for v in export_modules_as_functions}
+    # Use the model's current configuration for hashing to ensure any post-load modifications are captured
+    # TODO: Replace with get_model_config property of modeling classes and remove the if-else
+    # Determine the config dict to use, preferring .to_diff_dict() if available
+    if hasattr(qeff_model.model, "config") and hasattr(qeff_model.model.config, "to_diff_dict"):
+        config_val = qeff_model.model.config.to_diff_dict()
+    elif hasattr(qeff_model.model, "model") and hasattr(qeff_model.model.model.config, "to_diff_dict"):
+        config_val = qeff_model.model.model.config.to_diff_dict()
     else:
-        module_typenames = set()
+        config_val = qeff_model.model.config
 
-    if module_typenames:
-        __register_attribute_hook()
+    copy_of_hash_params = copy.deepcopy(qeff_model.hash_params)
+    copy_of_hash_params.update(
+        {
+            "config": config_val,
+        }
+    )
+    # Generate hash from relevant parameters
+    export_hash, filtered_hash_params = create_export_hash(
+        model_params=copy_of_hash_params,
+        output_names=all_args.get("output_names"),
+        dynamic_axes=all_args.get("dynamic_axes"),
+        export_kwargs=all_args.get("export_kwargs", None),
+        onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
+    )
 
-    return module_typenames
-
-
-def _get_module_attributes(module):
-    """Helper function to get module attributes safely."""
-    import typing
-
-    import torch.nn
-
-    annotations = typing.get_type_hints(type(module))
-    base_m_annotations = typing.get_type_hints(torch.nn.Module)
-    [annotations.pop(k, None) for k in base_m_annotations]
-
-    attrs = {}
-    for k in annotations:
-        try:
-            attrs[k] = getattr(module, k)
-        except AttributeError:
-            _C._jit_onnx_log(f"Skipping module attribute '{k}'")
-            continue
-    return attrs
+    return export_hash, filtered_hash_params
 
 
-def apply_torch_patches():
-    """Apply monkey patches for ONNX export."""
-    onnx_utils._setup_trace_module_map = _setup_trace_module_map_patched
-    if hasattr(onnx_utils, "_get_module_attributes"):
-        onnx_utils._get_module_attributes = _get_module_attributes
+def _setup_onnx_subfunctions(qeff_model, args, kwargs):
+    """
+    Setup ONNX subfunction export environment.
+
+    This function prepares the model and environment for exporting with
+    ONNX subfunctions enabled. It:
+    - Applies necessary torch patches
+    - Modifies output names for subfunction compatibility
+    - Adds subfunction-specific ONNX transforms
+    - Updates export kwargs with module classes
+
+    Args:
+        qeff_model: The QEff model instance
+        kwargs: Export keyword arguments (modified in-place).
+    """
+    warnings.warn(
+        "The subfunction feature is experimental. Please note that using compile "
+        "consecutively with and without subfunction may produce inconsistent results."
+    )
+
+    # Apply torch patches for subfunction support
+    apply_torch_patches()
+    InvalidIndexProvider.SUBFUNC_ENABLED = True
+    # Transform output names for subfunction compatibility
+    if "output_names" in kwargs:
+        kwargs["output_names"] = [
+            re.sub("_RetainedState", "_InternalRetainedState", name)
+            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            else name
+            for name in kwargs["output_names"]
+        ]
+    else:
+        args = list(args)
+        args[1] = [
+            re.sub("_RetainedState", "_InternalRetainedState", name)
+            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            else name
+            for name in args[1]
+        ]
+        args = tuple(args)
+    # Add subfunction-specific ONNX transforms
+    qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
+    qeff_model._onnx_transforms.append(CustomOpTransform)
+
+    # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
+    decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
+    if decoder_layer_classes:
+        kwargs["export_modules_as_functions"] = decoder_layer_classes
+    return args, kwargs
 
 
-def undo_torch_patches():
-    """Undo monkey patches and restore original functions."""
-    onnx_utils._setup_trace_module_map = _original_setup_trace_module_map
-    if _original_get_module_attributes:
-        onnx_utils._get_module_attributes = _original_get_module_attributes
+def _cleanup_onnx_subfunctions(qeff_model):
+    """
+    Cleanup ONNX subfunction export environment.
+
+    Restores the model and environment to pre-subfunction state by:
+    - Undoing torch patches
+    - Resetting InvalidIndexProvider flag
+    - Restoring original ONNX transforms list
+
+    Args:
+        qeff_model: The QEff model instance
+
+    Note:
+        This function is called in a finally block to ensure cleanup
+        even if export fails. Errors during cleanup are logged but
+        not re-raised to avoid masking the original exception.
+    """
+    # Undo torch patches
+    undo_torch_patches()
+    InvalidIndexProvider.SUBFUNC_ENABLED = False
+    qeff_model._onnx_transforms.remove(RenameFunctionOutputsTransform)
+    qeff_model._onnx_transforms.remove(CustomOpTransform)
+
+
+def _save_export_metadata(export_dir: Path, filtered_hash_params: Dict):
+    """
+    Save export metadata to JSON file for reproducibility.
+
+    Args:
+        export_dir: Directory where the export was saved
+        filtered_hash_params: Dictionary of parameters used for hashing
+    """
+    # Import here to avoid circular dependency
+    from QEfficient.utils._utils import create_json
+
+    hashed_params_path = export_dir / "hashed_export_params.json"
+    create_json(hashed_params_path, filtered_hash_params)
+    logger.info("Hashed parameters exported successfully.")
