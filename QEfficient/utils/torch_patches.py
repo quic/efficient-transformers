@@ -39,7 +39,6 @@ def _setup_trace_module_map_patched(
             if hasattr(module, attr_name):
                 onnx_attrs = getattr(module, attr_name)
                 delattr(module, attr_name)
-            # FIX: use empty dict to avoid type mismatch
             try:
                 _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
             except Exception as e:
