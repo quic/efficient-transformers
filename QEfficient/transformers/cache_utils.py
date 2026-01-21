@@ -630,7 +630,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
 # This is a hack for now, until we get to merging this code with HybridCache class,
 # We don't really need to inherit transformers classes as their cache classes are made to work with pytorch and
 # ours are made to work with AIC
-class QEffHybridCacheForGemma3:
+class QEffSlidingWindowCache:
     def __init__(self, config, batch_size, max_cache_len, sliding_window_len):
         self.max_cache_len = max_cache_len
         self.batch_size = batch_size

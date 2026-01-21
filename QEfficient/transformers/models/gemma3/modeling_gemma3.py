@@ -28,7 +28,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
-from QEfficient.transformers.cache_utils import QEffHybridCacheForGemma3
+from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
@@ -404,7 +404,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             # return_legacy_cache = True
-            past_key_values = QEffHybridCacheForGemma3.from_legacy_cache(
+            past_key_values = QEffSlidingWindowCache.from_legacy_cache(
                 config=self.config, past_key_values=past_key_values
             )
         if cache_position is None:

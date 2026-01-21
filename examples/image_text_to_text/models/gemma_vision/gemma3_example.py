@@ -44,6 +44,7 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
+        node_precision_info="/home/dipankar/gemma3_final/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_27b.yaml",
     )
 
     messages = [
@@ -63,7 +64,7 @@ if skip_vision:
         return_tensors="pt",
     )
 
-    output = qeff_model.generate(inputs=inputs, generation_len=1500)
+    output = qeff_model.generate(inputs=inputs, generation_len=2000)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 
@@ -79,12 +80,13 @@ else:
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mos=1,
+        node_precision_info="/home/dipankar/gemma3_final/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_27b.yaml",
     )
 
     ### IMAGE + TEXT ###
-    # image_url = (
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    # )
+    image_url = (
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
+    )
 
     messages = [
         {
@@ -105,6 +107,5 @@ else:
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     output = qeff_model.generate(inputs=inputs, generation_len=2000)
-    breakpoint()
     print(tokenizer.batch_decode(output.generated_ids, skip_special_tokens=True))
     print(output)
