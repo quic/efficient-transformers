@@ -271,7 +271,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
-    n_kv_head_repeat: Optional[int] = None,
+    num_kv_heads_repeat: Optional[int] = None,
     test_kv_replicate: Optional[bool] = None,
 ):
     model_config = {"model_name": model_name}
@@ -316,13 +316,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
     if test_kv_replicate:
         text_config = get_text_config(config)
-        n_kv_head_repeat = text_config.num_attention_heads // text_config.num_key_value_heads
+        num_kv_heads_repeat = text_config.num_attention_heads // text_config.num_key_value_heads
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_config["model_name"],
         kv_offload=kv_offload,
         config=config,
-        n_kv_head_repeat=n_kv_head_repeat,
+        num_kv_heads_repeat=num_kv_heads_repeat,
     )
 
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
@@ -443,7 +443,7 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
-    n_kv_head_repeat: Optional[int] = None,
+    num_kv_heads_repeat: Optional[int] = None,
     test_kv_replicate: Optional[bool] = None,
 ):
     model_config = {"model_name": model_name}
@@ -509,13 +509,13 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     if test_kv_replicate:
         text_config = get_text_config(config)
-        n_kv_head_repeat = text_config.num_attention_heads // text_config.num_key_value_heads
+        num_kv_heads_repeat = text_config.num_attention_heads // text_config.num_key_value_heads
 
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
         model_config["model_name"],
         kv_offload=kv_offload,
         config=config,
-        n_kv_head_repeat=n_kv_head_repeat,
+        num_kv_heads_repeat=num_kv_heads_repeat,
     )
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
     # assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (

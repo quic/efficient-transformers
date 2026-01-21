@@ -2266,9 +2266,9 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        n_kv_head_repeat = kwargs.pop("n_kv_head_repeat", None)
+        num_kv_heads_repeat = kwargs.pop("num_kv_heads_repeat", None)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        kwargs.update({"n_kv_head_repeat": n_kv_head_repeat})
+        kwargs.update({"num_kv_heads_repeat": num_kv_heads_repeat})
         return cls(
             model,
             kv_offload=kv_offload,
@@ -2495,10 +2495,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_offload = kwargs.pop("kv_offload", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        # InternVL causes an error if we pass the n_kv_head_repeat parameter
-        n_kv_head_repeat = kwargs.pop("n_kv_head_repeat", 1)
+        # InternVL causes an error if we pass the num_kv_heads_repeat parameter
+        num_kv_heads_repeat = kwargs.pop("num_kv_heads_repeat", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        kwargs.update({"n_kv_head_repeat": n_kv_head_repeat})
+        kwargs.update({"num_kv_heads_repeat": num_kv_heads_repeat})
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 

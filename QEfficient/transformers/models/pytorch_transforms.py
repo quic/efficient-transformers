@@ -761,6 +761,10 @@ class ReplicateKVHeadTransform:
                 repeat,
                 1,
             ).view(hidden_size // layer.group_size, new_kv_heads * head_dim)
+            if layer.bias is not None:
+                layer.bias.data = torch.repeat_interleave(
+                    layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0
+                ).view(new_kv_heads * head_dim)
             layer.out_features = layer.out_features * repeat
 
         elif isinstance(layer, FP8DeQuantLinear):
@@ -775,6 +779,10 @@ class ReplicateKVHeadTransform:
             layer.weight.data = torch.repeat_interleave(
                 layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
             ).view(new_kv_heads * head_dim, hidden_size)
+            if layer.bias is not None:
+                layer.bias.data = torch.repeat_interleave(
+                    layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0
+                ).view(new_kv_heads * head_dim)
             if layer.bias is not None:
                 layer.bias.data = torch.repeat_interleave(
                     layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0
@@ -804,9 +812,9 @@ class ReplicateKVHeadTransform:
         Args:
             model: The model to apply the transform to.
             kwargs: Additional arguments for the transformation. Includes:
-                - n_kv_head_repeat: The number of times to repeat the KV heads.
+                - num_kv_heads_repeat: The number of times to repeat the KV heads.
         """
-        n_repeat = kwargs.pop("n_kv_head_repeat", 1)
+        n_repeat = kwargs.pop("num_kv_heads_repeat", 1)
         transformed = False
         if n_repeat is not None and n_repeat > 1:
             if (model.__class__ in cls._module_mapping) or (model.__class__.__name__ in cls._module_string_mapping):

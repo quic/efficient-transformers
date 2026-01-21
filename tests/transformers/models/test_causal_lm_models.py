@@ -297,7 +297,7 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
     prompt_len: int = Constants.PROMPT_LEN,
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
-    n_kv_head_repeat: int = 1,
+    num_kv_heads_repeat: int = 1,
     config: Optional[AutoConfig] = None,
     pytorch_hf_tokens: Optional[list] = None,
 ):
@@ -308,7 +308,7 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
         :prompt_len (int): Prompt length for the model to compile.
         :ctx_len (int): Maximum context length to compile the model.
         :n_layers (int): Number of layers for the Model.
-        :n_kv_head_repeat (int): Number of times to repeat KV heads.
+        :num_kv_heads_repeat (int): Number of times to repeat KV heads.
     """
     replace_transformers_quantizers()
     if config is None:
@@ -331,13 +331,13 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
     if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
-    # TODO: Add support for custom repeat_kv in models to hands uneven replications.
-    # Generate n_kv_head_repeat from config so that divisibility error doesn't occur.
-    n_kv_head_repeat = config.num_attention_heads // config.num_key_value_heads
+    # TODO: Add support for custom repeat_kv in models to handle uneven replications.
+    # Generate num_kv_heads_repeat from config so that divisibility error doesn't occur.
+    num_kv_heads_repeat = config.num_attention_heads // config.num_key_value_heads
     qeff_model = QEFFAutoModelForCausalLM(
         copy.deepcopy(model_hf),
         pretrained_model_name_or_path=model_name,
-        n_kv_head_repeat=n_kv_head_repeat,
+        num_kv_heads_repeat=num_kv_heads_repeat,
     )
 
     if not get_available_device_id():
