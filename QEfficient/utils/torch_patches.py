@@ -42,7 +42,7 @@ def _setup_trace_module_map_patched(
             try:
                 _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
             except Exception as e:
-                logger.warning(f"Failed to track ONNX scope attributes: {e}. Skipping this step.")
+                logger.warning(f"ONNX scope attributes is Failed: {e}. Skipping this step.")
 
         for m in model.modules():
             m.register_forward_hook(_track_module_attributes_forward_hook)
