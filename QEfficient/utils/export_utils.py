@@ -164,11 +164,19 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     # Transform output names for subfunction compatibility
     if "output_names" in kwargs:
         kwargs["output_names"] = [
-            re.sub("_RetainedState", "_InternalRetainedState", name) for name in kwargs["output_names"]
+            re.sub("_RetainedState", "_InternalRetainedState", name)
+            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            else name
+            for name in kwargs["output_names"]
         ]
     else:
         args = list(args)
-        args[1] = [re.sub("_RetainedState", "_InternalRetainedState", name) for name in args[1]]
+        args[1] = [
+            re.sub("_RetainedState", "_InternalRetainedState", name)
+            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            else name
+            for name in args[1]
+        ]
         args = tuple(args)
     # Add subfunction-specific ONNX transforms
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
