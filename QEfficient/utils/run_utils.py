@@ -375,6 +375,7 @@ class ApiRunnerVlm:
         for inp_name in session_input_names:
             if inp_name in inputs.keys():
                 session_inputs[inp_name] = inputs[inp_name]
+        session_inputs["input_ids"] = session_inputs["input_ids"].astype(np.int64)
         outputs_data = session.run(output_names, session_inputs)
         ort_outputs = dict(zip(output_names, outputs_data))
         return ort_outputs

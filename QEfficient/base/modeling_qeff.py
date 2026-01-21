@@ -13,7 +13,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, OrderedDict
 
 import onnx
 import torch
@@ -24,6 +24,8 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxScatter
+from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import (
     constants,
@@ -208,6 +210,8 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        use_dynamo: bool = False,
+        dynamic_shapes: Optional[Dict[str, Dict[int, any]]] = None,
         **export_kwargs,
     ) -> str:
         """
@@ -274,17 +278,61 @@ class QEFFBaseModel(ABC):
                 else:
                     input_names.append(param)
 
+        # Rearrange example_inputs and dynamic_shapes to follow model.forward signature
+        sig = inspect.signature(self.model.forward)
+
+        ordered_example_inputs = OrderedDict()
+        ordered_dynamic_shapes = OrderedDict() if dynamic_shapes is not None else None
+
+        # First, add keys that are in the forward signature (in that order)
+        for name, param in sig.parameters.items():
+            if name in example_inputs:
+                ordered_example_inputs[name] = example_inputs[name]
+
+            if dynamic_shapes is not None and name in dynamic_shapes:
+                ordered_dynamic_shapes[name] = dynamic_shapes[name]
+
+        # Optionally, append any extra keys not in the forward signature
+        for name, value in example_inputs.items():
+            if name not in ordered_example_inputs:
+                ordered_example_inputs[name] = value
+
+        if dynamic_shapes is not None:
+            for name, value in dynamic_shapes.items():
+                if name not in ordered_dynamic_shapes:
+                    ordered_dynamic_shapes[name] = value
+
+        example_inputs = ordered_example_inputs
+        dynamic_shapes = ordered_dynamic_shapes
+
         try:
+            export_kwargs = {} if export_kwargs is None else export_kwargs
+            export_kwargs["dynamo"] = use_dynamo
+
+            if use_dynamo:
+                dynamic_axes = None
+                export_kwargs["report"] = True
+                export_kwargs["custom_translation_table"] = {
+                    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
+                    torch.ops.qefficient.ctx_gather.default: CtxGather,
+                    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
+                }
+
             torch.onnx.export(
                 self.model,
-                (example_inputs,),
-                str(tmp_onnx_path),
+                args=(),
+                f=str(tmp_onnx_path),
+                kwargs=example_inputs,
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
+                dynamic_shapes=dynamic_shapes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
             )
+            # op.save(str(tmp_onnx_path))
+
+            # model_proto = model.model_proto
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(tmp_onnx_path, load_external_data=False)
@@ -328,11 +376,13 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
+        use_dynamo: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
     ):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
+            "use_dynamo": use_dynamo,
             "retain_full_kv": retain_full_kv,
         }
 
@@ -366,6 +416,7 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        use_dynamo: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
@@ -391,6 +442,7 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
+
         onnx_path = Path(
             onnx_path
             if onnx_path
@@ -402,9 +454,11 @@ class QEFFBaseModel(ABC):
                 specializations,
                 offload_pt_weights,
                 use_onnx_subfunctions,
+                use_dynamo,
                 retain_full_kv,
             )
         )
+
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():
@@ -518,6 +572,7 @@ class QEFFBaseModel(ABC):
             command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
+        print(command)
         logger.info(f"Running compiler: {' '.join(command)}")
 
         try:

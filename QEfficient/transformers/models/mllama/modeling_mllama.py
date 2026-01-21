@@ -7,11 +7,12 @@
 
 """PyTorch Mllama model."""
 
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.export import Dim
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutput,
@@ -1092,6 +1093,209 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         else:
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
+
+    def get_onnx_dynamic_shapes(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+    ):
+        txt_cfg = self.config.get_text_config()
+        num_hidden_layers = txt_cfg.num_hidden_layers
+        cross_attention_layers = txt_cfg.cross_attention_layers
+
+        # Registry so dims with the same name share the same Dim object
+        dim_registry: Dict[str, Dim] = {}
+
+        def get_dim(dim_name: str) -> Dim:
+            if dim_name in dim_registry:
+                return dim_registry[dim_name]
+
+            if dim_name == "batch_size":
+                d = Dim(dim_name, min=1, max=1024)
+            elif "seq_len" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            elif "ctx_len" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            elif "max_num_images" in dim_name:
+                d = Dim(dim_name, min=1, max=16)
+            elif "max_num_tiles" in dim_name or "img_tiles" in dim_name:
+                d = Dim(dim_name, min=1, max=32)
+            elif "img_size" in dim_name:
+                d = Dim(dim_name, min=64, max=1024)
+            elif "idx" in dim_name:
+                # keep image_idx static for now
+                d = Dim.STATIC
+            elif "image_tokens_len" in dim_name:
+                d = Dim(dim_name, min=1, max=8192)
+            elif "comp_ctx_lengths" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            else:
+                d = Dim(dim_name, min=1, max=4096)
+
+            dim_registry[dim_name] = d
+            return d
+
+        # kv_offload=True: separate vision and language exports
+        if kv_offload:
+            # pixel_values: (batch_size, max_num_images, max_num_tiles, 3, img_size, img_size)
+            vision_dynamic_shapes: Dict[str, Dict[int, Any]] = {
+                "pixel_values": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("max_num_images"),
+                    2: get_dim("max_num_tiles"),
+                    4: get_dim("img_size"),
+                    5: get_dim("img_size"),
+                },
+                "aspect_ratio_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("max_num_images"),
+                },
+                "aspect_ratio_mask": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("max_num_images"),
+                    2: get_dim("max_num_tiles"),
+                },
+            }
+
+            # Language side: input_ids, image_idx, cross_attention_mask, position_ids, past_key_values, [comp_ctx_lengths]
+            lang_dynamic_shapes: Dict[str, Any] = {
+                "input_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "position_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "cross_attention_mask": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                    2: get_dim("max_num_images"),
+                    3: get_dim("max_num_tiles"),
+                },
+                # attention mask included in dynamic axes but since it is not used in the forward signature, omiting it here
+                "image_idx": {
+                    0: get_dim("idx"),
+                    1: get_dim("idx"),
+                },
+            }
+
+            # Build past_key_values shapes as list of (key, value) dicts
+            past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+            for layer_idx in range(num_hidden_layers):
+                if layer_idx in cross_attention_layers:
+                    # KV over image tokens
+                    past_key_shape = {
+                        0: get_dim("batch_size"),
+                        2: get_dim("image_tokens_len"),
+                    }
+                    past_value_shape = {
+                        0: get_dim("batch_size"),
+                        2: get_dim("image_tokens_len"),
+                    }
+                else:
+                    # KV over ctx_len
+                    past_key_shape = {
+                        0: get_dim("batch_size"),
+                        2: get_dim("ctx_len"),
+                    }
+                    past_value_shape = {
+                        0: get_dim("batch_size"),
+                        2: get_dim("ctx_len"),
+                    }
+                past_kv_shapes.append((past_key_shape, past_value_shape))
+
+            lang_dynamic_shapes["past_key_values"] = past_kv_shapes
+
+            if comp_ctx_lengths is not None:
+                lang_dynamic_shapes["comp_ctx_lengths"] = {
+                    0: get_dim("comp_ctx_lengths_dim"),
+                }
+
+            return {
+                "vision": vision_dynamic_shapes,
+                "lang": lang_dynamic_shapes,
+            }
+
+        # kv_offload=False: combined export
+        dynamic_shapes: Dict[str, Any] = {}
+
+        # pixel_values: (batch_size, max_num_images, max_num_tiles, 3, img_size, img_size)
+        dynamic_shapes["pixel_values"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("max_num_images"),
+            2: get_dim("max_num_tiles"),
+            4: get_dim("img_size"),
+            5: get_dim("img_size"),
+        }
+
+        # aspect_ratio_ids: (batch_size, max_num_images)
+        dynamic_shapes["aspect_ratio_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("max_num_images"),
+        }
+
+        # aspect_ratio_mask: (batch_size, max_num_images, max_num_tiles)
+        dynamic_shapes["aspect_ratio_mask"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("max_num_images"),
+            2: get_dim("max_num_tiles"),
+        }
+
+        # input_ids: (batch_size, seq_len)
+        dynamic_shapes["input_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
+
+        # image_idx: (1, 1) or (batch, 1); kept static by design
+        dynamic_shapes["image_idx"] = {
+            0: get_dim("idx"),
+            1: get_dim("idx"),
+        }
+
+        # cross_attention_mask: (batch_size, seq_len, max_num_images, max_num_tiles)
+        dynamic_shapes["cross_attention_mask"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+            2: get_dim("max_num_images"),
+            3: get_dim("max_num_tiles"),
+        }
+
+        # position_ids: (batch_size, seq_len)
+        dynamic_shapes["position_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
+
+        # past_key_values: list[(past_key, past_value)] for each layer
+        past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+        for layer_idx in range(num_hidden_layers):
+            if layer_idx in cross_attention_layers:
+                # KV over image tokens
+                past_key_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("image_tokens_len"),
+                }
+                past_value_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("image_tokens_len"),
+                }
+            else:
+                # KV over ctx_len
+                past_key_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("ctx_len"),
+                }
+                past_value_shape = {
+                    0: get_dim("batch_size"),
+                    2: get_dim("ctx_len"),
+                }
+            past_kv_shapes.append((past_key_shape, past_value_shape))
+
+        dynamic_shapes["past_key_values"] = tuple(past_kv_shapes)
+
+        return dynamic_shapes
 
     def get_output_names(self, kv_offload: bool = False):
         txt_cfg = self.config.get_text_config()

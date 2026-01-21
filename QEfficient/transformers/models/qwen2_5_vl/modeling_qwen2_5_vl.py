@@ -236,7 +236,7 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
 
         mask = (index_padded == -100).to(torch.int32)
 
-        if torch.jit.is_tracing():
+        if torch.jit.is_tracing() or torch._dynamo.is_compiling():
             order = torch.argsort(mask)
         else:
             order = torch.argsort(mask, stable=True)
@@ -944,7 +944,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             vision_size,
             self.model.config.hidden_size,
         )
-        inputs_shapes["image_grid_thw"] = (1, 1, 98, 146)
+        # inputs_shapes["image_grid_thw"] = (1, 1, 98, 146)
+        inputs_shapes["image_grid_thw"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1, 98, 146)
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -1222,6 +1223,182 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
+
+    def get_onnx_dynamic_shapes(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+    ):
+        from torch.export import Dim
+
+        num_layers = self.config.text_config.num_hidden_layers
+
+        # Registry of Dim objects so that dims with the same name share the same Dim
+        dim_registry: Dict[str, Dim] = {}
+
+        def get_dim(dim_name: str) -> Dim:
+            if dim_name in dim_registry:
+                return dim_registry[dim_name]
+
+            if dim_name == "batch_size":
+                d = Dim(dim_name)
+            elif dim_name == "vision_batch_size":
+                d = Dim(dim_name, min=1, max=1024)
+            elif dim_name == "full_batch_size":
+                d = Dim(dim_name, min=1, max=2048)
+            elif "seq_len" in dim_name:
+                d = Dim(dim_name, min=2, max=4095)
+            elif dim_name == "ctx_len":
+                d = Dim(dim_name, min=2, max=4095)
+            elif dim_name == "grid_height":
+                d = Dim(dim_name, min=1, max=65536)
+            elif dim_name == "grid_width":
+                d = Dim(dim_name, min=1, max=65536)
+            elif dim_name == "grid_h":
+                d = Dim(dim_name, min=5)
+            elif dim_name == "grid_w":
+                d = Dim(dim_name, min=5)
+            elif "vision_size" in dim_name:
+                d = Dim(dim_name, min=1, max=65536)
+            elif "comp_ctx_lengths" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            else:
+                # fallback
+                d = Dim(dim_name, min=1, max=4096)
+
+            dim_registry[dim_name] = d
+            return d
+
+        # kv_offload == True: separate vision/lang exports
+        if kv_offload:
+            # Vision encoder path:
+            #   pixel_values:   (grid_height, grid_width)
+            #   image_grid_thw: (batch_size, 1, grid_h, grid_w)
+            vision_dynamic_shapes: Dict[str, Dict[int, Any]] = {
+                "pixel_values": {
+                    0: get_dim("grid_height"),
+                    1: get_dim("grid_width"),
+                },
+                "image_grid_thw": {
+                    0: get_dim("batch_size"),
+                    2: get_dim("grid_h"),
+                    3: get_dim("grid_w"),
+                },
+            }
+
+            # Language decoder path:
+            #   input_ids:     (batch_size, seq_len)
+            #   position_ids:  (3, batch_size, seq_len)
+            #   vision_embeds: (vision_batch_size, vision_size, hidden_size)
+            #   image_idx:     (1, 1) --here treated as input to lang subgraph
+            lang_dynamic_shapes: Dict[str, Any] = {
+                "input_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "position_ids": {
+                    1: get_dim("batch_size"),
+                    2: get_dim("seq_len"),
+                },
+                "vision_embeds": {
+                    0: get_dim("vision_batch_size"),
+                    1: get_dim("vision_size"),
+                },
+                "image_idx": {
+                    0: Dim.STATIC,
+                    1: Dim.STATIC,
+                },
+            }
+
+            # KV cache for decoder: list of (key, value) per layer:
+            #   key/value: (batch_size or full_batch_size, num_heads, ctx_len, head_dim)
+            past_kv_shapes: List[List[Dict[int, Any], Dict[int, Any]]] = []
+            batch_dim_name = "full_batch_size" if continuous_batching else "batch_size"
+            for _ in range(num_layers):
+                past_key_shape = {
+                    0: get_dim(batch_dim_name),
+                    2: get_dim("ctx_len"),
+                }
+                past_value_shape = {
+                    0: get_dim(batch_dim_name),
+                    2: get_dim("ctx_len"),
+                }
+                past_kv_shapes.append([past_key_shape, past_value_shape])
+
+            lang_dynamic_shapes["past_key_values"] = past_kv_shapes
+
+            if continuous_batching:
+                # batch_index: often (batch_size, 1) or (batch_size,)
+                lang_dynamic_shapes["batch_index"] = {
+                    0: get_dim("batch_size"),
+                }
+
+            if comp_ctx_lengths is not None:
+                lang_dynamic_shapes["comp_ctx_lengths"] = {
+                    0: get_dim("comp_ctx_lengths"),
+                }
+
+            return {
+                "vision": vision_dynamic_shapes,
+                "lang": lang_dynamic_shapes,
+            }
+
+        # kv_offload == False: single combined export
+        dynamic_shapes: Dict[str, Any] = {}
+
+        # pixel_values: (grid_height, grid_width)
+        dynamic_shapes["pixel_values"] = {
+            0: get_dim("grid_height"),
+            1: get_dim("grid_width"),
+        }
+
+        # image_grid_thw: (batch_size, 1, grid_h, grid_w)
+        dynamic_shapes["image_grid_thw"] = {
+            0: get_dim("batch_size"),
+            2: get_dim("grid_h"),
+            3: get_dim("grid_w"),
+        }
+
+        # input_ids: (batch_size, seq_len)
+        dynamic_shapes["input_ids"] = {
+            0: get_dim("batch_size"),
+            1: get_dim("seq_len"),
+        }
+
+        # position_ids: (3, batch_size, seq_len)
+        # (dim 0 == 3 is static and omitted from dynamic spec)
+        dynamic_shapes["position_ids"] = {
+            1: get_dim("batch_size"),
+            2: get_dim("seq_len"),
+        }
+
+        # KV cache for decoder: list of (key, value) per layer:
+        #   key/value: (batch_size or full_batch_size, num_heads, ctx_len, head_dim)
+        past_kv_shapes: List[List[Dict[int, Any], Dict[int, Any]]] = []
+        batch_dim_name = "full_batch_size" if continuous_batching else "batch_size"
+        for _ in range(num_layers):
+            past_key_shape = {
+                0: get_dim(batch_dim_name),
+                2: get_dim("ctx_len"),
+            }
+            past_value_shape = {
+                0: get_dim(batch_dim_name),
+                2: get_dim("ctx_len"),
+            }
+            past_kv_shapes.append([past_key_shape, past_value_shape])
+
+        lang_dynamic_shapes["past_key_values"] = past_kv_shapes
+
+        dynamic_shapes["past_key_values"] = past_kv_shapes
+        dynamic_shapes["kwargs"] = {
+            "image_idx": {
+                0: Dim.STATIC,
+                1: Dim.STATIC,
+            },
+        }
+
+        return dynamic_shapes
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
