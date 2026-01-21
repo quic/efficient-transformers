@@ -3558,10 +3558,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     including Wav2Vec2 and other encoder-only speech models optimized for alignment-free transcription.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
 
-    ``Mandatory`` Args:
-        :model (nn.Module): PyTorch model
-
+    Example
+    -------
     .. code-block:: python
+
         import torchaudio
         from QEfficient import QEFFAutoModelForCTC
         from transformers import AutoProcessor
