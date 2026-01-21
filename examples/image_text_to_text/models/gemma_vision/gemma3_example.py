@@ -92,7 +92,7 @@ else:
         {
             "role": "user",
             "content": [
-                {"type": "image", "url": "ocr.png"},
+                {"type": "image", "url": image_url},
                 {"type": "text", "text": "Please OCR this image."},
             ],
         },
