@@ -1,0 +1,44 @@
+
+task: text-generation
+model: meta-llama/Llama-3.1-8B
+tokenizer: meta-llama/Llama-3.1-8B
+
+device: qaic
+tensor_parallel: false
+fp16: true
+bf16: false
+batch_size: 1
+max_new_tokens: 256
+
+
+do_sample: false          # deterministic decoding
+temperature: 0.0          # ignored when do_sample=false
+top_k: 0                  # ignored when do_sample=false
+top_p: 1.0                # ignored when do_sample=false
+max_new_tokens: 32        # short results (adjust to 64 if needed)
+
+# Add repetition controls
+repetition_penalty: 1.2   # discourages repeating tokens (1.0 = none)
+no_repeat_ngram_size: 3 
+
+
+
+prompt_template: |
+  Correct the grammar in the following sentence. Return only the corrected sentence.
+  ### prompt:
+  {prompt}
+  ### response:
+
+stop_seq: ["### prompt:", "### response:", "### answer:"]
+
+completion_template: "{response}"
+lora: /home/tchawada/LightningLLMs/training_results/checkpoint-1
+trust_remote_code: false
+revision: null
+
+
+inputs:
+  - "She go to school yesterday."
+  - "He don't like apples."
+  - "Their going to the park."
+output: outputs.jsonl

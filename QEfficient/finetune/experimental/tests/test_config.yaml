@@ -101,4 +101,3 @@ callbacks:
     early_stopping_patience: 3
     early_stopping_threshold: 0.001
   tensorboard:
-
