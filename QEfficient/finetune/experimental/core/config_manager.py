@@ -251,6 +251,14 @@ class ModelConfig:
         default=None,
         metadata={"help": "The device map to use for model distribution (e.g., 'auto')."},
     )
+    device: str = field(
+        default="qaic",
+        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
+    )
+    torch_dtype: str = field(
+        default="fp16",
+        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
+    )
 
 
 @dataclass
@@ -290,7 +298,7 @@ class DdpConfig:
         metadata={"help": "Whether to find unused parameters in DDP."},
     )
     ddp_bucket_cap_mb: Optional[int] = field(
-        default=25,
+        default=None,
         metadata={"help": "The bucket size in MB for DDP communication."},
     )
     ddp_broadcast_buffers: bool = field(
