@@ -32,7 +32,11 @@ dataset:
   test_split: "test"
   group_by_length: True
   num_workers: 4
+<<<<<<< HEAD
   dtype: "fp16"
+=======
+  torch_dtype: "fp16"
+>>>>>>> db94c30 (Updating config manager so it include all params from master config)
   dataloader_pin_memory: True
   dataloader_persistent_workers: True
   dataloader_prefetch_factor: 1

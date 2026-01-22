@@ -251,14 +251,6 @@ class ModelConfig:
         default=None,
         metadata={"help": "The device map to use for model distribution (e.g., 'auto')."},
     )
-    device: str = field(
-        default="qaic",
-        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
-    )
-    torch_dtype: str = field(
-        default="fp16",
-        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
-    )
 
 
 @dataclass
@@ -494,15 +486,58 @@ class MasterConfig:
     )
 
 
+<<<<<<< HEAD
 class ConfigManager:
     """Manages configuration loading, validation, and updates."""
 
     def __init__(self, config: Optional[MasterConfig] = None, config_path: Optional[str] = None):
+=======
+def parse_arguments() -> MasterConfig:
+    """Create argument parser for the new finetuning interface."""
+    master_config = MasterConfig()
+    return master_config
+    # if config_path:
+    #     config_path = os.path.abspath(config_path)
+    #     if not os.path.exists(config_path):
+    #         raise FileNotFoundError(f"Config file not found: {config_path}")
+    #     if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
+    #         raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
+
+    #     try:
+    #         config_manager=ConfigManager(master_config)
+    #         config=config_manager.load_config(config_path)
+    #     except Exception as e:
+    #         raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
+    # elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+    #     # If we pass only one argument to the script and it's the path to a json file,
+    #     # let's parse it to get our arguments.
+    #     config_path=os.path.abspath(sys.argv[1])
+    #     config_manager=ConfigManager(master_config)
+    #     config=config_manager.load_config(config_path)
+    # else:
+
+    #     parser = HfArgumentParser(MasterConfig)
+    #     args_dict = parser.parse_args_into_dict()
+    #     config_manager=ConfigManager(master_config)
+    #     config=config_manager.update_config(args_dict)
+
+    # master_config = asdict(config)
+    # master_config = MasterConfig(**master_config)
+    # return master_config
+
+
+class ConfigManager:
+    """Manages configuration loading, validation, and updates."""
+
+    def __init__(self, config: MasterConfig, config_path: Optional[str] = None):
+>>>>>>> db94c30 (Updating config manager so it include all params from master config)
         """
         Initialize ConfigManager with either:
         - Path to config file (str or Path)
         - Configuration dictionary
         """
+<<<<<<< HEAD
         if config:
             self.config = config
         else:
@@ -510,11 +545,16 @@ class ConfigManager:
 
         if config_path and not config:
             logger.log_rank_zero("Loading configuration from config_path...")
+=======
+        self.config = config
+        if config_path:
+>>>>>>> db94c30 (Updating config manager so it include all params from master config)
             config_path = os.path.abspath(config_path)
             if not os.path.exists(config_path):
                 raise FileNotFoundError(f"Config file not found: {config_path}")
             if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
                 raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
+<<<<<<< HEAD
             try:
                 self.load_config(config_path)
             except Exception as e:
@@ -573,6 +613,27 @@ class ConfigManager:
             self.validate_config()
         except Exception as e:
             logger.log_rank_zero(f"Config validation failed with error: {e}")
+=======
+
+            try:
+                config = self.load_config(config_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
+        elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+            # If we pass only one argument to the script and it's the path to a json file,
+            # let's parse it to get our arguments.
+            config_path = os.path.abspath(sys.argv[1])
+            self.load_config(config_path)
+        else:
+            parser = HfArgumentParser(MasterConfig)
+            args_dict = parser.parse_args_into_dict()
+            config_manager = ConfigManager(self.config)
+            config_manager.update_config(args_dict)
+
+        self.config = asdict(self.config)
+        self.config = MasterConfig(**self.config)
+>>>>>>> db94c30 (Updating config manager so it include all params from master config)
 
     def load_config(self, config_path: Union[str, Path]) -> None:
         """Load configuration from file."""
