@@ -101,6 +101,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100(model):
     """
@@ -110,6 +111,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100(model):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
     """
@@ -119,6 +121,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
 def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
     """
@@ -131,6 +134,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
@@ -147,6 +151,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model):
@@ -168,6 +173,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model", [embed_test_models[0]])
 def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model):

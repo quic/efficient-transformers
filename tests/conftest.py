@@ -58,6 +58,16 @@ def pytest_sessionstart(session):
     qeff_models_clean_up()
 
 
+def pytest_configure(config):
+    """Register custom markers for test categorization."""
+    config.addinivalue_line(
+        "markers", "llm_model: mark test as a pure LLM model inference test"
+    )
+    config.addinivalue_line(
+        "markers", "feature: mark test as a feature-specific test (SPD, sampler, prefix caching, LoRA, etc.)"
+    )
+
+
 def pytest_sessionfinish(session, exitstatus):
     inside_worker = getattr(session.config, "workerinput", None)
     if inside_worker is None:

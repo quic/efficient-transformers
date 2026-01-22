@@ -21,6 +21,7 @@ test_models = ["gpt2"]
 
 # The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
 def test_simple_prefix_caching(model_name):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
@@ -36,6 +37,7 @@ def test_simple_prefix_caching(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", test_models)
 def test_simple_prefix_caching_qnn(model_name):
