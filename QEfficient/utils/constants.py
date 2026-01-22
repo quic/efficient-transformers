@@ -218,6 +218,7 @@ class Constants:
     SDK_PLATFORM_XML = (
         "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.
     )
+    SKIP_THRESHOLD = 500
 
 
 @dataclass

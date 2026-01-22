@@ -70,12 +70,19 @@ test_models_spd = [
 test_models_blockedKV = [
     # "meta-llama/Llama-3.3-70B-Instruct",
     "meta-llama/Llama-3.2-1B",
+    "openai/gpt-oss-20b",
 ]
+
+test_models_skipSoftmax = [
+    "openai/gpt-oss-20b",
+]
+
+
 
 
 def get_custom_n_layers(model_name):
     """
-    Function to set number layers of the variuos types of models such as swiftkv models and others
+    Function to set number layers of the various types of models such as swiftkv models and others
     --------
 
     :model_name: str
@@ -193,6 +200,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
         )
+
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
     gen_len = ort_tokens.shape[-1]
@@ -511,6 +519,19 @@ def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     n_layer = get_custom_n_layers(model_name)
 
     qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
+
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("model_name", test_models_skipSoftmax)
+def test_causal_skipSoftmax_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    n_layer = get_custom_n_layers(model_name)
+
+    qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS, skip_threshold=Constants.SKIP_THRESHOLD)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
 
 

@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Dict, Optional, Union
 
 import torch
 from torch import nn
@@ -34,6 +34,7 @@ from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+import math
 
 
 class QEffGptOssExperts(GptOssExperts):
@@ -671,6 +672,113 @@ def eager_attention_forward_blocked(
     output = output.view(BS, NH, CL, DH).transpose(1, 2).contiguous()
     return output, output
 
+def eager_attention_forward_blockedKV(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: Optional[int] = None,
+    skip_threshold: Optional[bool] = None,
+    cache_kwargs: Optional[Dict[str, Any]] = None,
+    layer_idx: int = None,
+    past_key_value: Optional[Cache] = None,
+    dropout: float = 0.0,
+    **kwargs,
+):
+    # Initialize result tensor
+    output = torch.zeros_like(query)
+    
+    # Initialize Running Maximum
+    batch_size, num_heads, seq_len, head_dim = query.shape
+    current_max = torch.full((batch_size, num_heads, seq_len), float(MIN_MASKED_ATTENTION_VALUE), dtype=query.dtype)
+    
+    current_denominator = torch.zeros(batch_size, num_heads, seq_len, dtype=query.dtype)
+    
+    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    position_ids = cache_kwargs.get("position_ids")
+    block_size = -(-past_seen_tokens // num_kv_blocks)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+    
+    # sinks = module.sinks.unsqueeze(0).unsqueeze(2).expand(batch_size, -1, seq_len, -1)
+    sinks = module.sinks.reshape(1, -1, 1, 1).expand(
+            batch_size, -1, seq_len, -1
+        )
+
+    if skip_threshold:
+        threshold = math.log(skip_threshold)
+
+    for j in range(num_kv_blocks):
+        start_index = j * block_size
+        end_index = (j + 1) * block_size
+        
+        K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
+        K_block_states = repeat_kv(K_block, module.num_key_value_groups)
+        V_block_states = repeat_kv(V_block, module.num_key_value_groups)
+        
+        past_seen_tokens_start = start_index
+        past_seen_tokens_end = torch.where(
+            torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+            past_seen_tokens,
+            end_index,
+        )
+        
+        causal_mask_block = _create_causal_mask(
+            position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start
+        )
+        
+        attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
+        
+        if attention_mask is not None:
+            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+        
+        block_max = attn_weights_block.max(dim=-1, keepdim=True).values
+        
+        prev_max = current_max
+        current_max = torch.maximum(prev_max, block_max.squeeze(-1))
+        delta_max = prev_max - current_max
+
+        # skip condition
+        if skip_threshold:
+            local_delta = current_max.unsqueeze(2) - block_max > threshold
+        
+        attn_weights_block_stable = attn_weights_block - current_max.unsqueeze(-1)
+        kv_exp = torch.exp(attn_weights_block_stable)
+        
+        prev_denominator = current_denominator
+        current_denominator = prev_denominator * torch.exp(delta_max) + kv_exp.sum(dim=-1)
+        
+        block_contribution = torch.matmul(kv_exp, V_block_states)
+        prev_output = output
+        output_curr_step = prev_output * torch.exp(delta_max).unsqueeze(-1) + block_contribution
+
+        if skip_threshold:
+            output = torch.where(local_delta, output, output_curr_step) # if current_max - local_max > threshold, use previous output effectively skipping this block
+        else:
+            output = output_curr_step
+
+    # Apply attention sinks    
+    prev_max = current_max
+    sink_max = sinks.max(dim=-1, keepdim=True).values.squeeze(-1)
+    current_max = torch.maximum(prev_max, sink_max)
+    delta_max = prev_max - current_max
+    
+    sinks_stable = sinks - current_max.unsqueeze(-1)
+    sink_exp = torch.exp(sinks_stable)
+    
+    prev_denominator = current_denominator
+    current_denominator = prev_denominator * torch.exp(delta_max) + sink_exp.sum(dim=-1)
+    
+    output = output * torch.exp(delta_max).unsqueeze(-1)
+    
+    output = output / current_denominator.unsqueeze(-1)
+    
+    attn_output = output.transpose(1, 2).contiguous()
+    attn_weights = None
+
+    return attn_output, attn_weights
+
 
 def opt_eager_attention_forward_blocked(
     module: nn.Module,
@@ -915,6 +1023,8 @@ class QEffGptOssAttention(GptOssAttention):
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         sliding_mask=None,
+        num_kv_blocks: Optional[torch.Tensor] = None,
+        skip_threshold: Optional[bool] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -929,27 +1039,50 @@ class QEffGptOssAttention(GptOssAttention):
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-                "config": self.config,
-                "is_sliding": self.sliding_window is not None,
-                "sliding_window": past_key_value.sliding_window_len,
-            }
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if num_kv_blocks is not None:
+                past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+                cache_kwargs = {
+                    "sin": sin,
+                    "cos": cos,
+                    "batch_index": batch_index,
+                    "position_ids": position_ids,
+                    "past_seen_tokens": past_seen_tokens,
+                    "config": self.config,
+                    "is_sliding": self.sliding_window is not None,
+                    "sliding_window": past_key_value.sliding_window_len,
+                }
+                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                # sin and cos are specific to RoPE models; cache_position needed for the static cache
+                cache_kwargs = {
+                    "sin": sin,
+                    "cos": cos,
+                    "batch_index": batch_index,
+                    "position_ids": position_ids,
+                    "config": self.config,
+                    "is_sliding": self.sliding_window is not None,
+                    "sliding_window": past_key_value.sliding_window_len,
+                }
+                if comp_ctx_lengths is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+                
 
         if self.sliding_window is not None:
             attention_mask = sliding_mask
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = eager_attention_forward
+        if num_kv_blocks is not None: 
+            attention_interface: Callable = eager_attention_forward_blockedKV
+            if query_states.shape[2] != 1: # don't skip for prefill
+                skip_threshold = None
+        else:
+            attention_interface: Callable = eager_attention_forward
+
+        kwargs["cache_kwargs"] = cache_kwargs
+
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -958,8 +1091,12 @@ class QEffGptOssAttention(GptOssAttention):
             attention_mask,
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
+            num_kv_blocks=num_kv_blocks,
+            skip_threshold=skip_threshold,
             sliding_window=self.sliding_window,
             s_aux=self.sinks,  # diff with Llama
+            past_key_value=past_key_value,
+            layer_idx=self.layer_idx,
             **kwargs,
         )
 
