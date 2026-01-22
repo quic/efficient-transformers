@@ -289,8 +289,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         return self._export(
             example_inputs,
-            output_names,
-            dynamic_axes,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             do_constant_folding=False,  # To avoid merging adapter weights with base weights
             onnx_transform_kwargs={"adapter_name": self.model.active_adapter},
             export_dir=export_dir,
