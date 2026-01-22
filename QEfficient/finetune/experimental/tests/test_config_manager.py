@@ -20,8 +20,8 @@ def config_path() -> Path:
 
 
 def test_config(config_path):
-    master_config = parse_arguments(config_path=config_path)
-    config_manager = ConfigManager(master_config)
+    master_config = parse_arguments()
+    config_manager = ConfigManager(master_config, config_path)
     assert isinstance(config_manager, ConfigManager)
     config_manager.load_config(config_path)
     try:
