@@ -156,6 +156,7 @@ def prepare_model_setup(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     sampler_transform_configs,
@@ -286,6 +287,7 @@ def test_sampler_transform(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     greedy_sampling_configs,
@@ -388,6 +390,7 @@ def test_greedy_sampling(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     random_sampling_configs,
@@ -610,6 +613,7 @@ def test_random_sampling(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     guided_decoding_configs,
