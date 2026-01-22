@@ -116,6 +116,22 @@ class DatasetConfig:
         default=4,
         metadata={"help": "Number of workers for dataset processing."},
     )
+    prompt_template: str = field(
+        default=None,
+        metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
+    )
+    prompt_func: str = field(
+        default=None,
+        metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
+    )
+    completion_template: str = field(
+        default=None,
+        metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
+    )
+    completion_func: str = field(
+        default=None,
+        metadata={"help": "Function for formatting output completions (e.g., '{output}')."},
+    )
     collate_fn: str = field(
         default="dynamic_padding",
         metadata={"help": "The collation function to use (e.g., 'dynamic_padding')."},
@@ -227,14 +243,6 @@ class ModelConfig:
     device_map: Optional[str] = field(
         default=None,
         metadata={"help": "The device map to use for model distribution (e.g., 'auto')."},
-    )
-    device: str = field(
-        default="qaic",
-        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
-    )
-    torch_dtype: str = field(
-        default="fp16",
-        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
     )
 
 
@@ -381,7 +389,14 @@ class TrainingConfig:
         default_factory=GradientCheckpointingKwargs,
         metadata={"help": "Arguments for gradient checkpointing."},
     )
-
+    device: str = field(
+        default="qaic",
+        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
+    )
+    torch_dtype: str = field(
+        default="fp16",
+        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
+    )
     torch_compile: bool = field(
         default=True,
         metadata={"help": "Whether to compile the model with `torch.compile`."},
@@ -464,37 +479,45 @@ class MasterConfig:
     )
 
 
-def parse_arguments(config_path: Optional[str] = None) -> MasterConfig:
+def parse_arguments() -> MasterConfig:
     """Create argument parser for the new finetuning interface."""
-    parser = HfArgumentParser(MasterConfig)
-
-    if config_path:
-        config_path = os.path.abspath(config_path)
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-        if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
-            raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
-
-        try:
-            master_config = parser.parse_yaml_file(yaml_file=config_path)[0]
-        except Exception as e:
-            raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
-
-    elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
-        master_config = parser.parse_yaml_file(yaml_file=os.path.abspath(sys.argv[1]))[0]
-    else:
-        (master_config,) = parser.parse_args_into_dataclasses()
-    master_config = asdict(master_config)
-    master_config = MasterConfig(**master_config)
+    master_config = MasterConfig()
     return master_config
+    # if config_path:
+    #     config_path = os.path.abspath(config_path)
+    #     if not os.path.exists(config_path):
+    #         raise FileNotFoundError(f"Config file not found: {config_path}")
+    #     if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
+    #         raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
+
+    #     try:
+    #         config_manager=ConfigManager(master_config)
+    #         config=config_manager.load_config(config_path)
+    #     except Exception as e:
+    #         raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
+    # elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+    #     # If we pass only one argument to the script and it's the path to a json file,
+    #     # let's parse it to get our arguments.
+    #     config_path=os.path.abspath(sys.argv[1])
+    #     config_manager=ConfigManager(master_config)
+    #     config=config_manager.load_config(config_path)
+    # else:
+
+    #     parser = HfArgumentParser(MasterConfig)
+    #     args_dict = parser.parse_args_into_dict()
+    #     config_manager=ConfigManager(master_config)
+    #     config=config_manager.update_config(args_dict)
+
+    # master_config = asdict(config)
+    # master_config = MasterConfig(**master_config)
+    # return master_config
 
 
 class ConfigManager:
     """Manages configuration loading, validation, and updates."""
 
-    def __init__(self, config: MasterConfig):
+    def __init__(self, config: MasterConfig, config_path: Optional[str] = None):
         """
         Initialize ConfigManager with either:
         - Path to config file (str or Path)
@@ -502,6 +525,31 @@ class ConfigManager:
         - None (creates empty config)
         """
         self.config = config
+        if config_path:
+            config_path = os.path.abspath(config_path)
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
+                raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
+
+            try:
+                config = self.load_config(config_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
+        elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+            # If we pass only one argument to the script and it's the path to a json file,
+            # let's parse it to get our arguments.
+            config_path = os.path.abspath(sys.argv[1])
+            self.load_config(config_path)
+        else:
+            parser = HfArgumentParser(MasterConfig)
+            args_dict = parser.parse_args_into_dict()
+            config_manager = ConfigManager(self.config)
+            config_manager.update_config(args_dict)
+
+        self.config = asdict(self.config)
+        self.config = MasterConfig(**self.config)
 
     def load_config(self, config_path: Union[str, Path]) -> None:
         """Load configuration from file."""
@@ -518,7 +566,6 @@ class ConfigManager:
                 config_dict = json.load(f)
         else:
             raise ValueError(f"Unsupported configuration file format: {config_path.suffix}")
-
         self.update_config(config_dict)
 
     def _ensure_extra_params(self, obj) -> Dict[str, Any]:
