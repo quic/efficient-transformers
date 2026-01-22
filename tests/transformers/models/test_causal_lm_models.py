@@ -325,6 +325,7 @@ def test_causal_lm_export_with_deprecated_api(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.regular
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causal_model_config_dict):
@@ -350,6 +351,7 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causa
 
 @pytest.mark.nightly
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -371,6 +373,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.regular
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", test_models_qnn)
@@ -392,6 +395,7 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, custom_c
 
 @pytest.mark.nightly
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", test_models_qnn)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
@@ -412,6 +416,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
 
 @pytest.mark.regular
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", test_models_spd)
 def test_custom_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causal_model_config_dict):
@@ -431,6 +436,7 @@ def test_custom_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_caus
 
 @pytest.mark.nightly
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_spd)
 def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -446,6 +452,7 @@ def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
@@ -457,6 +464,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_qnn():
     """
@@ -474,6 +482,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_qnn():
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100():
     model_name = "gpt2"
     n_layer = 1
@@ -483,6 +492,7 @@ def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100():
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100_qnn():
     model_name = "gpt2"
@@ -501,6 +511,7 @@ def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100_qnn():
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -515,6 +526,7 @@ def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_nonBlockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """

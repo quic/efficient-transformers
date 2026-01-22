@@ -173,6 +173,7 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -184,6 +185,7 @@ def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.skip(reason="Wav2Vec2 is currently not supported on QNN")
 @pytest.mark.parametrize("model_name", test_models)
