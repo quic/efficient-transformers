@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -594,6 +594,15 @@ class QEffGemma3EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.vision_tower
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+
     def forward(self, pixel_values):
         image_features = self.model.get_image_features(pixel_values=pixel_values)
         return image_features
@@ -606,6 +615,15 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
         self.config = self.model.config
         self.lm_head = self.model.lm_head
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffGemma3DecoderLayer}
 
     def forward(
         self,
