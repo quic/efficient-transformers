@@ -707,11 +707,18 @@ def eager_attention_forward_blockedKV(
         )
 
     if skip_threshold:
-        threshold = math.log(skip_threshold)
+        threshold = math.log(skip_threshold / past_seen_tokens)
 
     for j in range(num_kv_blocks):
         start_index = j * block_size
         end_index = (j + 1) * block_size
+
+        if not torch.onnx.is_in_onnx_export():
+            if (position_ids < start_index).all():
+                break # can skip future blocks since masked
+
+        # out of onnx export, we create a condition to use torch.where on
+        skip_condition = (position_ids < start_index).all()
         
         K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
         K_block_states = repeat_kv(K_block, module.num_key_value_groups)
@@ -742,7 +749,7 @@ def eager_attention_forward_blockedKV(
         # skip condition
         if skip_threshold:
             local_delta = current_max.unsqueeze(2) - block_max > threshold
-        
+
         attn_weights_block_stable = attn_weights_block - current_max.unsqueeze(-1)
         kv_exp = torch.exp(attn_weights_block_stable)
         
@@ -752,6 +759,9 @@ def eager_attention_forward_blockedKV(
         block_contribution = torch.matmul(kv_exp, V_block_states)
         prev_output = output
         output_curr_step = prev_output * torch.exp(delta_max).unsqueeze(-1) + block_contribution
+
+        if torch.onnx.is_in_onnx_export():
+            output_curr_step = torch.where(skip_condition, output, output_curr_step)
 
         if skip_threshold:
             output = torch.where(local_delta, output, output_curr_step) # if current_max - local_max > threshold, use previous output effectively skipping this block
@@ -1040,7 +1050,7 @@ class QEffGptOssAttention(GptOssAttention):
 
         if past_key_value is not None:
             if num_kv_blocks is not None:
-                past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+                past_seen_tokens = past_key_value.get_seq_length(self.layer_idx) if past_key_value is not None else 0
                 cache_kwargs = {
                     "sin": sin,
                     "cos": cos,
