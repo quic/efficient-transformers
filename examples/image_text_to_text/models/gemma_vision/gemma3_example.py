@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
+
 import torch
 import transformers
 from transformers import AutoConfig, AutoProcessor
@@ -22,6 +24,10 @@ config = AutoConfig.from_pretrained(model_id)
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
+
+# Path to Node Precision Info YAML file
+npi_file_path = "configs/fp32_nodes_gemma3_27b.yaml"
+npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
 
 # For single QPC: kv_offload=False, For dual QPC: kv_offload=True
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -44,7 +50,7 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        node_precision_info="/home/dipankar/gemma3_final/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_27b.yaml",
+        node_precision_info=npi_file_full_path,
     )
 
     messages = [
@@ -80,7 +86,7 @@ else:
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mos=1,
-        node_precision_info="/home/dipankar/gemma3_final/efficient-transformers/examples/image_text_to_text/models/gemma_vision/configs/fp32_nodes_gemma3_27b.yaml",
+        node_precision_info=npi_file_full_path,
     )
 
     ### IMAGE + TEXT ###
@@ -93,7 +99,7 @@ else:
             "role": "user",
             "content": [
                 {"type": "image", "url": image_url},
-                {"type": "text", "text": "Please OCR this image."},
+                {"type": "text", "text": "Describe the image in details."},
             ],
         },
     ]
