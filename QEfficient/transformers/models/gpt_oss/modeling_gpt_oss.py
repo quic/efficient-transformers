@@ -402,7 +402,7 @@ class QEffGptOssMLP(GptOssMLP):
 
         # Apply routing weights AFTER expert computation
         experts_out = experts_out * router_top_value.unsqueeze(-1)
-        experts_out_sum = torch.einsum('bnd->bd', experts_out)
+        experts_out_sum = torch.einsum("bnd->bd", experts_out)
         return experts_out_sum, router_logits
 
     def optimized_moe_forward(self, hidden_states: torch.Tensor):
