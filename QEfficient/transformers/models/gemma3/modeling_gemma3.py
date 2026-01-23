@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -589,6 +589,15 @@ class QEffGemma3EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.vision_tower
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+
     def forward(self, pixel_values):
         image_features = self.model.get_image_features(pixel_values=pixel_values)
         return image_features
@@ -601,6 +610,15 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
         self.config = self.model.config
         self.lm_head = self.model.lm_head
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffGemma3DecoderLayer}
 
     def forward(
         self,
@@ -676,6 +694,14 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         logits = self.lm_head(hidden_states)
         logits = logits.float()
         return logits, pixel_values, image_idx, outputs.past_key_values
+
+    def get_npi_file(self, model_name: str) -> str:
+        if constants.NPI_MAPPING[model_name] is not None:
+            return constants.NPI_MAPPING[model_name]
+        else:
+            raise ValueError(
+                f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added for this particular model. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
+            )
 
     def get_specializations(
         self,
