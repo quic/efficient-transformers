@@ -14,7 +14,6 @@ import pytest
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.hash_utils import hash_dict_params
 
@@ -225,7 +224,7 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
     export_params["dynamic_axes"] = dynamic_axes
     hash_params["export_params"] = export_params
     if subfunc:
-        hash_params["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
+        hash_params["export_modules_as_functions"] = qeff_model.model.get_submodules_for_export()
 
     manual_hash = hash_dict_params(hash_params)
 

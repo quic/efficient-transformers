@@ -7,7 +7,7 @@
 
 """PyTorch Mllama model."""
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -749,6 +749,15 @@ class QEffMllamaVisionEncoder(nn.Module):
         self.model = model
         self.cross_attention_layers = self.model.config.get_text_config().cross_attention_layers
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_model.transformer.layers[0].__class__}
+
     def forward(
         self,
         pixel_values: Optional[torch.FloatTensor] = None,
@@ -860,6 +869,15 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
 
     def get_qeff_language_decoder(self):
         return self
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffMllamaSelfAttentionDecoderLayer}
 
     def forward(
         self,
