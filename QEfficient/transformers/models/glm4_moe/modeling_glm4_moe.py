@@ -510,7 +510,8 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         topk_indices = self.get_topk_indices(scores)
         topk_weights = scores.gather(1, topk_indices)
         if self.norm_topk_prob:
-            denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
+            # denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
+            denominator = torch.einsum("ab->a", topk_weights).unsqueeze(-1) + 1e-20
             topk_weights /= denominator
         topk_weights = topk_weights * self.routed_scaling_factor
         return topk_indices, topk_weights
@@ -533,7 +534,9 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         topk_weights = router_scores.gather(1, topk_indices)  # [T, 8]
 
         if self.norm_topk_prob:
-            topk_weights = topk_weights / (topk_weights.sum(dim=-1, keepdim=True) + 1e-20)
+            # denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
+            denominator = torch.einsum("ab->a", topk_weights).unsqueeze(-1) + 1e-20
+            topk_weights /= denominator
 
         topk_weights = topk_weights * self.routed_scaling_factor  # *2.5
         return topk_indices, topk_weights
@@ -606,7 +609,8 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         expert_output = torch.bmm(hidden, down_proj)
         experts_out = expert_output.view(bs * seq_len, self.gate.top_k, self.config.hidden_size)
         experts_out = experts_out * topk_weights.unsqueeze(-1)
-        final_hidden_states = experts_out.sum(dim=1)
+        # final_hidden_states = experts_out.sum(dim=1)
+        final_hidden_states = torch.einsum("abc->ac", experts_out)
 
         return final_hidden_states.type(hidden_states.dtype)
 
