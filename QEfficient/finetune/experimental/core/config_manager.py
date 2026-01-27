@@ -543,10 +543,21 @@ class ConfigManager:
             config_path = os.path.abspath(sys.argv[1])
             self.load_config(config_path)
         else:
-            parser = HfArgumentParser(MasterConfig)
-            args_dict = parser.parse_args_into_dict()
-            config_manager = ConfigManager(self.config)
-            config_manager.update_config(args_dict)
+            parser = HfArgumentParser(
+                (TrainingConfig, ModelConfig, DatasetConfig, OptimizerConfig, SchedulerConfig, CallbackConfig)
+            )
+            train_args, model_args, data_args, opt_args, schd_args, call_args, extra = (
+                parser.parse_args_into_dataclasses(return_remaining_strings=True)
+            )
+            self.config = MasterConfig(
+                model=model_args,
+                dataset=data_args,
+                training=train_args,
+                callbacks=call_args,
+                optimizers=opt_args,
+                scheduler=schd_args,
+                extra_params=extra,
+            )
 
         self.config = asdict(self.config)
         self.config = MasterConfig(**self.config)
