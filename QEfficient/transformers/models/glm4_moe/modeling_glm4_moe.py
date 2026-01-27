@@ -482,6 +482,63 @@ class QEffGlm4MoeModel(Glm4MoeModel):
         )
 
 
+class QEffGlm4MoeTopkRouter(nn.Module):
+    @torch.no_grad()
+    def get_topk_indices(self, scores):
+        scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.unsqueeze(0)
+        group_scores = (
+            scores_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group)
+            .topk(2, dim=-1)[0]
+            .sum(dim=-1)
+        )
+        group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
+        group_mask = torch.zeros_like(group_scores)
+        group_mask.scatter_(1, group_idx, 1)
+        score_mask = (
+            group_mask.unsqueeze(-1)
+            .expand(-1, self.n_group, self.n_routed_experts // self.n_group)
+            .reshape(-1, self.n_routed_experts)
+        )
+        scores_for_choice = scores_for_choice.masked_fill(~score_mask.bool(), 0.0)
+        topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]
+        return topk_indices
+
+    def orig_forward(self, hidden_states):
+        hidden_states = hidden_states.view(-1, self.config.hidden_size)
+        router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
+        scores = router_logits.sigmoid()
+        topk_indices = self.get_topk_indices(scores)
+        topk_weights = scores.gather(1, topk_indices)
+        if self.norm_topk_prob:
+            denominator = topk_weights.sum(dim=-1, keepdim=True) + 1e-20
+            topk_weights /= denominator
+        topk_weights = topk_weights * self.routed_scaling_factor
+        return topk_indices, topk_weights
+
+    def forward(self, hidden_states):
+        # orig_i, orig_w = self.orig_forward(hidden_states)
+        hidden_states = hidden_states.view(-1, self.config.hidden_size)
+        router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
+
+        # router_logits: [T, E] where E=160
+        router_scores = router_logits.sigmoid()  # (0,1), [T, 160]
+
+        # Only used for choosing which experts win
+        scores_for_choice = router_scores + self.e_score_correction_bias.unsqueeze(0)  # [T, 160]
+
+        # Choose top_k experts globally (top_k == num_experts_per_tok == 8)
+        topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]  # [T, 8]
+
+        # Weights come from router_scores (NOT bias-corrected)
+        topk_weights = router_scores.gather(1, topk_indices)  # [T, 8]
+
+        if self.norm_topk_prob:
+            topk_weights = topk_weights / (topk_weights.sum(dim=-1, keepdim=True) + 1e-20)
+
+        topk_weights = topk_weights * self.routed_scaling_factor  # *2.5
+        return topk_indices, topk_weights
+
+
 class QEffGlm4MoeMoE(Glm4MoeMoE):
     """
     MoE Block

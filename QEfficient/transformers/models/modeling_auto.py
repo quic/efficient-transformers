@@ -2303,7 +2303,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         KVCacheExternalModuleMapperTransform,
     ]
 
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [
+        # FP16ClipTransform,
+        SplitTensorsTransform
+    ]
 
     def prefill(
         self,
