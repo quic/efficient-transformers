@@ -2989,9 +2989,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-        kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
-        )
+        # kv_cache_shape = get_padding_shape_from_config(
+        #     self.model.config, fbs if self.continuous_batching else bs, seq_len
+        # )
+        kv_cache_shape = (1, 64, seq_len, 192)
+        kv_cache_shape_v = (1, 64, seq_len, 128)
         enable_chunking = kwargs.get("enable_chunking", False)
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
@@ -3085,10 +3087,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
 
             for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
-                    output_names.append(f"past_{kv}.{i}_RetainedState")
+                # for kv in ["key", "value"]:
+                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape_v, dtype=torch.float32))
+                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
+                output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
