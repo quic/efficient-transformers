@@ -28,7 +28,6 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
     calculate_latent_dimensions_with_frames,
-    set_module_device_ids,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -99,8 +98,6 @@ def wan_pipeline_call_with_mad_validation(
         num_frames=num_frames,
         use_onnx_subfunctions=use_onnx_subfunctions,
     )
-
-    set_module_device_ids(pipeline)
 
     # Step 2: Check inputs
     pipeline.model.check_inputs(
