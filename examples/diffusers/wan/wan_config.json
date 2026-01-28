@@ -1,6 +1,5 @@
 {
   "description": "Default configuration for Wan pipeline with unified transformer (model_type: 1 for high noise; model_type:2 for low noise)",
-  "model_type": "wan",
   "modules": {
     "transformer": {
                     "specializations": [
@@ -31,7 +30,8 @@
                                       "mdts_mos": 1
                                   },
                     "execute":     {
-                                        "device_ids": null
+                                        "device_ids": null,
+                                        "qpc_path" : null
                                     }
     },
     "vae_decoder":
@@ -57,7 +57,8 @@
                                       },
                     "execute":
                                       {
-                                        "device_ids": null
+                                        "device_ids": null,
+                                        "qpc_path" : null
                                       }
                   }
 
