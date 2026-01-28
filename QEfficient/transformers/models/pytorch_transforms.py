@@ -220,7 +220,7 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
-from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model
+from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3Attention, QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -807,6 +807,7 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
 
 
 class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
+    _match_class_replace_method = {}
     _match_string_replace_method = {
         "InternVLChatModel": {
             "forward": QEffInternVLModel.forward,
@@ -876,6 +877,12 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffDeepseekV3MoE.forward,
             "moe": QEffDeepseekV3MoE.moe
         },
+        "DeepseekV3Attention":{
+          "forward": QEffDeepseekV3Attention.forward  
+        },
+        "DeepseekV3RMSNorm":{
+            "forward": QEFFGrok1CustomRMSNormAIC.forward,
+        }
     }
 
 

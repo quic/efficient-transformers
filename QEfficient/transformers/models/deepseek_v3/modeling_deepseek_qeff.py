@@ -128,6 +128,16 @@ class DeepseekV3RotaryEmbedding(nn.Module):
             self.cos_cached[:seq_len].to(dtype=x.dtype),
             self.sin_cached[:seq_len].to(dtype=x.dtype),
         )
+    
+    # def forward(self, x, position_ids):
+    #     seq_len = torch.max(position_ids) + 1
+    #     if self.max_seq_len_cached is None or seq_len > self.max_seq_len_cached:
+    #         self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+    #     # Use position_ids to slice the precomputed caches
+    #     cos = self.cos_cached[position_ids]
+    #     sin = self.sin_cached[position_ids]
+    #     return cos.to(x.dtype), sin.to(x.dtype)
 
 
 
@@ -315,6 +325,7 @@ def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    # import ipdb; ipdb.set_trace()
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
@@ -332,6 +343,11 @@ def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
 
 class QEffDeepseekV3Attention(nn.Module):
     """Adapted DeepseekV3Attention with QEff logic, adding batch_index and proper position_ids handling."""
+    
+    def __qeff_init__(self,):
+        self.merged_q_weight = torch.matmul(self.q_a_proj.weight.T * self.q_a_layernorm.weight.unsqueeze(0), self.q_b_proj.weight.T)
+        self.merged_k_weight = torch.matmul(self.k_a_proj.weight.T * self.k_a_layernorm.weight.unsqueeze(0), self.k_b_proj.weight.T)
+        self.merged_v_weight = torch.matmul(self.v_a_proj.weight.T * self.v_a_layernorm.weight.unsqueeze(0), self.v_b_proj.weight.T)
 
     def forward(
         self,
@@ -346,39 +362,53 @@ class QEffDeepseekV3Attention(nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        batch_size, seq_length = hidden_states.shape[:-1]
-        query_shape = (batch_size, seq_length, -1, self.qk_head_dim)
-        key_shape = (batch_size, seq_length, -1, self.qk_nope_head_dim + self.v_head_dim)
-
-        q_states = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states))).view(query_shape).transpose(1, 2)
-        q_pass, q_rot = torch.split(q_states, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+        bsz, q_len, _ = hidden_states.size()
+        # import ipdb; ipdb.set_trace()
+        if self.q_lora_rank is None:
+            q = self.q_proj(hidden_states)
+        else:
+            q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
+        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
+        q_nope, q_pe = torch.split(
+            q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
+        )
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
-        k_pass, k_rot = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        compressed_kv, k_pe = torch.split(
+            compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
+        )
+        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
+        kv = (
+            self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
+            .view(bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
+            .transpose(1, 2)
+        )
 
-        k_pass = self.kv_b_proj(self.kv_a_layernorm(k_pass)).view(key_shape).transpose(1, 2)
-        k_pass, value_states = torch.split(k_pass, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+        k_nope, value_states = torch.split(
+            kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1
+        )
 
-        k_rot = k_rot.view(batch_size, 1, seq_length, self.qk_rope_head_dim)
-        cos, sin = position_embeddings
-        # if self.config.rope_interleave:
-        #     q_rot, k_rot = apply_rotary_pos_emb_interleave(q_rot, k_rot, cos, sin)
-        # else:
-        q_rot, k_rot = orig_apply_rotary_pos_emb(q_rot, k_rot, cos, sin)
+        
+        # cos, sin = position_embeddings
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
+        cos, sin = self.rotary_emb(value_states, seq_len=32*1024)
+        
+        # q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
-        k_rot = k_rot.expand(*k_pass.shape[:-1], -1)
+        query_states = k_pe.new_empty(bsz, self.num_heads, q_len, self.q_head_dim)
+        query_states[:, :, :, : self.qk_nope_head_dim] = q_nope
+        query_states[:, :, :, self.qk_nope_head_dim :] = q_pe
 
-        query_states = torch.cat((q_pass, q_rot), dim=-1)
-        key_states = torch.cat((k_pass, k_rot), dim=-1)
-
+        key_states = k_pe.new_empty(bsz, self.num_heads, q_len, self.q_head_dim)
+        key_states[:, :, :, : self.qk_nope_head_dim] = k_nope
+        key_states[:, :, :, self.qk_nope_head_dim :] = k_pe
+        # import ipdb; ipdb.set_trace()
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        key_states = repeat_kv(key_states, self.num_key_value_groups)
-        value_states = repeat_kv(value_states, self.num_key_value_groups)
-
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
         if attention_mask is not None:  # no matter the length, we just slice it
             attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
@@ -387,7 +417,7 @@ class QEffDeepseekV3Attention(nn.Module):
         attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
-        attn_output = attn_output.transpose(1, 2).contiguous().reshape(batch_size, seq_length, -1)
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -497,12 +527,13 @@ class QEffDeepseekV3Model(nn.Module):
             if key in self.config.rope_scaling
         }
         self.rotary_emb = DeepseekV3YarnRotaryEmbedding(
-            self.qk_rope_head_dim,
+            self.config.qk_rope_head_dim,
             max_position_embeddings=32*1024,
             scaling_factor=scaling_factor,
-            base=self.rope_theta,
+            base=self.config.rope_theta,
             **kwargs,
         )
+        # import ipdb; ipdb.set_trace()
 
     def forward(
         self,
@@ -552,7 +583,8 @@ class QEffDeepseekV3Model(nn.Module):
 
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values[0][0].shape[2])
         hidden_states = inputs_embeds
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        # position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        position_embeddings = None
 
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
