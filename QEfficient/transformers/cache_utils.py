@@ -640,14 +640,14 @@ class QEffSlidingWindowCache:
 
     @classmethod
     def from_legacy_cache(
-        cls, config, prefill_seq_len, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
+        cls, config, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     ) -> "HybridCache":
         """Converts a cache in the legacy cache format into an equivalent `DynamicCache`. Used for
         backward compatibility."""
         cache = cls(
             config,
             batch_size=past_key_values[0][0].shape[0],
-            max_cache_len=prefill_seq_len,
+            max_cache_len=past_key_values[config.sliding_window_pattern - 1][0].shape[2],
             sliding_window_len=past_key_values[0][0].shape[2],
         )
         if past_key_values is not None:

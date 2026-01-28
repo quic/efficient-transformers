@@ -18,9 +18,9 @@ model_id = "google/gemma-3-27b-it"
 
 config = AutoConfig.from_pretrained(model_id)
 
-# For Testing Purpose Only
-# config.text_config.num_hidden_layers = 1
-# config.vision_config.num_hidden_layers = 2
+# For Testing Purpose Only atleast 6 layers are required
+# config.text_config.num_hidden_layers = 6
+# config.vision_config.num_hidden_layers = 6
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -99,7 +99,7 @@ else:
             "role": "user",
             "content": [
                 {"type": "image", "url": image_url},
-                {"type": "text", "text": "Describe the image in details."},
+                {"type": "text", "text": "Describe this image in details."},
             ],
         },
     ]
