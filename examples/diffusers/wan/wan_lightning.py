@@ -50,10 +50,9 @@ output = pipeline(
     guidance_scale_2=1.0,
     num_inference_steps=4,
     generator=torch.manual_seed(0),
-    custom_config_path="examples/diffusers/wan/wan_config.json",
     height=480,
     width=832,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
     parallel_compile=True,
 )
 frames = output.images[0]
