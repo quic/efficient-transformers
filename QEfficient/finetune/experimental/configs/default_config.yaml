@@ -35,7 +35,7 @@ training:
   num_train_epochs: 1
   max_steps: -1
   save_strategy: "epoch"
-  dtype: "fp16"
+  torch_dtype: "fp16"
 
   # Uncomment if running in Notebook
   # disable_tqdm: True
