@@ -493,27 +493,14 @@ class ConfigManager:
         Initialize ConfigManager with either:
         - Path to config file (str or Path)
         - Configuration dictionary
-        - None (creates empty config)
         """
         self.config = config
-        if config_path:
-            config_path = os.path.abspath(config_path)
+        if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+            config_path = os.path.abspath(sys.argv[1])
             if not os.path.exists(config_path):
                 raise FileNotFoundError(f"Config file not found: {config_path}")
-            if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
-                raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
-
-            try:
-                config = self.load_config(config_path)
-            except Exception as e:
-                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
-
-        elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-            # If we pass only one argument to the script and it's the path to a json file,
-            # let's parse it to get our arguments.
-            config_path = os.path.abspath(sys.argv[1])
             self.load_config(config_path)
-        else:
+        elif len(sys.argv) > 2:
             parser = HfArgumentParser(
                 (TrainingConfig, ModelConfig, DatasetConfig, OptimizerConfig, SchedulerConfig, CallbackConfig)
             )
@@ -529,6 +516,19 @@ class ConfigManager:
                 scheduler=schd_args,
                 extra_params=extra,
             )
+        elif config_path:
+            config_path = os.path.abspath(config_path)
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
+                raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
+
+            try:
+                config = self.load_config(config_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+        else:
+            self.config = MasterConfig()
 
         self.config = asdict(self.config)
         self.config = MasterConfig(**self.config)
