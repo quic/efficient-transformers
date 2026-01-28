@@ -159,26 +159,26 @@ test_models_config = [
 ]
 
 intern_model_config = [
-    # (
-    # "OpenGVLab/InternVL2_5-1B",
-    # True,
-    # 1,
-    # 384,
-    # 512,
-    # "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
-    # "Please describe the image in detail.",
-    # 2,
-    # ),
-    # (
-    # "OpenGVLab/InternVL3_5-1B",
-    # True,
-    # 1,
-    # 384,
-    # 512,
-    # "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
-    # "Please describe the image in detail.",
-    # 2,
-    # ),
+    (
+        "OpenGVLab/InternVL2_5-1B",
+        True,
+        1,
+        384,
+        512,
+        "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
+        "Please describe the image in detail.",
+        2,
+    ),
+    (
+        "OpenGVLab/InternVL3_5-1B",
+        True,
+        1,
+        384,
+        512,
+        "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
+        "Please describe the image in detail.",
+        2,
+    ),
     # (
     #     "OpenGVLab/InternVL2_5-1B",
     #     False,
