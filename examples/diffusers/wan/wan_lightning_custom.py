@@ -91,13 +91,13 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # # Reduce high noise transformer blocks
 # original_blocks = pipeline.transformer.model.transformer_high.blocks
 # pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
-#     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config.num_layers)]
+#     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config['num_layers'])]
 # )
 #
 # # Reduce low noise transformer blocks
 # org_blocks = pipeline.transformer.model.transformer_low.blocks
 # pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
-#     [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config.num_layers)]
+#     [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config['num_layers'])]
 # )
 
 # ============================================================================
@@ -125,6 +125,20 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 #     num_frames=81,
 #     use_onnx_subfunctions=True
 # )
+
+# ============================================================================
+# OPTIONAL: Skip Export, Compilation
+# ============================================================================
+#
+# Use this when you want to skip export and compilation if you have already compiled QPC.
+#
+# Changes needed in config.json: update qpc_path of desired module
+#
+# "execute":
+#          {
+#           "device_ids": null,
+#           "qpc_path" : "<QPC_PATH>"
+#          }
 
 # ============================================================================
 # VIDEO GENERATION WITH CUSTOM RUNTIME CONFIGURATION

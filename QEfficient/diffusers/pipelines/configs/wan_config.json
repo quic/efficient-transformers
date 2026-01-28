@@ -30,16 +30,15 @@
                               "mdts_mos": 1
                          },
           "execute":     {
-                              "device_ids": null
+                              "device_ids": null,
+                              "qpc_path" : null
                           }
     },
     "vae_decoder":{
-          "specializations": [
-                              {
+          "specializations":{
                                 "batch_size": 1,
                                 "num_channels": 16
-                              }
-                            ],
+                            },
           "compilation":
                         {
                           "onnx_path": null,
@@ -55,7 +54,8 @@
                         },
            "execute":
                       {
-                        "device_ids": null
+                        "device_ids": null,
+                        "qpc_path" : null
                       }
       }
   }
