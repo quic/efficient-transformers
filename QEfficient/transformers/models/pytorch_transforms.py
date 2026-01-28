@@ -220,6 +220,7 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
+from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -861,9 +862,21 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "RMSNorm": {
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
         },
+        "DeepseekV3ForCausalLM":{
+            "forward": QEffDeepseekV3ForCausalLM.forward,
+        },
+        "DeepseekV3Model":{
+            "forward": QEffDeepseekV3Model.forward,
+            "__qeff_init__": QEffDeepseekV3Model.__qeff_init__
+        },
+        "DeepseekV3DecoderLayer": {
+            "forward": QEffDeepseekV3DecoderLayer.forward,
+        },
+        "DeepseekV3MoE": {
+            "forward": QEffDeepseekV3MoE.forward,
+            "moe": QEffDeepseekV3MoE.moe
+        },
     }
-
-    _match_class_replace_method = {}
 
 
 class T5ModelTransform(ModuleMappingTransform):
