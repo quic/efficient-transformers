@@ -85,7 +85,7 @@ pipeline.transformer.model.config['num_layers'] = 1
 pipeline.transformer.model.config['num_single_layers'] = 1
 ```
 
-### 4. Pre-compile with Custom Configuration
+### 4. Compile with Custom Configuration
 
 Compile the model separately before generation:
 
@@ -98,7 +98,17 @@ pipeline.compile(
 )
 ```
 
-### 5. Runtime Configuration
+### 5. Skip export, compilation if pre-compiled qpc exist
+Update custom config with qpc in execute of corresponding module.
+```
+"execute":
+          {
+           "device_ids": null,
+           "qpc_path" : "<QPC_PATH>"
+          }
+```
+
+### 6. Runtime Configuration
 
 Use custom configuration during generation:
 
@@ -158,6 +168,7 @@ Each module has three sections:
 
 #### Execute
 - `device_ids`: List of device IDs to use (null for auto-selection)
+- `qpc_path` : compiled qpc path, to skip recompilation (null by default)
 
 ### Example Configuration Snippet
 
