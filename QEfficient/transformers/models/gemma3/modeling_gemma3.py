@@ -28,7 +28,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
@@ -254,6 +254,7 @@ class QEffGemma3Attention(Gemma3Attention):
                 "position_ids": position_ids,
                 "is_sliding": self.is_sliding,
                 "sliding_window_pattern": self.config.sliding_window_pattern,
+                "sliding_window": past_key_value.sliding_window_len,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
@@ -311,10 +312,12 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+        # past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         if self.self_attn.is_sliding:
             attention_mask = _create_causal_mask(
-                position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window
+                position_ids=position_ids,
+                target_length=past_key_value.sliding_window_len,
+                sliding_window=past_key_value.sliding_window_len,
             )
         else:
             attention_mask = _create_causal_mask(
@@ -401,7 +404,9 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             # return_legacy_cache = True
-            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+            past_key_values = QEffSlidingWindowCache.from_legacy_cache(
+                config=self.config, past_key_values=past_key_values
+            )
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
