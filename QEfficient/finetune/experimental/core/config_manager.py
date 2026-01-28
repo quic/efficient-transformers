@@ -11,6 +11,7 @@ Provides centralized configuration loading, validation, and management.
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -113,6 +114,22 @@ class DatasetConfig:
         default=4,
         metadata={"help": "Number of workers for dataset processing."},
     )
+    prompt_template: str = field(
+        default=None,
+        metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
+    )
+    prompt_func: str = field(
+        default=None,
+        metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
+    )
+    completion_template: str = field(
+        default=None,
+        metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
+    )
+    completion_func: str = field(
+        default=None,
+        metadata={"help": "Function for formatting output completions (e.g., '{output}')."},
+    )
     collate_fn: str = field(
         default="dynamic_padding",
         metadata={"help": "The collation function to use (e.g., 'dynamic_padding')."},
@@ -144,6 +161,10 @@ class DatasetConfig:
     dataloader_num_workers: int = field(
         default=1,
         metadata={"help": "Number of workers for the DataLoader."},
+    )
+    config_name: str = field(
+        default="None",
+        metadata={"help": "Name of the hf configuration file."},
     )
 
 
@@ -252,7 +273,7 @@ class DdpConfig:
     """Arguments for Distributed Data Parallel (DDP) training."""
 
     ddp_backend: str = field(
-        default="qccl",
+        default=None,
         metadata={"help": "The DDP backend to use (e.g., 'nccl', 'gloo', 'qccl')."},
     )
     ddp_find_unused_parameters: bool = field(
@@ -260,7 +281,7 @@ class DdpConfig:
         metadata={"help": "Whether to find unused parameters in DDP."},
     )
     ddp_bucket_cap_mb: Optional[int] = field(
-        default=25,
+        default=None,
         metadata={"help": "The bucket size in MB for DDP communication."},
     )
     ddp_broadcast_buffers: bool = field(
@@ -292,10 +313,6 @@ class TrainingConfig:
     seed: int = field(
         default=42,
         metadata={"help": "Random seed for reproducibility."},
-    )
-    device: str = field(
-        default="qaic",
-        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
     )
     do_eval: bool = field(
         default=True,
@@ -329,7 +346,6 @@ class TrainingConfig:
         default=-1,
         metadata={"help": "If > 0: set total number of training steps to perform."},
     )
-
     log_level: str = field(
         default="info",
         metadata={"help": "Set the verbosity level of the logs ('debug', 'info', 'warning', 'error')."},
@@ -363,12 +379,6 @@ class TrainingConfig:
         default="eval_loss",
         metadata={"help": "The metric to use to compare two models ('eval_loss', etc.)."},
     )
-
-    dtype: str = field(
-        default="fp16",
-        metadata={"help": "The data type to use for training (e.g., 'fp16', 'bf16')."},
-    )
-
     gradient_checkpointing: bool = field(
         default=False,
         metadata={"help": "Whether to use gradient checkpointing."},
@@ -377,7 +387,14 @@ class TrainingConfig:
         default_factory=GradientCheckpointingKwargs,
         metadata={"help": "Arguments for gradient checkpointing."},
     )
-
+    device: str = field(
+        default="qaic",
+        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
+    )
+    torch_dtype: str = field(
+        default="fp16",
+        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
+    )
     torch_compile: bool = field(
         default=True,
         metadata={"help": "Whether to compile the model with `torch.compile`."},
@@ -412,7 +429,7 @@ class TrainingConfig:
         metadata={"help": "DDP configuration dictionary."},
     )
     use_cpu: Optional[bool] = field(
-        default=None,
+        default=False,
         metadata={"help": "Whether to explicitly run training on CPU."},
     )
     resume_from_checkpoint: Optional[str] = field(
@@ -460,47 +477,59 @@ class MasterConfig:
     )
 
 
-def parse_arguments(config_path: Optional[str] = None, args: Optional[List[str]] = None) -> MasterConfig:
+def parse_arguments() -> MasterConfig:
     """Create argument parser for the new finetuning interface."""
-    parser = HfArgumentParser(MasterConfig)
-
-    if config_path:
-        config_path = os.path.abspath(config_path)
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-        if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
-            raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
-
-        try:
-            (master_config,) = parser.parse_yaml_file(yaml_file=config_path)
-            return master_config
-        except Exception as e:
-            raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
-
-    args = [] if args is None else args
-    # If a single positional YAML file was passed via args, parse it as YAML
-    if len(args) == 1 and (args[0].endswith(".yaml") or args[0].endswith(".yml")):
-        yaml_path = os.path.abspath(args[0])
-        (master_config,) = parser.parse_yaml_file(yaml_file=yaml_path)
-    else:
-        (master_config,) = parser.parse_args_into_dataclasses(args=args)
-        master_config = asdict(master_config)
-        master_config = MasterConfig(**master_config)
-
+    master_config = MasterConfig()
     return master_config
 
 
 class ConfigManager:
     """Manages configuration loading, validation, and updates."""
 
-    def __init__(self, config: MasterConfig):
+    def __init__(self, config: MasterConfig, config_path: Optional[str] = None):
         """
         Initialize ConfigManager with either:
         - Path to config file (str or Path)
         - Configuration dictionary
-        - None (creates empty config)
         """
         self.config = config
+        if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+            config_path = os.path.abspath(sys.argv[1])
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            self.load_config(config_path)
+        elif len(sys.argv) > 2:
+            parser = HfArgumentParser(
+                (TrainingConfig, ModelConfig, DatasetConfig, OptimizerConfig, SchedulerConfig, CallbackConfig)
+            )
+            train_args, model_args, data_args, opt_args, schd_args, call_args, extra = (
+                parser.parse_args_into_dataclasses(return_remaining_strings=True)
+            )
+            self.config = MasterConfig(
+                model=model_args,
+                dataset=data_args,
+                training=train_args,
+                callbacks=call_args,
+                optimizers=opt_args,
+                scheduler=schd_args,
+                extra_params=extra,
+            )
+        elif config_path:
+            config_path = os.path.abspath(config_path)
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
+                raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
+
+            try:
+                config = self.load_config(config_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+        else:
+            self.config = MasterConfig()
+
+        self.config = asdict(self.config)
+        self.config = MasterConfig(**self.config)
 
     def load_config(self, config_path: Union[str, Path]) -> None:
         """Load configuration from file."""
@@ -517,7 +546,6 @@ class ConfigManager:
                 config_dict = json.load(f)
         else:
             raise ValueError(f"Unsupported configuration file format: {config_path.suffix}")
-
         self.update_config(config_dict)
 
     def _ensure_extra_params(self, obj) -> Dict[str, Any]:
@@ -598,16 +626,20 @@ class ConfigManager:
         """
         Validate configuration parameters for MasterConfig.
         """
+        cfg = self.config
         errors: List[str] = []
 
-        cfg = self.config
         model = getattr(cfg, "model", {})
         dataset = getattr(cfg, "dataset", {})
         training = getattr(cfg, "training", {})
 
         # ---------- Model ----------
         self._push(errors, not model.get("model_name"), "model.model_name is required.")
-
+        # Device
+        valid_devices = ["cpu", "cuda", "qaic"]
+        training_device = model.get("device", "qaic")
+        if training_device not in valid_devices:
+            self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
         # PEFT validation
         if model.get("use_peft"):
             pc = model.get("peft_config", {})
@@ -632,46 +664,38 @@ class ConfigManager:
         # ---------- Dataset ----------
         self._push(errors, not dataset.get("dataset_name"), "dataset.dataset_name is required.")
         self._push(errors, not dataset.get("tokenizer_name"), "dataset.tokenizer_name is required.")
-        self._push(errors, dataset.get("max_seq_length", 0) <= 0, "dataset.max_seq_length must be positive.")
 
         # ---------- Training ----------
         # Batch sizes
         self._push(
             errors,
-            training.get("per_device_train_batch_size", 0) <= 0,
+            training.get("per_device_train_batch_size", 1) <= 0,
             "training.per_device_train_batch_size must be positive.",
         )
         self._push(
             errors,
-            training.get("per_device_eval_batch_size", 0) <= 0,
+            training.get("per_device_eval_batch_size", 1) <= 0,
             "training.per_device_eval_batch_size must be positive.",
         )
 
         # Epochs / steps
-        n_epochs = training.get("num_train_epochs", 0)
-        max_steps = training.get("max_steps", -1)
+        n_epochs = training.get("num_train_epochs", 1)
         self._push(
             errors,
-            n_epochs <= 0 and max_steps <= 0,
+            n_epochs <= 0,
             "Either training.num_train_epochs > 0 or training.max_steps > 0 must be set.",
         )
 
         # Gradient accumulation
         self._push(
             errors,
-            training.get("gradient_accumulation_steps", 0) <= 0,
+            training.get("gradient_accumulation_steps", 1) <= 0,
             "training.gradient_accumulation_steps must be positive.",
         )
 
         # Logging / saving configs
         self._push(errors, training.get("logging_steps", 0) < 0, "training.logging_steps must be >= 0.")
         self._push(errors, training.get("save_total_limit", 0) < 0, "training.save_total_limit must be >= 0.")
-
-        # Device
-        valid_devices = ["cpu", "cuda", "qaic"]
-        training_device = training.get("device", None)
-        if training_device not in valid_devices:
-            self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
 
         # DDP config
         ddp = training.get("ddp_config", {})
