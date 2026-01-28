@@ -13,6 +13,15 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+# Try importing QAIC-specific module, proceed without it if it's unavailable
+try:
+    import torch_qaic  # noqa: F401
+except ImportError as e:
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        logging.WARNING,
+    )
+
 from QEfficient.finetune.experimental.core.callbacks import create_callbacks, replace_progress_callback
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
 from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
@@ -25,6 +34,9 @@ from QEfficient.finetune.experimental.core.config_manager import (
 )
 from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
 from QEfficient.finetune.experimental.core.logger import Logger
+from QEfficient.finetune.experimental.core.model import HFModel  # noqa: F401
+from QEfficient.finetune.experimental.core.trainer import sft_trainer  # noqa: F401
+from QEfficient.finetune.experimental.core.dataset import SFTDataset  # noqa: F401
 
 logger = Logger(__name__)
 
@@ -41,9 +53,9 @@ class FineTuningPipeline:
         Args:
             config: Master configuration object containing all training parameters
         """
-        self.config = config
         self.config_manager = ConfigManager(config)
-        self.output_dir = Path(config.training.output_dir)
+        self.config = self.config_manager.config
+        self.output_dir = Path(self.config.training["output_dir"])
         self._setup_environment()
 
     def _setup_environment(self) -> None:
@@ -61,8 +73,6 @@ class FineTuningPipeline:
         """
         return prepare_training_config(
             config_manager=self.config_manager,
-            include_num_input_tokens_seen=False,
-            use_cpu=False,
         )
 
     def _create_datasets(self) -> Tuple[Any, Any]:
@@ -79,7 +89,9 @@ class FineTuningPipeline:
 
         dataset_type = dataset_config.get("dataset_type")
         dataset_name = dataset_config.get("dataset_name")
-        seed = self.config.training.seed
+        train_split = dataset_config.get("train_split", "train")
+        test_split = dataset_config.get("test_split", "test")
+        seed = self.config.training["seed"]
 
         # Create a copy of dataset_config excluding keys that are passed explicitly
         # to avoid duplicate keyword arguments when unpacking
@@ -87,11 +99,7 @@ class FineTuningPipeline:
         dataset_config_copy = {k: v for k, v in dataset_config.items() if k not in excluded_keys}
 
         # Helper function to create a dataset for a specific split
-        def create_dataset_for_split(split: str) -> Any:
-            # Extract split-specific configuration
-            split_key = f"{split}_split" if split == "test" else "train_split"
-            split_name = dataset_config.get(split_key, split)
-
+        def create_dataset_for_split(split_name: str) -> Any:
             return ComponentFactory.create_dataset(
                 dataset_type=dataset_type,
                 dataset_name=dataset_name,
@@ -100,8 +108,9 @@ class FineTuningPipeline:
                 **dataset_config_copy,
             )
 
-        train_dataset = create_dataset_for_split("train")
-        eval_dataset = create_dataset_for_split("test")
+        # Create training and evaluation datasets using config values
+        train_dataset = create_dataset_for_split(train_split)
+        eval_dataset = create_dataset_for_split(test_split)
 
         return train_dataset, eval_dataset
 
@@ -112,17 +121,25 @@ class FineTuningPipeline:
         Returns:
             Model instance with loaded model and tokenizer
         """
-        # Get model config as dict and create mutable copy to avoid mutating original
+        # Get model config as dict
         model_config = dict(self.config_manager.get_model_config())
+
+        # Extract required fields
         model_type = model_config.pop("model_type")
         model_name = model_config.pop("model_name")
 
-        # Handle dtype conversion for model
+        # Get torch_dtype from training config and convert to model format
         training_config_dict = self.config_manager.get_training_config()
-        model_dtype = training_config_dict.get("dtype")
-        model_config["dtype"] = {"fp16": "float16", "bf16": "bfloat16"}.get(model_dtype, "auto")
+        # To do: (For Tanisha) Check if torch_dtype should rather be added directly in model_config only in config_manager.py
+        model_dtype = training_config_dict.get("torch_dtype")
+        dtype_mapping = {"fp16": "float16", "bf16": "bfloat16"}
+        model_config["torch_dtype"] = dtype_mapping.get(model_dtype, "auto")
 
-        model_instance = ComponentFactory.create_model(model_type, model_name, **model_config)
+        # Filter out PEFT-related fields, these shouldn't be passed to model creation
+        excluded_keys = {"use_peft", "peft_config"}
+        model_config_kwargs = {k: v for k, v in model_config.items() if k not in excluded_keys}
+
+        model_instance = ComponentFactory.create_model(model_type, model_name, **model_config_kwargs)
         return model_instance
 
     def _create_optimizer(self) -> Tuple[Any, Dict[str, Any]]:
@@ -146,7 +163,7 @@ class FineTuningPipeline:
         callbacks = []
 
         # callback_config.callbacks is a dictionary of callback configurations
-        for callback_name, callback_kwargs in callback_config.callbacks.items():
+        for callback_name, callback_kwargs in callback_config["callbacks"].items():
             try:
                 callback_instance = create_callbacks(callback_name, **callback_kwargs)
                 callbacks.append(callback_instance)
@@ -190,24 +207,38 @@ class FineTuningPipeline:
             if peft_config_dataclass is not None:
                 peft_config = convert_peft_config_to_lora_config(peft_config_dataclass)
 
-        # Get trainer configuration
+        # Build dependencies for trainer configuration
         dependencies = {}
         if peft_config is not None:
             dependencies["peft_config"] = peft_config
 
         trainer_cls, args_cls, additional_kwargs = create_trainer_config(trainer_type, **dependencies)
 
+        # Clean up training config: remove fields that shouldn't be passed to TrainingArguments
+
+        # Extract device before removing it
+        device = training_config.pop("device", None)
+
+        # Note: torch_dtype was already converted to fp16/bf16 flag in prepare_training_config
+        training_config.pop("deepspeed_config", None)
+        training_config.pop("torch_dtype", None)
+
+        # Ensure dtype flag is set (prepare_training_config should have set fp16/bf16 already)
+        # Fallback to fp16 if neither is set (shouldn't happen, but safety check)
+        if "fp16" not in training_config and "bf16" not in training_config:
+            training_config["fp16"] = True
+            logger.log_rank_zero("Warning: No dtype flag found, defaulting to fp16", level="warning")
+
         # Create trainer arguments instance
         args = args_cls(**training_config)
-
         # Initialize trainer
         trainer = trainer_cls(
             model=model,
             processing_class=tokenizer,
             args=args,
             compute_loss_func=None,
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
+            train_dataset=train_dataset.dataset,
+            eval_dataset=eval_dataset.dataset,
             optimizer_cls_and_kwargs=optimizer_cls_and_kwargs,
             callbacks=callbacks,
             **additional_kwargs,
@@ -226,7 +257,6 @@ class FineTuningPipeline:
 
         # Prepare training configuration
         training_config = self._prepare_training_config()
-
         # Create datasets
         logger.log_rank_zero("Creating datasets...")
         train_dataset, eval_dataset = self._create_datasets()
@@ -270,7 +300,6 @@ def main():
     """
     # Parse arguments/config
     master_config = parse_arguments()
-
     # Create and run pipeline
     pipeline = FineTuningPipeline(master_config)
     pipeline.run()

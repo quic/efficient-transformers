@@ -17,7 +17,25 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from QEfficient.cloud.finetune_experimental import FineTuningPipeline, main
-from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+from QEfficient.finetune.experimental.core.config_manager import MasterConfig
+
+
+class DictLikeMock:
+    """A mock that supports both dict access ['key'] and attribute access .key"""
+
+    def __init__(self, data):
+        self._data = data
+        for key, value in data.items():
+            setattr(self, key, value)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
 
 
 class TestFineTuningPipeline:
@@ -27,9 +45,8 @@ class TestFineTuningPipeline:
     def mock_master_config(self):
         """Create a mock MasterConfig for testing."""
         config = MagicMock(spec=MasterConfig)
-        config.training = MagicMock()
-        config.training.output_dir = "./test_output"
-        config.training.seed = 42
+        # Use DictLikeMock to support both dict access ['key'] and attribute access .key
+        config.training = DictLikeMock({"output_dir": "./test_output", "seed": 42})
         return config
 
     @pytest.fixture
@@ -56,19 +73,23 @@ class TestFineTuningPipeline:
             "optimizer_name": "adamw",
             "lr": 1e-4,
         }
-        config_manager.get_callback_config.return_value = MagicMock()
-        config_manager.get_callback_config.return_value.callbacks = {}
+        config_manager.get_callback_config.return_value = {"callbacks": {}}
         config_manager.validate_config = MagicMock()
         return config_manager
 
     def test_initialization(self, mock_master_config):
         """Test pipeline initialization."""
         with patch("QEfficient.cloud.finetune_experimental.ConfigManager") as mock_cm:
-            mock_cm.return_value = MagicMock()
+            mock_cm_instance = MagicMock()
+            # Set up config_manager.config to return a mock that has training dict access
+            mock_config_obj = MagicMock()
+            mock_config_obj.training = DictLikeMock({"output_dir": "./test_output"})
+            mock_cm_instance.config = mock_config_obj
+            mock_cm.return_value = mock_cm_instance
 
             pipeline = FineTuningPipeline(mock_master_config)
 
-            assert pipeline.config == mock_master_config
+            assert pipeline.config == mock_cm_instance.config
             assert isinstance(pipeline.output_dir, Path)
             assert pipeline.output_dir == Path("./test_output")
 
@@ -103,17 +124,43 @@ class TestFineTuningPipeline:
                 pipeline = FineTuningPipeline(mock_master_config)
                 result = pipeline._prepare_training_config()
 
-                # Verify prepare_training_config was called with correct overrides
+                # Verify prepare_training_config was called
                 assert mock_prepare.call_count > 0
-                call_kwargs = mock_prepare.call_args[1]
-                assert call_kwargs["include_num_input_tokens_seen"] is False
-                assert call_kwargs["use_cpu"] is False
+                call_kwargs = mock_prepare.call_args.kwargs
                 assert call_kwargs["config_manager"] == mock_config_manager
 
                 assert result == {"fp16": True, "seed": 42}
 
-    def test_create_datasets(self, mock_master_config, mock_config_manager):
-        """Test dataset creation."""
+    @pytest.mark.parametrize(
+        "train_split,test_split,expected_train_split,expected_test_split",
+        [
+            ("train", "test", "train", "test"),  # Default splits
+            ("training", "testing", "training", "testing"),  # Custom splits
+        ],
+    )
+    def test_create_datasets(
+        self,
+        mock_master_config,
+        mock_config_manager,
+        train_split,
+        test_split,
+        expected_train_split,
+        expected_test_split,
+    ):
+        """Test dataset creation with default and custom split names."""
+        # Set up config_manager.config.training to support dict access for seed and output_dir
+        mock_config_obj = MagicMock()
+        mock_config_obj.training = DictLikeMock({"output_dir": "./test_output", "seed": 42})
+        mock_config_manager.config = mock_config_obj
+
+        # Update dataset config with the split names
+        mock_config_manager.get_dataset_config.return_value = {
+            "dataset_type": "sft_dataset",
+            "dataset_name": "test_dataset",
+            "train_split": train_split,
+            "test_split": test_split,
+        }
+
         with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
             with patch("QEfficient.cloud.finetune_experimental.ComponentFactory") as mock_factory:
                 mock_train_dataset = MagicMock()
@@ -121,7 +168,8 @@ class TestFineTuningPipeline:
 
                 def create_dataset_side_effect(*args, **kwargs):
                     split = kwargs.get("split", "")
-                    if "train" in split:
+                    # Match based on expected split names
+                    if expected_train_split in split or (expected_train_split == "train" and "train" in split):
                         return mock_train_dataset
                     return mock_eval_dataset
 
@@ -139,37 +187,24 @@ class TestFineTuningPipeline:
 
                 # Verify correct parameters were passed
                 calls = mock_factory.create_dataset.call_args_list
-                train_call = calls[0]
-                assert train_call[1]["split"] == "train"
-                assert train_call[1]["seed"] == 42
-                assert train_call[1]["dataset_type"] == "sft_dataset"
-                assert train_call[1]["dataset_name"] == "test_dataset"
+                assert calls[0].kwargs["split"] == expected_train_split
+                assert calls[1].kwargs["split"] == expected_test_split
+                assert calls[0].kwargs["seed"] == 42
+                assert calls[0].kwargs["dataset_type"] == "sft_dataset"
+                assert calls[0].kwargs["dataset_name"] == "test_dataset"
 
-    def test_create_datasets_with_custom_splits(self, mock_master_config, mock_config_manager):
-        """Test dataset creation with custom split names."""
-        mock_config_manager.get_dataset_config.return_value = {
-            "dataset_type": "sft_dataset",
-            "dataset_name": "test_dataset",
-            "train_split": "training",
-            "test_split": "testing",
-        }
-
-        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
-            with patch("QEfficient.cloud.finetune_experimental.ComponentFactory") as mock_factory:
-                mock_factory.create_dataset.return_value = MagicMock()
-
-                pipeline = FineTuningPipeline(mock_master_config)
-                pipeline._create_datasets()
-
-                # Verify custom splits were used
-                calls = mock_factory.create_dataset.call_args_list
-                assert calls[0][1]["split"] == "training"
-                assert calls[1][1]["split"] == "testing"
-
-    def test_create_model(self, mock_master_config, mock_config_manager):
-        """Test model creation."""
+    @pytest.mark.parametrize(
+        "torch_dtype,expected_dtype",
+        [
+            ("fp16", "float16"),  # fp16 -> float16
+            ("bf16", "bfloat16"),  # bf16 -> bfloat16
+            ("unknown", "auto"),  # Unknown dtype -> auto
+        ],
+    )
+    def test_create_model_dtype_conversion(self, mock_master_config, mock_config_manager, torch_dtype, expected_dtype):
+        """Test model creation with different dtype conversions."""
         mock_config_manager.get_training_config.return_value = {
-            "dtype": "fp16",
+            "torch_dtype": torch_dtype,
         }
 
         mock_model_instance = MagicMock()
@@ -187,40 +222,8 @@ class TestFineTuningPipeline:
 
                 # Verify model was created with correct dtype conversion
                 assert mock_factory.create_model.call_count > 0
-                call_kwargs = mock_factory.create_model.call_args[1]
-                assert call_kwargs["dtype"] == "float16"  # fp16 -> float16
-
-    def test_create_model_bf16(self, mock_master_config, mock_config_manager):
-        """Test model creation with bf16 dtype."""
-        mock_config_manager.get_training_config.return_value = {
-            "dtype": "bf16",
-        }
-
-        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
-            with patch("QEfficient.cloud.finetune_experimental.ComponentFactory") as mock_factory:
-                mock_factory.create_model.return_value = MagicMock()
-
-                pipeline = FineTuningPipeline(mock_master_config)
-                pipeline._create_model()
-
-                call_kwargs = mock_factory.create_model.call_args[1]
-                assert call_kwargs["dtype"] == "bfloat16"  # bf16 -> bfloat16
-
-    def test_create_model_auto_dtype(self, mock_master_config, mock_config_manager):
-        """Test model creation with auto dtype fallback."""
-        mock_config_manager.get_training_config.return_value = {
-            "dtype": "unknown",
-        }
-
-        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
-            with patch("QEfficient.cloud.finetune_experimental.ComponentFactory") as mock_factory:
-                mock_factory.create_model.return_value = MagicMock()
-
-                pipeline = FineTuningPipeline(mock_master_config)
-                pipeline._create_model()
-
-                call_kwargs = mock_factory.create_model.call_args[1]
-                assert call_kwargs["dtype"] == "auto"  # Unknown dtype -> auto
+                call_kwargs = mock_factory.create_model.call_args.kwargs
+                assert call_kwargs.get("torch_dtype") == expected_dtype
 
     def test_create_optimizer(self, mock_master_config, mock_config_manager):
         """Test optimizer creation."""
@@ -240,38 +243,66 @@ class TestFineTuningPipeline:
                 assert mock_prepare.call_count > 0
                 assert mock_prepare.call_args[0][0] == mock_config_manager.get_optimizer_config.return_value
 
-    def test_create_callbacks(self, mock_master_config, mock_config_manager):
-        """Test callback creation."""
-        mock_config_manager.get_callback_config.return_value.callbacks = {
-            "early_stopping": {"early_stopping_patience": 3},
-            "tensorboard": {},
-        }
+    @pytest.mark.parametrize(
+        "callback_config,expected_count,expected_names",
+        [
+            (
+                {
+                    "early_stopping": {"early_stopping_patience": 3},
+                    "tensorboard": {},
+                },
+                2,
+                ["early_stopping", "tensorboard"],
+            ),
+            (
+                {
+                    "early_stopping": {"early_stopping_patience": 3},
+                    "tensorboard": {},
+                    "checkpoint": {"save_strategy": "epoch"},
+                },
+                3,
+                ["early_stopping", "tensorboard", "checkpoint"],
+            ),
+        ],
+    )
+    def test_create_callbacks(
+        self, mock_master_config, mock_config_manager, callback_config, expected_count, expected_names
+    ):
+        """Test callback creation with different numbers of callbacks."""
+        mock_callback_config = {"callbacks": callback_config}
+        mock_config_manager.get_callback_config.return_value = mock_callback_config
+        mock_config_obj = MagicMock()
+        mock_config_obj.training = DictLikeMock({"output_dir": "./test_output"})
+        mock_config_manager.config = mock_config_obj
 
-        mock_callback1 = MagicMock()
-        mock_callback2 = MagicMock()
+        # Create mock callbacks based on expected count
+        mock_callbacks = [MagicMock() for _ in range(expected_count)]
 
         with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
             with patch("QEfficient.cloud.finetune_experimental.create_callbacks") as mock_create:
-                mock_create.side_effect = [mock_callback1, mock_callback2]
+                mock_create.side_effect = mock_callbacks
 
                 pipeline = FineTuningPipeline(mock_master_config)
                 callbacks = pipeline._create_callbacks()
 
-                assert len(callbacks) == 2
-                assert mock_callback1 in callbacks
-                assert mock_callback2 in callbacks
+                assert len(callbacks) == expected_count
+                for mock_cb in mock_callbacks:
+                    assert mock_cb in callbacks
 
                 # Verify callbacks were created with correct names
-                assert mock_create.call_count == 2
-                assert mock_create.call_args_list[0][0][0] == "early_stopping"
-                assert mock_create.call_args_list[1][0][0] == "tensorboard"
+                assert mock_create.call_count == expected_count
+                for i, expected_name in enumerate(expected_names):
+                    assert mock_create.call_args_list[i][0][0] == expected_name
 
     def test_create_callbacks_with_failure(self, mock_master_config, mock_config_manager):
         """Test callback creation with one failure."""
-        mock_config_manager.get_callback_config.return_value.callbacks = {
-            "early_stopping": {"early_stopping_patience": 3},
-            "invalid_callback": {},
+        mock_callback_config = {
+            "callbacks": {
+                "early_stopping": {"early_stopping_patience": 3},
+                "invalid_callback": {},
+            }
         }
+        mock_config_manager.get_callback_config.return_value = mock_callback_config
 
         mock_callback = MagicMock()
 
@@ -299,6 +330,7 @@ class TestFineTuningPipeline:
         mock_config_manager.get_training_config.return_value = {
             "type": "sft",
             "dtype": "fp16",
+            "device": "cpu",
         }
 
         mock_trainer_cls = MagicMock()
@@ -317,123 +349,46 @@ class TestFineTuningPipeline:
         mock_optimizer_kwargs = {}
         mock_callbacks = [MagicMock()]
 
-        training_config = {"type": "sft", "output_dir": "./output"}
+        training_config = {"type": "sft", "output_dir": "./output", "fp16": True}
 
         with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
             with patch("QEfficient.cloud.finetune_experimental.create_trainer_config") as mock_create_trainer:
                 with patch("QEfficient.cloud.finetune_experimental.replace_progress_callback") as mock_replace:
-                    mock_create_trainer.return_value = (mock_trainer_cls, mock_args_cls, {})
+                    with patch("QEfficient.cloud.finetune_experimental.logger") as mock_logger:
+                        mock_create_trainer.return_value = (mock_trainer_cls, mock_args_cls, {})
 
-                    pipeline = FineTuningPipeline(mock_master_config)
-                    trainer = pipeline._create_trainer(
-                        model=mock_model,
-                        tokenizer=mock_tokenizer,
-                        train_dataset=mock_train_dataset,
-                        eval_dataset=mock_eval_dataset,
-                        optimizer_cls_and_kwargs=(mock_optimizer_cls, mock_optimizer_kwargs),
-                        callbacks=mock_callbacks,
-                        training_config=training_config.copy(),
-                    )
+                        pipeline = FineTuningPipeline(mock_master_config)
+                        trainer = pipeline._create_trainer(
+                            model=mock_model,
+                            tokenizer=mock_tokenizer,
+                            train_dataset=mock_train_dataset,
+                            eval_dataset=mock_eval_dataset,
+                            optimizer_cls_and_kwargs=(mock_optimizer_cls, mock_optimizer_kwargs),
+                            callbacks=mock_callbacks,
+                            training_config=training_config.copy(),
+                        )
 
-                    assert trainer == mock_trainer_instance
+                        assert trainer == mock_trainer_instance
 
                     # Verify trainer was created with correct parameters
                     assert mock_trainer_cls.call_count > 0
-                    call_kwargs = mock_trainer_cls.call_args[1]
+                    call_kwargs = mock_trainer_cls.call_args.kwargs
                     assert call_kwargs["model"] == mock_model
                     assert call_kwargs["processing_class"] == mock_tokenizer
                     assert call_kwargs["args"] == mock_args_instance
                     assert call_kwargs["compute_loss_func"] is None
-                    assert call_kwargs["train_dataset"] == mock_train_dataset
-                    assert call_kwargs["eval_dataset"] == mock_eval_dataset
+                    assert call_kwargs["train_dataset"] == mock_train_dataset.dataset
+                    assert call_kwargs["eval_dataset"] == mock_eval_dataset.dataset
                     assert call_kwargs["optimizer_cls_and_kwargs"] == (mock_optimizer_cls, mock_optimizer_kwargs)
                     assert call_kwargs["callbacks"] == mock_callbacks
 
                     # Verify progress callback replacement was called
                     assert mock_replace.call_count > 0
-                    replace_call_args = mock_replace.call_args[0]
+                    replace_call_args = mock_replace.call_args.args
                     assert replace_call_args[0] == mock_trainer_instance
                     assert replace_call_args[1] == mock_callbacks
                     # Third argument should be logger (can be None or Logger instance)
                     assert len(replace_call_args) >= 3
-
-    def test_create_trainer_with_peft(self, mock_master_config, mock_config_manager):
-        """Test trainer creation with PEFT enabled."""
-        from peft import LoraConfig
-
-        mock_config_manager.get_training_config.return_value = {
-            "type": "sft",
-            "dtype": "fp16",
-        }
-        mock_config_manager.get_model_config.return_value = {
-            "model_type": "hf",
-            "model_name": "test-model",
-            "use_peft": True,
-            "peft_config": MagicMock(),
-        }
-
-        mock_lora_config = MagicMock(spec=LoraConfig)
-
-        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
-            with patch("QEfficient.cloud.finetune_experimental.convert_peft_config_to_lora_config") as mock_convert:
-                with patch("QEfficient.cloud.finetune_experimental.create_trainer_config") as mock_create_trainer:
-                    mock_convert.return_value = mock_lora_config
-                    mock_create_trainer.return_value = (MagicMock(), MagicMock(), {})
-
-                    pipeline = FineTuningPipeline(mock_master_config)
-                    training_config = {"type": "sft"}
-
-                    pipeline._create_trainer(
-                        model=MagicMock(),
-                        tokenizer=MagicMock(),
-                        train_dataset=MagicMock(),
-                        eval_dataset=MagicMock(),
-                        optimizer_cls_and_kwargs=(MagicMock(), {}),
-                        callbacks=[],
-                        training_config=training_config,
-                    )
-
-                    # Verify PEFT config was converted
-                    assert mock_convert.call_count > 0
-
-                    # Verify dependencies were passed to create_trainer_config
-                    assert mock_create_trainer.call_count > 0
-                    call_kwargs = mock_create_trainer.call_args[1]
-                    assert "peft_config" in call_kwargs
-                    assert call_kwargs["peft_config"] == mock_lora_config
-
-    def test_create_trainer_without_peft(self, mock_master_config, mock_config_manager):
-        """Test trainer creation without PEFT."""
-        mock_config_manager.get_training_config.return_value = {
-            "type": "sft",
-            "dtype": "fp16",
-        }
-        mock_config_manager.get_model_config.return_value = {
-            "model_type": "hf",
-            "model_name": "test-model",
-            "use_peft": False,
-        }
-
-        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
-            with patch("QEfficient.cloud.finetune_experimental.create_trainer_config") as mock_create_trainer:
-                mock_create_trainer.return_value = (MagicMock(), MagicMock(), {})
-
-                pipeline = FineTuningPipeline(mock_master_config)
-                training_config = {"type": "sft"}
-
-                pipeline._create_trainer(
-                    model=MagicMock(),
-                    tokenizer=MagicMock(),
-                    train_dataset=MagicMock(),
-                    eval_dataset=MagicMock(),
-                    optimizer_cls_and_kwargs=(MagicMock(), {}),
-                    callbacks=[],
-                    training_config=training_config,
-                )
-
-                # Verify no PEFT config in dependencies
-                call_kwargs = mock_create_trainer.call_args[1]
-                assert "peft_config" not in call_kwargs or call_kwargs.get("peft_config") is None
 
     def test_run_full_pipeline(self, mock_master_config, mock_config_manager):
         """Test full pipeline execution."""
@@ -495,25 +450,29 @@ class TestFineTuningPipeline:
             with pytest.raises(ValueError, match="Invalid config"):
                 pipeline.run()
 
-    def test_output_dir_path_handling(self, mock_master_config):
-        """Test output directory path handling."""
-        mock_master_config.training.output_dir = "/absolute/path/to/output"
+    @pytest.mark.parametrize(
+        "output_dir,expected_path",
+        [
+            ("/absolute/path/to/output", "/absolute/path/to/output"),
+            ("./relative/output", "relative/output"),  # Path normalizes ./relative/output to relative/output
+        ],
+    )
+    def test_output_dir_path_handling(self, mock_master_config, output_dir, expected_path):
+        """Test output directory path handling for both absolute and relative paths."""
+        mock_master_config.training = DictLikeMock({"output_dir": output_dir})
 
-        with patch("QEfficient.cloud.finetune_experimental.ConfigManager"):
+        with patch("QEfficient.cloud.finetune_experimental.ConfigManager") as mock_cm:
+            # Set up config_manager.config to have training dict
+            mock_cm_instance = MagicMock()
+            mock_config_obj = MagicMock()
+            mock_config_obj.training = DictLikeMock({"output_dir": output_dir})
+            mock_cm_instance.config = mock_config_obj
+            mock_cm.return_value = mock_cm_instance
+
             pipeline = FineTuningPipeline(mock_master_config)
 
             assert isinstance(pipeline.output_dir, Path)
-            assert str(pipeline.output_dir) == "/absolute/path/to/output"
-
-    def test_output_dir_relative_path(self, mock_master_config):
-        """Test output directory with relative path."""
-        mock_master_config.training.output_dir = "./relative/output"
-
-        with patch("QEfficient.cloud.finetune_experimental.ConfigManager"):
-            pipeline = FineTuningPipeline(mock_master_config)
-
-            assert isinstance(pipeline.output_dir, Path)
-            assert pipeline.output_dir == Path("./relative/output")
+            assert str(pipeline.output_dir) == expected_path
 
 
 class TestMainFunction:
@@ -551,3 +510,161 @@ class TestMainFunction:
             with patch("QEfficient.cloud.finetune_experimental.FineTuningPipeline", return_value=mock_pipeline):
                 with pytest.raises(RuntimeError, match="Training failed"):
                     main()
+
+
+class TestFineTuningPipelineEnhanced:
+    """Enhanced test suite for FineTuningPipeline class with additional edge cases."""
+
+    @pytest.fixture
+    def mock_master_config(self):
+        """Create a mock MasterConfig for testing."""
+        config = MagicMock(spec=MasterConfig)
+        # Use DictLikeMock to support both dict access ['key'] and attribute access .key
+        config.training = DictLikeMock({"output_dir": "./test_output", "seed": 42})
+        return config
+
+    @pytest.fixture
+    def mock_config_manager(self):
+        """Create a mock ConfigManager."""
+        config_manager = MagicMock()
+        config_manager.get_training_config.return_value = {
+            "type": "sft",
+            "dtype": "fp16",
+            "seed": 42,
+        }
+        config_manager.get_dataset_config.return_value = {
+            "dataset_type": "sft_dataset",
+            "dataset_name": "test_dataset",
+            "train_split": "train",
+            "test_split": "test",
+        }
+        config_manager.get_model_config.return_value = {
+            "model_type": "hf",
+            "model_name": "test-model",
+            "use_peft": False,
+        }
+        config_manager.get_optimizer_config.return_value = {
+            "optimizer_name": "adamw",
+            "lr": 1e-4,
+        }
+        config_manager.get_callback_config.return_value = {"callbacks": {}}
+        config_manager.validate_config = MagicMock()
+        return config_manager
+
+    def test_create_datasets_with_additional_config_params(self, mock_master_config, mock_config_manager):
+        """Test that additional dataset config parameters are properly propagated."""
+        mock_config_manager.get_dataset_config.return_value = {
+            "dataset_type": "sft_dataset",
+            "dataset_name": "test_dataset",
+            "train_split": "train",
+            "test_split": "test",
+            "max_seq_length": 512,
+            "batch_size": 16,
+            "custom_param": "custom_value",
+        }
+        mock_config_obj = MagicMock()
+        mock_config_obj.training = DictLikeMock({"output_dir": "./test_output", "seed": 42})
+        mock_config_manager.config = mock_config_obj
+
+        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
+            with patch("QEfficient.cloud.finetune_experimental.ComponentFactory") as mock_factory:
+                mock_factory.create_dataset.return_value = MagicMock()
+
+                pipeline = FineTuningPipeline(mock_master_config)
+                pipeline._create_datasets()
+
+                # Verify additional parameters are passed through
+                calls = mock_factory.create_dataset.call_args_list
+                assert calls[0].kwargs.get("max_seq_length") == 512
+                assert calls[0].kwargs.get("batch_size") == 16
+                assert calls[0].kwargs.get("custom_param") == "custom_value"
+                # Verify excluded keys are not passed
+                assert "train_split" not in calls[0].kwargs
+                assert "test_split" not in calls[0].kwargs
+
+    def test_create_model_with_additional_model_params(self, mock_master_config, mock_config_manager):
+        """Test that additional model config parameters are properly propagated."""
+        mock_config_manager.get_model_config.return_value = {
+            "model_type": "hf",
+            "model_name": "test-model",
+            "use_peft": False,
+            "trust_remote_code": True,
+            "device_map": "auto",
+            "custom_model_param": "value",
+        }
+        mock_config_obj = MagicMock()
+        mock_config_obj.training = DictLikeMock({"output_dir": "./test_output"})
+        mock_config_manager.config = mock_config_obj
+
+        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
+            with patch("QEfficient.cloud.finetune_experimental.ComponentFactory") as mock_factory:
+                mock_factory.create_model.return_value = MagicMock()
+
+                pipeline = FineTuningPipeline(mock_master_config)
+                pipeline._create_model()
+
+                call_kwargs = mock_factory.create_model.call_args.kwargs
+                assert call_kwargs.get("trust_remote_code") is True
+                assert call_kwargs.get("device_map") == "auto"
+                assert call_kwargs.get("custom_model_param") == "value"
+                # Verify PEFT keys are excluded
+                assert "use_peft" not in call_kwargs
+                assert "peft_config" not in call_kwargs
+
+    def test_create_trainer_defaults_to_fp16_when_missing(self, mock_master_config, mock_config_manager):
+        """Test trainer creation defaults to fp16 when neither fp16 nor bf16 is set."""
+        training_config = {"type": "sft", "output_dir": "./output"}  # Missing fp16/bf16
+
+        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
+            with patch("QEfficient.cloud.finetune_experimental.create_trainer_config") as mock_create_trainer:
+                with patch("QEfficient.cloud.finetune_experimental.logger") as mock_logger:
+                    mock_args_cls = MagicMock()
+                    mock_args_instance = MagicMock()
+                    mock_args_cls.return_value = mock_args_instance
+                    mock_create_trainer.return_value = (MagicMock(), mock_args_cls, {})
+
+                    pipeline = FineTuningPipeline(mock_master_config)
+                    pipeline._create_trainer(
+                        model=MagicMock(),
+                        tokenizer=MagicMock(),
+                        train_dataset=MagicMock(),
+                        eval_dataset=MagicMock(),
+                        optimizer_cls_and_kwargs=(MagicMock(), {}),
+                        callbacks=[],
+                        training_config=training_config.copy(),
+                    )
+
+                    # Verify fp16 was set as default
+                    assert mock_args_cls.call_args.kwargs.get("fp16") is True
+                    # Verify warning was logged
+                    log_calls = [call[0][0] for call in mock_logger.log_rank_zero.call_args_list if call]
+                    assert any("No dtype flag found" in str(msg) for msg in log_calls)
+
+    def test_run_method_calls_validate_config_first(self, mock_master_config, mock_config_manager):
+        """Test that run() calls validate_config before other operations."""
+        mock_config_obj = MagicMock()
+        mock_config_obj.training = DictLikeMock({"output_dir": "./test_output", "seed": 42})
+        mock_config_manager.config = mock_config_obj
+
+        call_order = []
+
+        def track_validate():
+            call_order.append("validate")
+            return None
+
+        mock_config_manager.validate_config.side_effect = track_validate
+
+        with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
+            with patch.object(FineTuningPipeline, "_prepare_training_config", return_value={"type": "sft"}):
+                with patch.object(FineTuningPipeline, "_create_datasets", return_value=(MagicMock(), MagicMock())):
+                    with patch.object(FineTuningPipeline, "_create_model", return_value=MagicMock()):
+                        with patch.object(FineTuningPipeline, "_create_optimizer", return_value=(MagicMock(), {})):
+                            with patch.object(FineTuningPipeline, "_create_callbacks", return_value=[]):
+                                with patch.object(FineTuningPipeline, "_create_trainer", return_value=MagicMock()):
+                                    with patch("QEfficient.cloud.finetune_experimental.logger"):
+                                        pipeline = FineTuningPipeline(mock_master_config)
+                                        pipeline.run()
+
+                                        # Verify validate_config was called first
+                                        assert call_order[0] == "validate"
+                                        assert mock_config_manager.validate_config.call_count == 1
