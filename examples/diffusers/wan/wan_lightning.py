@@ -54,7 +54,7 @@ output = pipeline(
     custom_config_path="examples/diffusers/wan/wan_config.json",
     height=480,
     width=832,
-    use_onnx_subfunctions=False,
+    use_onnx_subfunctions=True,
     parallel_compile=True,
 )
 frames = output.images[0]
