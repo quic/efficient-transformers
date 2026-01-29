@@ -152,7 +152,7 @@ output = pipeline(
     custom_config_path="examples/diffusers/wan/wan_config.json",
     height=480,
     width=832,
-    use_onnx_subfunctions=True,  # Enable ONNX optimizations
+    use_onnx_subfunctions=False,  # Enable ONNX optimizations
     parallel_compile=False,  # Set to True for parallel compilation
 )
 
