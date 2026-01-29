@@ -179,7 +179,6 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
-    # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
     submodule_classes = qeff_model.model.get_submodules_for_export()
     if submodule_classes:
         kwargs["export_modules_as_functions"] = submodule_classes
