@@ -57,7 +57,8 @@
                                 "mdts_mos": 1
                             },
           "execute":     {
-                                "device_ids": null
+                                "device_ids": null,
+                                "qpc_path" : null
                           }
         }
     }

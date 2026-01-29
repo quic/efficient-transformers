@@ -116,16 +116,22 @@ def config_manager(cls, config_source: Optional[str] = None, use_onnx_subfunctio
             cls.custom_config["modules"][module_name]["compilation"]["use_onnx_subfunctions"] = use_onnx_subfunctions
 
 
-def set_module_device_ids(cls):
+def set_execute_params(cls):
     """
-    Set device IDs for each module based on the custom configuration.
+    Set device IDs, qpc_paths for each module based on the custom configuration.
 
-    Iterates through all modules in the pipeline and assigns device IDs
-    from the configuration file to each module's device_ids attribute.
+    Iterates through all modules in the pipeline and assigns device IDs, qpc_paths
+    from the configuration file to each module's attribute.
     """
     config_modules = cls.custom_config["modules"]
     for module_name, module_obj in cls.modules.items():
         module_obj.device_ids = config_modules[module_name]["execute"]["device_ids"]
+        module_obj.qpc_path = config_modules[module_name]["execute"]["qpc_path"]
+        if module_obj.qpc_path:
+            if not os.path.exists(module_obj.qpc_path):
+                raise FileNotFoundError(
+                    f"Given qpc path: {module_obj.qpc_path} does not exist. Please provide correct path or keep null"
+                )
 
 
 def compile_modules_parallel(
@@ -159,8 +165,10 @@ def compile_modules_parallel(
                 specializations = [specializations]
         else:
             specializations = [specializations]
-        # Compile with prepared specializations
-        module_obj.compile(specializations=specializations, **compile_kwargs)
+
+        if module_obj.qpc_path is None:
+            # Compile with prepared specializations
+            module_obj.compile(specializations=specializations, **compile_kwargs)
 
     # Execute compilations in parallel
     with ThreadPoolExecutor(max_workers=len(modules)) as executor:
@@ -210,8 +218,10 @@ def compile_modules_sequential(
                 specializations = [specializations]
         else:
             specializations = [specializations]
-        # Compile with prepared specializations
-        module_obj.compile(specializations=specializations, **compile_kwargs)
+
+        if module_obj.qpc_path is None:
+            # Compile with prepared specializations
+            module_obj.compile(specializations=specializations, **compile_kwargs)
 
 
 @dataclass(frozen=True)
