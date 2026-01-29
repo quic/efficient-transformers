@@ -19,6 +19,10 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformer2DModel,
     FluxTransformerBlock,
 )
+from diffusers.models.transformers.transformer_qwenimage import (
+    QwenDoubleStreamAttnProcessor2_0,
+    QwenImageTransformer2DModel,
+)
 from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
 from torch import nn
 
@@ -41,6 +45,11 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxSingleTransformerBlock,
     QEffFluxTransformer2DModel,
     QEffFluxTransformerBlock,
+)
+from QEfficient.diffusers.models.transformers.transformer_qwenimage import (
+    QEffQwenDoubleStreamAttnProcessor2_0,
+    QEffQwenImageAttention,
+    QEffQwenImageTransformer2DModel,
 )
 from QEfficient.diffusers.models.transformers.transformer_wan import (
     QEffWanAttention,
@@ -66,6 +75,9 @@ class AttentionTransform(ModuleMappingTransform):
         WanAttnProcessor: QEffWanAttnProcessor,
         WanAttention: QEffWanAttention,
         WanTransformer3DModel: QEffWanTransformer3DModel,
+        QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
+        QwenDoubleStreamAttnProcessor2_0: QEffQwenDoubleStreamAttnProcessor2_0,
+        Attention: QEffQwenImageAttention,
         WanDecoder3d: QEffWanDecoder3d,
         WanEncoder3d: QEffWanEncoder3d,
         WanResidualBlock: QEffWanResidualBlock,
