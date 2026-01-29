@@ -1286,6 +1286,35 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
         return inputs
 
+        # attention_mask = inputs["attention_mask"]  # shape: (batch_size, seq_len)
+
+        # # Create 1D sequence positions
+        # seq_positions = torch.arange(input_ids_length, device=inputs["input_ids"].device).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+
+        # # For multimodal models, repeat position_ids 3 times for temporal, height, width
+        # # All three dimensions use the same position indices for text tokens
+        # pos_ids = seq_positions.repeat(3, 1, 1)  # shape: (3, batch_size, seq_len)
+
+        # # Concatenate 1D sequence positions with 3D multimodal positions
+        # inputs["position_ids"] = torch.cat((seq_positions, pos_ids), dim=0)  # shape: (4, batch_size, seq_len)
+
+        # # Apply attention mask to set padded positions to -1
+        # # attention_mask: 1 for valid tokens, 0 for padded
+        # mask_expanded = attention_mask.unsqueeze(0).expand(4, -1, -1)  # (4, batch_size, seq_len)
+        # inputs["position_ids"] = torch.where(mask_expanded == 1, inputs["position_ids"], -1)
+
+        # # Pad to multiple of prefill_seq_len
+        # num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide
+        # padded_len = num_chunks * prefill_seq_len
+
+        # inputs["position_ids"] = F.pad(
+        #     inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
+        # )
+
+        # inputs.pop("image_grid_thw", None)
+
+        # return inputs
+
     def get_inputs_info(self):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
