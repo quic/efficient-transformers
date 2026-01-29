@@ -12,12 +12,12 @@ Tests for FineTuningPipeline class and main() function.
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from QEfficient.cloud.finetune_experimental import FineTuningPipeline, main
-from QEfficient.finetune.experimental.core.config_manager import MasterConfig
+from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
 
 
 class DictLikeMock:
@@ -354,21 +354,20 @@ class TestFineTuningPipeline:
         with patch("QEfficient.cloud.finetune_experimental.ConfigManager", return_value=mock_config_manager):
             with patch("QEfficient.cloud.finetune_experimental.create_trainer_config") as mock_create_trainer:
                 with patch("QEfficient.cloud.finetune_experimental.replace_progress_callback") as mock_replace:
-                    with patch("QEfficient.cloud.finetune_experimental.logger") as mock_logger:
-                        mock_create_trainer.return_value = (mock_trainer_cls, mock_args_cls, {})
+                    mock_create_trainer.return_value = (mock_trainer_cls, mock_args_cls, {})
 
-                        pipeline = FineTuningPipeline(mock_master_config)
-                        trainer = pipeline._create_trainer(
-                            model=mock_model,
-                            tokenizer=mock_tokenizer,
-                            train_dataset=mock_train_dataset,
-                            eval_dataset=mock_eval_dataset,
-                            optimizer_cls_and_kwargs=(mock_optimizer_cls, mock_optimizer_kwargs),
-                            callbacks=mock_callbacks,
-                            training_config=training_config.copy(),
-                        )
+                    pipeline = FineTuningPipeline(mock_master_config)
+                    trainer = pipeline._create_trainer(
+                        model=mock_model,
+                        tokenizer=mock_tokenizer,
+                        train_dataset=mock_train_dataset,
+                        eval_dataset=mock_eval_dataset,
+                        optimizer_cls_and_kwargs=(mock_optimizer_cls, mock_optimizer_kwargs),
+                        callbacks=mock_callbacks,
+                        training_config=training_config.copy(),
+                    )
 
-                        assert trainer == mock_trainer_instance
+                    assert trainer == mock_trainer_instance
 
                     # Verify trainer was created with correct parameters
                     assert mock_trainer_cls.call_count > 0

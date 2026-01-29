@@ -13,32 +13,32 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-# Try importing QAIC-specific module, proceed without it if it's unavailable
-try:
-    import torch_qaic  # noqa: F401
-except ImportError as e:
-    logger.log_rank_zero(
-        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
-        logging.WARNING,
-    )
-
 from QEfficient.finetune.experimental.core.callbacks import create_callbacks, replace_progress_callback
-from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
-from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
-from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
+from QEfficient.finetune.experimental.core.component_registry import ComponentFactory
 from QEfficient.finetune.experimental.core.config_manager import (
     ConfigManager,
     MasterConfig,
     create_trainer_config,
     parse_arguments,
 )
-from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
+from QEfficient.finetune.experimental.core.dataset import SFTDataset  # noqa: F401
 from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.model import HFModel  # noqa: F401
-from QEfficient.finetune.experimental.core.trainer import sft_trainer  # noqa: F401
-from QEfficient.finetune.experimental.core.dataset import SFTDataset  # noqa: F401
+from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
+from QEfficient.finetune.experimental.core.trainer import sft_trainer
+from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
+from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
 
 logger = Logger(__name__)
+
+# Try importing QAIC-specific module, proceed without it if it's unavailable
+try:
+    import torch_qaic  # noqa: F401
+except ImportError as e:
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        level="warning",
+    )
 
 
 class FineTuningPipeline:
@@ -215,10 +215,7 @@ class FineTuningPipeline:
         trainer_cls, args_cls, additional_kwargs = create_trainer_config(trainer_type, **dependencies)
 
         # Clean up training config: remove fields that shouldn't be passed to TrainingArguments
-
-        # Extract device before removing it
-        device = training_config.pop("device", None)
-
+        training_config.pop("device", None)
         # Note: torch_dtype was already converted to fp16/bf16 flag in prepare_training_config
         training_config.pop("deepspeed_config", None)
         training_config.pop("torch_dtype", None)
