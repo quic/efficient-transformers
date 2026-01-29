@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import logging
-from typing import Callable, Dict, Optional, Type
+from typing import Any, Callable, Dict, Optional, Type
 
 # from QEfficient.finetune.experimental.core.logger import get_logger
 
@@ -201,10 +201,31 @@ registry = ComponentRegistry()
 
 class ComponentFactory:
     @staticmethod
-    def create_model(model_type: str, model_name: str, **kwargs) -> any:
+    def create_model(model_type: str, model_name: str, **kwargs) -> Any:
         """Create a model instance."""
         model_class = registry.get_model(model_type)
         if model_class is None:
             raise ValueError(f"Unknown model: {model_type}. Available: {registry.list_models()}")
         model_instance = model_class.create(model_name, **kwargs)
         return model_instance
+
+    @staticmethod
+    def create_dataset(dataset_type: str, dataset_name: str, split: str, seed: int = 42, **kwargs) -> Any:
+        """
+        Create a dataset instance.
+
+        Args:
+            dataset_type: Type of dataset to create (e.g., 'sft_dataset')
+            dataset_name: Name of the dataset to load
+            split: Dataset split ("train", "test", etc.)
+            seed: Random seed for reproducibility
+            **kwargs: Additional dataset configuration parameters
+
+        Returns:
+            Dataset instance
+        """
+        dataset_class = registry.get_dataset(dataset_type)
+        if dataset_class is None:
+            raise ValueError(f"Unknown dataset type: {dataset_type}. Available: {registry.list_datasets()}")
+        dataset_instance = dataset_class(dataset_name=dataset_name, split=split, seed=seed, **kwargs)
+        return dataset_instance
