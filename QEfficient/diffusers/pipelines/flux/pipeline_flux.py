@@ -236,7 +236,6 @@ class QEffFluxPipeline:
 
             if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
                 export_params["use_onnx_subfunctions"] = True
-
             module_obj.export(**export_params)
 
     @staticmethod

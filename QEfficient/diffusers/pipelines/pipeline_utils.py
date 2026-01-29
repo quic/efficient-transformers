@@ -9,12 +9,13 @@ import math
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 import numpy as np
 import PIL.Image
 import torch
 import torch.nn as nn
+from diffusers.models.transformers.transformer_wan import WanTransformerBlock
 from tqdm import tqdm
 
 from QEfficient.utils._utils import load_json
@@ -309,6 +310,15 @@ class QEffWanUnifiedWrapper(nn.Module):
         self.transformer_low = transformer_low
         # Both high and low noise transformers share the same configuration
         self.config = transformer_high.config
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {WanTransformerBlock}
 
     def forward(
         self,
