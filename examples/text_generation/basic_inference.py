@@ -39,7 +39,7 @@ def main():
         num_cores=args.num_cores,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
     )
-    print(f"Model compiled to: {qpc_path}")
+    print(f"Model compiled to the path: {qpc_path}")
 
     # Generate text
     exec_info = model.generate(
