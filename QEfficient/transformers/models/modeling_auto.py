@@ -46,7 +46,6 @@ from QEfficient.transformers.modeling_utils import (
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
     CustomOpsTransform,
-    GenericModelTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
@@ -56,6 +55,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     RevertPrefillOnlyTransform,
     SamplerTransform,
     SpDTransform,
+    TextClassificationTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
 )
@@ -591,7 +591,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModelForSequenceClassification
-    _pytorch_transforms = [CustomOpsTransform, GenericModelTransform]
+    _pytorch_transforms = [CustomOpsTransform, TextClassificationTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
@@ -768,37 +768,6 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         self,
         inputs: torch.Tensor,
         device_ids: List[int] = None,
-        runtime_ai100: bool = True,
-    ) -> Union[torch.Tensor, np.ndarray]:
-        """
-        Generate classification output by executing the compiled QPC on Cloud AI 100 hardware or using PyTorch runtime.
-
-        Parameters
-        ----------
-        inputs : torch.Tensor or np.ndarray
-            Input data for the model. Typically includes `input_ids` and `attention_mask`.
-        device_ids : list of int, optional
-            Device IDs for running the QPC. Defaults to `[0]` if not specified and `runtime_ai100` is True.
-        runtime_ai100 : bool, optional
-            Whether to use the AI 100 runtime for inference. If False, the PyTorch
-            runtime will be used. Default is True.
-
-        Returns
-        -------
-        dict
-            Dictionary containing the classification logits. Keys include "logits".
-        """
-        if runtime_ai100:
-            if not isinstance(self.qpc_path, Path):
-                raise TypeError("Please run compile API first!")
-            return self.cloud_ai_100_classification_generate(inputs=inputs, device_ids=device_ids)
-        else:
-            return self.pytorch_classification_generate(model=self.model, inputs=inputs)
-
-    def cloud_ai_100_classification_generate(
-        self,
-        inputs: torch.Tensor,
-        device_ids: List[int],
     ) -> dict:
         """
         Generate classification output using the Cloud AI 100 hardware runtime.
@@ -845,25 +814,6 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         outputs = self.qpc_session.run(inputs_np)
 
         return {"logits": torch.from_numpy(outputs["logits"])}
-
-    def pytorch_classification_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> dict:
-        """
-        Generate classification output using the PyTorch model.
-
-        Parameters
-        ----------
-        model : nn.Module
-            The PyTorch model to use for inference.
-        inputs : torch.Tensor or np.ndarray
-            Input tensors for classification. Expected to be a dictionary-like object.
-
-        Returns
-        -------
-        dict
-            Dictionary containing the classification logits.
-        """
-        outputs = model(**inputs)
-        return {"logits": outputs.logits}
 
 
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
