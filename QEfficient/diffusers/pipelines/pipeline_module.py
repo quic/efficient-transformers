@@ -18,7 +18,7 @@ from QEfficient.diffusers.models.pytorch_transforms import (
     NormalizationTransform,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
-    GenericModelTransform,
+    T5ModelTransform,
 )
 from QEfficient.utils import constants
 
@@ -37,7 +37,7 @@ class QEffTextEncoder(QEFFBaseModel):
         _onnx_transforms (List): ONNX transformations applied after export
     """
 
-    _pytorch_transforms = [CustomOpsTransform, GenericModelTransform]
+    _pytorch_transforms = [CustomOpsTransform, T5ModelTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     @property

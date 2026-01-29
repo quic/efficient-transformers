@@ -872,12 +872,17 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
 
 
-class GenericModelTransform(ModuleMappingTransform):
+class T5ModelTransform(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
-        # T5
         T5Attention: QEffT5Attention,
         T5LayerNorm: QEffT5LayerNorm,
+    }
+
+
+class TextClassificationTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
         # DebertaV2
         DisentangledSelfAttention: QEffDisentangledSelfAttention,
     }
