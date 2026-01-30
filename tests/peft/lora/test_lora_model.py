@@ -233,7 +233,7 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
     assert export_time_1 < export_time_0
 
     # test compile
-    qeff_model.compile(onnx_path=onnx_path, prefill_seq_len=32, ctx_len=512)
+    qeff_model.compile(onnx_path=onnx_path, prefill_seq_len=32, ctx_len=64)
     assert Path(qeff_model.qpc_path).is_dir()
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
