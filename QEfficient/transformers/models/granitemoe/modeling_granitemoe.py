@@ -460,7 +460,7 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
         final_hidden_states = torch.zeros_like(layer_input)
         for expert_idx in range(num_experts):
             mask = expert_mask[expert_idx].transpose(0, 1).to(layer_input.dtype)
-            mask_weight = (topk_gates * mask).sum(dim=1, keepdim=True)
+            mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
             hidden_states = self.input_linear(layer_input, expert_idx)
             chunked_hidden_states = hidden_states.chunk(2, dim=-1)
             hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
