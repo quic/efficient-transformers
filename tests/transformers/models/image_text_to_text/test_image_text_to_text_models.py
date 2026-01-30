@@ -188,7 +188,7 @@ intern_model_config = [
     #     "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
     #     "Please describe the image in detail.",
     #     2,
-    # ), # commented becuase QNN Convertor is not supported for this model yet.
+    # ),
 ]
 
 molmo_model_config = [
@@ -249,6 +249,14 @@ def set_num_layers(config, n_layer=1):
     return config
 
 
+def get_text_config(config):
+    if hasattr(config, "text_config"):
+        return config.text_config
+    elif hasattr(config, "llm_config"):
+        return config.llm_config
+    return config
+
+
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     img_size: int,
@@ -263,6 +271,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
+    num_kv_heads_repeat: Optional[int] = None,
+    test_kv_replicate: Optional[bool] = None,
 ):
     model_config = {"model_name": model_name}
     model_config["img_size"] = img_size
@@ -304,10 +314,15 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     streamer = TextStreamer(processor.tokenizer)
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
+    if test_kv_replicate:
+        text_config = get_text_config(config)
+        num_kv_heads_repeat = text_config.num_attention_heads // text_config.num_key_value_heads
+
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_config["model_name"],
         kv_offload=kv_offload,
         config=config,
+        num_kv_heads_repeat=num_kv_heads_repeat,
     )
 
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
@@ -428,6 +443,8 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
+    num_kv_heads_repeat: Optional[int] = None,
+    test_kv_replicate: Optional[bool] = None,
 ):
     model_config = {"model_name": model_name}
 
@@ -490,10 +507,15 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
 
+    if test_kv_replicate:
+        text_config = get_text_config(config)
+        num_kv_heads_repeat = text_config.num_attention_heads // text_config.num_key_value_heads
+
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
         model_config["model_name"],
         kv_offload=kv_offload,
         config=config,
+        num_kv_heads_repeat=num_kv_heads_repeat,
     )
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
     # assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
@@ -552,6 +574,34 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
+)
+def test_replicate_kv_pytorch_vs_ai100(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
+):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+        test_kv_replicate=True,
+    )
+
+
+@pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.multimodal
 @pytest.mark.parametrize(
@@ -605,6 +655,28 @@ def test_image_text_to_text_molmo_pytorch_vs_kv_vs_ort_vs_ai100(
         n_layer=n_layer,
         batch_size=batch_size,
         kv_offload=kv_offload,
+    )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
+)
+def test_replicate_kv_intern_pytorch_vs_ai100(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
+):
+    check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+        test_kv_replicate=True,
     )
 
 
