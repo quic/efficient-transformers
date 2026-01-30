@@ -123,6 +123,7 @@ test_models_config = [
         1,
         128,
         128,
+        336,
         [
             "https://picsum.photos/id/237/536/354",
             "https://picsum.photos/id/237/536/354",
@@ -157,20 +158,21 @@ test_models_config = [
 
 intern_model_config = [
     (
-        "OpenGVLab/InternVL2_5-1B",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
         True,
         1,
         128,
         128,
+        336,
         [
-            "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-            "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
+            "https://picsum.photos/id/237/536/354",
+            "https://picsum.photos/id/237/536/354",
         ],
         [
-            "Describe this image.",
+            "Describe image.",
             "What's here?",
         ],
-        2,
+        1,
         2,
     ),
     (
