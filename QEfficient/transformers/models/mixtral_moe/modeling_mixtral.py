@@ -209,7 +209,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
 
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        routing_weights = routing_weights / torch.einsum("bi->b", routing_weights)[:, None]
+        routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
 

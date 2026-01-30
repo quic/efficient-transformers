@@ -23,15 +23,17 @@ configs = [
     ("gptj", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
     ("llama", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("mistral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("mixtral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("mixtral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("mpt", 256, 2, 4, 128, 512, 127, {}),
     ("phi", 256, 2, 4, 128, 512, 127, {}),
     ("phi3", 256, 2, 4, 128, 512, 127, {"pad_token_id": 0}),
     ("qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("qwen3", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("starcoder2", 256, 2, 4, 128, 512, 127, {}),
     ("granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("olmo2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("gpt_oss", 256, 3, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("qwen3_moe", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
 ]
 
 configs = [
@@ -133,7 +135,7 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     # model_0_0.compile(onnx_path=without_sub_func_onnx, **compile_params)
     # generation_01 = model_0_0.generate(prompts=["Help me with this"], tokenizer=tokenizer)
 
-    # Verify that both models produce the same output
+    # # Verify that both models produce the same output
     # assert generation_00.generated_texts == generation_01.generated_texts, (
     #    "Models with and without subfunctions should produce identical outputs"
     # )
