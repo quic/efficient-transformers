@@ -100,11 +100,11 @@ test_models_config = [
         ],
         [
             "Can you describe the image in detail?",
-            "What are the objects in the image?",
-            "What is the main subject of the image?",
-            "What colors are predominant in the image?",
+            "Can you describe the image in detail?",
+            "Can you describe the image in detail?",
+            "Can you describe the image in detail?",
         ],
-        1,
+        6,
         4,
     ),
     (
