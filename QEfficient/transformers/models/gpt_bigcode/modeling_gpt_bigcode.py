@@ -139,9 +139,14 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
 
         else:
             if self.multi_query:
-                query, key, value = (
-                    self.c_attn(hidden_states).unsqueeze(1).split((self.embed_dim, self.kv_dim, self.kv_dim), dim=3)
-                )
+                x = self.c_attn(hidden_states).unsqueeze(1)  # shape: [B, 1, T, E + 2*KV]
+                e = int(self.embed_dim)
+                kv = int(self.kv_dim)
+
+                query = x[..., :e]
+                key = x[..., e : e + kv]
+                value = x[..., e + kv : e + 2 * kv]
+
                 query = query.view(*input_shape, -1, self.head_dim).transpose(1, 2)
             else:
                 query, key, value = (
