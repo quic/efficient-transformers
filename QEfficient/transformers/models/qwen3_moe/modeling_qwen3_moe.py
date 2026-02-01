@@ -173,7 +173,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         prob = F.softmax(router_logits, -1, dtype=torch.float)
         top_w, top_i = torch.topk(prob, self.top_k, -1)
         if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
-            top_w /= top_w.sum(-1, keepdim=True)
+            top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(hidden_states.dtype)
 
         gate_proj_w = self.gate_proj_w[top_i.flatten()]
@@ -187,7 +187,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         experts_out = torch.bmm(intermediate, down_proj_w)
         experts_out = experts_out.view(B * S, self.top_k, H)
         experts_out = experts_out * top_w.unsqueeze(-1)
-        experts_out = experts_out.sum(dim=1)
+        experts_out = torch.einsum("bnd->bd", experts_out)
         return experts_out.view(B, S, H), router_logits
 
 
