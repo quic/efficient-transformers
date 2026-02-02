@@ -22,7 +22,6 @@ with torch.no_grad():
 
 
 qeff_model = QEFFAutoModelForCausalLM(model)
-import ipdb; ipdb.set_trace()
 inputs = tokenizer(prompts, return_tensors="np", padding="max_length", max_length=padded_len)
 inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
 inputs.pop("token_type_ids", None)
@@ -38,10 +37,13 @@ for i in range(model.config.num_hidden_layers):
     past_key_values.append(pkv)
 inputs["past_key_values"] = past_key_values
 
-# qeff_model.compile(prefill_seq_len=1, ctx_len=1024, mxfp6_matmul=True, num_devices=1)
 qeff_out = qeff_model.model(**inputs)
 
 assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
+
+qeff_model.model.to(torch.float32)
+qeff_model.compile(prefill_seq_len=1, ctx_len=1024, num_devices=2)
+
 # qeff_model = QEFFAutoModelForCausalLM(model)
 # qeff_model.compile(
 #     prefill_seq_len=1,
