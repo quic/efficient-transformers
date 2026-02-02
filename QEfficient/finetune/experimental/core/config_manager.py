@@ -19,6 +19,11 @@ from typing import Any, Dict, List, Optional, Union
 import yaml
 from transformers.hf_argparser import HfArgumentParser
 
+from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.logger import Logger
+
+logger = Logger(__name__)
+
 
 @dataclass
 class OptimizerConfig:
@@ -54,6 +59,10 @@ class SchedulerConfig:
             "ratio of total training steps for the warmup phase."
         },
     )
+    warmup_ratio: int = field(
+        default=0.1,
+        metadata={"help": "ratio of total training steps for the warmup phase. value is within [0-1) range."},
+    )
 
 
 @dataclass
@@ -69,7 +78,7 @@ class DatasetConfig:
         metadata={"help": "The type of dataset (e.g., 'seq_completion')."},
     )
     dataset_name: str = field(
-        default="knkarthick/samsum",
+        default="yahma/alpaca-cleaned",
         metadata={"help": "The name or path of the dataset."},
     )
     json_file_path: str = field(
@@ -96,7 +105,7 @@ class DatasetConfig:
         default=0.8,
         metadata={"help": "Ratio for train/test split, used when only train_split is provided."},
     )
-    input_columns: list[str] = field(
+    input_columns: List[str] = field(
         default_factory=lambda: ["text"],
         metadata={"help": "List of column names containing input text."},
     )
@@ -121,11 +130,11 @@ class DatasetConfig:
         metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     prompt_func: str = field(
-        default=None,
+        default="QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt",
         metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     completion_template: str = field(
-        default=None,
+        default="{output}",
         metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
     )
     completion_func: str = field(
@@ -165,7 +174,7 @@ class DatasetConfig:
         metadata={"help": "Number of workers for the DataLoader."},
     )
     config_name: str = field(
-        default="None",
+        default="default",
         metadata={"help": "Name of the hf configuration file."},
     )
 
@@ -186,7 +195,7 @@ class PeftConfig:
         default=0.1,
         metadata={"help": "The dropout probability for Lora layers."},
     )
-    target_modules: list[str] = field(
+    target_modules: List[str] = field(
         default_factory=lambda: ["q_proj", "v_proj"],
         metadata={"help": "The modules to apply Lora to."},
     )
@@ -275,7 +284,7 @@ class DdpConfig:
     """Arguments for Distributed Data Parallel (DDP) training."""
 
     ddp_backend: str = field(
-        default=None,
+        default="qccl",
         metadata={"help": "The DDP backend to use (e.g., 'nccl', 'gloo', 'qccl')."},
     )
     ddp_find_unused_parameters: bool = field(
@@ -283,7 +292,7 @@ class DdpConfig:
         metadata={"help": "Whether to find unused parameters in DDP."},
     )
     ddp_bucket_cap_mb: Optional[int] = field(
-        default=None,
+        default=25,
         metadata={"help": "The bucket size in MB for DDP communication."},
     )
     ddp_broadcast_buffers: bool = field(
@@ -479,34 +488,66 @@ class MasterConfig:
     )
 
 
-def parse_arguments() -> MasterConfig:
-    """Create argument parser for the new finetuning interface."""
-    master_config = MasterConfig()
-    return master_config
-
-
 class ConfigManager:
     """Manages configuration loading, validation, and updates."""
 
-    def __init__(self, config: MasterConfig, config_path: Optional[str] = None):
+    def __init__(self, config: Optional[MasterConfig] = None, config_path: Optional[str] = None):
         """
         Initialize ConfigManager with either:
         - Path to config file (str or Path)
         - Configuration dictionary
         """
-        self.config = config
-        if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+        if config:
+            self.config = config
+        else:
+            self.config = MasterConfig()
+
+        if config_path and not config:
+            logger.log_rank_zero("Loading configuration from config_path...")
+            config_path = os.path.abspath(config_path)
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
+                raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
+            try:
+                self.load_config(config_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
+        elif config and not config_path:
+            logger.log_rank_zero("Loading configuration from config object...")
+
+        elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+            logger.log_rank_zero("Loading configuration from config_path from CLI...")
             config_path = os.path.abspath(sys.argv[1])
             if not os.path.exists(config_path):
                 raise FileNotFoundError(f"Config file not found: {config_path}")
-            self.load_config(config_path)
+            try:
+                self.load_config(config_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
         elif len(sys.argv) > 2:
+            logger.log_rank_zero("Loading configuration flags from CLI...")
             parser = HfArgumentParser(
-                (TrainingConfig, ModelConfig, DatasetConfig, OptimizerConfig, SchedulerConfig, CallbackConfig)
+                (
+                    TrainingConfig,
+                    ModelConfig,
+                    DatasetConfig,
+                    OptimizerConfig,
+                    SchedulerConfig,
+                    CallbackConfig,
+                    PeftConfig,
+                    DdpConfig,
+                    GradientCheckpointingKwargs,
+                )
             )
-            train_args, model_args, data_args, opt_args, schd_args, call_args, extra = (
+            train_args, model_args, data_args, opt_args, schd_args, call_args, peft_args, ddp_args, gck_args, extra = (
                 parser.parse_args_into_dataclasses(return_remaining_strings=True)
             )
+            train_args.ddp_config = ddp_args
+            train_args.gradient_checkpointing_kwargs = gck_args
+            model_args.peft_config = peft_args
             self.config = MasterConfig(
                 model=model_args,
                 dataset=data_args,
@@ -516,22 +557,16 @@ class ConfigManager:
                 scheduler=schd_args,
                 extra_params=extra,
             )
-        elif config_path:
-            config_path = os.path.abspath(config_path)
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(f"Config file not found: {config_path}")
-            if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
-                raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
 
-            try:
-                config = self.load_config(config_path)
-            except Exception as e:
-                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
         else:
-            self.config = MasterConfig()
-
+            logger.log_rank_zero("Using default configuration...")
         self.config = asdict(self.config)
         self.config = MasterConfig(**self.config)
+        # Validate loaded config
+        try:
+            self.validate_config()
+        except Exception as e:
+            logger.log_rank_zero(f"Config validation failed with error: {e}")
 
     def load_config(self, config_path: Union[str, Path]) -> None:
         """Load configuration from file."""
@@ -685,7 +720,7 @@ class ConfigManager:
         self._push(
             errors,
             n_epochs <= 0,
-            "Either training.num_train_epochs > 0 or training.max_steps > 0 must be set.",
+            "Either training.num_train_epochs > 0  must be set.",
         )
 
         # Gradient accumulation

@@ -52,6 +52,7 @@ Welcome to Efficient-Transformers Documentation!
    :maxdepth: 4
 
    source/hf_finetune
+   source/config
    
 .. toctree::
    :caption: Blogs
