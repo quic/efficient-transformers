@@ -519,7 +519,10 @@ class QEffGlm4MoeTopkRouter(nn.Module):
     def forward(self, hidden_states):
         # orig_i, orig_w = self.orig_forward(hidden_states)
         hidden_states = hidden_states.view(-1, self.config.hidden_size)
-        router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
+        # import ipdb; ipdb.set_trace()c
+        
+        # router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
+        router_logits = torch.nn.functional.linear(hidden_states, self.weight)
 
         # router_logits: [T, E] where E=160
         router_scores = router_logits.sigmoid()  # (0,1), [T, 160]
