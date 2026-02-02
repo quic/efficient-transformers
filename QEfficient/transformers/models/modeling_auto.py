@@ -2688,8 +2688,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 # for kv in ["key", "value"]:
                 example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                 example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape_v, dtype=torch.float32))
-                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
-                output_names.append(f"past_{kv}.{i}_RetainedState")
+                dynamic_axes[f"past_key.{i}"] = pkv_dynamic_axes[i]
+                dynamic_axes[f"past_value.{i}"] = pkv_dynamic_axes[i]
+                output_names.append(f"past_key.{i}_RetainedState")
+                output_names.append(f"past_value.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
