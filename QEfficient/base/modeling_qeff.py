@@ -519,20 +519,21 @@ class QEFFBaseModel(ABC):
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 
-        try:
-            subprocess.run(command, capture_output=True, check=True)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                "\n".join(
-                    [
-                        "Compilation failed!",
-                        f"Compiler command: {e.cmd}",
-                        f"Compiler exitcode: {e.returncode}",
-                        "Compiler stderr:",
-                        e.stderr.decode(),
-                    ]
-                )
-            )
+        # try:
+        print(" ".join(command))
+        subprocess.run(command, capture_output=True, check=True)
+        # except subprocess.CalledProcessError as e:
+        #     raise RuntimeError(
+        #         "\n".join(
+        #             [
+        #                 "Compilation failed!",
+        #                 f"Compiler command: {e.cmd}",
+        #                 f"Compiler exitcode: {e.returncode}",
+        #                 "Compiler stderr:",
+        #                 e.stderr.decode(),
+        #             ]
+        #         )
+        #     )
         # Dump JSON file with hashed parameters
         hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
         create_json(hashed_compile_params_path, compile_hash_params)
