@@ -22,8 +22,6 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeParallelExperts,
     GraniteMoeRotaryEmbedding,
     GraniteMoeTopKGating,
-    load_balancing_loss_func,
-    logger,
     repeat_kv,
     rotate_half,
 )
@@ -240,7 +238,6 @@ class QEffGraniteMoeModel(GraniteMoeModel):
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-               
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -304,7 +301,6 @@ class QEffGraniteMoeModel(GraniteMoeModel):
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
-
 
         return MoeModelOutputWithPast(
             last_hidden_state=hidden_states,
@@ -549,7 +545,6 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states).float()
         # logits = logits / self.config.logits_scaling
-
 
         return MoeCausalLMOutputWithPast(
             loss=None,
