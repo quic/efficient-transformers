@@ -155,12 +155,18 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLAttention,
     Qwen2_5_VLDecoderLayer,
     Qwen2_5_VLForConditionalGeneration,
-    Qwen2_5_VLModel,
     Qwen2_5_VLTextModel,
     Qwen2_5_VLVisionAttention,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2RMSNorm as Qwen2_5RMSNorm,
+)
+from transformers.models.qwen3.modeling_qwen3 import (
+    Qwen3Attention,
+    Qwen3DecoderLayer,
+    Qwen3ForCausalLM,
+    Qwen3Model,
+    Qwen3RMSNorm,
 )
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeForConditionalGeneration,
@@ -169,23 +175,9 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextDecoderLayer,
     Qwen3VLMoeTextModel,
     Qwen3VLMoeTextRMSNorm,
+    Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
-from transformers.models.qwen3.modeling_qwen3 import (
-    Qwen3Attention,
-    Qwen3DecoderLayer,
-    Qwen3ForCausalLM,
-    Qwen3Model,
-    Qwen3RMSNorm,
-)
-from transformers.models.qwen3_moe.modeling_qwen3_moe import (
-    Qwen3MoeAttention,
-    Qwen3MoeDecoderLayer,
-    Qwen3MoeForCausalLM,
-    Qwen3MoeModel,
-    Qwen3MoeRMSNorm,
-    Qwen3MoeRotaryEmbedding,
-    Qwen3MoeSparseMoeBlock,
 )
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
@@ -389,33 +381,21 @@ from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     QEffQwen2_5_VLVisionAttention,
     QEffQwen_2_5_vl_ForConditionalGeneration,
 )
-from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-    QEffQwen3VLMoeForConditionalGeneration,
-    QEffQwen3VLMoeModel,
-    QEffQwen3VLMoeTextAttention,
-    QEffQwen3VLMoeTextDecoderLayer,
-    QEffQwen3VLMoeTextModel,
-    QEffQwen3VLMoeVisionAttention,
-    QEffQwen3VLMoeVisionModel,
-    QEffQwen2_5_VLModel,
-    QEffQwen2_5_VLTextModel,
-    QEffQwen2_5_VLVisionAttention,
-    QEffQwen_2_5_vl_DecoderWrapper,
-    QEffQwen_2_5_vl_ForConditionalGeneration,
-)
 from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3Attention,
     QEffQwen3DecoderLayer,
     QEffQwen3ForCausalLM,
     QEffQwen3Model,
 )
-from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-    QEffQwen3MoeAttention,
-    QEffQwen3MoeDecoderLayer,
-    QEffQwen3MoeForCausalLM,
-    QEffQwen3MoeModel,
-    QEffQwen3MoeRotaryEmbedding,
-    QEffQwen3MoeSparseMoeBlock,
+from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+    QEffQwen3VLMoeForConditionalGeneration,
+    QEffQwen3VLMoeModel,
+    QEffQwen3VLMoeTextAttention,
+    QEffQwen3VLMoeTextDecoderLayer,
+    QEffQwen3VLMoeTextModel,
+    QEffQwen3VLMoeTextSparseMoeBlock,
+    QEffQwen3VLMoeVisionAttention,
+    QEffQwen3VLMoeVisionModel,
 )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
@@ -603,8 +583,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3Model: QEffQwen3Model,
         Qwen3ForCausalLM: QEffQwen3ForCausalLM,
         # Qwen2.5 VL
-        Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
-        Qwen2_5_VLModel: QEffQwen2_5_VLModel,
+        # Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
+        # Qwen2_5_VLModel: QEffQwen2_5_VLModel,
         Qwen2_5_VLAttention: QEffQwen2_5_VLAttention,
         Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
         Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
@@ -617,8 +597,9 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
         Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
         Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
+        Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
         # Grok1
-        Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
+        # Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
@@ -764,7 +745,7 @@ class SamplerTransform:
         QEffMptForCausalLM,
         QEffPhi3ForCausalLM,
         QEffQwen2ForCausalLM,
-        QEffQwen_2_5_vl_DecoderWrapper,
+        # QEffQwen_2_5_vl_DecoderWrapper,
     }
 
     @classmethod

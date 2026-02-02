@@ -17,6 +17,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextDecoderLayer,
     Qwen3VLMoeTextModel,
     Qwen3VLMoeTextRotaryEmbedding,
+    Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
     apply_rotary_pos_emb_vision,
@@ -25,8 +26,6 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
-
-# from transformers import Qw
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -68,7 +67,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     """
 
     mrope_section = mrope_section * 2
-    breakpoint()
+    # breakpoint()
     cos = cos[position_ids]
     sin = sin[position_ids]
 
@@ -77,7 +76,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
 
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
-    breakpoint()
+    # breakpoint()
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
@@ -225,6 +224,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
@@ -242,18 +242,21 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
 
         # kv_seq_len = key_states.shape[-2]
         # kv_seq_len = past_key_values.get_usable_length(kv_seq_len, self.layer_idx)
-        # breakpoint()
+        breakpoint()
         kv_seq_len = past_key_values.get_seq_length(self.layer_idx)
-
+        breakpoint()
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         # breakpoint()
         query_states, key_states = qeff_apply_rotary_pos_emb(
             query_states, key_states, cos, sin, position_ids[1:], self.config.rope_scaling["mrope_section"]
         )
-
+        # breakpoint()
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids[0]}
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -285,6 +288,7 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[torch.Tensor]] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -324,6 +328,7 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
             position_ids=position_ids,
             past_key_values=past_key_values,
             batch_index=batch_index,
+            comp_ctx_lengths=comp_ctx_lengths,
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
@@ -357,6 +362,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -372,28 +378,10 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
         breakpoint()
-        if use_cache and not isinstance(past_key_values, Cache):
+        if self.config.use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-        # use_cache = use_cache if use_cache is not None else self.config.use_cache
-        # breakpoint()
-        # if (input_ids is None) ^ (inputs_embeds is not None):
-        #     raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-
-        # if inputs_embeds is None:
-        #     inputs_embeds = self.embed_tokens(input_ids)
-
-        # past_key_values_length = 0
-        # if past_key_values is not None:
-        #     past_key_values_length = past_key_values[0][0].shape[2]
-
-        # past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -418,10 +406,6 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         all_hidden_states = () if output_hidden_states else None
         # all_self_attns = () if output_attentions else None
 
-        # for decoder_layer in self.layers:
-        #     if output_hidden_states:
-        #         all_hidden_states += (hidden_states,)
-        # breakpoint()
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -431,6 +415,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
@@ -608,6 +593,7 @@ class QEffQwen3VLMoeVisionModel(Qwen3VLMoeVisionModel):
         hidden_states = self.patch_embed(hidden_states)
 
         pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
+        # breakpoint()
         hidden_states = hidden_states + pos_embeds
 
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
@@ -623,21 +609,10 @@ class QEffQwen3VLMoeVisionModel(Qwen3VLMoeVisionModel):
         t = torch.arange(t, t + 1).squeeze().expand(bs)
         h = torch.arange(h, h + 1).squeeze().expand(bs)
         w = torch.arange(w, w + 1).squeeze().expand(bs)
-        # cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
-        #     dim=0,
-        #     # Select dtype based on the following factors:
-        #     #  - FA2 requires that cu_seqlens_q must have dtype int32
-        #     #  - torch.onnx.export requires that cu_seqlens_q must have same dtype as grid_thw
-        #     # See https://github.com/huggingface/transformers/pull/34852 for more information
-        #     dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
-        # )
+
         cu_seqlens = (h * w).cumsum(
             dim=0,
-            # Select dtype based on the following factors:
-            #  - FA2 requires that cu_seqlens_q must have dtype int32
-            #  - torch.onnx.export requires that cu_seqlens_q must have same dtype as grid_thw
-            # See https://github.com/huggingface/transformers/pull/34852 for more information
-            dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+            dtype=torch.int32,
         )
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
@@ -653,9 +628,9 @@ class QEffQwen3VLMoeVisionModel(Qwen3VLMoeVisionModel):
                     hidden_states
                 )
                 deepstack_feature_lists.append(deepstack_feature)
-
+        # breakpoint()
         hidden_states = self.merger(hidden_states)
-
+        # breakpoint()
         return hidden_states, deepstack_feature_lists
 
 
@@ -666,6 +641,7 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -689,6 +665,7 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -716,11 +693,12 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
         self.model.vision_model = self.model.visual
 
     def forward(self, pixel_values, image_grid_thw):
+        # breakpoint()
         image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)[0]
         bs = image_grid_thw.shape[0]
         split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
         image_embeds = image_embeds.reshape(bs, split_size, image_embeds.size(1))
-        breakpoint()
+        # breakpoint()
         return image_embeds
 
 
@@ -730,7 +708,16 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         self.model = model
         self.language_model = self.model.model
 
-    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
+    def forward(
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
+    ):
         # breakpoint()
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
@@ -743,12 +730,55 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
         # breakpoint()
         outputs = self.model.model(
-            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
+            use_cache=True,
         )
-        logits = self.model.lm_head(outputs[0])
+        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+        logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-
+        # breakpoint()
         return logits, vision_embeds, image_idx, outputs.past_key_values
+
+
+class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
+    # def __qeff_init__(self):
+    #     breakpoint()
+    #     self.gate_proj_w = self.experts.gate_up_proj.requires_grad_(False)
+    #     self.down_proj_w = self.experts.down_proj.requires_grad_(False)
+
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, H = hidden_states.shape
+        T = B * S
+        # breakpoint()
+        hidden_states = hidden_states.view(T, H)
+        router_logits = self.gate(hidden_states)  # [T, E]
+        prob = F.softmax(router_logits, -1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, -1)
+        # breakpoint()
+        # if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
+        #     top_w /= top_w.sum(-1, keepdim=True)
+        # top_w = top_w.to(hidden_states.dtype)
+        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
+        gate_proj_up_w = self.experts.gate_up_proj.requires_grad_(False)[top_i.flatten()]
+        # up_proj_w = self.up_proj_w[top_i.flatten()]
+        down_proj_w = self.experts.down_proj.requires_grad_(False)[top_i.flatten()]
+
+        expert_in = hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
+        gate_up = torch.bmm(expert_in, gate_proj_up_w)
+        gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+        # up = torch.bmm(expert_in, up_proj_w)
+        intermediate = up * self.experts.act_fn(gate)
+        # intermediate=self.experts.act_fn(gate)
+        experts_out = torch.bmm(intermediate, down_proj_w)
+        experts_out = experts_out.view(B * S, self.top_k, H)
+        experts_out = experts_out * top_w.unsqueeze(-1)
+        experts_out = experts_out.sum(dim=1)
+        return experts_out.view(B, S, H), router_logits
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):
@@ -758,7 +788,13 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
     def get_qeff_language_decoder(self):
         return QEffQwen3VLDecoderWrapper(self)
 
-    def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        **kwargs,
+    ):
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 
@@ -769,13 +805,13 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             vision_size,
             self.model.config.vision_config.out_hidden_size,
         )
-        inputs_shapes["image_grid_thw"] = (1, 1, 22, 33)
+        inputs_shapes["image_grid_thw"] = (1, 1, 22, 32)
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
-        inputs_shapes["pixel_values"] = (726, 1536)
+        inputs_shapes["pixel_values"] = (704, 1536)
         inputs_shapes["image_idx"] = (1, 1)
         inputs_shapes["image_sizes"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 2)
         # Define inputs
@@ -798,9 +834,13 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
         # breakpoint()
+
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
-            batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
@@ -809,6 +849,11 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
 
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
+
+        if comp_ctx_lengths is not None:
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
         inputs = {}
         if kv_offload:
             inputs["vision"] = vision_inputs
@@ -826,10 +871,16 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         img_size: None,
         height: int = None,
         width: int = None,
+        num_frames: int = 1,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
-        breakpoint()
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        # breakpoint()
         if height is None or width is None:
             height = 1365
             width = 2048
@@ -838,9 +889,9 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             )
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
-        # channel = 3
+        channel = 3
         patch_size = self.config.vision_config.patch_size
-        # temporal_patch_size = self.config.vision_config.temporal_patch_size
+        temporal_patch_size = self.config.vision_config.temporal_patch_size
 
         IMAGE_FACTOR = 28
         MIN_PIXELS = 4 * 28 * 28
@@ -891,38 +942,111 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 w_bar = ceil_by_factor(width * beta, factor)
             return h_bar, w_bar
 
-        breakpoint()
+        # breakpoint()
         resized_height, resized_width = smart_resize(height=height, width=width)
         grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
         grid_height = grid_h * grid_w
-        # grid_width = patch_size * patch_size * temporal_patch_size * channel
+        grid_width = patch_size * patch_size * temporal_patch_size * channel
         vision_size = grid_height // 4
+        vision_size = vision_size * num_frames
         grid_height = grid_height * batch_size
 
+        vision_size = 176
+        grid_height = 704
+        grid_width = 1536
+        grid_h = 22
+        grid_w = 32
+
+        # vision = [
+        #     {
+        #         "batch_size": batch_size,
+        #         "vision_size": vision_size,
+        #         "grid_height": grid_height,
+        #         "grid_width": grid_width,
+        #         "grid_h": grid_h,
+        #         "grid_w": grid_w,
+        #     }
+        # ]
+        # breakpoint()
         vision = [
             {
                 "batch_size": 1,
-                "vision_size": 181,
-                "grid_height": 22,
-                "grid_width": 33,
-                "grid_h": 726,
-                "grid_w": 1536,
+                "vision_size": vision_size,
+                "grid_height": grid_height,
+                "grid_width": grid_width,
+                "grid_h": grid_h,
+                "grid_w": grid_w,
             }
         ]
-        lang = [
-            {
-                "batch_size": batch_size,
+
+        if comp_ctx_lengths_prefill is not None:
+            lang = []
+
+            for i in range(0, len(comp_ctx_lengths_prefill)):
+                lang_prefill = {
+                    "batch_size": 1 if continuous_batching else batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "vision_size": vision_size,
+                    "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
+                    "vision_batch_size": batch_size,
+                }
+
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
+
+                lang.append(lang_prefill)
+
+            for i in range(0, len(comp_ctx_lengths_decode)):
+                lang_decode = {
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "vision_size": vision_size,
+                    "comp_ctx_lengths": comp_ctx_lengths_decode[i],
+                    "vision_batch_size": batch_size,
+                }
+
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
+
+                lang.append(lang_decode)
+        else:
+            lang_prefill = {
+                "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
+                "vision_batch_size": batch_size,
+            }
+
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
+
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": 1,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,
-            },
-        ]
+                "vision_batch_size": batch_size,
+            }
+
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
+
+            lang = [lang_prefill, lang_decode]
 
         specializations = {}
 
@@ -931,9 +1055,13 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
+            lang[0].pop("vision_size")
+            lang[1].pop("vision_size")
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
         # breakpoint()
@@ -949,10 +1077,23 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         }
 
         for i in range(num_layers):
-            lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+            lang_dynamic_axes[f"past_key.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+            lang_dynamic_axes[f"past_value.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+
+        if comp_ctx_lengths is not None:
+            lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         dynamic_axes = {}
+
         if kv_offload:
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
@@ -979,6 +1120,32 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
+
+    def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
+        input_ids_length = inputs["input_ids"].shape[1]
+
+        inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+        breakpoint()
+        pos_ids, rope_deltas = self.model.get_rope_index(
+            inputs["input_ids"],
+            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            video_grid_thw=None,
+            # second_per_grid_ts=None,
+            attention_mask=inputs["attention_mask"],
+        )
+
+        inputs["position_ids"] = torch.cat((inputs["position_ids"], pos_ids), dim=0)
+
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+
+        inputs["position_ids"] = F.pad(
+            inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
+        )
+
+        inputs.pop("image_grid_thw", None)
+
+        return inputs
 
     def get_inputs_info(self):
         return [

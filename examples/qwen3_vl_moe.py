@@ -26,18 +26,18 @@ config.text_config.num_hidden_layers = 1
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
 )
+
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 # breakpoint()
-
 ### use skip_vision=Ture, if want to run only text, ow false ###
-skip_vision = False
+skip_vision = True
 
 if skip_vision:
     ## Only Text ##
 
     ## Set Batch_Size ##
-    batch_size = 2
+    batch_size = 1
     qeff_model.compile(
         batch_size=batch_size,
         prefill_seq_len=128,
@@ -45,8 +45,8 @@ if skip_vision:
         num_cores=16,
         num_devices=4,
         height=354,
-        width=536,
-        mxfp6_matmul=False,
+        width=520,
+        mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
@@ -70,27 +70,9 @@ if skip_vision:
         return_dict=True,
         return_tensors="pt",
     )
-    # breakpoint()
-    pos_ids, rope_deltas = qeff_model.model.get_rope_index(
-        inputs["input_ids"],
-        image_grid_thw=None,
-        video_grid_thw=None,
-        second_per_grid_ts=None,
-        attention_mask=inputs["attention_mask"],
-    )
-
-    input_ids_length = inputs["input_ids"].shape[1]
-
-    inputs["position_ids"] = torch.cat([pos_ids, pos_ids[0].unsqueeze(0)], dim=0)
-
-    prefill_seq_len = 128
-    num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
-    padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
-
-    inputs["position_ids"] = F.pad(
-        inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
-    )
-
+    breakpoint()
+    inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
+    breakpoint()
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
