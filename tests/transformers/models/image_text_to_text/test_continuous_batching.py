@@ -104,7 +104,7 @@ test_models_config = [
         True,
         1,
         128,
-        128,
+        4096,
         1540,
         [
             "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
@@ -122,7 +122,7 @@ test_models_config = [
         True,
         1,
         128,
-        128,
+        4096,
         336,
         [
             "https://picsum.photos/id/237/536/354",
@@ -158,29 +158,11 @@ test_models_config = [
 
 intern_model_config = [
     (
-        "Qwen/Qwen2.5-VL-3B-Instruct",
-        True,
-        1,
-        128,
-        128,
-        336,
-        [
-            "https://picsum.photos/id/237/536/354",
-            "https://picsum.photos/id/237/536/354",
-        ],
-        [
-            "Describe image.",
-            "What's here?",
-        ],
-        1,
-        2,
-    ),
-    (
         "OpenGVLab/InternVL3_5-1B",
         True,
         1,
-        128,
-        128,
+        384,
+        512,
         [
             "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
             "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
@@ -195,7 +177,6 @@ intern_model_config = [
 ]
 
 molmo_model_config = [
-    # Disabled in CI due to HF issues
     # (
     #     "allenai/Molmo-7B-D-0924",
     #     True,
@@ -203,15 +184,11 @@ molmo_model_config = [
     #     128,
     #     4096,
     #     ["https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-    #      "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
-    #      "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-    #      "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",],
+    #      "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"],
     #     ["Can you describe the image in detail?",
-    #      "What are the objects in the image?",
-    #      "What is the main subject of the image?",
-    #      "What colors are predominant in the image?"],
+    #      "What are the objects in the image?"],
     #     2,
-    #     4,
+    #     2,
     # ),
 ]
 

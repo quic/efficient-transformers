@@ -47,6 +47,11 @@ configs = [
 
 model_samples = [
     pytest.param("mistralai/Mistral-7B-v0.1", "predibase/gsm8k", "predibase/dbpedia"),
+    pytest.param(
+        "meta-llama/Meta-Llama-3-8B",
+        "hallisky/lora-type-narrative-llama-3-8b",
+        "hallisky/lora-grade-elementary-llama-3-8b",
+    ),
 ]
 
 

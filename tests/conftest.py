@@ -10,7 +10,7 @@ import os
 import shutil
 
 import pytest
-from transformers import AutoConfig
+from transformers import AutoConfig, logging
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
@@ -55,6 +55,10 @@ def qeff_models_clean_up():
 
 def pytest_sessionstart(session):
     logger.info("PYTEST Session Starting ...")
+    
+    # Suppress transformers warnings about unused weights when loading models with fewer layers
+    logging.set_verbosity_error()
+    
     qeff_models_clean_up()
 
 
