@@ -79,10 +79,6 @@ class DatasetConfig:
         default="yahma/alpaca-cleaned",
         metadata={"help": "The name or path of the dataset."},
     )
-    json_file_path: str = field(
-        default=None,
-        metadata={"help": "Path to a custom JSON file containing the dataset."},
-    )
     dataset_subset: str = field(
         default="default",
         metadata={"help": "The subset of the dataset to use, if applicable."},
@@ -290,7 +286,7 @@ class DdpConfig:
         metadata={"help": "Whether to find unused parameters in DDP."},
     )
     ddp_bucket_cap_mb: Optional[int] = field(
-        default=None,
+        default=25,
         metadata={"help": "The bucket size in MB for DDP communication."},
     )
     ddp_broadcast_buffers: bool = field(
@@ -486,58 +482,15 @@ class MasterConfig:
     )
 
 
-<<<<<<< HEAD
 class ConfigManager:
     """Manages configuration loading, validation, and updates."""
 
     def __init__(self, config: Optional[MasterConfig] = None, config_path: Optional[str] = None):
-=======
-def parse_arguments() -> MasterConfig:
-    """Create argument parser for the new finetuning interface."""
-    master_config = MasterConfig()
-    return master_config
-    # if config_path:
-    #     config_path = os.path.abspath(config_path)
-    #     if not os.path.exists(config_path):
-    #         raise FileNotFoundError(f"Config file not found: {config_path}")
-    #     if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
-    #         raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
-
-    #     try:
-    #         config_manager=ConfigManager(master_config)
-    #         config=config_manager.load_config(config_path)
-    #     except Exception as e:
-    #         raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
-
-    # elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-    #     # If we pass only one argument to the script and it's the path to a json file,
-    #     # let's parse it to get our arguments.
-    #     config_path=os.path.abspath(sys.argv[1])
-    #     config_manager=ConfigManager(master_config)
-    #     config=config_manager.load_config(config_path)
-    # else:
-
-    #     parser = HfArgumentParser(MasterConfig)
-    #     args_dict = parser.parse_args_into_dict()
-    #     config_manager=ConfigManager(master_config)
-    #     config=config_manager.update_config(args_dict)
-
-    # master_config = asdict(config)
-    # master_config = MasterConfig(**master_config)
-    # return master_config
-
-
-class ConfigManager:
-    """Manages configuration loading, validation, and updates."""
-
-    def __init__(self, config: MasterConfig, config_path: Optional[str] = None):
->>>>>>> db94c30 (Updating config manager so it include all params from master config)
         """
         Initialize ConfigManager with either:
         - Path to config file (str or Path)
         - Configuration dictionary
         """
-<<<<<<< HEAD
         if config:
             self.config = config
         else:
@@ -545,16 +498,11 @@ class ConfigManager:
 
         if config_path and not config:
             logger.log_rank_zero("Loading configuration from config_path...")
-=======
-        self.config = config
-        if config_path:
->>>>>>> db94c30 (Updating config manager so it include all params from master config)
             config_path = os.path.abspath(config_path)
             if not os.path.exists(config_path):
                 raise FileNotFoundError(f"Config file not found: {config_path}")
             if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
                 raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
-<<<<<<< HEAD
             try:
                 self.load_config(config_path)
             except Exception as e:
@@ -613,27 +561,6 @@ class ConfigManager:
             self.validate_config()
         except Exception as e:
             logger.log_rank_zero(f"Config validation failed with error: {e}")
-=======
-
-            try:
-                config = self.load_config(config_path)
-            except Exception as e:
-                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
-
-        elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-            # If we pass only one argument to the script and it's the path to a json file,
-            # let's parse it to get our arguments.
-            config_path = os.path.abspath(sys.argv[1])
-            self.load_config(config_path)
-        else:
-            parser = HfArgumentParser(MasterConfig)
-            args_dict = parser.parse_args_into_dict()
-            config_manager = ConfigManager(self.config)
-            config_manager.update_config(args_dict)
-
-        self.config = asdict(self.config)
-        self.config = MasterConfig(**self.config)
->>>>>>> db94c30 (Updating config manager so it include all params from master config)
 
     def load_config(self, config_path: Union[str, Path]) -> None:
         """Load configuration from file."""
@@ -850,3 +777,32 @@ class ConfigManager:
         if hasattr(self.config, name):
             return getattr(self.config, name)
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+
+def create_trainer_config(name: str, **dependencies) -> tuple:
+    """
+    Create trainer configuration based on registered trainer modules.
+
+    Args:
+        name: Name of the trainer type
+        **dependencies: Any dependencies needed to configure the trainer
+
+    Returns:
+        tuple: (trainer_class, args_class, additional_kwargs)
+    """
+    config = registry.get_trainer_module(name)
+
+    # Process required kwargs based on available dependencies
+    additional_kwargs = {}
+    for kwarg, default in config["required_kwargs"].items():
+        if kwarg in dependencies:
+            additional_kwargs[kwarg] = dependencies[kwarg]
+        elif default != "REQUIRED":
+            additional_kwargs[kwarg] = default
+
+    # Check for missing required arguments
+    for kwarg, default in config["required_kwargs"].items():
+        if kwarg not in additional_kwargs and default == "REQUIRED":
+            raise ValueError(f"Required argument '{kwarg}' not provided for trainer '{name}'")
+
+    return config["trainer_cls"], config["args_cls"], additional_kwargs    
