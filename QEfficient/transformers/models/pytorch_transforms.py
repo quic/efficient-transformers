@@ -915,9 +915,16 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
 
     # Filter to only include classes that are actually used in the current model
     model_decoder_classes = set()
-    for module in model.modules():
-        if module.__class__ in decoder_layer_classes:
-            model_decoder_classes.add(module.__class__)
+    model_class_name = model.__class__.__name__
+    if "EncoderWrapper" in model_class_name:
+        model_decoder_classes.update(
+            module.__class__ for module in model.modules() if "Qwen2_5_VLVisionBlock" in module.__class__.__name__
+        )
+        return model_decoder_classes
+
+    model_decoder_classes.update(
+        module.__class__ for module in model.modules() if module.__class__ in decoder_layer_classes
+    )
 
     return model_decoder_classes
 

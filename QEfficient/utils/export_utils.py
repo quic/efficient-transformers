@@ -161,15 +161,21 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     # Apply torch patches for subfunction support
     apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
+
     # Transform output names for subfunction compatibility
     if "output_names" in kwargs:
         kwargs["output_names"] = [
-            re.sub("_RetainedState", "_InternalRetainedState", name) for name in kwargs["output_names"]
+            re.sub("_RetainedState", "_InternalRetainedState", name)
+            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            else name
+            for name in kwargs["output_names"]
         ]
     else:
-        args = list(args)
-        args[1] = [re.sub("_RetainedState", "_InternalRetainedState", name) for name in args[1]]
-        args = tuple(args)
+        warnings.warn(
+            "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "
+            "Ensure `output_names` includes key/value retained states if subfunction compatibility is required."
+        )
+
     # Add subfunction-specific ONNX transforms
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
     qeff_model._onnx_transforms.append(CustomOpTransform)
