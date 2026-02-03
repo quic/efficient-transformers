@@ -14,15 +14,15 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytest
 import torch
-from datasets import load_dataset
+from peft import LoraConfig
+from torch.utils.data import Subset
 
-from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.cloud.finetune_experimental import FineTuningPipeline
 from QEfficient.finetune.experimental.core.config_manager import (
-    ConfigManager,
     DatasetConfig,
     MasterConfig,
     ModelConfig,
@@ -32,7 +32,6 @@ from QEfficient.finetune.experimental.core.config_manager import (
     TrainingConfig,
 )
 from QEfficient.finetune.experimental.core.dataset import SFTDataset
-from QEfficient.finetune.experimental.core.model import HFModel
 from QEfficient.finetune.experimental.core.utils.constants import (
     HF_DATASET_ALPACA,
     HF_DATASET_GSM8K,
@@ -61,6 +60,7 @@ from QEfficient.finetune.experimental.core.utils.constants import (
     DatasetType,
     TaskType,
 )
+from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
 from QEfficient.utils.logging_utils import logger
 
 # ============================================================================
@@ -120,7 +120,7 @@ BERT_MODEL_CONFIG = TestModelConfig(
 
 # Dataset configurations
 GSM8K_DATASET_CONFIG = TestDatasetConfig(
-    dataset_name="gsm8k",
+    dataset_name="openai/gsm8k",
     hf_dataset_name=HF_DATASET_GSM8K,
     hf_dataset_config=HF_DATASET_GSM8K_CONFIG,
     prompt_template="Question: {question}\nAnswer: ",
@@ -129,7 +129,7 @@ GSM8K_DATASET_CONFIG = TestDatasetConfig(
 )
 
 ALPACA_DATASET_CONFIG = TestDatasetConfig(
-    dataset_name="alpaca",
+    dataset_name="yahma/alpaca-cleaned",
     hf_dataset_name=HF_DATASET_ALPACA,
     hf_dataset_config=None,
     prompt_template="Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n",
@@ -145,7 +145,6 @@ IMDB_DATASET_CONFIG = TestDatasetConfig(
     completion_template="{label}",
     max_seq_length=TEST_MAX_SEQ_LENGTH_SEQ_CLS,
 )
-
 
 # ============================================================================
 # Helper Functions
@@ -171,13 +170,12 @@ def create_master_config(
     # Determine auto_class_name and dataset_type based on task type
     if model_config.task_type == TaskType.CAUSAL_LM:
         auto_class_name = AutoClassName.CAUSAL_LM.value
-        dataset_type = DatasetType.SEQ_COMPLETION.value
+        dataset_type = DatasetType.SFT_DATASET.value
     elif model_config.task_type == TaskType.SEQ_CLS:
         auto_class_name = AutoClassName.SEQ_CLS.value
-        dataset_type = DatasetType.SEQ_CLASSIFICATION.value
+        dataset_type = DatasetType.SFT_DATASET.value
     else:
         raise ValueError(f"Unsupported task type: {model_config.task_type}")
-
     return MasterConfig(
         model=ModelConfig(
             model_name=model_config.model_name,
@@ -207,6 +205,8 @@ def create_master_config(
             train_batch_size=TEST_PER_DEVICE_BATCH_SIZE,
             eval_batch_size=TEST_PER_DEVICE_BATCH_SIZE,
             num_workers=1,
+            test_split="train",
+            config_name=dataset_config.hf_dataset_config,
         ),
         optimizers=OptimizerConfig(
             optimizer_name="AdamW",
@@ -233,8 +233,9 @@ def create_master_config(
 
 
 def load_and_prepare_dataset(
-    dataset_config: TestDatasetConfig,
+    dataset_config_test: TestDatasetConfig,
     output_dir: str,
+    pipeline: FineTuningPipeline,
 ) -> tuple[SFTDataset, Callable]:
     """
     Load and prepare a dataset for training.
@@ -246,41 +247,19 @@ def load_and_prepare_dataset(
     Returns:
         Tuple of (SFTDataset instance, formatting function)
     """
-    if dataset_config.hf_dataset_config:
-        hf_dataset = load_dataset(
-            dataset_config.hf_dataset_name,
-            dataset_config.hf_dataset_config,
-            split="train",
-        )
-    else:
-        hf_dataset = load_dataset(dataset_config.hf_dataset_name, split="train")
-
-    # Use small subset for testing
-    hf_subset = hf_dataset.select(range(TEST_DATASET_SUBSET_SIZE))
-
-    # Save to temporary JSON file
-    json_path = os.path.join(output_dir, f"{dataset_config.dataset_name}.json")
-    hf_subset.to_json(json_path)
-
-    # Create SFTDataset instance
-    dataset = SFTDataset(
-        dataset_name=dataset_config.dataset_name,
-        split="train",
-        json_file_path=json_path,
-        prompt_template=dataset_config.prompt_template,
-        completion_template=dataset_config.completion_template,
-    )
-
-    # Create formatting function
-    def formatting_func(example):
-        prompt = dataset._preprocess_sample(example)
-        return prompt["prompt"] + prompt["completion"]
-
-    return dataset, formatting_func
+    dataset_config = pipeline.config_manager.get_dataset_config()
+    dataset_config["prompt_template"] = dataset_config_test.prompt_template
+    dataset_config["completion_template"] = dataset_config_test.completion_template
+    dataset_config["config_name"] = dataset_config_test.hf_dataset_config
+    train_dataset, eval_dataset = pipeline._create_datasets()
+    subset_indices = list(range(0, TEST_DATASET_SUBSET_SIZE))
+    eval_dataset = Subset(eval_dataset, subset_indices)
+    train_dataset = Subset(train_dataset, subset_indices)
+    return train_dataset, eval_dataset
 
 
 def create_model_and_tokenizer(
-    model_config: ModelConfig,
+    pipeline: FineTuningPipeline,
 ) -> tuple[torch.nn.Module, any]:
     """
     Create model and tokenizer instances.
@@ -291,18 +270,8 @@ def create_model_and_tokenizer(
     Returns:
         Tuple of (model, tokenizer)
     """
-    # Adjust model config for faster testing
-    model_config_kwargs = {"num_hidden_layers": TEST_NUM_HIDDEN_LAYERS}
-
     # Create HFModel instance
-    hf_model = HFModel(
-        model_name=model_config.model_name,
-        auto_class_name=model_config.auto_class_name,
-        use_cache=model_config.use_cache,
-        attn_implementation=model_config.attn_implementation,
-        device_map=model_config.device_map,
-        **model_config_kwargs,
-    )
+    hf_model = pipeline._create_model()
 
     # Load model and tokenizer
     model = hf_model.load_model()
@@ -324,22 +293,17 @@ def create_peft_config(peft_config: Optional[PeftConfig]) -> Optional[LoraConfig
     if peft_config is None:
         return None
 
-    return LoraConfig(
-        r=peft_config.lora_r,
-        lora_alpha=peft_config.lora_alpha,
-        lora_dropout=peft_config.lora_dropout,
-        target_modules=peft_config.target_modules,
-        bias=peft_config.bias,
-    )
+    convert_peft_config_to_lora_config(peft_config)
 
 
 def create_sft_trainer(
     model: torch.nn.Module,
     tokenizer: any,
     dataset: SFTDataset,
-    formatting_func: Callable,
-    master_config: MasterConfig,
-    peft_config: Optional[LoraConfig],
+    optimizer_cls_and_kwargs: Tuple[Any, Dict[str, Any]],
+    training_args: TrainingConfig,
+    callbacks: List[Any],
+    pipeline: FineTuningPipeline,
 ):
     """
     Create SFT trainer using ComponentRegistry.
@@ -348,52 +312,22 @@ def create_sft_trainer(
         model: Model instance
         tokenizer: Tokenizer instance
         dataset: Dataset instance
-        formatting_func: Formatting function for dataset
-        master_config: Master configuration
-        peft_config: PEFT configuration
-
+        optimizer_cls_and_kwargs: Optimizer class and kwargs
+        training_args: Training arguments
+        callbacks: List of callback instances
+        pipeline: FineTuningPipeline instance
     Returns:
         Trainer instance
     """
-    # Get trainer type from training config
-    trainer_type = master_config.training.type
-
-    # Get trainer module from registry
-    trainer_module = registry.get_trainer_module(trainer_type)
-    if trainer_module is None:
-        raise ValueError(f"Trainer type '{trainer_type}' not found in registry")
-
-    # Get the trainer class and args class
-    trainer_cls = trainer_module["trainer_cls"]
-    args_cls = trainer_module["args_cls"]
-
-    # Create training arguments using the args class
-    training_config = master_config.training
-    sft_config = args_cls(
-        output_dir=training_config.output_dir,
-        max_length=master_config.dataset.max_seq_length,
-        per_device_train_batch_size=training_config.per_device_train_batch_size,
-        num_train_epochs=training_config.num_train_epochs,
-        max_steps=training_config.max_steps,
-        logging_steps=training_config.logging_steps,
-        save_strategy=training_config.save_strategy,
-        eval_strategy=training_config.eval_strategy,
-        seed=training_config.seed,
-        bf16=False,
-        fp16=True,
-        report_to="none",
-    )
-
-    # Create trainer instance
-    trainer = trainer_cls(
+    trainer = pipeline._create_trainer(
         model=model,
-        args=sft_config,
+        tokenizer=tokenizer,
         train_dataset=dataset.dataset,
-        processing_class=tokenizer,
-        peft_config=peft_config,
-        formatting_func=formatting_func,
+        eval_dataset=dataset.dataset,
+        optimizer_cls_and_kwargs=optimizer_cls_and_kwargs,
+        callbacks=callbacks,
+        training_config=training_args,
     )
-
     return trainer
 
 
@@ -499,36 +433,34 @@ class TestCausalLMIntegration:
             dataset_config=dataset_config,
             output_dir=self.test_output_dir,
         )
-
-        # Validate configuration
-        config_manager = ConfigManager(master_config)
-        config_manager.validate_config()
-
+        pipeline = FineTuningPipeline(master_config)
         # Load model and tokenizer
-        model_config = config_manager.get_model_config()
-        model, tokenizer = create_model_and_tokenizer(model_config)
-        logger.warning(f"Model loaded: {model_config.model_name}")
+        model_config = pipeline.config_manager.get_model_config()
+        # for fast testing
+        model_config["num_hidden_layers"] = TEST_NUM_HIDDEN_LAYERS
+        model, tokenizer = create_model_and_tokenizer(pipeline)
+        logger.warning(f"Model loaded: {model_config['model_name']}")
 
         # Load and prepare dataset
-        dataset, formatting_func = load_and_prepare_dataset(
-            dataset_config=dataset_config,
+        train_dataset, test_dataset = load_and_prepare_dataset(
+            dataset_config_test=dataset_config,
             output_dir=self.test_output_dir,
+            pipeline=pipeline,
         )
-        logger.warning(f"Dataset loaded: {len(dataset)} samples")
-
-        # Create PEFT config if needed
-        peft_config = None
-        if model_config.use_peft and model_config.peft_config:
-            peft_config = create_peft_config(model_config.peft_config)
-
+        logger.warning(f"Dataset loaded: {len(train_dataset)} samples")
+        callbacks = []
+        optimizer = pipeline._create_optimizer()
+        logger.warning(f"Optimizer created: {type(optimizer[0]).__name__}")
         # Create trainer using ComponentRegistry
+        training_config = pipeline._prepare_training_config()
         trainer = create_sft_trainer(
             model=model,
             tokenizer=tokenizer,
-            dataset=dataset,
-            formatting_func=formatting_func,
-            master_config=master_config,
-            peft_config=peft_config,
+            dataset=train_dataset,
+            optimizer_cls_and_kwargs=optimizer,
+            callbacks=callbacks,
+            training_args=training_config,
+            pipeline=pipeline,
         )
         logger.warning("Trainer instantiated")
 

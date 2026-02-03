@@ -27,6 +27,7 @@ class TaskType(str, Enum):
 class DatasetType(str, Enum):
     """Dataset types for training."""
 
+    SFT_DATASET = "sft_dataset"
     SEQ_COMPLETION = "seq_completion"
     SEQ_CLASSIFICATION = "seq_classification"
 
