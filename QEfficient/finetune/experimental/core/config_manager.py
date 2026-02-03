@@ -130,7 +130,7 @@ class DatasetConfig:
         metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     prompt_func: str = field(
-        default="QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt",
+        default=None,
         metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     completion_template: str = field(
@@ -284,7 +284,7 @@ class DdpConfig:
     """Arguments for Distributed Data Parallel (DDP) training."""
 
     ddp_backend: str = field(
-        default="qccl",
+        default=None,
         metadata={"help": "The DDP backend to use (e.g., 'nccl', 'gloo', 'qccl')."},
     )
     ddp_find_unused_parameters: bool = field(
