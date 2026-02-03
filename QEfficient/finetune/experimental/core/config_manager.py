@@ -134,7 +134,7 @@ class DatasetConfig:
         metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     completion_template: str = field(
-        default="{output}",
+        default=None,
         metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
     )
     completion_func: str = field(
