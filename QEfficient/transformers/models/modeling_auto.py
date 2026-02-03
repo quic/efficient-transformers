@@ -2623,7 +2623,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
-        if self.comp_ctx_lengths_prefill is not None:
+        if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
@@ -2994,13 +2994,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # --- Specializations ---
         specializations = []
-        if prefill_only is None or prefill_only or prefill_seq_len == 1:
+        if prefill_only:
             # TODO: we are handling decode-only case inside prefill call which is utterly mis-leading
             if self.comp_ctx_lengths_prefill is not None:
                 # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
                 for i in range(0, len(self.comp_ctx_lengths_prefill)):
-                    if prefill_only or enable_chunking:
-                        raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
+                    # if prefill_only or enable_chunking:
+                    #     raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
                     specializations.append(
                         self.build_prefill_specialization(
                             prefill_seq_len=prefill_seq_len,
@@ -3025,7 +3025,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 )
 
-        if (prefill_only is None or not prefill_only) and prefill_seq_len != 1:
+        if prefill_only is None or not prefill_only:
             if self.comp_ctx_lengths_decode is not None:
                 # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
                 for i in range(0, len(self.comp_ctx_lengths_decode)):

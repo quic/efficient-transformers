@@ -136,16 +136,17 @@ def validate_ccl_lists(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len):
         ccl_decode = [x if x >= constants.CCL_MIN_CTX_LEN else constants.CCL_MIN_CTX_LEN for x in ccl_decode]
 
     # Check the last element of ccl_prefill and ccl_decode to make sure it's not less than ctx_len
-    if ccl_prefill[-1] < ctx_len - 1:
+    if ccl_prefill and ccl_prefill[-1] < ctx_len - 1:
         ccl_prefill.append(ctx_len)
-    if ccl_decode[-1] < ctx_len:
+    if ccl_decode and ccl_decode[-1] < ctx_len:
         ccl_decode.append(ctx_len)
 
     if prefill_seq_len == 1:
         # both prefill and decode ccl can share the same specializations since prefill_seq_len=1. So, a sorted union of both lists can be used for both of them.
-        ccl_union_all = sorted(set([min(x, ctx_len) for x in ccl_prefill + ccl_decode]))
-        ccl_prefill = ccl_union_all
-        ccl_decode = ccl_union_all
+        if ccl_prefill and ccl_decode:
+            ccl_union_all = sorted(set([min(x, ctx_len) for x in ccl_prefill + ccl_decode]))
+            ccl_prefill = ccl_union_all
+            ccl_decode = ccl_union_all
     else:
         # Sort ccl_prefill and ccl_decode lists and make sure they don't have repeated elements and also are less than ctx_len
         if ccl_prefill:
@@ -154,16 +155,18 @@ def validate_ccl_lists(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len):
             ccl_decode = sorted({min(x, ctx_len) for x in (ccl_decode)})
 
         # Handling the common values between ccl_prefill and ccl_decode. The elements of these two lists should be unique (COMPILER)
-        tmp_prefill = ccl_prefill
-        ccl_prefill = []
-        for val in tmp_prefill:
-            while val in ccl_decode or val in ccl_prefill:
-                val -= 1
-                if val < 0:
-                    break  # Prevent negative values
-            if val >= 0:
-                ccl_prefill.append(val)
-        ccl_prefill.sort()
+        if ccl_decode and ccl_prefill:
+            tmp_prefill = ccl_prefill
+            ccl_prefill = []
+            for val in tmp_prefill:
+                while val in ccl_decode or val in ccl_prefill:
+                    # Suitable for TS16
+                    val -= 16
+                    if val < 0:
+                        break  # Prevent negative values
+                if val >= 0:
+                    ccl_prefill.append(val)
+            ccl_prefill.sort()
 
     return ccl_prefill, ccl_decode
 
@@ -193,10 +196,10 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
 
     # One of ccl lists is [] or None -> replace it with [ctx_len] -> CCL lists have to have a value when CCL is enabled
     # Condition #3, #4, #5, and #6
-    elif not ccl_prefill or not ccl_decode:
-        # Initial setting and will be checked with edge cases later
-        ccl_prefill = ccl_prefill if ccl_prefill else [ctx_len]
-        ccl_decode = ccl_decode if ccl_decode else [ctx_len]
+    # elif not ccl_prefill or not ccl_decode:
+    # Initial setting and will be checked with edge cases later
+    # ccl_prefill = ccl_prefill if ccl_prefill else [ctx_len]
+    # ccl_decode = ccl_decode if ccl_decode else [ctx_len]
 
     # Verifying ccl_prefill and ccl_decode values for all conditions
     ccl_prefill, ccl_decode = validate_ccl_lists(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len)
