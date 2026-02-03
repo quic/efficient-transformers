@@ -72,6 +72,11 @@ from QEfficient.utils.check_ccl_specializations import process_ccl_specializatio
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
+DTYPE_TO_STRING_MAP = {
+    torch.float16: "float16",
+    torch.bfloat16: "bfloat16",
+}
+
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -2659,7 +2664,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                    )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -2682,7 +2689,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                    )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -3059,7 +3068,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     specializations.append(decode_spec)
 
         # --- Compilation ---
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        needed_dtype = self.model.config.torch_dtype
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else DTYPE_TO_STRING_MAP[needed_dtype]
         custom_io = {}
 
         for suffix in ["", "_RetainedState"]:
@@ -3667,7 +3677,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         seq_len = constants.WAV2VEC2_MAX_SEQ_LEN
 
         example_inputs = {
-            "input_values": torch.zeros((bs, seq_len), dtype=torch.float32),
+            "input_values": torch.zeros((bs, seq_len), dtype=self.model.config.torch_dtype),
         }
 
         dynamic_axes = {"input_values": {0: "batch_size", 1: "seq_len"}}
