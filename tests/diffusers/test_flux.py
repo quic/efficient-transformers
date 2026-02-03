@@ -19,7 +19,6 @@ from QEfficient import QEffFluxPipeline
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ModulePerf,
     QEffPipelineOutput,
-    set_module_device_ids,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils._utils import load_json
@@ -74,9 +73,6 @@ def flux_pipeline_call_with_mad_validation(
 
     # Step 1: Load configuration, compile models
     pipeline.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
-
-    # Set device IDs for all modules based on configuration
-    set_module_device_ids(pipeline)
 
     # Validate all inputs
     pipeline.model.check_inputs(

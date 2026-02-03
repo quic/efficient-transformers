@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -28,7 +28,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
@@ -254,6 +254,7 @@ class QEffGemma3Attention(Gemma3Attention):
                 "position_ids": position_ids,
                 "is_sliding": self.is_sliding,
                 "sliding_window_pattern": self.config.sliding_window_pattern,
+                "sliding_window": past_key_value.sliding_window_len,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
@@ -311,10 +312,12 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+        # past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         if self.self_attn.is_sliding:
             attention_mask = _create_causal_mask(
-                position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window
+                position_ids=position_ids,
+                target_length=past_key_value.sliding_window_len,
+                sliding_window=past_key_value.sliding_window_len,
             )
         else:
             attention_mask = _create_causal_mask(
@@ -401,7 +404,9 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             # return_legacy_cache = True
-            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+            past_key_values = QEffSlidingWindowCache.from_legacy_cache(
+                config=self.config, past_key_values=past_key_values
+            )
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
@@ -589,6 +594,15 @@ class QEffGemma3EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.vision_tower
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+
     def forward(self, pixel_values):
         image_features = self.model.get_image_features(pixel_values=pixel_values)
         return image_features
@@ -601,6 +615,15 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
         self.config = self.model.config
         self.lm_head = self.model.lm_head
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffGemma3DecoderLayer}
 
     def forward(
         self,

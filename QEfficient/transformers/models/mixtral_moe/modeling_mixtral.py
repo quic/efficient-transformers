@@ -7,7 +7,7 @@
 
 """PyTorch Mixtral model."""
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -209,7 +209,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
 
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+        routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
 
@@ -225,9 +225,12 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
             expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            current_hidden_states = expert_layer(hidden_states) * (((routing_weights * expert_mask_tr).sum(1))[:, None])
+            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.float())[:, None]
+            current_hidden_states = expert_layer(hidden_states) * scale
             current_hidden_states = torch.where(
-                (routing_weights * expert_mask_tr).sum(1).to(torch.bool)[:, None],
+                torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(routing_weights.dtype)).to(torch.bool)[
+                    :, None
+                ],
                 current_hidden_states,
                 torch.tensor(0.0),
             )
@@ -413,6 +416,15 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model
     """
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QeffMixtralDecoderLayer}
 
     def forward(
         self,
