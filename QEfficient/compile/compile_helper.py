@@ -129,19 +129,22 @@ def compile_kv_model_on_cloud_ai_100(
         raise FileNotFoundError(f"Please use 'QEfficient.compile', as {specializations_json} file was not found")
     if not os.path.isfile(custom_io_path):
         raise FileNotFoundError(f"{custom_io_path} file was not found!")
+    aic_version = kwargs.get("aic_hw_version", constants.DEFAULT_AIC_HW_VERSION)
     command = [
         "/opt/qti-aic/exec/qaic-compile",
         f"-m={onnx_path}",
         "-aic-hw",
         f"-aic-hw-version={kwargs.pop('aic_hw_version', kwargs.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}",
         f"-network-specialization-config={specializations_json}",
-        "-convert-to-fp16",
+        # "-convert-to-fp16",
         "-retained-state",
         f"-aic-num-cores={num_cores}",
         f"-custom-IO-list-file={custom_io_path}",
         "-compile-only",
         f"-aic-binary-dir={aic_binary_dir}",
     ]
+    if aic_version == "ai100":
+        command.append("-convert-to-fp16")
     if mxfp6:
         command.append("-mxfp6-matmul")
     if mos > 0:
