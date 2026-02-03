@@ -74,6 +74,8 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -348,7 +350,7 @@
 <span class="sd">        _onnx_transforms (List): ONNX transformations applied after export</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="n">_pytorch_transforms</span> <span class="o">=</span> <span class="p">[</span><span class="n">CustomOpsTransform</span><span class="p">]</span>
+    <span class="n">_pytorch_transforms</span> <span class="o">=</span> <span class="p">[</span><span class="n">CustomOpsTransform</span><span class="p">,</span> <span class="n">AttentionTransform</span><span class="p">]</span>
     <span class="n">_onnx_transforms</span> <span class="o">=</span> <span class="p">[</span><span class="n">FP16ClipTransform</span><span class="p">,</span> <span class="n">SplitTensorsTransform</span><span class="p">]</span>
 
     <span class="nd">@property</span>
@@ -406,6 +408,40 @@
 
         <span class="k">return</span> <span class="n">example_inputs</span><span class="p">,</span> <span class="n">dynamic_axes</span><span class="p">,</span> <span class="n">output_names</span></div>
 
+<div class="viewcode-block" id="QEffVAE.get_video_onnx_params"><a class="viewcode-back" href="../../../../source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.get_video_onnx_params">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_video_onnx_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Dict</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Generate ONNX export configuration for the VAE decoder.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            latent_height (int): Height of latent representation (default: 32)</span>
+<span class="sd">            latent_width (int): Width of latent representation (default: 32)</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Tuple containing:</span>
+<span class="sd">                - example_inputs (Dict): Sample inputs for ONNX export</span>
+<span class="sd">                - dynamic_axes (Dict): Specification of dynamic dimensions</span>
+<span class="sd">                - output_names (List[str]): Names of model outputs</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">bs</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">ONNX_EXPORT_EXAMPLE_BATCH_SIZE</span>
+        <span class="n">latent_frames</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">WAN_ONNX_EXPORT_LATENT_FRAMES</span>
+        <span class="n">latent_height</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">WAN_ONNX_EXPORT_LATENT_HEIGHT_180P</span>
+        <span class="n">latent_width</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">WAN_ONNX_EXPORT_LATENT_WIDTH_180P</span>
+
+        <span class="c1"># VAE decoder takes latent representation as input</span>
+        <span class="n">example_inputs</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;latent_sample&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">bs</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="n">latent_frames</span><span class="p">,</span> <span class="n">latent_height</span><span class="p">,</span> <span class="n">latent_width</span><span class="p">),</span>
+            <span class="s2">&quot;return_dict&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="p">}</span>
+
+        <span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;sample&quot;</span><span class="p">]</span>
+
+        <span class="c1"># All dimensions except channels can be dynamic</span>
+        <span class="n">dynamic_axes</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;latent_sample&quot;</span><span class="p">:</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s2">&quot;batch_size&quot;</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="s2">&quot;latent_frames&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">:</span> <span class="s2">&quot;latent_height&quot;</span><span class="p">,</span> <span class="mi">4</span><span class="p">:</span> <span class="s2">&quot;latent_width&quot;</span><span class="p">},</span>
+        <span class="p">}</span>
+
+        <span class="k">return</span> <span class="n">example_inputs</span><span class="p">,</span> <span class="n">dynamic_axes</span><span class="p">,</span> <span class="n">output_names</span></div>
+
 <div class="viewcode-block" id="QEffVAE.export"><a class="viewcode-back" href="../../../../source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.export">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">inputs</span><span class="p">:</span> <span class="n">Dict</span><span class="p">,</span>
@@ -427,6 +463,10 @@
 <span class="sd">        Returns:</span>
 <span class="sd">            str: Path to the exported ONNX model</span>
 <span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;_use_default_values&quot;</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;_use_default_values&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">sort</span><span class="p">()</span>
+
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">example_inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
             <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
@@ -694,7 +734,7 @@
             <span class="s2">&quot;hidden_states&quot;</span><span class="p">:</span> <span class="p">{</span>
                 <span class="mi">0</span><span class="p">:</span> <span class="s2">&quot;batch_size&quot;</span><span class="p">,</span>
                 <span class="mi">1</span><span class="p">:</span> <span class="s2">&quot;num_channels&quot;</span><span class="p">,</span>
-                <span class="mi">2</span><span class="p">:</span> <span class="s2">&quot;num_frames&quot;</span><span class="p">,</span>
+                <span class="mi">2</span><span class="p">:</span> <span class="s2">&quot;latent_frames&quot;</span><span class="p">,</span>
                 <span class="mi">3</span><span class="p">:</span> <span class="s2">&quot;latent_height&quot;</span><span class="p">,</span>
                 <span class="mi">4</span><span class="p">:</span> <span class="s2">&quot;latent_width&quot;</span><span class="p">,</span>
             <span class="p">},</span>
@@ -781,9 +821,6 @@
       <dl>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
-        <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
-        <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
-
       </dl>
     </div>
 </div><script>

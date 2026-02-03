@@ -74,6 +74,8 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -180,7 +182,7 @@
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Compiles an ONNX Key-Value (KV) model for Cloud AI 100 hardware using `qaic-exec`.</span>
+<span class="sd">    Compiles an ONNX Key-Value (KV) model for Cloud AI 100 hardware using `qaic-compile`.</span>
 
 <span class="sd">    This function sets up and executes the Qualcomm AI 100 compiler with various options</span>
 <span class="sd">    to generate a QPC package.</span>
@@ -212,7 +214,7 @@
 <span class="sd">        List of device IDs for multi-device compilation (tensor slicing). If `len(device_group) &gt; 1`,</span>
 <span class="sd">        a multi-device partition configuration is generated. Default is None.</span>
 <span class="sd">    **kwargs :</span>
-<span class="sd">        Additional compiler options passed directly to `qaic-exec`. These are formatted as</span>
+<span class="sd">        Additional compiler options passed directly to `qaic-compile`. These are formatted as</span>
 <span class="sd">        `-key=value` or `-key` for boolean flags.</span>
 
 <span class="sd">    Returns</span>
@@ -227,7 +229,7 @@
 <span class="sd">    FileNotFoundError</span>
 <span class="sd">        If the `specializations_json` or `custom_io_path` files are not found.</span>
 <span class="sd">    RuntimeError</span>
-<span class="sd">        If the `qaic-exec` compilation process fails.</span>
+<span class="sd">        If the `qaic-compile` compilation process fails.</span>
 
 <span class="sd">    Warnings</span>
 <span class="sd">    --------</span>
@@ -249,7 +251,7 @@
     <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">custom_io_path</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">custom_io_path</span><span class="si">}</span><span class="s2"> file was not found!&quot;</span><span class="p">)</span>
     <span class="n">command</span> <span class="o">=</span> <span class="p">[</span>
-        <span class="s2">&quot;/opt/qti-aic/exec/qaic-exec&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;/opt/qti-aic/exec/qaic-compile&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-m=</span><span class="si">{</span><span class="n">onnx_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
         <span class="s2">&quot;-aic-hw&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-aic-hw-version=</span><span class="si">{</span><span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s1">&#39;aic_hw_version&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s1">&#39;aic-hw-version&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_AIC_HW_VERSION</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
@@ -495,9 +497,6 @@
       <dl>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
-        <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
-        <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
-
       </dl>
     </div>
 </div><script>

@@ -74,6 +74,8 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -159,7 +161,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.generation.vlm_generation</span><span class="w"> </span><span class="kn">import</span> <span class="n">VisionLanguageGeneration</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.transformers.modeling_utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH</span><span class="p">,</span>
-    <span class="n">SPECIALIZED_PREFILL_ONLY_MODEL_ARCH</span><span class="p">,</span>
+    <span class="n">SPECIALIZED_DISAGG_SERVING_MODEL_ARCH</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.transformers.models.pytorch_transforms</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">BlockedKVAttentionTransform</span><span class="p">,</span>
@@ -463,8 +465,8 @@
 
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">example_inputs</span><span class="p">,</span>
-            <span class="n">output_names</span><span class="p">,</span>
-            <span class="n">dynamic_axes</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">dynamic_axes</span><span class="o">=</span><span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;use_onnx_subfunctions&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">),</span>
         <span class="p">)</span></div>
@@ -486,7 +488,7 @@
 <span class="sd">        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.</span>
 
 <span class="sd">        This method generates a ``qpc`` package. If the model has not been exported yet,</span>
-<span class="sd">        this method will handle the export process. Additional arguments for the `qaic-exec`</span>
+<span class="sd">        this method will handle the export process. Additional arguments for the `qaic-compile`</span>
 <span class="sd">        compiler can be passed as keyword arguments.</span>
 
 <span class="sd">        Parameters</span>
@@ -512,7 +514,7 @@
 <span class="sd">            Additional compiler options for QAIC or QNN compilers. These are passed directly</span>
 <span class="sd">            to the underlying compilation command.</span>
 
-<span class="sd">            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:</span>
+<span class="sd">            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:</span>
 
 <span class="sd">            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.</span>
 <span class="sd">            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.</span>
@@ -742,8 +744,8 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">inputs</span><span class="p">,</span>
-            <span class="n">output_names</span><span class="p">,</span>
-            <span class="n">dynamic_axes</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">dynamic_axes</span><span class="o">=</span><span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
             <span class="n">offload_pt_weights</span><span class="o">=</span><span class="n">offload_pt_weights</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;use_onnx_subfunctions&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">),</span>
@@ -887,8 +889,8 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">inputs</span><span class="p">,</span>
-            <span class="n">output_names</span><span class="p">,</span>
-            <span class="n">dynamic_axes</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">dynamic_axes</span><span class="o">=</span><span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
             <span class="n">offload_pt_weights</span><span class="o">=</span><span class="n">offload_pt_weights</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;use_onnx_subfunctions&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">),</span>
@@ -1149,12 +1151,14 @@
             <span class="n">offload_pt_weights</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">use_onnx_subfunctions</span><span class="p">,</span>
         <span class="p">)</span>
+
+        <span class="n">offload_pt_weights</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;offload_pt_weights&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">lang_model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
             <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;lang&quot;</span><span class="p">],</span>
             <span class="n">output_names</span><span class="p">[</span><span class="s2">&quot;lang&quot;</span><span class="p">],</span>
             <span class="n">dynamic_axes</span><span class="p">[</span><span class="s2">&quot;lang&quot;</span><span class="p">],</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
-            <span class="n">offload_pt_weights</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">offload_pt_weights</span><span class="o">=</span><span class="n">offload_pt_weights</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">use_onnx_subfunctions</span><span class="p">,</span>
         <span class="p">)</span>
 
@@ -1310,7 +1314,6 @@
         <span class="n">compiler_options</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;continuous_batching&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
         <span class="n">compiler_options</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;kv_cache_batch_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
         <span class="n">compiler_options</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-
         <span class="k">if</span> <span class="ow">not</span> <span class="n">skip_vision</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">vision_model</span><span class="o">.</span><span class="n">_compile</span><span class="p">(</span>
                 <span class="n">compile_dir</span><span class="o">=</span><span class="n">compile_dir</span><span class="p">,</span>
@@ -1326,6 +1329,10 @@
                 <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
             <span class="p">)</span>
 
+        <span class="c1"># Custom NPI file options</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="s2">&quot;get_npi_file&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;node_precision_info&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">compiler_options</span><span class="p">:</span>
+            <span class="n">compiler_options</span><span class="p">[</span><span class="s2">&quot;node_precision_info&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_npi_file</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">name_or_path</span><span class="p">)</span>
+
         <span class="k">if</span> <span class="ow">not</span> <span class="n">skip_lang</span><span class="p">:</span>
             <span class="n">custom_io_lang</span> <span class="o">=</span> <span class="p">{}</span>
             <span class="c1"># Inputs</span>
@@ -1339,7 +1346,6 @@
             <span class="k">for</span> <span class="n">output_name</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">[</span><span class="s2">&quot;lang&quot;</span><span class="p">]:</span>
                 <span class="k">if</span> <span class="n">output_name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;_RetainedState&quot;</span><span class="p">):</span>
                     <span class="n">custom_io_lang</span><span class="p">[</span><span class="n">output_name</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;float16&quot;</span> <span class="k">if</span> <span class="s2">&quot;vision_embeds&quot;</span> <span class="ow">in</span> <span class="n">output_name</span> <span class="k">else</span> <span class="n">kv_cache_dtype</span>
-
             <span class="bp">self</span><span class="o">.</span><span class="n">lang_model</span><span class="o">.</span><span class="n">_compile</span><span class="p">(</span>
                 <span class="n">compile_dir</span><span class="o">=</span><span class="n">compile_dir</span><span class="p">,</span>
                 <span class="n">compile_only</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
@@ -1825,8 +1831,8 @@
         <span class="n">output_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_output_names</span><span class="p">()</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">inputs</span><span class="p">,</span>
-            <span class="n">output_names</span><span class="p">,</span>
-            <span class="n">dynamic_axes</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">dynamic_axes</span><span class="o">=</span><span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">use_onnx_subfunctions</span><span class="p">,</span>
         <span class="p">)</span>
@@ -1936,6 +1942,9 @@
             <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
         <span class="p">)</span>
 
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="s2">&quot;get_npi_file&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;node_precision_info&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">compiler_options</span><span class="p">:</span>
+            <span class="n">compiler_options</span><span class="p">[</span><span class="s2">&quot;node_precision_info&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_npi_file</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">name_or_path</span><span class="p">)</span>
+
         <span class="n">custom_io</span> <span class="o">=</span> <span class="p">{}</span>
         <span class="n">kv_cache_dtype</span> <span class="o">=</span> <span class="s2">&quot;mxint8&quot;</span> <span class="k">if</span> <span class="n">mxint8_kv_cache</span> <span class="k">else</span> <span class="s2">&quot;float16&quot;</span>
         <span class="c1"># inputs</span>
@@ -1954,7 +1963,6 @@
         <span class="n">compiler_options</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;continuous_batching&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
         <span class="n">compiler_options</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;kv_cache_batch_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
         <span class="n">compiler_options</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-
         <span class="bp">self</span><span class="o">.</span><span class="n">_compile</span><span class="p">(</span>
             <span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_path</span><span class="p">,</span>
             <span class="n">compile_dir</span><span class="o">=</span><span class="n">compile_dir</span><span class="p">,</span>
@@ -2641,15 +2649,18 @@
 
         <span class="n">num_q_blocks</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;NUM_Q_BLOCKS&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">num_q_blocks</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">block_size</span> <span class="o">=</span> <span class="mi">256</span>
-            <span class="k">if</span> <span class="n">prefill_seq_len</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">prefill_seq_len</span> <span class="o">%</span> <span class="n">block_size</span> <span class="o">!=</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">prefill_seq_len</span> <span class="o">&lt;</span> <span class="mi">128</span><span class="p">:</span>
+            <span class="k">if</span> <span class="p">(</span>
+                <span class="n">prefill_seq_len</span> <span class="ow">is</span> <span class="kc">None</span>
+                <span class="ow">or</span> <span class="n">prefill_seq_len</span> <span class="o">%</span> <span class="n">constants</span><span class="o">.</span><span class="n">GPT_OSS_PREFILL_Q_BLOCK_SIZE</span> <span class="o">!=</span> <span class="mi">0</span>
+                <span class="ow">or</span> <span class="n">prefill_seq_len</span> <span class="o">&lt;</span> <span class="n">constants</span><span class="o">.</span><span class="n">GPT_OSS_PREFILL_Q_BLOCK_SIZE</span>
+            <span class="p">):</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;When prefill_only=True, &#39;prefill_seq_len&#39; must be explicitly set and divisible by block_size=</span><span class="si">{</span><span class="n">block_size</span><span class="si">}</span><span class="s2">. &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;When prefill_only=True, &#39;prefill_seq_len&#39; must be explicitly set and divisible by block_size=</span><span class="si">{</span><span class="n">constants</span><span class="o">.</span><span class="n">GPT_OSS_PREFILL_Q_BLOCK_SIZE</span><span class="si">}</span><span class="s2">. &quot;</span>
                     <span class="sa">f</span><span class="s2">&quot;Or set `NUM_Q_BLOCKS` ENV variable&quot;</span>
                     <span class="sa">f</span><span class="s2">&quot;Received: prefill_seq_len=</span><span class="si">{</span><span class="n">prefill_seq_len</span><span class="si">}</span><span class="s2">&quot;</span>
                 <span class="p">)</span>
 
-            <span class="n">num_q_blocks</span> <span class="o">=</span> <span class="n">prefill_seq_len</span> <span class="o">//</span> <span class="n">block_size</span>
+            <span class="n">num_q_blocks</span> <span class="o">=</span> <span class="n">prefill_seq_len</span> <span class="o">//</span> <span class="n">constants</span><span class="o">.</span><span class="n">GPT_OSS_PREFILL_Q_BLOCK_SIZE</span>
             <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;Setting NUM_Q_BLOCKS=</span><span class="si">{</span><span class="n">num_q_blocks</span><span class="si">}</span><span class="s2"> used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_Q_BLOCKS` to override&quot;</span>
             <span class="p">)</span>
@@ -2707,31 +2718,28 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">fbs</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="k">else</span> <span class="n">bs</span><span class="p">,</span> <span class="n">seq_len</span>
         <span class="p">)</span>
         <span class="n">enable_chunking</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;enable_chunking&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">prefill_only</span><span class="p">:</span>
-            <span class="k">if</span> <span class="ow">not</span> <span class="n">enable_chunking</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-                    <span class="s2">&quot;Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!&quot;</span>
-                <span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">prefill</span><span class="p">(</span><span class="n">enable</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">enable_chunking</span><span class="o">=</span><span class="n">enable_chunking</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;retain_full_kv&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="n">seq_len</span> <span class="o">=</span> <span class="p">(</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">get_seq_len_and_handle_specialized_prefill_model</span><span class="p">(</span>
+
+        <span class="c1"># TODO: move this to a DA Serving utility class</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">model_type</span> <span class="ow">in</span> <span class="n">SPECIALIZED_DISAGG_SERVING_MODEL_ARCH</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">prefill_only</span><span class="p">:</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">enable_chunking</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Can&#39;t enable prefix-caching without chunking&quot;</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">prefill</span><span class="p">(</span><span class="n">enable</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">enable_chunking</span><span class="o">=</span><span class="n">enable_chunking</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;retain_full_kv&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="n">seq_len</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_seq_len_and_handle_specialized_prefill_model</span><span class="p">(</span>
                     <span class="n">prefill_seq_len</span><span class="o">=</span><span class="n">prefill_seq_len</span><span class="p">,</span> <span class="n">enable_chunking</span><span class="o">=</span><span class="n">enable_chunking</span>
                 <span class="p">)</span>
-                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">model_type</span> <span class="ow">in</span> <span class="n">SPECIALIZED_PREFILL_ONLY_MODEL_ARCH</span>
-                <span class="k">else</span> <span class="n">seq_len</span>
-            <span class="p">)</span>
-            <span class="n">kv_cache_shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">seq_len</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">sliding_window</span> <span class="k">if</span> <span class="n">enable_chunking</span> <span class="k">else</span> <span class="n">seq_len</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">prefill</span><span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">retain_full_kv</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;retain_full_kv&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;prefill_only&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;NUM_Q_BLOCKS&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;NUM_FFN_BLOCKS&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;ENABLE_OPT_SWA&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;chunking&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;retain_full_kv&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
-                <span class="n">kv_cache_shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">seq_len</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">sliding_window</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="p">[</span><span class="s2">&quot;retain_full_kv&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">kv_cache_shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">seq_len</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">sliding_window</span> <span class="k">if</span> <span class="n">enable_chunking</span> <span class="k">else</span> <span class="n">seq_len</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">prefill</span><span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">retain_full_kv</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;retain_full_kv&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;prefill_only&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;NUM_Q_BLOCKS&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;NUM_FFN_BLOCKS&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;ENABLE_OPT_SWA&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;chunking&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;retain_full_kv&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+                    <span class="n">kv_cache_shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">seq_len</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">sliding_window</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">hash_params</span><span class="p">[</span><span class="s2">&quot;retain_full_kv&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
 
         <span class="n">example_inputs</span> <span class="o">=</span> <span class="p">{</span>
             <span class="s2">&quot;input_ids&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">bs</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">),</span>
@@ -2821,8 +2829,8 @@
             <span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">example_inputs</span><span class="p">,</span>
-            <span class="n">output_names</span><span class="p">,</span>
-            <span class="n">dynamic_axes</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">dynamic_axes</span><span class="o">=</span><span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;use_onnx_subfunctions&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">),</span>
             <span class="n">offload_pt_weights</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;offload_pt_weights&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">),</span>
@@ -2978,7 +2986,7 @@
 <span class="sd">        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.</span>
 
 <span class="sd">        This method generates a ``qpc`` package. If the model has not been exported yet,</span>
-<span class="sd">        this method will handle the export process. Additional arguments for the `qaic-exec`</span>
+<span class="sd">        this method will handle the export process. Additional arguments for the `qaic-compile`</span>
 <span class="sd">        compiler can be passed as keyword arguments.</span>
 
 <span class="sd">        Parameters</span>
@@ -3018,7 +3026,7 @@
 <span class="sd">        **compiler_options : dict</span>
 <span class="sd">            Additional compiler options for QAIC or QNN compilers.</span>
 
-<span class="sd">            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:</span>
+<span class="sd">            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:</span>
 
 <span class="sd">            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.</span>
 <span class="sd">            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.</span>
@@ -3061,7 +3069,6 @@
         <span class="k">if</span> <span class="n">prefill_only</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">prefill_only</span><span class="p">:</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="ow">and</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;`full_batch_size` is required when `continuous_batching=True`.&quot;</span><span class="p">)</span>
-
         <span class="k">else</span><span class="p">:</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="ow">and</span> <span class="n">kv_cache_batch_size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
@@ -3416,8 +3423,8 @@
         <span class="n">output_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_output_names</span><span class="p">()</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">inputs</span><span class="p">,</span>
-            <span class="n">output_names</span><span class="p">,</span>
-            <span class="n">dynamic_axes</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">dynamic_axes</span><span class="o">=</span><span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;use_onnx_subfunctions&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">),</span>
         <span class="p">)</span></div>
@@ -3445,7 +3452,7 @@
 <span class="sd">        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.</span>
 
 <span class="sd">        This method generates a ``qpc`` package. If the model has not been exported yet,</span>
-<span class="sd">        this method will handle the export process. Additional arguments for the `qaic-exec`</span>
+<span class="sd">        this method will handle the export process. Additional arguments for the `qaic-compile`</span>
 <span class="sd">        compiler can be passed as keyword arguments.</span>
 
 <span class="sd">        Parameters</span>
@@ -3485,7 +3492,7 @@
 <span class="sd">        **compiler_options : dict</span>
 <span class="sd">            Additional compiler options for QAIC.</span>
 
-<span class="sd">            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:</span>
+<span class="sd">            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:</span>
 
 <span class="sd">            - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.</span>
 <span class="sd">            - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.</span>
@@ -3669,10 +3676,10 @@
 <span class="sd">    including Wav2Vec2 and other encoder-only speech models optimized for alignment-free transcription.</span>
 <span class="sd">    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.</span>
 
-<span class="sd">    ``Mandatory`` Args:</span>
-<span class="sd">        :model (nn.Module): PyTorch model</span>
-
+<span class="sd">    Example</span>
+<span class="sd">    -------</span>
 <span class="sd">    .. code-block:: python</span>
+
 <span class="sd">        import torchaudio</span>
 <span class="sd">        from QEfficient import QEFFAutoModelForCTC</span>
 <span class="sd">        from transformers import AutoProcessor</span>
@@ -3792,8 +3799,8 @@
 
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">example_inputs</span><span class="p">,</span>
-            <span class="n">output_names</span><span class="p">,</span>
-            <span class="n">dynamic_axes</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">dynamic_axes</span><span class="o">=</span><span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
             <span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;use_onnx_subfunctions&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">),</span>
         <span class="p">)</span></div>
@@ -3812,9 +3819,9 @@
         <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.</span>
+<span class="sd">        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-compile`` and generates a ``qpc`` package.</span>
 <span class="sd">        If the model has not been exported yet, this method will handle the export process.</span>
-<span class="sd">        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.</span>
+<span class="sd">        You can pass any other arguments that the `qaic-compile` takes as extra kwargs.</span>
 
 <span class="sd">        ``Optional`` Args:</span>
 <span class="sd">            :onnx_path (str, optional): Path to pre-exported onnx model.</span>
@@ -3827,7 +3834,7 @@
 <span class="sd">            :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False</span>
 <span class="sd">            :compiler_options (dict, optional): Additional compiler options.</span>
 
-<span class="sd">                For QAIC Compiler: Extra arguments for qaic-exec can be passed.</span>
+<span class="sd">                For QAIC Compiler: Extra arguments for qaic-compile can be passed.</span>
 <span class="sd">                    :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.</span>
 <span class="sd">                    :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``</span>
 
@@ -3983,9 +3990,6 @@
       <dl>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
-        <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
-        <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
-
       </dl>
     </div>
 </div><script>

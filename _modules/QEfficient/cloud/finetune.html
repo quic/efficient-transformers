@@ -74,6 +74,8 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -147,7 +149,7 @@
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.finetune.utils.dataset_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_dataloader</span><span class="p">,</span> <span class="n">get_longest_seq_length</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.finetune.utils.device_map</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_device_map</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.finetune.utils.helper</span><span class="w"> </span><span class="kn">import</span> <span class="n">Task_Mode</span><span class="p">,</span> <span class="n">get_world_size</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.finetune.utils.helper</span><span class="w"> </span><span class="kn">import</span> <span class="n">Task_Mode</span><span class="p">,</span> <span class="n">get_local_rank</span><span class="p">,</span> <span class="n">get_local_world_size</span><span class="p">,</span> <span class="n">get_rank</span><span class="p">,</span> <span class="n">get_world_size</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.finetune.utils.logging_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.finetune.utils.parser</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_finetune_parser</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.finetune.utils.train_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">print_model_size</span><span class="p">,</span> <span class="n">print_trainable_parameters</span><span class="p">,</span> <span class="n">train</span>
@@ -171,10 +173,8 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Initialize the distributed training environment if Distributed Data Parallel (DDP) is enabled.</span>
 
-<span class="sd">    This function configures the PyTorch distributed backend based on the device type</span>
-<span class="sd">    and initializes the process group. It also validates device availability and</span>
-<span class="sd">    pipeline parallelism settings.</span>
-
+<span class="sd">    Supports single-node and multi-node training launched via torchrun</span>
+<span class="sd">    (uses WORLD_SIZE, RANK, LOCAL_RANK, LOCAL_WORLD_SIZE environment variables).</span>
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    train_config : TrainConfig</span>
@@ -186,7 +186,6 @@
 <span class="sd">        If the number of required devices exceeds the total available devices.</span>
 <span class="sd">        If pipeline parallelism (`num_pp_stages`) is enabled but set to 1.</span>
 <span class="sd">        If DDP is enabled with a CPU device or with a specific device index (DDP requires device type only).</span>
-
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    - If `train_config.enable_ddp` is False, this function performs no action.</span>
@@ -194,24 +193,50 @@
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">torch_device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="n">train_config</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
-    <span class="n">num_available_devices</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">)</span><span class="o">.</span><span class="n">device_count</span><span class="p">()</span>
-    <span class="k">assert</span> <span class="n">get_world_size</span><span class="p">()</span> <span class="o">*</span> <span class="n">train_config</span><span class="o">.</span><span class="n">num_pp_stages</span> <span class="o">&lt;=</span> <span class="n">num_available_devices</span><span class="p">,</span> <span class="p">(</span>
-        <span class="s2">&quot;Number of devices required should be less than or equal to total available devices.&quot;</span>
-    <span class="p">)</span>
+
+    <span class="c1"># Validate pipeline parallelism settings</span>
     <span class="k">if</span> <span class="n">train_config</span><span class="o">.</span><span class="n">enable_pp</span><span class="p">:</span>
         <span class="k">assert</span> <span class="n">train_config</span><span class="o">.</span><span class="n">num_pp_stages</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">,</span> <span class="p">(</span>
             <span class="sa">f</span><span class="s2">&quot;For pipeline parallelism, num_pp_stages should be greater than 1. Got </span><span class="si">{</span><span class="n">train_config</span><span class="o">.</span><span class="n">num_pp_stages</span><span class="si">}</span><span class="s2">&quot;</span>
         <span class="p">)</span>
 
+    <span class="c1"># If DDP is disabled, nothing to initialize here</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">train_config</span><span class="o">.</span><span class="n">enable_ddp</span><span class="p">:</span>
+        <span class="c1"># Non-DDP path: allow explicit device index, just set it if present</span>
+        <span class="k">if</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span> <span class="o">!=</span> <span class="s2">&quot;cpu&quot;</span> <span class="ow">and</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">index</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">)</span><span class="o">.</span><span class="n">set_device</span><span class="p">(</span><span class="n">torch_device</span><span class="o">.</span><span class="n">index</span><span class="p">)</span>
         <span class="k">return</span>
 
+    <span class="c1"># ---- DDP path (single- or multi-node) ----</span>
     <span class="k">assert</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span> <span class="o">!=</span> <span class="s2">&quot;cpu&quot;</span><span class="p">,</span> <span class="s2">&quot;Host doesn&#39;t support single-node DDP&quot;</span>
-    <span class="k">assert</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">index</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;DDP requires only device type, got: </span><span class="si">{</span><span class="n">torch_device</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">assert</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">index</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;DDP requires only device type (qaic/cuda), got: </span><span class="si">{</span><span class="n">torch_device</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="c1"># Torchrun-provided env vars</span>
+    <span class="n">world_size</span> <span class="o">=</span> <span class="n">get_world_size</span><span class="p">()</span>
+    <span class="n">rank</span> <span class="o">=</span> <span class="n">get_rank</span><span class="p">()</span>
+    <span class="n">local_rank</span> <span class="o">=</span> <span class="n">get_local_rank</span><span class="p">()</span>
+    <span class="n">local_world_size</span> <span class="o">=</span> <span class="n">get_local_world_size</span><span class="p">()</span>
+
+    <span class="c1"># Per-node device validation</span>
+    <span class="n">num_available_devices</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">)</span><span class="o">.</span><span class="n">device_count</span><span class="p">()</span>
+    <span class="k">assert</span> <span class="n">local_world_size</span> <span class="o">*</span> <span class="n">train_config</span><span class="o">.</span><span class="n">num_pp_stages</span> <span class="o">&lt;=</span> <span class="n">num_available_devices</span><span class="p">,</span> <span class="p">(</span>
+        <span class="s2">&quot;Number of devices required per node (LOCAL_WORLD_SIZE * num_pp_stages) should be &lt;= locally available devices.&quot;</span>
+    <span class="p">)</span>
+
     <span class="n">dist_backend_map</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;cpu&quot;</span><span class="p">:</span> <span class="s2">&quot;gloo&quot;</span><span class="p">,</span> <span class="s2">&quot;qaic&quot;</span><span class="p">:</span> <span class="s2">&quot;qccl&quot;</span><span class="p">,</span> <span class="s2">&quot;cuda&quot;</span><span class="p">:</span> <span class="s2">&quot;gloo&quot;</span><span class="p">}</span>
-    <span class="n">dist</span><span class="o">.</span><span class="n">init_process_group</span><span class="p">(</span><span class="n">backend</span><span class="o">=</span><span class="n">dist_backend_map</span><span class="p">[</span><span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">])</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">init_process_group</span><span class="p">(</span><span class="n">dist_backend_map</span><span class="p">[</span><span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">],</span> <span class="n">rank</span><span class="o">=</span><span class="n">rank</span><span class="p">,</span> <span class="n">world_size</span><span class="o">=</span><span class="n">world_size</span><span class="p">)</span>
+
+    <span class="c1"># Set the base device index for this process on this node</span>
+    <span class="c1"># For PP: each process controls num_pp_stages devices starting from base_device_index</span>
+    <span class="n">base_device_index</span> <span class="o">=</span> <span class="n">local_rank</span> <span class="o">*</span> <span class="n">train_config</span><span class="o">.</span><span class="n">num_pp_stages</span>
     <span class="c1"># from here onward &quot;qaic/cuda&quot; will automatically map to &quot;qaic:i/cuda:i&quot;, where i = process rank</span>
-    <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">)</span><span class="o">.</span><span class="n">set_device</span><span class="p">(</span><span class="n">dist</span><span class="o">.</span><span class="n">get_rank</span><span class="p">()</span> <span class="o">*</span> <span class="n">train_config</span><span class="o">.</span><span class="n">num_pp_stages</span><span class="p">)</span>
+    <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">)</span><span class="o">.</span><span class="n">set_device</span><span class="p">(</span><span class="n">base_device_index</span><span class="p">)</span>
+
+    <span class="c1"># persist rank info in the config</span>
+    <span class="n">train_config</span><span class="o">.</span><span class="n">rank</span> <span class="o">=</span> <span class="n">rank</span>
+    <span class="n">train_config</span><span class="o">.</span><span class="n">local_rank</span> <span class="o">=</span> <span class="n">local_rank</span>
+    <span class="n">train_config</span><span class="o">.</span><span class="n">world_size</span> <span class="o">=</span> <span class="n">world_size</span>
+    <span class="n">train_config</span><span class="o">.</span><span class="n">local_world_size</span> <span class="o">=</span> <span class="n">local_world_size</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">setup_seeds</span><span class="p">(</span><span class="n">seed</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -481,14 +506,26 @@
         <span class="sa">f</span><span class="s2">&quot;passed context length is </span><span class="si">{</span><span class="n">train_config</span><span class="o">.</span><span class="n">context_length</span><span class="si">}</span><span class="s2"> and overall model&#39;s context length is &quot;</span>
         <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">max_position_embeddings</span><span class="si">}</span><span class="s2">&quot;</span>
     <span class="p">)</span>
+
+    <span class="c1"># Figure out the concrete device for this process</span>
+    <span class="n">torch_device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="n">train_config</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">train_config</span><span class="o">.</span><span class="n">enable_ddp</span> <span class="ow">and</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span> <span class="o">!=</span> <span class="s2">&quot;cpu&quot;</span><span class="p">:</span>
+        <span class="c1"># setup_distributed_training has already set the current device based on LOCAL_RANK</span>
+        <span class="n">current_idx</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">)</span><span class="o">.</span><span class="n">current_device</span><span class="p">()</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="n">torch_device</span><span class="o">.</span><span class="n">type</span><span class="p">,</span> <span class="n">current_idx</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">torch_device</span>
+
     <span class="k">if</span> <span class="ow">not</span> <span class="n">train_config</span><span class="o">.</span><span class="n">enable_pp</span><span class="p">:</span>
-        <span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">train_config</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
     <span class="n">optimizer</span> <span class="o">=</span> <span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span>
         <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span>
         <span class="n">lr</span><span class="o">=</span><span class="n">train_config</span><span class="o">.</span><span class="n">lr</span><span class="p">,</span>
         <span class="n">weight_decay</span><span class="o">=</span><span class="n">train_config</span><span class="o">.</span><span class="n">weight_decay</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">scheduler</span> <span class="o">=</span> <span class="n">StepLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">step_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="n">train_config</span><span class="o">.</span><span class="n">gamma</span><span class="p">)</span>
+
     <span class="k">if</span> <span class="n">train_config</span><span class="o">.</span><span class="n">enable_ddp</span><span class="p">:</span>
         <span class="n">ignore_names</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
         <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">():</span>
@@ -497,6 +534,7 @@
         <span class="c1"># Adding params in ignore list will enforce DDP to ignore them during synchronization,</span>
         <span class="c1"># which will further reduce the tensor exchange across devices.</span>
         <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">parallel</span><span class="o">.</span><span class="n">DistributedDataParallel</span><span class="o">.</span><span class="n">_set_params_and_buffers_to_ignore_for_model</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">ignore_names</span><span class="p">)</span>
+
         <span class="n">model</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">parallel</span><span class="o">.</span><span class="n">DistributedDataParallel</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
 
     <span class="n">results</span> <span class="o">=</span> <span class="n">train</span><span class="p">(</span>
@@ -550,9 +588,6 @@
       <dl>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
-        <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
-        <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
-
       </dl>
     </div>
 </div><script>

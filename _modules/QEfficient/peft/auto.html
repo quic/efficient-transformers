@@ -74,6 +74,8 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -408,8 +410,8 @@
 
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span>
             <span class="n">example_inputs</span><span class="p">,</span>
-            <span class="n">output_names</span><span class="p">,</span>
-            <span class="n">dynamic_axes</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">dynamic_axes</span><span class="o">=</span><span class="n">dynamic_axes</span><span class="p">,</span>
             <span class="n">do_constant_folding</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># To avoid merging adapter weights with base weights</span>
             <span class="n">onnx_transform_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;adapter_name&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">active_adapter</span><span class="p">},</span>
             <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">,</span>
@@ -449,7 +451,7 @@
 <span class="sd">            mxint8_kv_cache (bool, optional): Use MXINT8 compression for KV cache. Default is False.</span>
 <span class="sd">            **compiler_options: Additional compiler options for QAIC.</span>
 
-<span class="sd">                **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:</span>
+<span class="sd">                **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:</span>
 
 <span class="sd">                - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.</span>
 <span class="sd">                - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.</span>
@@ -651,9 +653,6 @@
       <dl>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
-        <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
-        <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
-
       </dl>
     </div>
 </div><script>

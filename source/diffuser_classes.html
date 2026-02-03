@@ -113,6 +113,8 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -481,6 +483,31 @@ pipelines for encoding images to latent space and decoding latents back to image
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.get_onnx_params">
 <span class="sig-name descname"><span class="pre">get_onnx_params</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">latent_height</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">latent_width</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/QEfficient/diffusers/pipelines/pipeline_module.html#QEffVAE.get_onnx_params"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.get_onnx_params" title="Permalink to this definition"></a></dt>
+<dd><p>Generate ONNX export configuration for the VAE decoder.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>latent_height</strong> (<em>int</em>) – Height of latent representation (default: 32)</p></li>
+<li><p><strong>latent_width</strong> (<em>int</em>) – Width of latent representation (default: 32)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p>example_inputs (Dict): Sample inputs for ONNX export</p></li>
+<li><p>dynamic_axes (Dict): Specification of dynamic dimensions</p></li>
+<li><p>output_names (List[str]): Names of model outputs</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Tuple containing</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.get_video_onnx_params">
+<span class="sig-name descname"><span class="pre">get_video_onnx_params</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/QEfficient/diffusers/pipelines/pipeline_module.html#QEffVAE.get_video_onnx_params"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.get_video_onnx_params" title="Permalink to this definition"></a></dt>
 <dd><p>Generate ONNX export configuration for the VAE decoder.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -1383,7 +1410,6 @@ and wraps all components with QEfficient-optimized versions for QAIC deployment.
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
-
       </dl>
     </div>
 </div><script>

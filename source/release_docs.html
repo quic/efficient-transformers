@@ -89,6 +89,8 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -140,21 +142,21 @@
 <hr class="docutils" />
 <section id="newly-supported-models">
 <h2>Newly Supported Models<a class="headerlink" href="#newly-supported-models" title="Permalink to this heading"></a></h2>
-<ul class="simple">
-<li><p><strong>Flux (Diffusers - Image Generation)</strong></p>
 <ul>
+<li><p><strong>Flux (Diffusers - Image Generation)</strong></p>
+<ul class="simple">
 <li><p>Diffusion-based image generation model</p></li>
 <li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/flux/flux_1_schnell.py">Flux.1 Schnell Example Script</a></p></li>
 </ul>
 </li>
 <li><p><strong>WAN (Diffusers - Video Generation)</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Wide-Area Network Lightning support for distributed inference</p></li>
 <li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_lightning.py">Wan_lightning Example Script</a></p></li>
 </ul>
 </li>
 <li><p><strong>Qwen2.5-VL (Vision Language)</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforimagetexttotext"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code></span></a></p></li>
 <li><p>Multi-image prompt support</p></li>
 <li><p>Continuous batching enabled</p></li>
@@ -162,13 +164,16 @@
 </ul>
 </li>
 <li><p><strong>Mistral 3.1 (24B)</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforimagetexttotext"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code></span></a></p></li>
 <li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/mistral_vision/mistral3_example.py">Mistral-3.1 Example Script</a></p></li>
 </ul>
 </li>
-<li><p><strong>GPT-OSS (Decode-Only)</strong></p>
-<ul>
+<li><p><strong>Disaggregated serving ready via vLLM GPT-OSS</strong></p>
+<blockquote>
+<div><p><strong>Note</strong>: If running GPT-OSS models natively via vLLM, PR-685 of the qefficient library is required for Python 3.12 compatibility.</p>
+</div></blockquote>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforcausallm"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEffAutoModelForCausalLM</span></code></span></a></p></li>
 <li><p>Separate prefill and decode compilation supported</p></li>
 <li><p>Disaggregated serving ready</p></li>
@@ -176,21 +181,21 @@
 </ul>
 </li>
 <li><p><strong>Olmo2</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforcausallm"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEffAutoModelForCausalLM</span></code></span></a></p></li>
 <li><p>Full CausalLM support with optimizations</p></li>
 <li><p>Refer to <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/text_generation">Text generation Example Scripts</a> for usage details.</p></li>
 </ul>
 </li>
 <li><p><strong>Molmo</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforcausallm"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEffAutoModelForCausalLM</span></code></span></a></p></li>
 <li><p>Multi-modal capabilities</p></li>
 <li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/molmo/molmo_example.py">Molmo Example Script</a></p></li>
 </ul>
 </li>
 <li><p><strong>InternVL 3.5 Series</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforcausallm"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEffAutoModelForCausalLM</span></code></span></a></p></li>
 <li><p>Full Vision-Language support</p></li>
 <li><p>Multi-image handling with continuous batching</p></li>
@@ -198,21 +203,21 @@
 </ul>
 </li>
 <li><p><strong>Qwen3-MOE (Mixture of Experts)</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforcausallm"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEffAutoModelForCausalLM</span></code></span></a></p></li>
 <li><p>Efficient expert routing</p></li>
 <li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/moe_inference.py">Qwen3-MOE Example Scripts</a></p></li>
 </ul>
 </li>
 <li><p><strong>Wav2Vec2 (Audio)</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforctc"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC</span></code></span></a></p></li>
 <li><p>Speech recognition and audio feature extraction</p></li>
 <li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/audio/wav2vec2_inference.py">Wav2Vec2 Example Scripts</a></p></li>
 </ul>
 </li>
 <li><p><strong>Multilingual-e5-Large (Embedding Model)</strong></p>
-<ul>
+<ul class="simple">
 <li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodel"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEffAutoModel</span></code></span></a></p></li>
 <li><p>Multilingual text embedding capabilities</p></li>
 <li><p>Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/embeddings">usage details</a> here.</p></li>
@@ -225,20 +230,31 @@
 <h2>Key Features &amp; Enhancements<a class="headerlink" href="#key-features-enhancements" title="Permalink to this heading"></a></h2>
 <ul class="simple">
 <li><p><strong>Framework Upgrades</strong>: Transformers <code class="docutils literal notranslate"><span class="pre">4.55</span></code>, PyTorch <code class="docutils literal notranslate"><span class="pre">2.7.0+cpu</span></code>, Torchvision <code class="docutils literal notranslate"><span class="pre">0.22.0+cpu</span></code></p></li>
-<li><p><strong>Python Support</strong>: Now requires Python <code class="docutils literal notranslate"><span class="pre">&gt;=3.9</span></code></p></li>
+<li><p><strong>Python Support</strong>:  Requires Python <code class="docutils literal notranslate"><span class="pre">3.10</span></code></p></li>
 <li><p><strong>ONNX Opset</strong>: Updated to version <code class="docutils literal notranslate"><span class="pre">17</span></code> for broader operator support</p></li>
 <li><p><strong>Advanced Attention</strong>: Flux blocking support, BlockedKV attention for CausalLM models</p></li>
 <li><p><strong>Diffusers Integration</strong>: Full support for diffuser-based image generation and video generation models</p></li>
 <li><p><strong>Compute-Context-Length (CCL) support</strong>: To optimize the throughput when handling very large context lengths</p></li>
 <li><p><strong>Prefill/Decode Separation</strong>: Support for GPT OSS using disaggregate serving models</p></li>
-<li><p><strong>Continuous Batching (VLMs)</strong>: Extended to Vision Language Models with multi-image handling</p></li>
-<li><p><strong>ONNX Sub-Functions</strong>: Feature enabling more efficient model compilation and execution on hardware</p></li>
+<li><p><strong>Continuous Batching (VLMs)</strong>: Extended to Vision Language Models with multi-image handling</p>
+<ul>
+<li><p>Supported models: Llava, Llava_Next, Gemma3, Mistral3, InternVL2_5, InternVL3_5, Molmo</p></li>
+</ul>
+</li>
+<li><p><strong>ONNX Sub-Functions</strong>: Feature enabling more efficient model compilation and execution on hardware. Users can enable the feature by passing <code class="docutils literal notranslate"><span class="pre">use_onnx_subfunctions=True</span></code> during export</p></li>
 <li><p><strong>Memory Profiling</strong>: Built-in utilities for optimization analysis</p></li>
 <li><p><strong>Extend on-device Sampling</strong>: Extend on-device sampling to dual QPC VLMs and Guided decoding for on-device sampling</p></li>
 <li><p><strong>ONNX transform, memory &amp; time optimizations</strong>: Optimizations for faster ONNX Transform and reduced memory footprint</p></li>
 <li><p><strong>Removed platform SDK dependency</strong>: Support QPC generation on systems without the Platform SDK</p></li>
 <li><p><strong>Example Scripts Revamp</strong>: New example scripts for audio, embeddings, and image-text-to-text tasks</p></li>
-<li><p><strong>Onboarding Guide</strong>: Simplified setup and deployment process for new users</p></li>
+<li><p><strong>Onboarding Guide</strong>:
+Simplified setup and deployment process for new users</p>
+<ul>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples/onboarding_guide/causallm">CausalLM Onboarding Guide</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples/onboarding_guide/customop">Custom ops</a></p></li>
+</ul>
+</li>
+<li><p>Organized examples into domain-specific subdirectories <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples">Examples</a></p></li>
 </ul>
 </section>
 <hr class="docutils" />
@@ -380,7 +396,6 @@
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
-
       </dl>
     </div>
 </div><script>
