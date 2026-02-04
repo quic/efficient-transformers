@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
 # Model configuration
 model:
   model_type: "hf"  # Hugging Face model
@@ -33,29 +32,15 @@ training:
   eval_strategy: "epoch"
   gradient_accumulation_steps: 1
   num_train_epochs: 1
-  max_steps: -1
-  save_strategy: "epoch"
-  torch_dtype: "fp16"
-
-  # Uncomment if running in Notebook
-  # disable_tqdm: True
-
-  # Uncomment and populate to resume training
-  # resume_from_checkpoint: "./abc"
-  # restore_callback_states_from_checkpoint: True
-
-  gradient_checkpointing: False
   torch_compile: True
 
 # Optimizer configuration
 optimizers:
   optimizer_name: "adamw"
   lr: 5e-5
-  weight_decay: 0.01
 
 scheduler:
   scheduler_name: "cosine"
-  warmup_steps: 100   # warmup_steps or warmup_ratio
 
 callbacks:
   early_stopping:
