@@ -38,6 +38,7 @@ def _setup_trace_module_map_patched(
                 onnx_attrs = getattr(module, attr_name)
                 delattr(module, attr_name)
             try:
+                onnx_attrs = {}
                 _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
             except Exception:
                 # Silently skip: scope-attribute tracking is best-effort and not required for export.
