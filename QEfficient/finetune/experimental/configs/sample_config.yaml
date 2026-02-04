@@ -23,13 +23,11 @@ dataset:
   dataset_name: "knkarthick/samsum"
   prompt_template: "Summarize the following conversation:\n\n{'dialogue'}\n\nSummary:\n"
   completion_template: "{summary}"
-  train_split: "train"
+
 
 # Training configuration
 training:
   type: "sft"
-  output_dir: "./training_results"
-  eval_strategy: "epoch"
   gradient_accumulation_steps: 1
   num_train_epochs: 1
   torch_compile: True
