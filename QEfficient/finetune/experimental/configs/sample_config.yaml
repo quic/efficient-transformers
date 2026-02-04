@@ -19,7 +19,7 @@ model:
 
 # Dataset configuration
 dataset:
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "knkarthick/samsum"
   prompt_template: "Summarize the following conversation:\n\n{'dialogue'}\n\nSummary:\n"
   completion_template: "{summary}"
