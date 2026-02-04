@@ -24,6 +24,15 @@ ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
 
+NPI_MAPPING = {
+    "google/gemma-3-4b-it": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
+    ),
+    "google/gemma-3-27b-it": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_27b.yaml"
+    ),
+}
+
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
@@ -88,7 +97,7 @@ FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
 SIZE_THRESHOLD_DEFAULT = 1024
 
 
-COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-compile-only"]
+COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 DEFAULT_AIC_HW_VERSION = "ai100"
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
@@ -177,6 +186,7 @@ CCL_START_MAP = {
 # Limitation in the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists during automatic lists generation process.
 CCL_MAX_ELEMENTS_LISTS = 5
 CCL_START_CTX_LEN = 4096
+CCL_MIN_CTX_LEN = 1024
 
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256

@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
+
 import torch
 import transformers
 from transformers import AutoConfig, AutoProcessor
@@ -12,16 +14,20 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # Change model_id to "google/gemma-3-27b-it" for 27B model
-model_id = "google/gemma-3-4b-it"
+model_id = "google/gemma-3-27b-it"
 
 config = AutoConfig.from_pretrained(model_id)
 
-# For Testing Purpose Only
-config.text_config.num_hidden_layers = 1
-config.vision_config.num_hidden_layers = 2
+# For Testing Purpose Only atleast 6 layers are required
+# config.text_config.num_hidden_layers = 6
+# config.vision_config.num_hidden_layers = 6
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
+
+# Path to Node Precision Info YAML file
+npi_file_path = "configs/fp32_nodes_gemma3_27b.yaml"
+npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
 
 # For single QPC: kv_offload=False, For dual QPC: kv_offload=True
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -44,7 +50,7 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        node_precision_info="examples/gemma3_example/fp32_nodes_gemma3_4b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
+        node_precision_info=npi_file_full_path,
     )
 
     messages = [
@@ -64,7 +70,7 @@ if skip_vision:
         return_tensors="pt",
     )
 
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=2000)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 
@@ -75,12 +81,12 @@ else:
         ctx_len=3072,
         img_size=896,
         num_cores=16,
-        num_devices=1,
+        num_devices=4,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mos=1,
-        node_precision_info="examples/gemma3_example/fp32_nodes_gemma3_4b.yaml",  # Change to fp32_nodes_gemma3_27b.yaml for 27B model
+        node_precision_info=npi_file_full_path,
     )
 
     ### IMAGE + TEXT ###
@@ -93,7 +99,7 @@ else:
             "role": "user",
             "content": [
                 {"type": "image", "url": image_url},
-                {"type": "text", "text": "Can you describe the image in detail."},
+                {"type": "text", "text": "Describe this image in details."},
             ],
         },
     ]
@@ -106,6 +112,6 @@ else:
         return_tensors="pt",
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=2000)
     print(tokenizer.batch_decode(output.generated_ids, skip_special_tokens=True))
     print(output)

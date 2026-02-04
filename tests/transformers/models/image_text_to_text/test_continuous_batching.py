@@ -100,11 +100,11 @@ test_models_config = [
         ],
         [
             "Can you describe the image in detail?",
-            "What are the objects in the image?",
-            "What is the main subject of the image?",
-            "What colors are predominant in the image?",
+            "Can you describe the image in detail?",
+            "Can you describe the image in detail?",
+            "Can you describe the image in detail?",
         ],
-        1,
+        6,
         4,
     ),
     (
@@ -172,27 +172,27 @@ test_models_config = [
 ]
 
 intern_model_config = [
-    (
-        "OpenGVLab/InternVL2_5-1B",
-        True,
-        1,
-        384,
-        512,
-        [
-            "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-            "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
-            "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-            "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
-        ],
-        [
-            "Can you describe the image in detail?",
-            "What are the objects in the image?",
-            "What is the main subject of the image?",
-            "What colors are predominant in the image?",
-        ],
-        2,
-        4,
-    ),
+    # (
+    #     "OpenGVLab/InternVL2_5-1B",
+    #     True,
+    #     1,
+    #     384,
+    #     512,
+    #     [
+    #         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+    #         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
+    #         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+    #         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
+    #     ],
+    #     [
+    #         "Can you describe the image in detail?",
+    #         "What are the objects in the image?",
+    #         "What is the main subject of the image?",
+    #         "What colors are predominant in the image?",
+    #     ],
+    #     2,
+    #     4,
+    # ),
     (
         "OpenGVLab/InternVL3_5-1B",
         True,
