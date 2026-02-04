@@ -17,7 +17,7 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "test_model_configs.json")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "causal_model_configs.json")
 
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)

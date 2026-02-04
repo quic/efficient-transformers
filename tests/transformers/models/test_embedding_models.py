@@ -20,7 +20,7 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import Constants, QnnConstants
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "test_model_configs.json")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "embedding_model_configs.json")
 
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
