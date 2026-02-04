@@ -1,13 +1,23 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import math
+import os
 from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers.cache_utils import Cache, DynamicCache, StaticCache
+from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 # Assuming these are imported from the original DeepseekV3 code
 # from transformers.models.deepseek_v3.modeling_deepseek_v3 import (
@@ -25,7 +35,6 @@ from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 #     logger,
 # )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 
 def rotate_half(x):
@@ -44,31 +53,19 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
     if n_rep == 1:
         return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(
-        batch, num_key_value_heads, n_rep, slen, head_dim
-    )
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
 # Inverse dim formula to find dim based on number of rotations
-def yarn_find_correction_dim(
-    num_rotations, dim, base=10000, max_position_embeddings=2048
-):
-    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (
-        2 * math.log(base)
-    )
+def yarn_find_correction_dim(num_rotations, dim, base=10000, max_position_embeddings=2048):
+    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
 
 
 # Find dim range bounds based on rotations
-def yarn_find_correction_range(
-    low_rot, high_rot, dim, base=10000, max_position_embeddings=2048
-):
-    low = math.floor(
-        yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
-    )
-    high = math.ceil(
-        yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
-    )
+def yarn_find_correction_range(low_rot, high_rot, dim, base=10000, max_position_embeddings=2048):
+    low = math.floor(yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings))
+    high = math.ceil(yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings))
     return max(low, 0), min(high, dim - 1)  # Clamp values just in case
 
 
@@ -94,9 +91,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
-        inv_freq = 1.0 / (
-            self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim)
-        )
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
         # Build here to make `torch.jit.trace` work.
@@ -109,9 +104,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
-        t = torch.arange(
-            self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype
-        )
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
 
         freqs = torch.outer(t, self.inv_freq.to(t.device))
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
@@ -128,7 +121,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
             self.cos_cached[:seq_len].to(dtype=x.dtype),
             self.sin_cached[:seq_len].to(dtype=x.dtype),
         )
-    
+
     # def forward(self, x, position_ids):
     #     seq_len = torch.max(position_ids) + 1
     #     if self.max_seq_len_cached is None or seq_len > self.max_seq_len_cached:
@@ -140,9 +133,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
     #     return cos.to(x.dtype), sin.to(x.dtype)
 
 
-
 class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
-
     def __init__(
         self,
         dim,
@@ -168,14 +159,9 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
         self.max_seq_len_cached = seq_len
         dim = self.dim
 
-        freq_extra = 1.0 / (
-            self.base
-            ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
-        )
+        freq_extra = 1.0 / (self.base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim))
         freq_inter = 1.0 / (
-            self.scaling_factor
-            * self.base
-            ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
+            self.scaling_factor * self.base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
         )
 
         low, high = yarn_find_correction_range(
@@ -185,9 +171,7 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
             self.base,
             self.original_max_position_embeddings,
         )
-        inv_freq_mask = 1.0 - yarn_linear_ramp_mask(low, high, dim // 2).to(
-            device=device, dtype=torch.float32
-        )
+        inv_freq_mask = 1.0 - yarn_linear_ramp_mask(low, high, dim // 2).to(device=device, dtype=torch.float32)
         inv_freq = freq_inter * (1 - inv_freq_mask) + freq_extra * inv_freq_mask
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
@@ -201,12 +185,8 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
         )
 
         emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer(
-            "cos_cached", (emb.cos() * _mscale).to(dtype), persistent=False
-        )
-        self.register_buffer(
-            "sin_cached", (emb.sin() * _mscale).to(dtype), persistent=False
-        )
+        self.register_buffer("cos_cached", (emb.cos() * _mscale).to(dtype), persistent=False)
+        self.register_buffer("sin_cached", (emb.sin() * _mscale).to(dtype), persistent=False)
 
 
 class QEffDeepseekV3RotaryEmbedding(nn.Module):
@@ -340,14 +320,21 @@ def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     return q_embed, k_embed
 
 
-
 class QEffDeepseekV3Attention(nn.Module):
     """Adapted DeepseekV3Attention with QEff logic, adding batch_index and proper position_ids handling."""
-    
-    def __qeff_init__(self,):
-        self.merged_q_weight = torch.matmul(self.q_a_proj.weight.T * self.q_a_layernorm.weight.unsqueeze(0), self.q_b_proj.weight.T)
-        self.merged_k_weight = torch.matmul(self.k_a_proj.weight.T * self.k_a_layernorm.weight.unsqueeze(0), self.k_b_proj.weight.T)
-        self.merged_v_weight = torch.matmul(self.v_a_proj.weight.T * self.v_a_layernorm.weight.unsqueeze(0), self.v_b_proj.weight.T)
+
+    def __qeff_init__(
+        self,
+    ):
+        self.merged_q_weight = torch.matmul(
+            self.q_a_proj.weight.T * self.q_a_layernorm.weight.unsqueeze(0), self.q_b_proj.weight.T
+        )
+        self.merged_k_weight = torch.matmul(
+            self.k_a_proj.weight.T * self.k_a_layernorm.weight.unsqueeze(0), self.k_b_proj.weight.T
+        )
+        self.merged_v_weight = torch.matmul(
+            self.v_a_proj.weight.T * self.v_a_layernorm.weight.unsqueeze(0), self.v_b_proj.weight.T
+        )
 
     def forward(
         self,
@@ -369,14 +356,10 @@ class QEffDeepseekV3Attention(nn.Module):
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
         q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
-        q_nope, q_pe = torch.split(
-            q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
-        )
+        q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
-        compressed_kv, k_pe = torch.split(
-            compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
-        )
+        compressed_kv, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
         k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
         kv = (
             self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
@@ -384,20 +367,17 @@ class QEffDeepseekV3Attention(nn.Module):
             .transpose(1, 2)
         )
 
-        k_nope, value_states = torch.split(
-            kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1
-        )
+        k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
 
-        
         # cos, sin = position_embeddings
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=32*1024)
-        
+        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+
         # q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         query_states = torch.cat((q_nope, q_pe), -1)
-        k_pe_new = k_pe.repeat(1,self.num_heads,1,1)
+        k_pe_new = k_pe.repeat(1, self.num_heads, 1, 1)
         key_states = torch.cat((k_nope, k_pe_new), -1)
 
         if past_key_value is not None:
@@ -427,13 +407,21 @@ class QEffDeepseekV3MoE(nn.Module):
         self,
     ):
         self.all_gate_proj = torch.nn.Parameter(
-            torch.cat([exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts], dim=0)
+            torch.cat(
+                [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
+                dim=0,
+            )
         )
         self.all_up_proj = torch.nn.Parameter(
-            torch.cat([exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0)
+            torch.cat(
+                [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
+            )
         )
         self.all_down_proj = torch.nn.Parameter(
-            torch.cat([exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts], dim=0)
+            torch.cat(
+                [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
+                dim=0,
+            )
         )
         self.act_fn = self.experts[0].act_fn
 
@@ -463,7 +451,7 @@ class QEffDeepseekV3MoE(nn.Module):
         final_hidden_states = torch.einsum("abc->ac", experts_out)
 
         return final_hidden_states.type(hidden_states.dtype)
-    
+
     def forward(self, hidden_states):
         residuals = hidden_states
         orig_shape = hidden_states.shape
@@ -501,7 +489,6 @@ class QEffDeepseekV3MoE(nn.Module):
 
 
 class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
-
     def __qeff_init__(
         self,
     ):
@@ -647,7 +634,7 @@ class QEffDeepseekV3Model(nn.Module):
         }
         self.rotary_emb = DeepseekV3YarnRotaryEmbedding(
             self.config.qk_rope_head_dim,
-            max_position_embeddings=32*1024,
+            max_position_embeddings=32 * 1024,
             scaling_factor=scaling_factor,
             base=self.config.rope_theta,
             **kwargs,
@@ -679,8 +666,6 @@ class QEffDeepseekV3Model(nn.Module):
 
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-
-
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -792,8 +777,9 @@ class QEffDeepseekV3Model(nn.Module):
             ):
                 return None
 
-        dtype, device = input_tensor.dtype, input_tensor.device
-        sequence_length = input_tensor.shape[1]
+        dtype = input_tensor.dtype
+        # dtype, device = input_tensor.dtype, input_tensor.device
+        # sequence_length = input_tensor.shape[1]
         if using_static_cache:
             target_length = past_key_values.get_max_cache_shape()
         else:

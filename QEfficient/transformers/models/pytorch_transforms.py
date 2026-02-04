@@ -220,7 +220,14 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
-from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3Attention, QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model, QEffPrefillOnlyDeepseekV3MoE
+from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import (
+    QEffDeepseekV3Attention,
+    QEffDeepseekV3DecoderLayer,
+    QEffDeepseekV3ForCausalLM,
+    QEffDeepseekV3Model,
+    QEffDeepseekV3MoE,
+    QEffPrefillOnlyDeepseekV3MoE,
+)
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -866,27 +873,22 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "RMSNorm": {
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
         },
-        "DeepseekV3ForCausalLM":{
+        "DeepseekV3ForCausalLM": {
             "forward": QEffDeepseekV3ForCausalLM.forward,
         },
-        "DeepseekV3Model":{
-            "forward": QEffDeepseekV3Model.forward,
-            "__qeff_init__": QEffDeepseekV3Model.__qeff_init__
-        },
+        "DeepseekV3Model": {"forward": QEffDeepseekV3Model.forward, "__qeff_init__": QEffDeepseekV3Model.__qeff_init__},
         "DeepseekV3DecoderLayer": {
             "forward": QEffDeepseekV3DecoderLayer.forward,
         },
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
             "moe": QEffDeepseekV3MoE.moe,
-            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__
+            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
-        "DeepseekV3Attention":{
-          "forward": QEffDeepseekV3Attention.forward  
-        },
-        "DeepseekV3RMSNorm":{
+        "DeepseekV3Attention": {"forward": QEffDeepseekV3Attention.forward},
+        "DeepseekV3RMSNorm": {
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
-        }
+        },
     }
 
 

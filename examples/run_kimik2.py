@@ -1,12 +1,24 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
-model = AutoModelForCausalLM.from_pretrained("/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd", torch_dtype=torch.float16, num_hidden_layers=2, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd",
+    torch_dtype=torch.float16,
+    num_hidden_layers=2,
+    trust_remote_code=True,
+)
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
-PREFILL_SEQ_LEN=128
+PREFILL_SEQ_LEN = 128
 
 
 prompts = "Once upon a time,"
@@ -39,7 +51,7 @@ inputs["past_key_values"] = past_key_values
 
 qeff_out = qeff_model.model(**inputs)
 
-#assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
+# assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
 breakpoint()
 qeff_model.model.to(torch.float32)

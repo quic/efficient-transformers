@@ -66,7 +66,6 @@ from QEfficient.transformers.quantizers.quant_transforms import (
 )
 from QEfficient.utils import (
     constants,
-    get_padding_shape_from_config,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
