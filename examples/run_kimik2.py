@@ -43,7 +43,7 @@ qeff_out = qeff_model.model(**inputs)
 
 breakpoint()
 qeff_model.model.to(torch.float32)
-qeff_model.compile(prefill_seq_len=1, ctx_len=1024, num_devices=2)
+qeff_model.compile(prefill_seq_len=1, ctx_len=1024, mxint8_kv_cache=True, num_devices=2)
 
 # qeff_model = QEFFAutoModelForCausalLM(model)
 # qeff_model.compile(

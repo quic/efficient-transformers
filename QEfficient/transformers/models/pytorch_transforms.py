@@ -878,7 +878,8 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe
+            "moe": QEffDeepseekV3MoE.moe,
+            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__
         },
         "DeepseekV3Attention":{
           "forward": QEffDeepseekV3Attention.forward  

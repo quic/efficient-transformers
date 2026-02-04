@@ -427,13 +427,13 @@ class QEffDeepseekV3MoE(nn.Module):
         self,
     ):
         self.all_gate_proj = torch.nn.Parameter(
-            torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+            torch.cat([exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts], dim=0)
         )
         self.all_up_proj = torch.nn.Parameter(
-            torch.cat([exp.up_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+            torch.cat([exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0)
         )
         self.all_down_proj = torch.nn.Parameter(
-            torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+            torch.cat([exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts], dim=0)
         )
         self.act_fn = self.experts[0].act_fn
 
@@ -443,9 +443,10 @@ class QEffDeepseekV3MoE(nn.Module):
         topk_indices: torch.Tensor,
         topk_weights: torch.Tensor,
     ):
-        bs, seq_len, _ = hidden_states.shape
+        seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
+
         gate_proj = self.all_gate_proj[topk_indices.flatten()]
         up_proj = self.all_up_proj[topk_indices.flatten()]
         down_proj = self.all_down_proj[topk_indices.flatten()]
@@ -456,7 +457,7 @@ class QEffDeepseekV3MoE(nn.Module):
         up_out = torch.bmm(expert_in, up_proj)
         hidden = self.act_fn(gate_out) * up_out
         expert_output = torch.bmm(hidden, down_proj)
-        experts_out = expert_output.view(bs * seq_len, self.gate.top_k, self.config.hidden_size)
+        experts_out = expert_output.view(seq_len, self.gate.top_k, self.config.hidden_size)
         experts_out = experts_out * topk_weights.unsqueeze(-1)
         # final_hidden_states = experts_out.sum(dim=1)
         final_hidden_states = torch.einsum("abc->ac", experts_out)
@@ -473,7 +474,7 @@ class QEffDeepseekV3MoE(nn.Module):
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
 
-    def moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
+    def old_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
         expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
         expert_mask = expert_mask.permute(2, 0, 1)
