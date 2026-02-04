@@ -20,9 +20,9 @@ model:
 # Dataset configuration
 dataset:
   dataset_type: "sft_dataset"
-  dataset_name: "knkarthick/samsum"
-  prompt_template: "Summarize the following conversation:\n\n{'dialogue'}\n\nSummary:\n"
-  completion_template: "{summary}"
+  dataset_name: "yahma/alpaca-cleaned"
+  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt"
+  completion_template: "{output}" 
 
 
 # Training configuration
