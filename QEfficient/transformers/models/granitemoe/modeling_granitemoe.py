@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Type, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -555,6 +555,7 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
     """
     Copied from GraniteForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/granite/modeling_granite.py
     """
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
