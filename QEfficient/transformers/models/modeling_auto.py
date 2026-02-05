@@ -2629,7 +2629,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
-        if self.comp_ctx_lengths_prefill is not None:
+        if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
@@ -2811,9 +2811,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             A dictionary defining the decode specialization, or None if it would be a duplicate
             of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
         """
-        if prefill_seq_len == 1 and not self.continuous_batching:
-            return None  # Avoid duplication with prefill
-
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
                 batch_size=full_batch_size if self.continuous_batching else batch_size,
@@ -2966,6 +2963,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # For supporting VLLM and Disaggregated with CCL
         elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            self.ccl_enabled = True
             if isinstance(comp_ctx_lengths_prefill, str):
                 import ast
 
@@ -3000,7 +2998,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # --- Specializations ---
         specializations = []
-        if prefill_only is None or prefill_only or prefill_seq_len == 1:
+        if (prefill_only is None or prefill_only) and prefill_seq_len != 1:
             # TODO: we are handling decode-only case inside prefill call which is utterly mis-leading
             if self.comp_ctx_lengths_prefill is not None:
                 # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
@@ -3060,6 +3058,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if decode_spec:
                     specializations.append(decode_spec)
 
+        print(f"specializations: {specializations}")
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
