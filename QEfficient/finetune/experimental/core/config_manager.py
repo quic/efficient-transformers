@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import yaml
 from transformers.hf_argparser import HfArgumentParser
+
 from QEfficient.finetune.experimental.core.logger import Logger
 
 logger = Logger(__name__)
@@ -776,4 +777,4 @@ class ConfigManager:
         """Allow direct access to config attributes."""
         if hasattr(self.config, name):
             return getattr(self.config, name)
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")  
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
