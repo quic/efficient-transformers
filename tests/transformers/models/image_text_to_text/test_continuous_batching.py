@@ -25,7 +25,6 @@ from transformers import (
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import get_num_layers_vlm
-from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import InternProcessor
 
@@ -41,6 +40,7 @@ with open(CONFIG_PATH, "r") as f:
 
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
+
 
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
@@ -83,7 +83,6 @@ def set_num_layers(config, n_layer=1):
     else:
         config.num_hidden_layers = n_layer
     return config
-
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
@@ -181,6 +180,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
                 images.append(image)
 
     # ========== Prepare Inputs and Get PyTorch HF Tokens ==========
+    generation_config = None
     if is_intern_model:
         generation_config = dict(max_new_tokens=max_gen_len, do_sample=False)
         generation_config["eos_token_id"] = tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
@@ -220,7 +220,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         # For same prompt
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list, generation_config)
+        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
+            model_hf, image_list, prompt_list, generation_config
+        )
 
     else:
         conversation = [
@@ -262,12 +264,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             continuous_batching=True,
         )
     else:
-       qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-        mmodel_name,
-        kv_offload=kv_offload,
-        config=config,
-        continuous_batching=True,
-    )
+        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_name,
+            kv_offload=kv_offload,
+            config=config,
+            continuous_batching=True,
+        )
 
     qeff_model.export()
 
@@ -306,10 +308,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
             f"Tokens don't match for prompt {i} between HF and QPC output for same prompts"
         )
-    
 
     # For different prompts
-    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries, generation_config)
+    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
+        model_hf, images, queries, generation_config=generation_config
+    )
 
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
@@ -355,7 +358,7 @@ def test_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_
     # Get img_size for standard models, None for InternVL and Molmo
     img_size = model_config_dict[model_name].get("img_size")
 
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         model_name=model_name,
         prompt_len=model_config_dict[model_name]["prompt_len"],
         ctx_len=model_config_dict[model_name]["ctx_len"],
@@ -368,4 +371,3 @@ def test_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_
         full_batch_size=model_config_dict[model_name]["full_batch_size"],
         kv_offload=kv_offload,
     )
-

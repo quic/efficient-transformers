@@ -43,7 +43,6 @@ test_mm_models = [model_config["model_name"] for model_config in multimodal_mode
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
 
 
-
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
         repo_id=model_config._name_or_path,
