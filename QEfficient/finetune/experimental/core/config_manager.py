@@ -407,7 +407,7 @@ class TrainingConfig:
         metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
     )
     torch_compile: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Whether to compile the model with `torch.compile`."},
     )
     include_num_input_tokens_seen: bool = field(
