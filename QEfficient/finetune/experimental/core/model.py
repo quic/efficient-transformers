@@ -1,8 +1,6 @@
 # -----------------------------------------------------------------------------
-#
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
-#
 # -----------------------------------------------------------------------------
 
 import warnings
@@ -11,7 +9,7 @@ from typing import Any, Dict, Optional, Type
 
 import torch.nn as nn
 import transformers
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient.finetune.experimental.core.component_registry import registry
 from QEfficient.finetune.experimental.core.logger import Logger
@@ -48,7 +46,10 @@ class BaseModel(nn.Module, ABC):
 
     def load_tokenizer(self) -> Any:
         """Override if the model exposes a tokenizer."""
-        warnings.warn(f"{type(self).__name__} does not provide a tokenizer.", category=UserWarning)
+        warnings.warn(
+            f"{type(self).__name__} does not provide a tokenizer.",
+            category=UserWarning,
+        )
         return None
 
     # Lazy accessors
@@ -82,7 +83,10 @@ class BaseModel(nn.Module, ABC):
 
 @registry.model("hf")
 class HFModel(BaseModel):
-    """HuggingFace-backed model with optional quantization."""
+    """
+    HuggingFace-backed model
+
+    """
 
     def __init__(
         self,
@@ -105,26 +109,43 @@ class HFModel(BaseModel):
             )
         return getattr(transformers, auto_class_name)
 
-    # def _build_quant_config(self) -> Optional[BitsAndBytesConfig]:
-    #     if not self.model_kwargs.get("load_in_4bit"):
-    #         return None
-    #     return BitsAndBytesConfig(
-    #         load_in_4bit=True,
-    #         bnb_4bit_quant_type=self.model_kwargs.get("bnb_4bit_quant_type", "nf4"),
-    #         bnb_4bit_compute_dtype=self.model_kwargs.get("bnb_4bit_compute_dtype", torch.float16),
-    #         bnb_4bit_use_double_quant=self.model_kwargs.get("bnb_4bit_use_double_quant", True),
-    #     )
-
     def configure_model_kwargs(self) -> Dict[str, Any]:
-        """Hook for subclasses to tweak HF `.from_pretrained` kwargs."""
+        """
+        Hook for subclasses to tweak HF `.from_pretrained` kwargs.
 
+        This method follows HuggingFace transformers patterns:
+        1. Supports passing `config` object directly (AutoConfig instance)
+        2. Supports passing config parameters directly as kwargs (e.g., num_hidden_layers=2)
+
+        Returns:
+            Dict[str, Any]: Cleaned kwargs ready for `from_pretrained()`
+        """
         extra = dict(self.model_kwargs)
-        # extra["quantization_config"] = self._build_quant_config()
+
+        # Handle config parameter (HuggingFace pattern: pass config object directly)
+        if "config" in extra:
+            config = extra["config"]
+            if not isinstance(config, AutoConfig):
+                raise TypeError(
+                    f"Expected AutoConfig instance, got {type(config)}. "
+                    "Pass an AutoConfig object or use config parameters as kwargs."
+                )
+            return extra
+
         return extra
 
     def load_model(self) -> nn.Module:
-        logger.log_rank_zero(f"Loading HuggingFace model '{self.model_name}' via {self.auto_class.__name__}")
+        """
+        Load HuggingFace model with config support.
 
+        Supports loading models with modified configurations following HuggingFace transformers patterns:
+        1. Direct config parameters (HuggingFace standard)
+        2. Config object (HuggingFace standard)
+
+        Returns:
+            nn.Module: The loaded model.
+        """
+        logger.log_rank_zero(f"Loading HuggingFace model '{self.model_name}' via {self.auto_class.__name__}")
         return self.auto_class.from_pretrained(
             self.model_name,
             **self.configure_model_kwargs(),
