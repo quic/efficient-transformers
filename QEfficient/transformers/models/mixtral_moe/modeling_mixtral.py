@@ -219,7 +219,14 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
 
         # One hot encode the selected experts to create an expert mask
         # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+        # selected_experts: [B, K]
+        B, K = selected_experts.shape
+        E = int(self.num_experts)
+        flat = selected_experts.reshape(-1)
+        mask = torch.zeros((B * K, E), dtype=torch.int64)
+        mask[torch.arange(B * K), flat] = 1
+        mask_bke = mask.view(B, K, E)
+        expert_mask = mask_bke.permute(2, 1, 0)
 
         # Loop over all available experts in the model and perform the computation on each expert
         for expert_idx in range(self.num_experts):
