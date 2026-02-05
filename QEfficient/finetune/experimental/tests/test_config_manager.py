@@ -4,13 +4,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
-
 from pathlib import Path
 
 import pytest
 
-from QEfficient.finetune.experimental.core.config_manager import ConfigManager, parse_arguments
+from QEfficient.finetune.experimental.core.config_manager import ConfigManager
 
 
 @pytest.fixture
@@ -19,15 +17,15 @@ def config_path() -> Path:
     return (here / "test_config.yaml").resolve()
 
 
+def test_default_config():
+    config_manager = ConfigManager()
+    assert config_manager is not None
+    assert config_manager.config is not None
+
+
 def test_config(config_path):
-    master_config = parse_arguments(args=[])
-    config_manager = ConfigManager(master_config)
+    config_manager = ConfigManager(config_path=config_path)
     assert isinstance(config_manager, ConfigManager)
-    config_manager.load_config(config_path)
-    try:
-        config_manager.validate_config()
-    except Exception as e:
-        pytest.fail(f"Config validation failed with error: {e}")
 
     # Test that all required fields are present
     missing = [
