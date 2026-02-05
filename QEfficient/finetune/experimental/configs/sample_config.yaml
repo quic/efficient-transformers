@@ -1,0 +1,47 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+# Model configuration
+model:
+  model_type: "hf"  # Hugging Face model
+  auto_class_name: "AutoModelForCausalLM"
+  model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
+  use_peft: true
+  peft_config:
+    lora_r: 8
+    lora_alpha: 16
+    target_modules: ["q_proj", "v_proj"]
+    task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
+    peft_type: "LORA"  # Options: LORA, IA3, etc.
+
+# Dataset configuration
+dataset:
+  dataset_type: "sft_dataset"
+  dataset_name: "yahma/alpaca-cleaned"
+  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt"
+  completion_template: "{output}" 
+
+
+# Training configuration
+training:
+  type: "sft"
+  gradient_accumulation_steps: 1
+  num_train_epochs: 1
+  torch_compile: True
+
+# Optimizer configuration
+optimizers:
+  optimizer_name: "adamw"
+  lr: 5e-5
+
+scheduler:
+  scheduler_name: "cosine"
+
+callbacks:
+  early_stopping:
+    early_stopping_patience: 3
+    early_stopping_threshold: 0.001
+  tensorboard:
