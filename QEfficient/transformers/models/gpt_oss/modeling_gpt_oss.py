@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from typing import Callable, Optional, Type, Union
+from typing import Callable, Optional, Union
 
 import torch
 from torch import nn
@@ -1209,16 +1209,6 @@ class QEffGptOssModel(GptOssModel):
 
 
 class QEffGptOssForCausalLM(GptOssForCausalLM):
-    def get_submodules_for_export(self) -> Type[nn.Module]:
-        """
-        Return the set of class used as the repeated layer across the model for subfunction extraction.
-
-        Notes:
-            This method should return the *class object* (not an instance).
-            Downstream code can use this to find/build subfunctions for repeated blocks.
-        """
-        return {QEffGptOssDecoderLayer}
-
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
