@@ -9,7 +9,8 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
-
+from diffusers.models.transformers.transformer_wan import WanTransformerBlock
+import copy
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.diffusers.models.pytorch_transforms import (
@@ -245,10 +246,15 @@ class QEffVAE(QEFFBaseModel):
             model (nn.Module): The pipeline model containing the VAE
             type (str): VAE operation type ("encoder" or "decoder")
         """
-        super().__init__(model)
-        self.model = model
+        # Create a deep copy to avoid shared model instances
+        model_copy = copy.deepcopy(model)
+        super().__init__(model_copy)
+        self.model = model_copy
+        self.model.type = type
 
         # To have different hashing for encoder/decoder
+        # Create a unique config copy for this instance
+        # self.model.config = copy.deepcopy(model.config) # not working - cant set attribute config
         self.model.config["type"] = type
 
     def get_onnx_params(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
@@ -278,6 +284,36 @@ class QEffVAE(QEFFBaseModel):
         # All dimensions except channels can be dynamic
         dynamic_axes = {
             "latent_sample": {0: "batch_size", 1: "channels", 2: "latent_height", 3: "latent_width"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def get_img_encoder_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
+        """
+        Generate ONNX export configuration for the VAE decoder.
+
+        Returns:
+            Tuple containing:
+                - example_inputs (Dict): Sample inputs for ONNX export
+                - dynamic_axes (Dict): Specification of dynamic dimensions
+                - output_names (List[str]): Names of model outputs
+        """
+        #TODO update for less resolution further
+        example_inputs = {
+            "image": torch.randn(
+                1, 3, 81, 208, 272 # batch_size, img channels, frames, height, width
+            ),
+            }
+        output_names = ["latents"]
+        # All dimensions except channels can be dynamic
+        dynamic_axes = {
+            "image": {
+                0: "batch_size",
+                # 1: "num_channels",
+                2: "frames",
+                3: "height",
+                4: "width",
+            },
         }
 
         return example_inputs, dynamic_axes, output_names
