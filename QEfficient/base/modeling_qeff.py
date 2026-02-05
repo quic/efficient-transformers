@@ -442,7 +442,6 @@ class QEFFBaseModel(ABC):
         mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
         mdp_ts_json = None
-        user_provided_load_config = False
 
         if mdp_dump_json_path:
             if mdp_ts_json_path:
@@ -507,9 +506,6 @@ class QEFFBaseModel(ABC):
             }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
-
-        if mdp_ts_json_path is not None:
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         # Write custom_io.yaml file
         if custom_io is not None:
