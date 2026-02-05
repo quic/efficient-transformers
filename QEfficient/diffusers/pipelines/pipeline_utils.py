@@ -132,6 +132,15 @@ def set_execute_params(cls):
                     f"Given qpc path: {module_obj.qpc_path} does not exist. Please provide correct path or keep null"
                 )
 
+def update_npi_path(cls, npi_full_path, module_name ):
+    """ To Set NPI for path in compilation config """
+    if module_name in cls.custom_config["modules"]:
+        # Check if the NPI file exists
+        if not os.path.exists(npi_full_path):
+            raise FileNotFoundError(f"Node precision info file not found: {npi_full_path}")
+
+        cls.custom_config["modules"][module_name]["compilation"]["node_precision_info"] = npi_full_path
+
 
 def compile_modules_parallel(
     modules: Dict[str, Any],
@@ -152,6 +161,7 @@ def compile_modules_parallel(
         """Prepare specializations and compile a single module."""
         specializations = config["modules"][module_name]["specializations"].copy()
         compile_kwargs = config["modules"][module_name]["compilation"]
+        # import pdb; pdb.set_trace()
 
         if (
             specialization_updates and module_name in specialization_updates
@@ -204,6 +214,8 @@ def compile_modules_sequential(
     for module_name, module_obj in tqdm(modules.items(), desc="Compiling modules", unit="module"):
         module_config = config["modules"]
         specializations = module_config[module_name]["specializations"].copy()
+        # import pdb; pdb.set_trace()
+
         compile_kwargs = module_config[module_name]["compilation"]
 
         if (
