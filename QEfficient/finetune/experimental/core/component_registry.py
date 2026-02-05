@@ -208,3 +208,31 @@ class ComponentFactory:
             raise ValueError(f"Unknown model: {model_type}. Available: {registry.list_models()}")
         model_instance = model_class.create(model_name, **kwargs)
         return model_instance
+
+    def create_trainer_config(name: str, **dependencies) -> tuple:
+        """
+        Create trainer configuration based on registered trainer modules.
+
+        Args:
+            name: Name of the trainer type
+            **dependencies: Any dependencies needed to configure the trainer
+
+        Returns:
+            tuple: (trainer_class, args_class, additional_kwargs)
+        """
+        config = registry.get_trainer_module(name)
+
+        # Process required kwargs based on available dependencies
+        additional_kwargs = {}
+        for kwarg, default in config["required_kwargs"].items():
+            if kwarg in dependencies:
+                additional_kwargs[kwarg] = dependencies[kwarg]
+            elif default != "REQUIRED":
+                additional_kwargs[kwarg] = default
+
+        # Check for missing required arguments
+        for kwarg, default in config["required_kwargs"].items():
+            if kwarg not in additional_kwargs and default == "REQUIRED":
+                raise ValueError(f"Required argument '{kwarg}' not provided for trainer '{name}'")
+
+        return config["trainer_cls"], config["args_cls"], additional_kwargs
