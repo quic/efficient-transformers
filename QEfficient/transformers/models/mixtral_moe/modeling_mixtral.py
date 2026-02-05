@@ -209,7 +209,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
 
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+        routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
 
@@ -219,15 +219,25 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
 
         # One hot encode the selected experts to create an expert mask
         # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+        # selected_experts: [B, K]
+        B, K = selected_experts.shape
+        E = int(self.num_experts)
+        flat = selected_experts.reshape(-1)
+        mask = torch.zeros((B * K, E), dtype=torch.int64)
+        mask[torch.arange(B * K), flat] = 1
+        mask_bke = mask.view(B, K, E)
+        expert_mask = mask_bke.permute(2, 1, 0)
 
         # Loop over all available experts in the model and perform the computation on each expert
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
             expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            current_hidden_states = expert_layer(hidden_states) * (((routing_weights * expert_mask_tr).sum(1))[:, None])
+            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.float())[:, None]
+            current_hidden_states = expert_layer(hidden_states) * scale
             current_hidden_states = torch.where(
-                (routing_weights * expert_mask_tr).sum(1).to(torch.bool)[:, None],
+                torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(routing_weights.dtype)).to(torch.bool)[
+                    :, None
+                ],
                 current_hidden_states,
                 torch.tensor(0.0),
             )

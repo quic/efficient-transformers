@@ -71,6 +71,7 @@ from transformers.models.granite.modeling_granite import (
 )
 from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
+    GraniteMoeDecoderLayer,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
@@ -286,6 +287,7 @@ from QEfficient.transformers.models.granite.modeling_granite import (
 )
 from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeAttention,
+    QEffGraniteMoeDecoderLayer,
     QEffGraniteMoeForCausalLM,
     QEffGraniteMoeModel,
     QEffGraniteMoeMoE,
@@ -562,6 +564,7 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
         GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
         GraniteMoeMoE: QEffGraniteMoeMoE,
+        GraniteMoeDecoderLayer: QEffGraniteMoeDecoderLayer,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
