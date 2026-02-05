@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Type, Union
 
 import torch
 from torch import nn
@@ -747,6 +747,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         sliding_mask=None,
@@ -779,6 +780,9 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
                     key_states, value_states, self.layer_idx, cache_kwargs
                 )
             else:
+                if comp_ctx_lengths is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
                 key_states, value_states = past_key_value.full_cache_update_chunked(
                     key_states, value_states, self.layer_idx, cache_kwargs
                 )
@@ -829,6 +833,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         sliding_mask=None,
@@ -1204,6 +1209,16 @@ class QEffGptOssModel(GptOssModel):
 
 
 class QEffGptOssForCausalLM(GptOssForCausalLM):
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffGptOssDecoderLayer}
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,

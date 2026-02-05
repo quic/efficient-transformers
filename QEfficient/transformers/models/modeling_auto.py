@@ -2623,7 +2623,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
-        if self.comp_ctx_lengths_prefill is not None:
+        if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
@@ -2960,6 +2960,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # For supporting VLLM and Disaggregated with CCL
         elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            self.ccl_enabled = True
             if isinstance(comp_ctx_lengths_prefill, str):
                 import ast
 
@@ -3026,13 +3027,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
 
         if (prefill_only is None or not prefill_only) and prefill_seq_len != 1:
-            if self.comp_ctx_lengths_decode is not None:
+            if self.comp_ctx_lengths_prefill is not None or self.comp_ctx_lengths_decode is not None:
+                ccl_lengths = self.comp_ctx_lengths_decode if prefill_seq_len == 1 else self.comp_ctx_lengths_prefill
                 # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
-                for i in range(0, len(self.comp_ctx_lengths_decode)):
+                for i in range(0, len(ccl_lengths)):
                     decode_spec = self.build_decode_specialization(
                         prefill_seq_len=prefill_seq_len,
                         ctx_len=ctx_len,
-                        comp_ctx_lengths=self.comp_ctx_lengths_decode[i],
+                        comp_ctx_lengths=ccl_lengths[i],
                         batch_size=batch_size,
                         kv_cache_batch_size=kv_cache_batch_size,
                         full_batch_size=full_batch_size,
