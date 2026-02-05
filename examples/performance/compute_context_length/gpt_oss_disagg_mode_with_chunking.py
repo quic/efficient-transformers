@@ -72,7 +72,7 @@ prefill_qpc_path = qeff_model1.compile(
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=4,
+    num_devices=1,
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
@@ -110,9 +110,6 @@ for i in range(num_chunks):
 
     ins = time.time()
     qpc_out = prefill_session.run(chunk_inputs)
-
-    print("Prefill output keys:", sorted(qpc_out.keys()))
-    print("Session output_names:", getattr(prefill_session, "output_names", None))
 
     print(f"time for this run={time.time() - ins}")
     for i in range(config.num_hidden_layers):
