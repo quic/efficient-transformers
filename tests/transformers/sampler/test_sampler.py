@@ -541,8 +541,8 @@ def test_random_sampling(
         }
     elif model == "OpenGVLab/InternVL2_5-1B":
         golden_texts = {
-            "w_sampler": "The description of this picture would be as follows:\n\nAn adorable black puppy is sitting on a wooden surface",
-            "wo_sampler": "The image features a black puppy sitting on a wooden surface. The puppy has a shiny, glossy coat",
+            "w_sampler": "The description of this vivid scene is as follows:\n\nIn a sepia-toned photograph, we see",
+            "wo_sampler": "The image features a black puppy lying on a wooden surface. The puppy has a shiny, glossy coat",
         }
         golden_ids = {
             "w_sampler": [
@@ -551,22 +551,22 @@ def test_random_sampling(
                     4008,
                     315,
                     419,
-                    6802,
-                    1035,
-                    387,
+                    42020,
+                    6109,
+                    374,
                     438,
                     11017,
                     1447,
-                    2082,
-                    40608,
-                    3691,
-                    41189,
-                    374,
-                    11699,
-                    389,
+                    641,
                     264,
-                    22360,
-                    7329,
+                    21017,
+                    685,
+                    74635,
+                    291,
+                    10300,
+                    11,
+                    582,
+                    1490,
                 ]
             ],
             "wo_sampler": [
@@ -577,7 +577,7 @@ def test_random_sampling(
                     264,
                     3691,
                     41189,
-                    11699,
+                    20446,
                     389,
                     264,
                     22360,

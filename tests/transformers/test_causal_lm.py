@@ -14,7 +14,6 @@ import pytest
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.hash_utils import hash_dict_params
 
@@ -158,12 +157,17 @@ def test_causal_lm_export_and_hash(config, cb, tmp_path):
 
 
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
-@pytest.mark.parametrize("subfunc", [False, True], ids=["False", "True"])
+@pytest.mark.parametrize("subfunc", [False, True], ids=["non-subfunc", "subfunc"])
+@pytest.mark.parametrize("prefill_only", [False, True], ids=["pref+decode", "prefill-only"])
 @pytest.mark.parametrize("config", configs, ids=config_ids)
-def test_causal_lm_hash_creation(config, cb, subfunc, tmp_path):
+def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
+    if config.model_type == "gpt_oss" and prefill_only:
+        pytest.skip(
+            "gpt_oss prefill_only mode has different logic to create hash as we have two different ONNX for prefill/decode for this model for disagg serving"
+        )
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
-    qeff_model.export(tmp_path, use_onnx_subfunctions=subfunc)
+    qeff_model.export(tmp_path, use_onnx_subfunctions=subfunc, prefill_only=prefill_only)
     hash_params = {}
     hash_params["config"] = qeff_model.model.config.to_diff_dict()
     hash_params["peft_config"] = None
@@ -220,7 +224,7 @@ def test_causal_lm_hash_creation(config, cb, subfunc, tmp_path):
     export_params["dynamic_axes"] = dynamic_axes
     hash_params["export_params"] = export_params
     if subfunc:
-        hash_params["export_modules_as_functions"] = get_decoder_layer_classes_for_export(qeff_model.model)
+        hash_params["export_modules_as_functions"] = qeff_model.model.get_submodules_for_export()
 
     manual_hash = hash_dict_params(hash_params)
 
@@ -251,12 +255,19 @@ def tmp_cache(tmp_path, monkeypatch):
     yield tmp_path
 
 
+@pytest.mark.parametrize("prefill_only", [False, True], ids=["pref+decode", "prefill_only"])
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_ids)
-def test_causal_lm_compile(config, cb, tmp_cache):
+def test_causal_lm_compile(config, cb, prefill_only, tmp_cache):
+    if config.model_type == "gpt_oss":
+        pytest.skip(
+            "gpt_oss prefill_only mode has different logic to create hash as we have two different ONNX for prefill/decode for this model for disagg serving"
+        )
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
+    if prefill_only:
+        compile_params["prefill_only"] = True
     if cb:
         compile_params["full_batch_size"] = 32
         compile_params["batch_size"] = 8

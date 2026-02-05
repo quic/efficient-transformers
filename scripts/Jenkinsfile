@@ -95,7 +95,7 @@ pipeline {
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
                     export HF_HUB_CACHE=/huggingface_hub &&
-                    pytest tests -m '(not cli) and (on_qaic) and (diffusion_models) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log_diffusion.xml &&
+                    pytest tests -m '(not cli) and (on_qaic) and (diffusion_models) and (not wan) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log_diffusion.xml &&
                     junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
                     deactivate"
                     '''

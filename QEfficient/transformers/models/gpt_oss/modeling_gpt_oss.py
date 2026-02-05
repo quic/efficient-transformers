@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Type, Union
 
 import torch
 from torch import nn
@@ -402,9 +402,8 @@ class QEffGptOssMLP(GptOssMLP):
 
         # Apply routing weights AFTER expert computation
         experts_out = experts_out * router_top_value.unsqueeze(-1)
-        experts_out = experts_out.sum(dim=1)
-
-        return experts_out, router_logits
+        experts_out_sum = torch.einsum("bnd->bd", experts_out)
+        return experts_out_sum, router_logits
 
     def optimized_moe_forward(self, hidden_states: torch.Tensor):
         B, S, H = hidden_states.shape
@@ -1205,6 +1204,16 @@ class QEffGptOssModel(GptOssModel):
 
 
 class QEffGptOssForCausalLM(GptOssForCausalLM):
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffGptOssDecoderLayer}
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
