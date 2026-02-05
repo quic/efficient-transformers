@@ -28,7 +28,7 @@ from QEfficient.finetune.utils.config_utils import (
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader, get_longest_seq_length
 from QEfficient.finetune.utils.device_map import get_device_map
-from QEfficient.finetune.utils.helper import Task_Mode, get_world_size
+from QEfficient.finetune.utils.helper import Task_Mode, get_local_rank, get_local_world_size, get_rank, get_world_size
 from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import print_model_size, print_trainable_parameters, train
@@ -52,10 +52,8 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     """
     Initialize the distributed training environment if Distributed Data Parallel (DDP) is enabled.
 
-    This function configures the PyTorch distributed backend based on the device type
-    and initializes the process group. It also validates device availability and
-    pipeline parallelism settings.
-
+    Supports single-node and multi-node training launched via torchrun
+    (uses WORLD_SIZE, RANK, LOCAL_RANK, LOCAL_WORLD_SIZE environment variables).
     Parameters
     ----------
     train_config : TrainConfig
@@ -67,7 +65,6 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
         If the number of required devices exceeds the total available devices.
         If pipeline parallelism (`num_pp_stages`) is enabled but set to 1.
         If DDP is enabled with a CPU device or with a specific device index (DDP requires device type only).
-
     Notes
     -----
     - If `train_config.enable_ddp` is False, this function performs no action.
@@ -75,24 +72,50 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     """
 
     torch_device = torch.device(train_config.device)
-    num_available_devices = getattr(torch, torch_device.type).device_count()
-    assert get_world_size() * train_config.num_pp_stages <= num_available_devices, (
-        "Number of devices required should be less than or equal to total available devices."
-    )
+
+    # Validate pipeline parallelism settings
     if train_config.enable_pp:
         assert train_config.num_pp_stages > 1, (
             f"For pipeline parallelism, num_pp_stages should be greater than 1. Got {train_config.num_pp_stages}"
         )
 
+    # If DDP is disabled, nothing to initialize here
     if not train_config.enable_ddp:
+        # Non-DDP path: allow explicit device index, just set it if present
+        if torch_device.type != "cpu" and torch_device.index is not None:
+            getattr(torch, torch_device.type).set_device(torch_device.index)
         return
 
+    # ---- DDP path (single- or multi-node) ----
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
-    assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
+    assert torch_device.index is None, f"DDP requires only device type (qaic/cuda), got: {torch_device}"
+
+    # Torchrun-provided env vars
+    world_size = get_world_size()
+    rank = get_rank()
+    local_rank = get_local_rank()
+    local_world_size = get_local_world_size()
+
+    # Per-node device validation
+    num_available_devices = getattr(torch, torch_device.type).device_count()
+    assert local_world_size * train_config.num_pp_stages <= num_available_devices, (
+        "Number of devices required per node (LOCAL_WORLD_SIZE * num_pp_stages) should be <= locally available devices."
+    )
+
     dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
-    dist.init_process_group(backend=dist_backend_map[torch_device.type])
+    dist.init_process_group(dist_backend_map[torch_device.type], rank=rank, world_size=world_size)
+
+    # Set the base device index for this process on this node
+    # For PP: each process controls num_pp_stages devices starting from base_device_index
+    base_device_index = local_rank * train_config.num_pp_stages
     # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
-    getattr(torch, torch_device.type).set_device(dist.get_rank() * train_config.num_pp_stages)
+    getattr(torch, torch_device.type).set_device(base_device_index)
+
+    # persist rank info in the config
+    train_config.rank = rank
+    train_config.local_rank = local_rank
+    train_config.world_size = world_size
+    train_config.local_world_size = local_world_size
 
 
 def setup_seeds(seed: int) -> None:
@@ -362,14 +385,26 @@ def main(**kwargs) -> None:
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
     )
+
+    # Figure out the concrete device for this process
+    torch_device = torch.device(train_config.device)
+    if train_config.enable_ddp and torch_device.type != "cpu":
+        # setup_distributed_training has already set the current device based on LOCAL_RANK
+        current_idx = getattr(torch, torch_device.type).current_device()
+        device = torch.device(torch_device.type, current_idx)
+    else:
+        device = torch_device
+
     if not train_config.enable_pp:
-        model.to(train_config.device)
+        model.to(device)
+
     optimizer = optim.AdamW(
         model.parameters(),
         lr=train_config.lr,
         weight_decay=train_config.weight_decay,
     )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
+
     if train_config.enable_ddp:
         ignore_names = set()
         for name, param in model.named_parameters():
@@ -378,6 +413,7 @@ def main(**kwargs) -> None:
         # Adding params in ignore list will enforce DDP to ignore them during synchronization,
         # which will further reduce the tensor exchange across devices.
         torch.nn.parallel.DistributedDataParallel._set_params_and_buffers_to_ignore_for_model(model, ignore_names)
+
         model = nn.parallel.DistributedDataParallel(model)
 
     results = train(

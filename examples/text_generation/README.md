@@ -24,6 +24,7 @@ Popular model families include:
 - GPT-2, GPT-J
 - Falcon, MPT, Phi-3
 - Granite, StarCoder
+- OLMo 2
 
 ---
 

@@ -60,24 +60,7 @@ pipeline.transformer.model.transformer_low.load_lora_adapter(
 pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 ```
 
-
-### 3. Compile API
-
-To compile the model for desired resolution:
-
-```python
-# Compile with custom configuration
-pipeline.compile(
-    compile_config="examples/diffusers/wan/wan_config.json",
-    parallel=True,
-    height=480,
-    width=832,
-    num_frames=81,
-    use_onnx_subfunctions=False,
-)
-```
-
-### 4. Generate video
+### 3. Generate video
 ```python
 output = pipeline(
     prompt="A cat playing in a sunny garden",
@@ -109,21 +92,48 @@ python wan_lightning.py
 
 ```python
 # Reduce to 2 layers for faster inference
-pipeline.transformer.model.transformer_high.config.num_layers = 2
-pipeline.transformer.model.transformer_low.config.num_layers = 2
+pipeline.transformer.model.transformer_high.config['num_layers'] = 2
+pipeline.transformer.model.transformer_low.config['num_layers']= 2
 
 original_blocks = pipeline.transformer.model.transformer_high.blocks
 org_blocks = pipeline.transformer.model.transformer_low.blocks
 
 pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
-    [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config.num_layers)]
+    [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config['num_layers'])]
 )
 pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
-    [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config.num_layers)]
+    [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config.config['num_layers'])]
 )
 ```
 
-### 2. To Run with Blocking
+
+### 2. Compile API
+
+To compile the model for desired resolution:
+
+```python
+# Compile with custom configuration
+pipeline.compile(
+    compile_config="examples/diffusers/wan/wan_config.json",
+    parallel=True,
+    height=480,
+    width=832,
+    num_frames=81,
+    use_onnx_subfunctions=False,
+)
+```
+
+### 3. Skip export, compilation if pre-compiled qpc exist
+Update custom config with qpc in execute of corresponding module.
+```
+"execute":
+          {
+           "device_ids": null,
+           "qpc_path" : "<QPC_PATH>"
+          }
+```
+
+### 4. To Run with Blocking
 
 Use environment variables to enable attention blocking:
 
@@ -161,26 +171,18 @@ The configuration includes dual specializations for WAN's high and low noise mod
   "transformer": {
     "specializations":[
         {
-            "batch_size":"1",
-            "cl":"5040",
-            "latent_height":"24",
-            "latent_width":"40",
-            "model_type":"1",
-            "num_channels":"16",
-            "num_frames":"21",
-            "sequence_length":"512",
-            "steps":"1"
+            "batch_size": "1",
+            "num_channels": "16",
+            "steps": "1",
+            "sequence_length": "512",
+            "model_type": "1"
         },
         {
-            "batch_size":"1",
-            "cl":"5040",
-            "latent_height":"24",
-            "latent_width":"40",
-            "model_type":"2",
-            "num_channels":"16",
-            "num_frames":"21",
-            "sequence_length":"512",
-            "steps":"1"
+            "batch_size": "1",
+            "num_channels": "16",
+            "steps": "1",
+            "sequence_length": "512",
+            "model_type": "2"
         }
     ]
 }
@@ -192,9 +194,6 @@ The configuration includes dual specializations for WAN's high and low noise mod
 #### Specializations
 - `batch_size`: Batch size for inference
 - `num_channels`: Number of latent channels (16 for WAN)
-- `num_frames`: Number of latent frames (21 for 81 input frames)
-- `latent_height`/`latent_width`: Latent space dimensions
-- `cl`: Compressed latent dimension for transformer
 - `sequence_length` : Sequence length of text encoder 512
 - `model_type`: 1 for high noise model, 2 for low noise model
 
@@ -205,6 +204,10 @@ The configuration includes dual specializations for WAN's high and low noise mod
 - `aic_num_cores`: Number of AI cores to use (16 recommended)
 - `mos`: Degree of weight splitting done across cores (1 is recommended)
 - `mdts_mos`: Degree of weight splitting done across multi-device tensor slices (1 is recommended)
+
+#### Execute
+- `device_ids`: List of device IDs to use (null for auto-selection)
+- `qpc_path` : compiled qpc path, to skip recompilation (null by default)
 
 ## Key Parameters
 
@@ -220,7 +223,6 @@ The configuration includes dual specializations for WAN's high and low noise mod
 - **`generator`** (torch.Generator): Random seed for reproducibility
 - **`parallel_compile`** (bool): Enable parallel compilation of modules
 - **`use_onnx_subfunctions`** (bool): Enable ONNX modular export
-
 
 ## Output
 

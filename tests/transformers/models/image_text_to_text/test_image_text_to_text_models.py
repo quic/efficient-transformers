@@ -99,7 +99,7 @@ test_models_config = [
         896,
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
         "Can you describe the image in detail.",
-        1,
+        6,
     ),
     (
         "google/gemma-3-4b-it",
@@ -110,7 +110,7 @@ test_models_config = [
         896,
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
         "Can you describe the image in detail.",
-        1,
+        6,
     ),
     (
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
