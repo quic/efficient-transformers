@@ -3309,7 +3309,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if decode_spec:
                     specializations.append(decode_spec)
 
-        print(f"specializations: {specializations}")
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
