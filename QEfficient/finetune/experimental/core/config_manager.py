@@ -18,8 +18,6 @@ from typing import Any, Dict, List, Optional, Union
 
 import yaml
 from transformers.hf_argparser import HfArgumentParser
-
-from QEfficient.finetune.experimental.core.component_registry import registry
 from QEfficient.finetune.experimental.core.logger import Logger
 
 logger = Logger(__name__)
