@@ -10,7 +10,6 @@ model:
   model_type: "hf"  
   auto_class_name: "AutoModelForCausalLM"
   model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
-  load_in_4bit: false
   use_peft: true
   peft_config:
     lora_r: 8
@@ -28,16 +27,13 @@ dataset:
   # dataset_name: "Arthur-LAGACHERIE/very-smollm-corpus-0.5M"
   dataset_name: "knkarthick/samsum"
   train_split: "train"
-  max_seq_length: 512
+  max_seq_length: 1024
   split_ratio: 0.8  # Ratio for train/test split, used when only train_split is provided
   test_split: "test"
   group_by_length: True
   num_workers: 4
-  dataloader_pin_memory: True
-  dataloader_persistent_workers: True
-  dataloader_prefetch_factor: 1
-  dataloader_drop_last: False
-
+  torch_dtype: "fp16"
+ 
 # Training configuration
 training:
   type: "sft"
@@ -46,25 +42,21 @@ training:
   seed: 42
   device: "qaic"
   do_eval: True
+  torch_dtype: "fp16"
   eval_strategy: "epoch"
   eval_steps: 100
-
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 1
   num_train_epochs: 1
   max_steps: -1
-
   log_level: "info"
   log_on_each_node: True
   logging_strategy: "steps"
   logging_steps: 10
-
   save_strategy: "epoch"
   save_total_limit: 5
   metric_for_best_model: "eval_loss"
-
-  dtype: "fp16"
   completion_only_loss: True
   report_to: "trackio"
 
