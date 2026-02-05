@@ -7,6 +7,7 @@
 
 import torch
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
+    AutoencoderKLWan,
     WanDecoder3d,
     WanEncoder3d,
     WanResample,
@@ -15,8 +16,6 @@ from diffusers.models.autoencoders.autoencoder_kl_wan import (
 )
 
 CACHE_T = 2
-
-modes = []
 
 # Used max(0, x.shape[2] - CACHE_T) instead of CACHE_T because x.shape[2] is either 1 or 4,
 # and CACHE_T = 2. This ensures the value never goes negative
@@ -58,7 +57,6 @@ class QEffWanResample(WanResample):
                     x = x.reshape(b, c, t * 2, h, w)
         t = x.shape[2]
         x = x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
-        modes.append(self.mode)
         x = self.resample(x)
         x = x.view(b, t, x.size(1), x.size(2), x.size(3)).permute(0, 2, 1, 3, 4)
 
@@ -198,3 +196,56 @@ class QEffWanDecoder3d(WanDecoder3d):
         else:
             x = self.conv_out(x)
         return x
+
+class QEffAutoencoderKLWan(AutoencoderKLWan):
+    def encode(
+        self, x: torch.Tensor
+    ) -> torch.Tensor:
+        r"""
+        Encode a batch of images into latents.
+
+        Args:
+            x (`torch.Tensor`): Input batch of images.
+        """
+        # import pdb; pdb.set_trace()
+        if self.use_slicing and x.shape[0] > 1:
+            encoded_slices = [self._encode(x_slice) for x_slice in x.split(1)]
+            h = torch.cat(encoded_slices)
+        else:
+            h = self._encode(x)
+        return h
+
+    #TODO clean up
+    # def decode(self, z: torch.Tensor, return_dict: bool = True) -> Union[DecoderOutput, torch.Tensor]:
+    #     r"""
+    #     Decode a batch of images.
+
+    #     Args:
+    #         z (`torch.Tensor`): Input batch of latent vectors.
+    #         return_dict (`bool`, *optional*, defaults to `True`):
+    #             Whether to return a [`~models.vae.DecoderOutput`] instead of a plain tuple.
+
+    #     Returns:
+    #         [`~models.vae.DecoderOutput`] or `tuple`:
+    #             If return_dict is True, a [`~models.vae.DecoderOutput`] is returned, otherwise a plain `tuple` is
+    #             returned.
+    #     """
+    #     if self.use_slicing and z.shape[0] > 1:
+    #         decoded_slices = [self._decode(z_slice).sample for z_slice in z.split(1)]
+    #         decoded = torch.cat(decoded_slices)
+    #     else:
+    #         decoded = self._decode(z).sample
+
+    #     if not return_dict:
+    #         return (decoded,)
+    #     return DecoderOutput(sample=decoded)
+    
+
+    # def forward(self, image: torch.Tensor= None, latents:torch.Tensor=None, return_dict: bool=True):
+    #     import pdb; pdb.set_trace()
+    #     if self.type == "encoder":
+    #         return self.encode(image)
+    #     elif self.type == "decoder":
+    #         return self.decode(latents, return_dict)
+    #     else:
+    #         raise ValueError(f"Unknown type: {self.type}")
