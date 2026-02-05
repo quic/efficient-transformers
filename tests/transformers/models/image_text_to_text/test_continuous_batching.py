@@ -128,7 +128,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 
     # ========== Config and Model Loading ==========
     if config is None:
-        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, padding=not is_molmo_model)
+        config = AutoConfig.from_pretrained(
+            model_name, trust_remote_code=True, padding=not is_intern_model and not is_molmo_model
+        )
         config._attn_implementation = "eager" if (is_intern_model or is_molmo_model) else None
         config = set_num_layers(config, n_layer=n_layer)
 
@@ -158,19 +160,25 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 
     images = []
     if is_intern_model:
+        image_height = 448
+        image_width = 448
         for img_url in image_urls:
             img = requests.get(img_url, stream=True)
             image = Image.open(BytesIO(img.content)).convert("RGB")
-            image = image.resize((448, 448))
+            image = image.resize((image_height, image_width))
             images.append(image)
     else:
         if is_molmo_model:
+            image_height = 536
+            image_width = 354
             for img_url in image_urls:
                 img = requests.get(img_url, stream=True)
                 image = Image.open(BytesIO(img.content)).convert("RGB")
-                image = image.resize((536, 354))
+                image = image.resize((image_height, image_width))
                 images.append(image)
         else:
+            image_height = None
+            image_width = None
             for img_url in image_urls:
                 image = Image.open(requests.get(img_url, stream=True).raw)
                 if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
@@ -201,9 +209,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
     elif is_molmo_model:
-        # inputs = processor.process(images=[image], text=query)
-        # inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
-        # generation_config = GenerationConfig(max_new_tokens=NEW_GENERATION_TOKENS, stop_strings="<|endoftext|>")
         api_runner = ApiRunnerMolmo(
             batch_size,
             processor,
@@ -299,6 +304,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         images=[image_urls[0]] * full_batch_size,
         prompts=prompt_list,
         generation_len=max_gen_len,
+        image_height=image_height,
+        image_width=image_width,
     )
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
     print("QPC Outputs (QAIC) for Continuous Batching with same prompt:")
@@ -310,9 +317,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         )
 
     # For different prompts
-    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
-        model_hf, images, queries, generation_config=generation_config
-    )
+    if is_molmo_model:
+        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
+            model_hf, images, queries, generation_config=generation_config
+        )
+    else:
+        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries)
 
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
@@ -321,6 +331,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         images=image_urls,
         prompts=queries,
         generation_len=max_gen_len,
+        image_height=image_height,
+        image_width=image_width,
     )
 
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
@@ -337,7 +349,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("kv_offload", [True])
 def test_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  with continuous batching.

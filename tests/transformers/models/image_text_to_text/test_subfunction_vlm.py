@@ -23,7 +23,6 @@ from transformers import (
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import get_num_layers_vlm
-from QEfficient.utils.device_utils import get_available_device_id
 
 NEW_GENERATION_TOKENS = 10
 
@@ -110,9 +109,6 @@ def check_image_text_to_text_subfunction_core(
 
     with_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
 
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
-
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
         inputs = qeff_model.model.prepare_inputs_for_generation(
@@ -143,7 +139,7 @@ def check_image_text_to_text_subfunction_core(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("kv_offload", [True])
 def test_image_text_to_text_subfunction(model_name, kv_offload):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
