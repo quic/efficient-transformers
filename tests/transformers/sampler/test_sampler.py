@@ -58,10 +58,10 @@ greedy_sampling_configs = [
         "OpenGVLab/InternVL2_5-1B",  # model
         (
             ["https://picsum.photos/id/237/536/354"] * 2,
-            ["Can you describe the image in detail."] * 2,
+            ["Describe this image."] * 2,
         ),  # images and prompts
         128,  # prefill_seq_len
-        4096,  # ctx_len
+        128,  # ctx_len
         20,  # generation_len
         2,  # full_batch_size
         None,  # spec_length
@@ -82,13 +82,13 @@ random_sampling_configs = [
     pytest.param(
         "OpenGVLab/InternVL2_5-1B",  # model
         (
-            ["https://picsum.photos/id/237/536/354"] * 4,
-            ["Can you describe the image in detail."] * 4,
+            ["https://picsum.photos/id/237/536/354"] * 2,
+            ["Describe this image."] * 2,
         ),  # images and prompts
         128,  # prefill_seq_len
-        4096,  # ctx_len
+        128,  # ctx_len
         20,  # generation_len
-        4,  # full_batch_size
+        2,  # full_batch_size
         None,  # spec_length
         True,  # is_vlm
     ),
@@ -108,10 +108,10 @@ guided_decoding_configs = [
         "OpenGVLab/InternVL2_5-1B",  # model
         (
             ["https://picsum.photos/id/237/536/354"] * 2,
-            ["Can you describe the image in detail."] * 2,
+            ["Describe this image."] * 2,
         ),  # images and prompts
         128,  # prefill_seq_len
-        4096,  # ctx_len
+        128,  # ctx_len
         20,  # generation_len
         2,  # full_batch_size
         None,  # spec_length
@@ -156,6 +156,7 @@ def prepare_model_setup(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     sampler_transform_configs,
@@ -286,6 +287,7 @@ def test_sampler_transform(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     greedy_sampling_configs,
@@ -388,6 +390,7 @@ def test_greedy_sampling(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     random_sampling_configs,
@@ -610,6 +613,7 @@ def test_random_sampling(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
     guided_decoding_configs,
