@@ -327,10 +327,11 @@ class QEffDynamicCache(DynamicCache):
         **kwargs,
     ):
         # Remove layer_classes if present to avoid duplicate argument
-
+        # breakpoint()
         kwargs.pop("layers", None)
         from transformers.cache_utils import Cache  # Import here to avoid circular import
 
+        # breakpoint()
         layers = []
         # If a config is passed, use it to infer the layer types and initialize accordingly
         if len(layers) == 0:
@@ -372,7 +373,7 @@ class QEffDynamicCache(DynamicCache):
         Return:
             A tuple containing the updated key and value states.
         """
-
+        # breakpoint()
         return self.layers[layer_idx].read_only(cache_kwargs)
 
     def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
