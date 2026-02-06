@@ -2600,6 +2600,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape_v = (1, 64, seq_len, 128)
         enable_chunking = kwargs.get("enable_chunking", False)
 
+        # TODO: HACK handle better
+        if enable_mla:=kwargs.get('enable_mla', False):
+            self.hash_params['enable_mla'] = enable_mla
+            setattr(self.model.model, "enable_mla", enable_mla)
+        if enable_mla_absorption:=kwargs.get('enable_mla_absorption', False):
+            self.hash_params['enable_mla_absorption'] = enable_mla_absorption
+            setattr(self.model.model, "enable_mla_absorption", enable_mla_absorption)
+        
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
@@ -2711,6 +2719,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
+        if enable_mla:
+            [example_inputs.pop(k) for k in example_inputs.keys() if "past" in k]
+            [dynamic_axes.pop(k) for k in dynamic_axes.keys() if "past" in k]
+            output_names = [v for v in output_names if "past" not in v]
+            example_inputs['compressed_kv'] = []
+            for i in range(self.num_layers):
+                example_inputs['compressed_kv'][i] = torch.zeros((bs, seq_len, self.model.config.kv_lora_rank + self.model.config.qk_rope_head_dim), dtype=torch.float32)
+                dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 1: "seq_len"}
+                output_names.append(f"compressed_kv.{i}_RetainedState")
+            
+            
+
         return self._export(
             example_inputs,
             output_names=output_names,
@@ -2864,9 +2884,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        enable_mla: Optional[bool] = False,
+        enable_mla_absorption: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
+        
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
@@ -2944,6 +2967,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        if enable_mla_absorption and not enable_mla:
+            logger.warning("enable_mla_fusion will be ignored as enable_mla is set to False")
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
                 "`kv_cache_batch_size` or `full_batch_size` is being passed"
@@ -3091,6 +3116,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
+            enable_mla = enable_mla,
+            enable_mla_absorption = enable_mla_absorption,
             **compiler_options,
         )
 

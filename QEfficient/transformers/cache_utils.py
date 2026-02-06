@@ -293,6 +293,31 @@ class QEffDynamicLayer(DynamicLayer):
         return k_out, v_out
 
 
+class QEffDynamicCompressedKVLayer:
+    def __init__(self, ckv):
+        pass
+
+
+
+class QEffDynamicCompressedKVCache:
+    def __init__(self, ddp_cache_data = None, *args, **kwargs):
+        super().__init__(ddp_cache_data, *args, **kwargs)
+        self.layers=[]
+    
+    def update(self, ckv, layer_idx):
+        self.layers.append(QEffDynamicCompressedKVCache())
+    
+    @classmethod
+    def from_legacy_cache(cls, past_key_values):
+        cache = cls()
+        if past_key_values is not None:
+            for layer_idx in range(len(past_key_values)):
+                ckv = past_key_values[layer_idx]
+                cache.update(ckv, layer_idx)
+        return cache
+
+
+
 class QEffDynamicCache(DynamicCache):
     """
     A cache that grows dynamically as more tokens are generated. This is the default for generative models.

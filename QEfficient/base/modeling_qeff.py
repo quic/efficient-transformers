@@ -329,11 +329,15 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
+        enable_mla: Optional[bool] = False,
+        enable_mla_absorption: Optional[bool] = False,
     ):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
+            "enable_mla": enable_mla,
+            "enable_mla_absorption": enable_mla_absorption,
         }
 
         if prefill_only:
@@ -366,6 +370,8 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        enable_mla: Optional[bool] = False,
+        enable_mla_absorption: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
@@ -403,6 +409,8 @@ class QEFFBaseModel(ABC):
                 offload_pt_weights,
                 use_onnx_subfunctions,
                 retain_full_kv,
+                enable_mla,
+                enable_mla_absorption,
             )
         )
         compile_dir = Path(compile_dir or onnx_path.parent)

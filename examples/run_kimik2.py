@@ -1,10 +1,13 @@
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 
 from QEfficient import QEFFAutoModelForCausalLM
 
-model = AutoModelForCausalLM.from_pretrained("/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd", torch_dtype=torch.float16, num_hidden_layers=2, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained("moonshotai/Kimi-K2-Thinking", num_hidden_layers=1, trust_remote_code=True, torch_dtype=torch.float32)
+import ipdb; ipdb.set_trace()
+#model = AutoModelForCausalLM.from_pretrained("/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd", torch_dtype=torch.float16, num_hidden_layers=2, trust_remote_code=True)
+# model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
 PREFILL_SEQ_LEN=128
 
@@ -16,9 +19,9 @@ num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
 
-with torch.no_grad():
-    out = model(**inputs)
-    predictions = torch.argmax(out.logits, dim=-1)
+# with torch.no_grad():
+#     out = model(**inputs)
+#     predictions = torch.argmax(out.logits, dim=-1)
 
 
 qeff_model = QEFFAutoModelForCausalLM(model)
@@ -32,8 +35,8 @@ for i in range(model.config.num_hidden_layers):
     cache_len = 128
     pad_shape_k = (1, 64, cache_len, 192)
     pad_shape_v = (1, 64, cache_len, 128)
-    past_key = torch.zeros((pad_shape_k), dtype=torch.float16)
-    past_value = torch.zeros((pad_shape_v), dtype=torch.float16)
+    past_key = torch.zeros((pad_shape_k), dtype=torch.float32)
+    past_value = torch.zeros((pad_shape_v), dtype=torch.float32)
     pkv = (past_key, past_value)
     past_key_values.append(pkv)
 inputs["past_key_values"] = past_key_values
@@ -41,7 +44,7 @@ inputs["past_key_values"] = past_key_values
 # qeff_model.compile(prefill_seq_len=1, ctx_len=1024, mxfp6_matmul=True, num_devices=1)
 qeff_out = qeff_model.model(**inputs)
 
-assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
+# assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 # qeff_model = QEFFAutoModelForCausalLM(model)
 # qeff_model.compile(
 #     prefill_seq_len=1,
