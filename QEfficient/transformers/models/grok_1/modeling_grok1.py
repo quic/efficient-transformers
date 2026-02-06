@@ -39,7 +39,7 @@ class QEFFGrok1CustomRMSNormAIC(nn.Module):
             torch.Tensor: Normalized tensor.
         """
         return CustomRMSNormFunc.apply(
-            hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+            hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 
 
