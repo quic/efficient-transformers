@@ -178,7 +178,6 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLTextDecoderLayer,
     Qwen3VLTextModel,
     Qwen3VLTextRMSNorm,
-    Qwen3VLTextRotaryEmbedding,
     Qwen3VLVisionAttention,
     Qwen3VLVisionModel,
 )
@@ -399,7 +398,7 @@ from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLTextAttention,
     QEffQwen3VLTextDecoderLayer,
     QEffQwen3VLTextModel,
-    QEffQwen3VLTextRotaryEmbedding,
+    # QEffQwen3VLTextRotaryEmbedding,
     QEffQwen3VLVisionAttention,
     QEffQwen3VLVisionModel,
 )
@@ -594,9 +593,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
         Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
-        
-
-        #Qwen3vl
+        # Qwen3vl
         Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
         Qwen3VLModel: QEffQwen3VLModel,
         Qwen3VLTextAttention: QEffQwen3VLTextAttention,
@@ -604,7 +601,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLVisionAttention: QEffQwen3VLVisionAttention,
         Qwen3VLVisionModel: QEffQwen3VLVisionModel,
         Qwen3VLTextModel: QEffQwen3VLTextModel,
-        Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,  # reusing decoder layer for rotary embedding as they are tightly coupled in forward pass
+        # Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,  # reusing decoder layer for rotary embedding as they are tightly coupled in forward pass
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
