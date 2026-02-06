@@ -38,6 +38,7 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
+from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
@@ -85,6 +86,10 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
         if (
             hasattr(model, "config")
             and hasattr(model.config, "quantization_config")
@@ -122,6 +127,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         QEFFTransformersBase
             An instance of the specific QEFFAutoModel subclass, initialized with the pretrained weights.
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -131,7 +137,8 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path)
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
 
 class MultimodalUtilityMixin:
@@ -235,6 +242,10 @@ class QEFFAutoModel(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling
@@ -279,6 +290,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -291,6 +303,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model, kv_offload=kv_offload, **kwargs
@@ -441,6 +454,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         inputs: torch.Tensor,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
+        write_io: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output by executing the compiled QPC on Cloud AI 100 hardware or using PyTorch runtime.
@@ -593,6 +607,9 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -734,7 +751,11 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        super().__init__(model, qaic_config=qaic_config, **kwargs)
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
+        super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1302,6 +1323,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if (processor and images) or (tokenizer and prompts):
             # Create VisionLanguageGeneration instance
             batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
+            write_io = kwargs.pop("write_io", False)
             vlm_gen = VisionLanguageGeneration(
                 qeff_model=self,
                 lang_qpc_path=self.lang_model.qpc_path,
@@ -1315,6 +1337,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
                 image_height=image_height,
                 image_width=image_width,
+                write_io_dir=os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None,
                 **kwargs,
             )
 
@@ -2248,6 +2271,7 @@ class QEFFAutoModelForImageTextToText:
         NotImplementedError
             If `continuous_batching` is provided as True.
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
             NotImplementedError("Continuous batching is not supported for kv_offload = False")
@@ -2260,6 +2284,9 @@ class QEFFAutoModelForImageTextToText:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        if enable_proxy:
+            logger.info("Proxy Model Enabled for QEfficient Model")
+            kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(
             model,
             kv_offload=kv_offload,
@@ -2369,6 +2396,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
             raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
 
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
         # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -2468,6 +2499,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -2488,6 +2520,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
@@ -3119,6 +3152,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments. Currently supports:
             - `generation_len (int, optional)`: The maximum number of tokens to generate.
+            - `write_io (bool, optional)`: Whether to save the io files.
 
         Returns
         -------
@@ -3136,6 +3170,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
             generation_len = kwargs.pop("generation_len", None)
+            write_io = kwargs.pop("write_io", False)
             return QEfficient.cloud_ai_100_exec_kv(
                 tokenizer=tokenizer,
                 qpc_path=self.qpc_path,
@@ -3147,6 +3182,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 automation=kwargs.pop("automation", False),
                 iteration=kwargs.pop("iteration", 1),
                 is_tlm=self.is_tlm,
+                write_io_dir=os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None,
                 **kwargs,
             )
         else:
@@ -3257,6 +3293,11 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             If the model is not a supported speech-to-text model (i.e., not a `ForConditionalGeneration` model).
         """
         model_class_name = model.__class__.__name__
+
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
 
@@ -3445,6 +3486,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         generation_len: int,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
+        write_io: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output until ``<|endoftext|>`` token or `generation_len` is reached,
@@ -3589,6 +3631,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
+        if kwargs.pop("enable_proxy", False):
+            self._pytorch_transforms.append(QeffProxyModuleTransform)
+            logger.info("Proxy Model Enabled for QEfficient Model")
+
         super().__init__(model, **kwargs)
         self.model.base_model.config.use_cache = True
 
@@ -3630,6 +3676,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         # You can now execute the model
         out = model.generate(processor,inputs=input_audio)
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -3642,6 +3689,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model, kv_offload=kv_offload, **kwargs
@@ -3753,6 +3801,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         inputs: torch.Tensor,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
+        write_io: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
