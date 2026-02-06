@@ -326,6 +326,97 @@ class QEffDeepseekV3Attention(nn.Module):
     def __qeff_init__(
         self,
     ):
+        self.q_up, self.q_rope = self.q_b_proj.weight.T.view(
+            -1, self.num_heads, self.qk_nope_head_dim + self.qk_rope_head_dim
+        ).split([self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+        self.q_up = self.q_up.reshape(-1, self.num_heads * self.qk_nope_head_dim)
+        self.q_rope = self.q_rope.reshape(-1, self.num_heads * self.qk_rope_head_dim)
+        self.k_up, self.v_up = self.kv_b_proj.weight.T.view(
+            -1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
+        ).split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+        self.k_up = self.k_up.reshape(-1, self.num_heads * self.qk_nope_head_dim)
+        self.v_up = self.v_up.reshape(-1, self.num_heads * self.v_head_dim)
+        self.fusedqk = torch.bmm(
+            self.q_up.view(-1, self.num_heads, self.qk_nope_head_dim).transpose(0, 1),
+            self.k_up.view(-1, self.num_heads, self.qk_nope_head_dim).transpose(0, 1).transpose(1, 2),
+        )
+
+    def fused_forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        bsz, q_len, _ = hidden_states.size()
+        import ipdb
+
+        ipdb.set_trace()
+        q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
+        q_pe = (
+            torch.matmul(q_a_proj_out, self.q_rope)
+            .view(bsz, q_len, self.num_heads, self.qk_rope_head_dim)
+            .transpose(1, 2)
+        )
+        q_nope = (
+            torch.matmul(q_a_proj_out, self.q_up)
+            .view(bsz, q_len, self.num_heads, self.qk_nope_head_dim)
+            .transpose(1, 2)
+        )
+
+        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
+        compressed_kv, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
+
+        kva = self.kv_a_layernorm(compressed_kv)
+        k_nope = torch.matmul(kva, self.k_up).view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
+        value_states = (
+            torch.matmul(kva, self.v_up).view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
+        )
+
+        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+
+        if enable_mla_absorption:
+            atn = torch.matmul(torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk), kva.transpose(1, 2).unsqueeze(1))
+        else:
+            atn = torch.matmul(q_nope, k_nope.transpose(2, 3))
+
+        atr = torch.matmul(q_pe, k_pe.expand(-1, self.num_heads, -1, -1).transpose(2, 3))
+        attn_weights = (atn + atr) * self.softmax_scale
+
+        if attention_mask is not None:  # no matter the length, we just slice it
+            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
+        ctx_len = past_key_value[self.layer_idx][0].shape[2]
+        ctx_indices = torch.arange(ctx_len)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+        value_states = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), value_states)
+        attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+        attn_output = torch.matmul(attn_weights, value_states)
+
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
+        attn_output = self.o_proj(attn_output)
+
+        # if not output_attentions:
+        #     attn_weights = None
+
+        return attn_output, attn_weights, past_key_value, value_states
+
+
+class QEffDeepseekV3oldAttention(nn.Module):
+    """Adapted DeepseekV3Attention with QEff logic, adding batch_index and proper position_ids handling."""
+
+    def __qeff_init__(
+        self,
+    ):
         self.merged_q_weight = torch.matmul(
             self.q_a_proj.weight.T * self.q_a_layernorm.weight.unsqueeze(0), self.q_b_proj.weight.T
         )
