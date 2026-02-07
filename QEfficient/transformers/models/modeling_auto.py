@@ -1458,7 +1458,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
-
+        # breakpoint()
         # Custom NPI file options
         if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
             compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
@@ -1686,6 +1686,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
         vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        pixel_values_shape = list(vision_inputs["pixel_values"].shape)
+        breakpoint()
+        idx = next(i for i, inner in enumerate(vision_session.allowed_shapes) if (2, pixel_values_shape) in inner)
+
+        biffer_set = {
+            "vision_embeds": np.zeros(vision_session.allowed_shapes[idx][2][1], dtype=np.float16),
+            "image_grid_thw": np.zeros(vision_session.allowed_shapes[idx][0][1], dtype=np.int64),
+        }
+        vision_session.set_buffers(biffer_set)
 
         vision_start = perf_counter()
 
@@ -1712,6 +1721,16 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             vision_session.deactivate()
         lang_session.activate()
 
+        vision_outputs["vision_embeds"] = np.pad(
+            vision_outputs["vision_embeds"],
+            pad_width=(
+                (0, 0),
+                (0, lang_session.allowed_shapes[0][1][1][1] - vision_session.allowed_shapes[idx][2][1][1]),
+                (0, 0),
+            ),  # pad axis=1 only
+            mode="constant",
+            constant_values=0,
+        )
         lang_session.set_buffers(vision_outputs)
 
         if self.comp_ctx_lengths_prefill is not None:
