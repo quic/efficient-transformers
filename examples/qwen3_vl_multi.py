@@ -16,8 +16,8 @@ from QEfficient import QEFFAutoModelForImageTextToText
 ## For AWQ model update pytorch version to 2.8.*
 model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
-# config.vision_config.depth = 1
-# config.text_config.num_hidden_layers = 1
+config.vision_config.depth = 1
+config.text_config.num_hidden_layers = 1
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -84,7 +84,7 @@ else:
 
     ## The dimensions list stores all the height × width pairs required for compilation ##
     # dimension [hxw]
-    dimensions = [[354, 536], [240, 360], [1024, 1024]]
+    dimensions = [[354, 536], [240, 360], [1024, 1024], [180, 320]]
 
     ## Vision + Text ##
     qeff_model.compile(
@@ -99,7 +99,7 @@ else:
         aic_enable_depth_first=True,
         mos=1,
     )
-    breakpoint()
+    # breakpoint()
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
 
@@ -107,8 +107,8 @@ else:
 
     ## Resize to any deimnsion present in specializations ##
     # [wxh]
-    image = image.resize((1024, 1024))
-    breakpoint()
+    image = image.resize((320, 180))
+    # breakpoint()
 
     messages_1 = [
         {
@@ -142,9 +142,9 @@ else:
         padding=True,
         return_tensors="pt",
     )
-    breakpoint()
+    # breakpoint()
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    breakpoint()
+    # breakpoint()
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)

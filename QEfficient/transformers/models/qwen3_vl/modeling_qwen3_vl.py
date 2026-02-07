@@ -957,7 +957,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         temporal_patch_size = self.config.vision_config.temporal_patch_size
 
         IMAGE_FACTOR = 32
-        MIN_PIXELS = 4 * 32 * 32
+        MIN_PIXELS = 64 * 32 * 32
         MAX_PIXELS = 16384 * 32 * 32
         MAX_RATIO = 200
 
@@ -990,6 +990,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
             3. The aspect ratio of the image is maintained as closely as possible.
             """
+            # breakpoint()
             if max(height, width) / min(height, width) > MAX_RATIO:
                 raise ValueError(
                     f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
@@ -1004,6 +1005,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 beta = math.sqrt(min_pixels / (height * width))
                 h_bar = ceil_by_factor(height * beta, factor)
                 w_bar = ceil_by_factor(width * beta, factor)
+            # breakpoint()
             return h_bar, w_bar
 
         # resized_height, resized_width = smart_resize(height=height, width=width)
