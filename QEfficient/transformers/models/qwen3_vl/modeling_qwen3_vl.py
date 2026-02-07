@@ -68,7 +68,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-
+    # breakpoint()
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -144,8 +144,43 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
 
 
 class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
+    # def rot_pos_emb(self, grid_thw):
+    #     pos_ids = []
+
+    #     bs, t, h, w = grid_thw.shape
+
+    #     hpos_ids = torch.arange(h).unsqueeze(1).expand(-1, w)
+    #     hpos_ids = hpos_ids.reshape(
+    #         h // self.spatial_merge_size,
+    #         self.spatial_merge_size,
+    #         w // self.spatial_merge_size,
+    #         self.spatial_merge_size,
+    #     )
+    #     hpos_ids = hpos_ids.permute(0, 2, 1, 3)
+    #     hpos_ids = hpos_ids.flatten()
+
+    #     wpos_ids = torch.arange(w).unsqueeze(0).expand(h, -1)
+    #     wpos_ids = wpos_ids.reshape(
+    #         h // self.spatial_merge_size,
+    #         self.spatial_merge_size,
+    #         w // self.spatial_merge_size,
+    #         self.spatial_merge_size,
+    #     )
+    #     wpos_ids = wpos_ids.permute(0, 2, 1, 3)
+    #     wpos_ids = wpos_ids.flatten()
+    #     pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
+    #     pos_ids = torch.cat(pos_ids, dim=0)
+
+    #     x_expanded = pos_ids.unsqueeze(0)
+    #     x_expanded = x_expanded.expand(bs, -1, -1)
+    #     pos_ids = x_expanded.reshape(-1, pos_ids.size(1))
+
+    #     max_grid_size = max(grid_thw.shape)
+    #     rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
+    #     rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
+    #     return rotary_pos_emb
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
-        # ##breakpoint()
+        # breakpoint()
         merge_size = self.spatial_merge_size
 
         # max_hw = int(grid_thw[:, 1:].max().item())
@@ -160,7 +195,7 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
         pos_ids = torch.empty((total_tokens, 2), dtype=torch.long, device=device)
 
-        offset = 0
+        # offset = 0
         # breakpoint()
 
         # for bs,num_frames, height, width in grid_thw:
@@ -182,24 +217,24 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
 
         if num_frames > 1:
             coords = coords.repeat(num_frames, 1)
-
-        num_tokens = coords.shape[0]
-        pos_ids[offset : offset + num_tokens] = coords
-        offset += num_tokens
-
+        # breakpoint()
+        # num_tokens = len(coords)
+        # pos_ids[offset : offset + num_tokens] = coords
+        # offset += num_tokens
+        # breakpoint()
+        # pos_ids = torch.cat([pos_ids, coords], dim=-1)
+        pos_ids = coords
         embeddings = freq_table[pos_ids]  # lookup rotary embeddings
         embeddings = embeddings.flatten(1)
         return embeddings
 
     def fast_pos_embed_interpolate(self, grid_thw):
-        # breakpoint()
-        # gridbs, grid_ts, grid_hs, grid_ws = grid_thw.shape
         bs, t, h, w = grid_thw.shape
         # grid_ts = torch.tensor([grid_ts], device=grid_thw.device)
         # grid_hs = torch.tensor([grid_hs], device=grid_thw.device)
         # grid_ws = torch.tensor([grid_ws], device=grid_thw.device)
-        idx_list = [[] for _ in range(4)]
-        weight_list = [[] for _ in range(4)]
+        # idx_list = [[] for _ in range(4)]
+        # weight_list = [[] for _ in range(4)]
         # t,h,w = grid_ts[0],grid_hs[0],grid_ws[0]
         # for t, h, w in zip(grid_ts, grid_hs, grid_ws):
         h_idxs = torch.linspace(0, self.num_grid_per_side - 1, h)
@@ -207,8 +242,14 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
 
         h_idxs_floor = h_idxs.int()
         w_idxs_floor = w_idxs.int()
-        h_idxs_ceil = (h_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
-        w_idxs_ceil = (w_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
+        # h_idxs_ceil = (h_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
+        # w_idxs_ceil = (w_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
+        # h_idxs_ceil = torch.clip(h_idxs.int(),0,self.num_grid_per_side - 1)
+        # w_idxs_ceil = torch.clip(w_idxs.int(),0,self.num_grid_per_side - 1)
+        max_t = torch.tensor(self.num_grid_per_side - 1, device=h_idxs.device)
+
+        h_idxs_ceil = torch.minimum(h_idxs_floor + 1, max_t)  # working
+        w_idxs_ceil = torch.minimum(w_idxs_floor + 1, max_t)
 
         dh = h_idxs - h_idxs_floor
         dw = w_idxs - w_idxs_floor
@@ -230,12 +271,10 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
             (dh[None].T * dw[None]).flatten(),
         ]
 
-        for i in range(4):
-            idx_list[i].extend(indices[i].tolist())
-            weight_list[i].extend(weights[i].tolist())
-        idx_tensor = torch.tensor(idx_list, dtype=torch.long, device=self.pos_embed.weight.device)
-        weight_tensor = torch.tensor(
-            weight_list, dtype=self.pos_embed.weight.dtype, device=self.pos_embed.weight.device
+        idx_tensor = torch.stack(indices, dim=0).to(dtype=torch.long, device=self.pos_embed.weight.device)  # [4, h*w]
+
+        weight_tensor = torch.stack(weights, dim=0).to(
+            dtype=self.pos_embed.weight.dtype, device=self.pos_embed.weight.device
         )
         pos_embeds = self.pos_embed(idx_tensor) * weight_tensor[:, :, None]
         patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
@@ -244,9 +283,7 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
 
         patch_pos_embeds_permute = []
         merge_size = self.config.spatial_merge_size
-        # breakpoint()
         pos_embed = patch_pos_embeds[0]
-        # for pos_embed, t, h, w in zip(patch_pos_embeds, grid_ts, grid_hs, grid_ws):
         pos_embed = pos_embed.repeat(t, 1)
 
         pos_embed = (
@@ -262,12 +299,11 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         return patch_pos_embeds
 
     def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
-        # ##breakpoint()
         hidden_states = self.patch_embed(hidden_states)
         pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
-        # breakpoint()
+
         hidden_states = hidden_states + pos_embeds
-        # breakpoint()
+
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
 
         seq_len, _ = hidden_states.size()
@@ -275,7 +311,6 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
         emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
         position_embeddings = (emb.cos(), emb.sin())
-        # ##breakpoint()
         bs, t, h, w = grid_thw.shape
 
         t = torch.arange(t, t + 1).squeeze().expand(bs)
@@ -286,7 +321,6 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
             dim=0,
             dtype=torch.int32,
         )
-        # ##breakpoint()
         cu_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens.dtype), cu_seqlens])
 
         deepstack_feature_lists = []
@@ -301,9 +335,7 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
                     hidden_states
                 )
                 deepstack_feature_lists.append(deepstack_feature)
-        # ##breakpoint()
         hidden_states = self.merger(hidden_states)
-        # ##breakpoint()
         return hidden_states, deepstack_feature_lists
 
 
@@ -322,7 +354,7 @@ class QEffQwen3VLVisionAttention(Qwen3VLVisionAttention):
         rotary_pos_emb: Optional[torch.Tensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
-        # ##breakpoint()
+        # breakpoint()
         seq_length = hidden_states.shape[0]
         q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
         if position_embeddings is None:
@@ -390,7 +422,7 @@ def eager_attention_forward(
     past_key_value: Optional[Cache] = None,
     **kwargs,
 ):
-    # ##breakpoint()
+    # breakpoint()
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
@@ -425,7 +457,7 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        ##breakpoint()
+        # breakpoint()
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         bsz, q_len, _ = hidden_states.size()
@@ -898,8 +930,9 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: None,
-        height: int = None,
-        width: int = None,
+        # height: int = None,
+        # width: int = None,
+        dimensions: List = None,
         num_frames: int = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
@@ -910,12 +943,13 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         # ##breakpoint()
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
-        if height is None or width is None:
+        if dimensions is None:
             height = 1365
             width = 2048
             logger.warning(
                 "Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config"
             )
+            dimensions = [[height, width]]
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         channel = 3
@@ -972,30 +1006,53 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 w_bar = ceil_by_factor(width * beta, factor)
             return h_bar, w_bar
 
-        resized_height, resized_width = smart_resize(height=height, width=width)
-        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        grid_height = grid_h * grid_w
-        grid_width = patch_size * patch_size * temporal_patch_size * channel
-        vision_size = grid_height // 4
-        vision_size = vision_size * num_frames
-        grid_height = grid_height * batch_size
+        # resized_height, resized_width = smart_resize(height=height, width=width)
+        # grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+        # grid_height = grid_h * grid_w
+        # grid_width = patch_size * patch_size * temporal_patch_size * channel
+        # vision_size = grid_height // 4
+        # vision_size = vision_size * num_frames
+        # grid_height = grid_height * batch_size
+        # # breakpoint()
+        # # vision_size = 176
+        # # grid_height = 704
+        # # grid_width = 1536
+        # # grid_h = 22
+        # # grid_w = 32
+        # # breakpoint()
+        vision = []
+        max_vision_size = 0
         # breakpoint()
-        # vision_size = 176
-        # grid_height = 704
-        # grid_width = 1536
-        # grid_h = 22
-        # grid_w = 32
-        # breakpoint()
-        vision = [
-            {
-                "batch_size": batch_size,
-                "vision_size": vision_size,
-                "grid_height": grid_height,
-                "grid_width": grid_width,
-                "grid_h": grid_h,
-                "grid_w": grid_w,
-            }
-        ]
+        for dimension in dimensions:
+            resized_height, resized_width = smart_resize(height=dimension[0], width=dimension[1])
+            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+            grid_height = grid_h * grid_w
+            grid_width = patch_size * patch_size * temporal_patch_size * channel
+            vision_size = grid_height // 4
+            vision_size = vision_size * num_frames
+            grid_height = grid_height * batch_size
+
+            max_vision_size = max(max_vision_size, vision_size)
+            # vision = [
+            #     {
+            #         "batch_size": batch_size,
+            #         "vision_size": max_vision_size,
+            #         "grid_height": grid_height,
+            #         "grid_width": grid_width,
+            #         "grid_h": grid_h,
+            #         "grid_w": grid_w,
+            #     }
+            # ]
+            vision.append(
+                {
+                    "batch_size": batch_size,
+                    "vision_size": vision_size,
+                    "grid_height": grid_height,
+                    "grid_width": grid_width,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
+                }
+            )
         # ##breakpoint()
 
         if comp_ctx_lengths_prefill is not None:
@@ -1006,7 +1063,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
-                    "vision_size": vision_size,
+                    "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "vision_batch_size": batch_size,
                 }
@@ -1025,7 +1082,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "vision_size": vision_size,
+                    "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "vision_batch_size": batch_size,
                 }
@@ -1041,7 +1098,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "vision_size": vision_size,
+                "vision_size": max_vision_size,
                 "vision_batch_size": batch_size,
             }
 
@@ -1056,7 +1113,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
-                "vision_size": vision_size,
+                "vision_size": max_vision_size,
                 "vision_batch_size": batch_size,
             }
 
