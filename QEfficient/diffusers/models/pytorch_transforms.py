@@ -11,7 +11,6 @@ from diffusers.models.autoencoders.autoencoder_kl_wan import (
     WanResample,
     WanResidualBlock,
 )
-from diffusers.models.attention_processor import Attention
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero, AdaLayerNormZeroSingle, RMSNorm
 from diffusers.models.transformers.transformer_flux import (
     FluxAttention,
@@ -80,9 +79,6 @@ class AttentionTransform(ModuleMappingTransform):
         WanEncoder3d: QEffWanEncoder3d,
         WanResidualBlock: QEffWanResidualBlock,
         WanResample: QEffWanResample,
-        QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
-        QwenDoubleStreamAttnProcessor2_0: QEffQwenDoubleStreamAttnProcessor2_0,
-        Attention: QEffQwenImageAttention,
     }
 
 
