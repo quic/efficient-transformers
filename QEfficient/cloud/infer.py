@@ -206,8 +206,8 @@ def main(
     trust_remote_code : bool, optional
         If True, trusts remote code when loading models from HuggingFace. Default is False.
     **kwargs :
-        Additional compiler options passed directly to `qaic-exec`. Any flag supported by
-        `qaic-exec` can be passed. Parameters are converted to flags as follows:
+        Additional compiler options passed directly to `qaic-compile`. Any flag supported by
+        `qaic-compile` can be passed. Parameters are converted to flags as follows:
 
         - ``-allocator_dealloc_delay=1`` -> ``-allocator-dealloc-delay=1``
         - ``-qpc_crc=True`` -> ``-qpc-crc``
