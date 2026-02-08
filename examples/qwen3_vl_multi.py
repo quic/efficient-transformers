@@ -99,7 +99,6 @@ else:
         aic_enable_depth_first=True,
         mos=1,
     )
-    # breakpoint()
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
 
@@ -107,9 +106,7 @@ else:
 
     ## Resize to any deimnsion present in specializations ##
     # [wxh]
-    image = image.resize((320, 180))
-    # breakpoint()
-
+    image = image.resize((536, 354))
     messages_1 = [
         {
             "role": "user",
@@ -142,9 +139,7 @@ else:
         padding=True,
         return_tensors="pt",
     )
-    # breakpoint()
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    # breakpoint()
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
