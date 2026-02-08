@@ -14,7 +14,7 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-model_id="Qwen/Qwen3-VL-32B-Instruct"
+model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
 # For Testing Purpose Only
@@ -138,4 +138,3 @@ else:
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
-    
