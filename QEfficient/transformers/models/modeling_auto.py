@@ -40,7 +40,7 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
-    SPECIALIZED_PREFILL_ONLY_MODEL_ARCH,
+    SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -346,8 +346,8 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         return self._export(
             example_inputs,
-            output_names,
-            dynamic_axes,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
@@ -369,7 +369,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-exec`
+        this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -395,7 +395,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             Additional compiler options for QAIC or QNN compilers. These are passed directly
             to the underlying compilation command.
 
-            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -625,8 +625,8 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         """
         return self._export(
             inputs,
-            output_names,
-            dynamic_axes,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
@@ -770,8 +770,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         """
         return self._export(
             inputs,
-            output_names,
-            dynamic_axes,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
@@ -1032,12 +1032,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             offload_pt_weights=False,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
+
+        offload_pt_weights = kwargs.get("offload_pt_weights", True)
         self.lang_model.export(
             inputs["lang"],
             output_names["lang"],
             dynamic_axes["lang"],
             export_dir=export_dir,
-            offload_pt_weights=True,
+            offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
@@ -1193,7 +1195,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
-
         if not skip_vision:
             self.vision_model._compile(
                 compile_dir=compile_dir,
@@ -1209,6 +1210,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 **compiler_options,
             )
 
+        # Custom NPI file options
+        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
+            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
+
         if not skip_lang:
             custom_io_lang = {}
             # Inputs
@@ -1222,7 +1227,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
-
             self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
@@ -1708,8 +1712,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
         return self._export(
             inputs,
-            output_names,
-            dynamic_axes,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
@@ -1819,6 +1823,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **compiler_options,
         )
 
+        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
+            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
+
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         # inputs
@@ -1837,7 +1844,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
-
         self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -2524,15 +2530,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
         if num_q_blocks is None:
-            block_size = 256
-            if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
+            if (
+                prefill_seq_len is None
+                or prefill_seq_len % constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE != 0
+                or prefill_seq_len < constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE
+            ):
                 raise ValueError(
-                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
+                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE}. "
                     f"Or set `NUM_Q_BLOCKS` ENV variable"
                     f"Received: prefill_seq_len={prefill_seq_len}"
                 )
 
-            num_q_blocks = prefill_seq_len // block_size
+            num_q_blocks = prefill_seq_len // constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE
             logger.warning(
                 f"Setting NUM_Q_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_Q_BLOCKS` to override"
             )
@@ -2590,31 +2599,28 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
-        if prefill_only:
-            if not enable_chunking and self.continuous_batching:
-                raise NotImplementedError(
-                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                )
-            self.prefill(enable=True, enable_chunking=enable_chunking)
-            self.hash_params.pop("retain_full_kv", None)
-            seq_len = (
-                self.get_seq_len_and_handle_specialized_prefill_model(
+
+        # TODO: move this to a DA Serving utility class
+        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+            if prefill_only:
+                if self.continuous_batching and not enable_chunking:
+                    raise NotImplementedError("Can't enable prefix-caching without chunking")
+                self.prefill(enable=True, enable_chunking=enable_chunking)
+                self.hash_params.pop("retain_full_kv", None)
+                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                     prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                 )
-                if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
-                else seq_len
-            )
-            kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
-        else:
-            self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-            self.hash_params.pop("prefill_only", None)
-            self.hash_params.pop("NUM_Q_BLOCKS", None)
-            self.hash_params.pop("NUM_FFN_BLOCKS", None)
-            self.hash_params.pop("ENABLE_OPT_SWA", None)
-            self.hash_params.pop("chunking", None)
-            if kwargs.get("retain_full_kv", False):
-                kv_cache_shape[2] = seq_len + self.model.config.sliding_window
-                self.hash_params["retain_full_kv"] = True
+                kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
+            else:
+                self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+                self.hash_params.pop("prefill_only", None)
+                self.hash_params.pop("NUM_Q_BLOCKS", None)
+                self.hash_params.pop("NUM_FFN_BLOCKS", None)
+                self.hash_params.pop("ENABLE_OPT_SWA", None)
+                self.hash_params.pop("chunking", None)
+                if kwargs.get("retain_full_kv", False):
+                    kv_cache_shape[2] = seq_len + self.model.config.sliding_window
+                    self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
@@ -2704,8 +2710,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         return self._export(
             example_inputs,
-            output_names,
-            dynamic_axes,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
             offload_pt_weights=kwargs.get("offload_pt_weights", True),
@@ -2861,7 +2867,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-exec`
+        this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -2901,7 +2907,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
-            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -2944,7 +2950,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if prefill_only is None or not prefill_only:
             if self.continuous_batching and full_batch_size is None:
                 raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-
         else:
             if self.continuous_batching and kv_cache_batch_size is None and full_batch_size is None:
                 raise ValueError(
@@ -3299,8 +3304,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         output_names = self.model.get_output_names()
         return self._export(
             inputs,
-            output_names,
-            dynamic_axes,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
@@ -3328,7 +3333,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-exec`
+        this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -3368,7 +3373,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         **compiler_options : dict
             Additional compiler options for QAIC.
 
-            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -3552,10 +3557,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     including Wav2Vec2 and other encoder-only speech models optimized for alignment-free transcription.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
 
-    ``Mandatory`` Args:
-        :model (nn.Module): PyTorch model
-
+    Example
+    -------
     .. code-block:: python
+
         import torchaudio
         from QEfficient import QEFFAutoModelForCTC
         from transformers import AutoProcessor
@@ -3675,8 +3680,8 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         return self._export(
             example_inputs,
-            output_names,
-            dynamic_axes,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
@@ -3695,9 +3700,9 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         **compiler_options,
     ) -> str:
         """
-        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-compile`` and generates a ``qpc`` package.
         If the model has not been exported yet, this method will handle the export process.
-        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+        You can pass any other arguments that the `qaic-compile` takes as extra kwargs.
 
         ``Optional`` Args:
             :onnx_path (str, optional): Path to pre-exported onnx model.
@@ -3710,7 +3715,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
             :compiler_options (dict, optional): Additional compiler options.
 
-                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
+                For QAIC Compiler: Extra arguments for qaic-compile can be passed.
                     :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
                     :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
 

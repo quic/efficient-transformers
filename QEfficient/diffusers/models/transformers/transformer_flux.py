@@ -4,10 +4,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
+import torch.nn as nn
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.transformers.transformer_flux import (
     FluxAttention,
@@ -223,6 +224,15 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
 
 
 class QEffFluxTransformer2DModel(FluxTransformer2DModel):
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock}
+
     def forward(
         self,
         hidden_states: torch.Tensor,

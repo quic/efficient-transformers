@@ -14,7 +14,6 @@ from typing import Dict
 
 from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
-from QEfficient.transformers.models.pytorch_transforms import get_decoder_layer_classes_for_export
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import QEFFLogger
@@ -163,23 +162,28 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     # Apply torch patches for subfunction support
     apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
+
     # Transform output names for subfunction compatibility
     if "output_names" in kwargs:
         kwargs["output_names"] = [
-            re.sub("_RetainedState", "_InternalRetainedState", name) for name in kwargs["output_names"]
+            re.sub("_RetainedState", "_InternalRetainedState", name)
+            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            else name
+            for name in kwargs["output_names"]
         ]
     else:
-        args = list(args)
-        args[1] = [re.sub("_RetainedState", "_InternalRetainedState", name) for name in args[1]]
-        args = tuple(args)
+        warnings.warn(
+            "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "
+            "Ensure `output_names` includes key/value retained states if subfunction compatibility is required."
+        )
+
     # Add subfunction-specific ONNX transforms
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
-    # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
-    decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
-    if decoder_layer_classes:
-        kwargs["export_modules_as_functions"] = decoder_layer_classes
+    submodule_classes = qeff_model.model.get_submodules_for_export()
+    if submodule_classes:
+        kwargs["export_modules_as_functions"] = submodule_classes
     return args, kwargs
 
 

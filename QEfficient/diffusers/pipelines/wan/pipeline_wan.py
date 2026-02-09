@@ -11,7 +11,7 @@ This module provides an optimized implementation of the WAN pipeline
 for high-performance text-to-video generation on Qualcomm AI hardware.
 The pipeline supports WAN 2.2 architectures with unified transformer.
 
-TODO: 1. Update Vae, umt5 to Qaic; present running on cpu
+TODO: 1. Update umt5 to Qaic; present running on cpu
 """
 
 import os
@@ -21,18 +21,19 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 import torch
 from diffusers import WanPipeline
+from tqdm import tqdm
 
-from QEfficient.diffusers.pipelines.pipeline_module import QEffWanUnifiedTransformer
+from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper
+from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
-    QEffWanUnifiedWrapper,
     calculate_latent_dimensions_with_frames,
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
-    set_module_device_ids,
+    set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -108,16 +109,21 @@ class QEffWanPipeline:
         self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper)
 
         # VAE decoder for latent-to-video conversion
-        self.vae_decode = model.vae
-
+        self.vae_decoder = QEffVAE(model.vae, "decoder")
         # Store all modules in a dictionary for easy iteration during export/compile
-        # TODO: add text encoder, vae decoder on QAIC
-        self.modules = {"transformer": self.transformer}
+        # TODO: add text encoder on QAIC
+        self.modules = {"transformer": self.transformer, "vae_decoder": self.vae_decoder}
 
         # Copy tokenizers and scheduler from the original model
         self.tokenizer = model.tokenizer
         self.text_encoder.tokenizer = model.tokenizer
         self.scheduler = model.scheduler
+
+        self.vae_decoder.model.forward = lambda latent_sample, return_dict: self.vae_decoder.model.decode(
+            latent_sample, return_dict
+        )
+
+        self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
         # Extract patch dimensions from transformer configuration
         _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
 
@@ -223,7 +229,7 @@ class QEffWanPipeline:
         """
 
         # Export each module with video-specific parameters
-        for module_name, module_obj in self.modules.items():
+        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration with video dimensions
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
 
@@ -239,7 +245,8 @@ class QEffWanPipeline:
             if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
                 export_params["use_onnx_subfunctions"] = True
 
-            module_obj.export(**export_params)
+            if module_obj.qpc_path is None:
+                module_obj.export(**export_params)
 
     @staticmethod
     def get_default_config_path():
@@ -249,7 +256,7 @@ class QEffWanPipeline:
         Returns:
             str: Path to the default WAN configuration JSON file.
         """
-        return os.path.join(os.path.dirname(__file__), "wan_config.json")
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/wan_config.json")
 
     def compile(
         self,
@@ -299,17 +306,21 @@ class QEffWanPipeline:
             ...     num_frames=81
             ... )
         """
+        # Load compilation configuration
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
+
+        # Set device IDs, qpc path if precompiled qpc exist
+        set_execute_params(self)
+
         # Ensure all modules are exported to ONNX before compilation
         if any(
             path is None
             for path in [
                 self.transformer.onnx_path,
+                self.vae_decoder.onnx_path,
             ]
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
-
-        # Load compilation configuration
-        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Configure pipeline dimensions and calculate compressed latent parameters
         cl, latent_height, latent_width, latent_frames = calculate_latent_dimensions_with_frames(
@@ -329,19 +340,25 @@ class QEffWanPipeline:
                     "cl": cl,  # Compressed latent dimension
                     "latent_height": latent_height,  # Latent space height
                     "latent_width": latent_width,  # Latent space width
-                    "num_frames": latent_frames,  # Latent frames
+                    "latent_frames": latent_frames,  # Latent frames
                 },
                 # low noise
                 {
                     "cl": cl,  # Compressed latent dimension
                     "latent_height": latent_height,  # Latent space height
                     "latent_width": latent_width,  # Latent space width
-                    "num_frames": latent_frames,  # Latent frames
+                    "latent_frames": latent_frames,  # Latent frames
                 },
-            ]
+            ],
+            "vae_decoder": {
+                "latent_frames": latent_frames,
+                "latent_height": latent_height,
+                "latent_width": latent_width,
+            },
         }
 
         # Use generic utility functions for compilation
+        logger.warning('For VAE compilation use QAIC_COMPILER_OPTS_UNSUPPORTED="-aic-hmx-conv3d" ')
         if parallel:
             compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
         else:
@@ -449,9 +466,6 @@ class QEffWanPipeline:
             width=width,
             num_frames=num_frames,
         )
-
-        # Set device IDs for all modules based on configuration
-        set_module_device_ids(self)
 
         # Step 1: Validate all inputs
         self.model.check_inputs(
@@ -724,31 +738,45 @@ class QEffWanPipeline:
         # Step 9: Decode latents to video
         if not output_type == "latent":
             # Prepare latents for VAE decoding
-            latents = latents.to(self.vae_decode.dtype)
+            latents = latents.to(self.vae_decoder.model.dtype)
 
             # Apply VAE normalization (denormalization)
             latents_mean = (
-                torch.tensor(self.vae_decode.config.latents_mean)
-                .view(1, self.vae_decode.config.z_dim, 1, 1, 1)
+                torch.tensor(self.vae_decoder.model.config.latents_mean)
+                .view(1, self.vae_decoder.model.config.z_dim, 1, 1, 1)
                 .to(latents.device, latents.dtype)
             )
-            latents_std = 1.0 / torch.tensor(self.vae_decode.config.latents_std).view(
-                1, self.vae_decode.config.z_dim, 1, 1, 1
+            latents_std = 1.0 / torch.tensor(self.vae_decoder.model.config.latents_std).view(
+                1, self.vae_decoder.model.config.z_dim, 1, 1, 1
             ).to(latents.device, latents.dtype)
             latents = latents / latents_std + latents_mean
 
-            # TODO: Enable VAE on QAIC
-            # VAE Decode latents to video using CPU (temporary)
-            video = self.model.vae.decode(latents, return_dict=False)[0]  # CPU fallback
+            # Initialize VAE decoder inference session
+            if self.vae_decoder.qpc_session is None:
+                self.vae_decoder.qpc_session = QAICInferenceSession(
+                    str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
+                )
+
+            # Allocate output buffer for VAE decoder
+            output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
+
+            inputs = {"latent_sample": latents.numpy()}
+
+            start_decode_time = time.perf_counter()
+            video = self.vae_decoder.qpc_session.run(inputs)
+            end_decode_time = time.perf_counter()
+            vae_decoder_perf = end_decode_time - start_decode_time
 
             # Post-process video for output
-            video = self.model.video_processor.postprocess_video(video.detach())
+            video_tensor = torch.from_numpy(video["sample"])
+            video = self.model.video_processor.postprocess_video(video_tensor)
         else:
             video = latents
 
         # Step 10: Collect performance metrics
         perf_data = {
             "transformer": transformer_perf,  # Unified transformer (QAIC)
+            "vae_decoder": vae_decoder_perf,
         }
 
         # Build performance metrics for output

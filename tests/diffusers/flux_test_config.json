@@ -3,8 +3,7 @@
                         "height": 256,
                         "width": 256,
                         "num_transformer_layers": 2,
-                        "num_single_layers": 2,
-                        "use_onnx_subfunctions": false
+                        "num_single_layers": 2
                     },
     "mad_validation": {
                         "tolerances": {
@@ -21,7 +20,8 @@
                             "max_sequence_length": 256,
                             "validate_gen_img": true,
                             "min_image_variance": 1.0,
-                            "custom_config_path": null
+                            "custom_config_path": null,
+                            "use_onnx_subfunctions": true
                         },
     "validation_checks": {
                             "image_generation": true,
@@ -47,7 +47,8 @@
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                           "qpc_path" : null
                                         }
 
                     },
@@ -69,7 +70,8 @@
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                           "qpc_path" : null
                                         }
                     },
     "transformer":
@@ -94,7 +96,8 @@
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                           "qpc_path" : null
                                         }
                     },
     "vae_decoder":
@@ -115,7 +118,8 @@
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                           "qpc_path" : null
                                         }
                     }
   }

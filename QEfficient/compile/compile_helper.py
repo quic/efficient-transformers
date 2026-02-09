@@ -63,7 +63,7 @@ def compile_kv_model_on_cloud_ai_100(
     **kwargs,
 ) -> Tuple[bool, str]:
     """
-    Compiles an ONNX Key-Value (KV) model for Cloud AI 100 hardware using `qaic-exec`.
+    Compiles an ONNX Key-Value (KV) model for Cloud AI 100 hardware using `qaic-compile`.
 
     This function sets up and executes the Qualcomm AI 100 compiler with various options
     to generate a QPC package.
@@ -95,7 +95,7 @@ def compile_kv_model_on_cloud_ai_100(
         List of device IDs for multi-device compilation (tensor slicing). If `len(device_group) > 1`,
         a multi-device partition configuration is generated. Default is None.
     **kwargs :
-        Additional compiler options passed directly to `qaic-exec`. These are formatted as
+        Additional compiler options passed directly to `qaic-compile`. These are formatted as
         `-key=value` or `-key` for boolean flags.
 
     Returns
@@ -110,7 +110,7 @@ def compile_kv_model_on_cloud_ai_100(
     FileNotFoundError
         If the `specializations_json` or `custom_io_path` files are not found.
     RuntimeError
-        If the `qaic-exec` compilation process fails.
+        If the `qaic-compile` compilation process fails.
 
     Warnings
     --------
@@ -132,7 +132,7 @@ def compile_kv_model_on_cloud_ai_100(
     if not os.path.isfile(custom_io_path):
         raise FileNotFoundError(f"{custom_io_path} file was not found!")
     command = [
-        "/opt/qti-aic/exec/qaic-exec",
+        "/opt/qti-aic/exec/qaic-compile",
         f"-m={onnx_path}",
         "-aic-hw",
         f"-aic-hw-version={kwargs.pop('aic_hw_version', kwargs.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}",
