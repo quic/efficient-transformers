@@ -165,7 +165,7 @@ class QEffWanPipeline:
 
         Example:
             >>> # Load from HuggingFace Hub
-            >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
+            >>> pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
             >>>
             >>> # Load from local path
             >>> pipeline = QEffWanPipeline.from_pretrained("/local/path/to/wan")
@@ -219,7 +219,7 @@ class QEffWanPipeline:
             ValueError: If module configurations are invalid
 
         Example:
-            >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
+            >>> pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
             >>> export_path = pipeline.export(
             ...     export_dir="/path/to/export",
             ...     use_onnx_subfunctions=True
@@ -291,7 +291,7 @@ class QEffWanPipeline:
             OSError: If there are issues with file I/O during compilation
 
         Example:
-            >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
+            >>> pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
             >>> # Sequential compilation with default config
             >>> pipeline.compile(height=480, width=832, num_frames=81)
             >>>
@@ -356,7 +356,6 @@ class QEffWanPipeline:
         }
 
         # Use generic utility functions for compilation
-        logger.warning('For VAE compilation use QAIC_COMPILER_OPTS_UNSUPPORTED="-aic-hmx-conv3d" ')
         if parallel:
             compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
         else:
@@ -453,7 +452,7 @@ class QEffWanPipeline:
             >>> # Save generated video
             >>> result.images[0].save("cat_garden.mp4")
         """
-        device = "cpu"
+        device = self.model._execution_device
 
         # Compile models with custom configuration if needed
         self.compile(
@@ -757,7 +756,7 @@ class QEffWanPipeline:
 
             # Allocate output buffer for VAE decoder
             output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
-
+            self.vae_decoder.qpc_session.set_buffers(output_buffer)
             inputs = {"latent_sample": latents.numpy()}
 
             start_decode_time = time.perf_counter()
@@ -773,7 +772,7 @@ class QEffWanPipeline:
 
         # Step 10: Collect performance metrics
         perf_data = {
-            "transformer": transformer_perf,  # Unified transformer (QAIC)
+            "transformer": transformer_perf,
             "vae_decoder": vae_decoder_perf,
         }
 
