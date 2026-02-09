@@ -18,12 +18,12 @@ from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import InternProcessor
 from tests.transformers.models.image_text_to_text.test_continuous_batching import set_num_layers
 
-sampler_transform_configs = [
+test_configs = [
     pytest.param(
         "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
         Constants.INPUT_STR * 2,  # prompts
         32,  # prefill_seq_len
-        128,  # ctx_len
+        64,  # ctx_len
         20,  # generation_len
         2,  # full_batch_size
         1,  # spec_length
@@ -37,81 +37,6 @@ sampler_transform_configs = [
         ),  # images and prompts
         128,  # prefill_seq_len
         4096,  # ctx_len
-        20,  # generation_len
-        2,  # full_batch_size
-        None,  # spec_length
-        True,  # is_vlm
-    ),
-]
-greedy_sampling_configs = [
-    pytest.param(
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
-        Constants.INPUT_STR * 4,  # prompts
-        32,  # prefill_seq_len
-        128,  # ctx_len
-        20,  # generation_len
-        4,  # full_batch_size
-        1,  # spec_length
-        False,  # is_vlm
-    ),
-    pytest.param(
-        "OpenGVLab/InternVL2_5-1B",  # model
-        (
-            ["https://picsum.photos/id/237/536/354"] * 2,
-            ["Describe this image."] * 2,
-        ),  # images and prompts
-        128,  # prefill_seq_len
-        128,  # ctx_len
-        20,  # generation_len
-        2,  # full_batch_size
-        None,  # spec_length
-        True,  # is_vlm
-    ),
-]
-random_sampling_configs = [
-    pytest.param(
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
-        Constants.INPUT_STR * 4,  # prompts
-        32,  # prefill_seq_len
-        64,  # ctx_len
-        20,  # generation_len
-        4,  # full_batch_size
-        1,  # spec_length
-        False,  # is_vlm
-    ),
-    pytest.param(
-        "OpenGVLab/InternVL2_5-1B",  # model
-        (
-            ["https://picsum.photos/id/237/536/354"] * 2,
-            ["Describe this image."] * 2,
-        ),  # images and prompts
-        128,  # prefill_seq_len
-        128,  # ctx_len
-        20,  # generation_len
-        2,  # full_batch_size
-        None,  # spec_length
-        True,  # is_vlm
-    ),
-]
-guided_decoding_configs = [
-    pytest.param(
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
-        Constants.INPUT_STR * 4,  # prompts
-        32,  # prefill_seq_len
-        64,  # ctx_len
-        20,  # generation_len
-        4,  # full_batch_size
-        1,  # spec_length
-        False,  # is_vlm
-    ),
-    pytest.param(
-        "OpenGVLab/InternVL2_5-1B",  # model
-        (
-            ["https://picsum.photos/id/237/536/354"] * 2,
-            ["Describe this image."] * 2,
-        ),  # images and prompts
-        128,  # prefill_seq_len
-        128,  # ctx_len
         20,  # generation_len
         2,  # full_batch_size
         None,  # spec_length
@@ -159,7 +84,7 @@ def prepare_model_setup(
 @pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
-    sampler_transform_configs,
+    test_configs,
 )
 def test_sampler_transform(
     model: str,
@@ -290,7 +215,7 @@ def test_sampler_transform(
 @pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
-    greedy_sampling_configs,
+    test_configs,
 )
 def test_greedy_sampling(
     model: str,
@@ -393,7 +318,7 @@ def test_greedy_sampling(
 @pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
-    random_sampling_configs,
+    test_configs,
 )
 def test_random_sampling(
     model: str,
@@ -616,7 +541,7 @@ def test_random_sampling(
 @pytest.mark.feature
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length, is_vlm",
-    guided_decoding_configs,
+    test_configs,
 )
 def test_guided_decoding(
     model: str,
