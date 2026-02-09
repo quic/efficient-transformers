@@ -23,12 +23,12 @@ import torch
 from diffusers import WanPipeline
 from tqdm import tqdm
 
+from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper
 from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
-    QEffWanUnifiedWrapper,
     calculate_latent_dimensions_with_frames,
     compile_modules_parallel,
     compile_modules_sequential,
