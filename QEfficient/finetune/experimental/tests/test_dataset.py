@@ -67,25 +67,54 @@ class TestSFTDataset(unittest.TestCase):
     def test_sft_dataset_with_huggingface_dataset_and_templates(self, mock_builder, mock_load):
         """Test loading from HuggingFace dataset with templates using mocked data."""
         # Create mock dataset with dummy data
-        mock_dataset = MagicMock()
-        mock_dataset.column_names = ["text", "label"]
-        mock_dataset.num_rows = 3
+        sample_data = [
+            {"text": "Sample text 1", "label": "Label 1"},
+            {"text": "Sample text 2", "label": "Label 2"},
+            {"text": "Sample text 3", "label": "Label 3"},
+        ]
 
-        # Mock the select method to return individual samples
-        def mock_select(indices):
-            sample_data = [
-                {"text": "Sample text 1", "label": "Label 1"},
-                {"text": "Sample text 2", "label": "Label 2"},
-                {"text": "Sample text 3", "label": "Label 3"},
-            ]
-            return [sample_data[indices[0]]]
+        processed_samples_container = [None]
 
-        mock_dataset.select = mock_select
-        mock_dataset.filter = lambda func: mock_dataset  # Return self for filtering
+        def create_mock_dataset():
+            mock_dataset = MagicMock()
+            mock_dataset.column_names = ["text", "label"]
+            mock_dataset.num_rows = 3
 
-        # Mock train_test_split to return a dict with train/test splits
-        mock_split_result = {"train": mock_dataset, "test": mock_dataset}
-        mock_dataset.train_test_split = lambda test_size, seed: mock_split_result
+            # Mock __getitem__ to return processed samples
+            def mock_getitem(self, idx):
+                if processed_samples_container[0] is not None:
+                    return processed_samples_container[0][idx]
+                # Before map, return raw data
+                return sample_data[idx]
+
+            mock_dataset.__getitem__ = mock_getitem
+
+            # Mock the select method
+            def mock_select(indices):
+                idx = indices[0] if isinstance(indices, list) else indices
+                if processed_samples_container[0] is not None:
+                    return [processed_samples_container[0][idx]]
+                return [sample_data[idx]]
+
+            mock_dataset.select = mock_select
+            mock_dataset.filter = lambda func: mock_dataset  # Return self for filtering
+
+            # Mock map to apply the function and update processed_samples
+            def mock_map(func, desc=None):
+                # Apply the function to all samples
+                processed_samples_container[0] = [func(sample.copy()) for sample in sample_data]
+                # Return a new mock dataset with processed data
+                return create_mock_dataset()
+
+            mock_dataset.map = mock_map
+
+            # Mock train_test_split to return a dict with train/test splits
+            mock_split_result = {"train": mock_dataset, "test": mock_dataset}
+            mock_dataset.train_test_split = lambda test_size, seed: mock_split_result
+
+            return mock_dataset
+
+        mock_dataset = create_mock_dataset()
 
         # Mock the dataset builder to indicate multiple splits are available
         mock_info = MagicMock()
