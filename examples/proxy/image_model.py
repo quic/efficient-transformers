@@ -17,25 +17,15 @@ from transformers import (
     AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
-    GenerationConfig,
+    TextStreamer,
 )
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import get_num_layers_vlm
-from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import InternProcessor
 
 NEW_GENERATION_TOKENS = 10
-
-# CONFIG_PATH = os.path.join(os.path.dirname(__file__), "multimodal_model_configs.json")
-
-# with open(CONFIG_PATH, "r") as f:
-#     config_data = json.load(f)
-#     multimodal_models = config_data["multimodal_models"]
-
-# test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
-# model_config_dict = {model["model_name"]: model for model in multimodal_models}
 
 
 def load_image_text_to_text_model(model_config):
@@ -90,7 +80,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     max_gen_len: int = 20,
     batch_size: int = 1,
     n_layer: int = 1,
-    kv_offload: bool = False,
+    kv_offload: bool = True,
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
@@ -125,7 +115,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     if config is None:
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, padding=not is_molmo_model)
         config._attn_implementation = "eager" if (is_intern_model or is_molmo_model) else None
-        # config = set_num_layers(config, n_layer=n_layer)
+        config = set_num_layers(config, n_layer=n_layer)
 
     if is_intern_model:
         model_hf = AutoModelForCausalLM.from_pretrained(
@@ -187,36 +177,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         inputs = tokenizer(prompt, return_tensors="pt")
         batch_size, prompt_len = inputs["input_ids"].shape
         inputs["pixel_values"] = pixel_values.clone()
-        generation_config = dict(max_new_tokens=max_gen_len, do_sample=False)
-        generation_config["eos_token_id"] = tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
-        api_runner = ApiRunnerInternVL(
-            batch_size,
-            processor,
-            config,
-            image,
-            query,
-            prompt_len,
-            ctx_len,
-            max_gen_len,
-            n_layer,
-        )
-        # pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
+
     elif is_molmo_model:
         inputs = processor.process(images=[image], text=query)
         inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
-        generation_config = GenerationConfig(max_new_tokens=NEW_GENERATION_TOKENS, stop_strings="<|endoftext|>")
-        api_runner = ApiRunnerMolmo(
-            batch_size,
-            processor,
-            config,
-            image,
-            query,
-            prompt_len,
-            ctx_len,
-            max_gen_len,
-            n_layer,
-        )
-        # pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
         batch_size, prompt_len = inputs["input_ids"].shape
         inputs["attention_mask"] = torch.ones((inputs["input_ids"].shape), dtype=torch.int64)
         valid = inputs["image_input_idx"] > 0
@@ -234,25 +198,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             },
         ]
         prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
-        api_runner = ApiRunnerVlm(
-            batch_size,
-            processor,
-            config,
-            image,
-            conversation,
-            prompt,
-            prompt_len,
-            ctx_len,
-            max_gen_len,
-            n_layer,
-        )
+
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
-        print("PyTorch HF Tokens:", pytorch_hf_tokens)
 
-    # streamer = TextStreamer(processor.tokenizer)
+    streamer = TextStreamer(processor.tokenizer)
 
     # ========== Export and Compile Model ==========
     if is_intern_model or is_molmo_model:
@@ -265,7 +216,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     else:
         qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=kv_offload, enable_proxy=True)
     print("\n============Qeff Proxy Model===============\n")
-    print(qeff_model)
+    print(qeff_model.model)
     print("\n=====================================\n")
     qeff_model.export()
 
@@ -297,17 +248,22 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 
     print("QPC Outputs (QAIC):")
-    # qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    qeff_model.generate(
+        inputs=inputs,
+        generation_len=NEW_GENERATION_TOKENS,
+        streamer=streamer,
+        write_io=True,
+    )
 
 
 image_models = [
     "llava-hf/llava-1.5-7b-hf",
     # "meta-llama/Llama-3.2-11B-Vision-Instruct",
     # "meta-llama/Llama-3.2-90B-Vision-Instruct",
-    "ibm-granite/granite-vision-3.2-2b",
+    # "ibm-granite/granite-vision-3.2-2b",
     # "Llama-4-Scout-17B-16E-Instruct",
-    "google/gemma-3-4b-it",
-    "Qwen/Qwen2.5-VL-3B-Instruct",
+    # "google/gemma-3-4b-it",
+    # "Qwen/Qwen2.5-VL-3B-Instruct",
     # "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
 ]
 

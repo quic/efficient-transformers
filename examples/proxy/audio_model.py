@@ -49,7 +49,9 @@ def infer_speech_seq2seq(
     inputs = processor(audio_data, sampling_rate=sample_rate, return_tensors="pt")
 
     # Generate output
-    exec_info = model.generate(inputs=inputs, generation_len=generation_len)
+    exec_info = model.generate(
+        inputs=inputs, generation_len=generation_len, write_io=True
+    )  # write_io = True to save io files
 
     # Decode output
     transcription = processor.batch_decode(exec_info.generated_ids)[0]
@@ -70,7 +72,7 @@ def infer_ctc(model, processor, audio_data: list, num_cores: int = 16):
     model.compile(num_cores=num_cores)
 
     # Generate output
-    transcription = model.generate(processor, inputs=audio_data)
+    transcription = model.generate(processor, inputs=audio_data, write_io=True)  # write_io = True to save io files
 
     return transcription
 
