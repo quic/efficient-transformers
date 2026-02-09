@@ -9,7 +9,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -2604,9 +2604,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if enable_mla:=kwargs.get('enable_mla', False):
             self.hash_params['enable_mla'] = enable_mla
             setattr(self.model.model, "enable_mla", enable_mla)
-        if enable_mla_absorption:=kwargs.get('enable_mla_absorption', False):
-            self.hash_params['enable_mla_absorption'] = enable_mla_absorption
-            setattr(self.model.model, "enable_mla_absorption", enable_mla_absorption)
+        if mla_absorption_config:=kwargs.get('mla_absorption_config', None):
+            self.hash_params['mla_absorption_config'] = mla_absorption_config
+            setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
         
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
@@ -2720,16 +2720,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 qaic_config=self.model.qaic_config,
             )
         if enable_mla:
-            [example_inputs.pop(k) for k in example_inputs.keys() if "past" in k]
-            [dynamic_axes.pop(k) for k in dynamic_axes.keys() if "past" in k]
+            example_inputs = {k:v for k,v in example_inputs.items() if "past" not in k}
+            dynamic_axes = {k:v for k,v in dynamic_axes.items() if "past" not in k}
             output_names = [v for v in output_names if "past" not in v]
-            example_inputs['compressed_kv'] = []
+            example_inputs['compressed_kvs'] = []
             for i in range(self.num_layers):
-                example_inputs['compressed_kv'][i] = torch.zeros((bs, seq_len, self.model.config.kv_lora_rank + self.model.config.qk_rope_head_dim), dtype=torch.float32)
-                dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 1: "seq_len"}
-                output_names.append(f"compressed_kv.{i}_RetainedState")
-            
-            
+                example_inputs['compressed_kvs'].append(torch.zeros((bs, seq_len, self.model.config.kv_lora_rank + self.model.config.qk_rope_head_dim), dtype=torch.float32))
+                dynamic_axes[f"compressed_kvs.{i}"] = {0: "batch_size", 1: "seq_len"}
+                output_names.append(f"compressed_kvs.{i}_RetainedState")
 
         return self._export(
             example_inputs,
@@ -2885,7 +2883,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
         enable_mla: Optional[bool] = False,
-        enable_mla_absorption: Optional[bool] = False,
+        mla_absorption_config: Optional[Dict[str, bool]] = False,
         **compiler_options,
     ) -> str:
         """
@@ -2967,7 +2965,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        if enable_mla_absorption and not enable_mla:
+        if mla_absorption_config and not enable_mla:
             logger.warning("enable_mla_fusion will be ignored as enable_mla is set to False")
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
@@ -3093,11 +3091,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
+        if not enable_mla:
+            for suffix in ["", "_RetainedState"]:
+                for i in range(self.num_layers):
+                    for kv in ["key", "value"]:
+                        custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+        else:
+            for suffix in ["", "_RetainedState"]:
+                for i in range(self.num_layers):
+                    custom_io[f'compressed_kvs.{i}{suffix}'] = kv_cache_dtype
 
-        for suffix in ["", "_RetainedState"]:
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
         qpc_path = self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -3117,7 +3120,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
             enable_mla = enable_mla,
-            enable_mla_absorption = enable_mla_absorption,
+            mla_absorption_config = mla_absorption_config,
             **compiler_options,
         )
 
