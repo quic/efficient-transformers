@@ -3797,8 +3797,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
         # Dynamic switching to closest seq_Len based on input_ids_len
-        inputs = processor(inputs, return_tensors="pt")
-        input_ids_len = inputs["input_values"].shape[-1]
 
         for allowed_shape in self.qpc_session.allowed_shapes:
             seq_len_allowed = allowed_shape[1][1][1]
@@ -3806,9 +3804,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             if seq_len_allowed >= input_ids_len:
                 self.seq_len = seq_len_allowed
                 break
-
         # To handle single seq_len as we can't fetch allowed shapes for single seq_len
         self.seq_len = self.qpc_session.bindings[0].dims[1] if not hasattr(self, "seq_len") else self.seq_len
+        inputs = processor(inputs, return_tensors="pt",max_length=self.seq_len,truncation=True, padding="max_length")
+        input_ids_len = inputs["input_values"].shape[-1]
         input_values = np.array(
             torch.nn.functional.pad(inputs["input_values"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
