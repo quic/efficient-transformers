@@ -40,6 +40,7 @@ def _setup_trace_module_map_patched(
                 onnx_attrs = getattr(module, attr_name)
                 delattr(module, attr_name)
             try:
+                onnx_attrs = {}  # HACK: to reduce export time # TODO: study behaviour across models
                 _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
             except Exception:
                 logger.warning("Failed to track ONNX scope attributes, Skipping this step.")

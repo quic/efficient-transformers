@@ -56,6 +56,7 @@ def flux_pipeline_call_with_mad_validation(
     callback_on_step_end_tensor_inputs: List[str] = ["latents"],
     max_sequence_length: int = 512,
     custom_config_path: Optional[str] = None,
+    use_onnx_subfunctions: bool = False,
     parallel_compile: bool = False,
     mad_tolerances: Dict[str, float] = None,
 ):
@@ -72,7 +73,13 @@ def flux_pipeline_call_with_mad_validation(
     device = "cpu"
 
     # Step 1: Load configuration, compile models
-    pipeline.compile(compile_config=custom_config_path, parallel=parallel_compile, height=height, width=width)
+    pipeline.compile(
+        compile_config=custom_config_path,
+        parallel=parallel_compile,
+        use_onnx_subfunctions=use_onnx_subfunctions,
+        height=height,
+        width=width,
+    )
 
     # Validate all inputs
     pipeline.model.check_inputs(
@@ -307,10 +314,7 @@ def flux_pipeline():
     """Setup compiled Flux pipeline for testing"""
     config = INITIAL_TEST_CONFIG["model_setup"]
 
-    pipeline = QEffFluxPipeline.from_pretrained(
-        "black-forest-labs/FLUX.1-schnell",
-        use_onnx_subfunctions=config["use_onnx_subfunctions"],
-    )
+    pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
     # Reduce to 2 layers for testing
     original_blocks = pipeline.transformer.model.transformer_blocks
@@ -382,6 +386,7 @@ def test_flux_pipeline(flux_pipeline):
             custom_config_path=CONFIG_PATH,
             generator=generator,
             mad_tolerances=config["mad_validation"]["tolerances"],
+            use_onnx_subfunctions=config["pipeline_params"]["use_onnx_subfunctions"],
             parallel_compile=True,
             return_dict=True,
         )
