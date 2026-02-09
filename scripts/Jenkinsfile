@@ -17,8 +17,8 @@ pipeline {
                    sudo docker exec ${BUILD_TAG} bash -c "
                    cd /efficient-transformers &&
                    apt update &&
-                   apt install -y python3.10-venv &&
-                   python3.10 -m venv preflight_qeff &&
+                   DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
+                   python3.12 -m venv preflight_qeff &&
                    . preflight_qeff/bin/activate &&
                    pip install --upgrade pip setuptools &&
                    pip install .[test] &&
@@ -185,7 +185,9 @@ pipeline {
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
-                    pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
+                    # TODO: Update torch_qaic path to py312 when migrating to Python 3.12
+                    pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-linux_x86_64.whl &&
+                    # pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
                     pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cpu &&
                     mkdir -p $PWD/cli_qaic_finetuning &&
                     export TOKENIZERS_PARALLELISM=false &&

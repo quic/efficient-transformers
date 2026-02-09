@@ -11,7 +11,7 @@ For QEfficient Library : https://github.com/quic/efficient-transformers
 
 For torch_qaic, assuming QEfficient is already installed,
 ```bash
-pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
+pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-linux_x86_64.whl
 ```
 If qeff-env inside docker is used then torch_qaic and accelerate packages are already installed.
 
