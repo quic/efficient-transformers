@@ -160,6 +160,9 @@ class SFTDataset(BaseDataset):
             processed = self._preprocess_sample(example)
             # Add the combined text field
             example["text"] = processed["prompt"] + processed["completion"]
+            # Also add prompt and completion fields for __getitem__ to access
+            example["prompt"] = processed["prompt"]
+            example["completion"] = processed["completion"]
             return example
 
         # Map the function to add 'text' field to all examples
