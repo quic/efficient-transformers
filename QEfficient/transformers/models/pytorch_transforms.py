@@ -249,7 +249,7 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
 from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
     QEffDisentangledSelfAttention,
 )
-from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3Attention, QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model
+from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3Attention, QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model, QEffPrefillOnlyDeepseekV3MoE
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -732,6 +732,7 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        QEffDeepseekV3MoE: QEffPrefillOnlyDeepseekV3MoE,
     }
 
 
@@ -741,10 +742,14 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+<<<<<<< HEAD
         # Qwen3Moe
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         # Qwen3 VL Moe
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+=======
+        QEffDeepseekV3MoE: QEffPrefillOnlyDeepseekV3MoE,
+>>>>>>> ba3218c (Add prefill only moe changes from kimik2 branch)
     }
 
 
@@ -756,8 +761,12 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+<<<<<<< HEAD
         # Qwen3Moe
         QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
+=======
+        QEffPrefillOnlyDeepseekV3MoE: QEffDeepseekV3MoE,
+>>>>>>> ba3218c (Add prefill only moe changes from kimik2 branch)
     }
 
 
