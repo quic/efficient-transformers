@@ -51,7 +51,7 @@
       "img_size": 896,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
       "text_prompt": "Can you describe the image in detail.",
-      "num_layers": 1,
+      "num_layers": 6,
       "img_url_list": [
           "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
           "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
