@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from typing import Any, Callable, Dict, Optional, Type, Union
+from typing import Any, Callable, Dict, Optional, Union
 
 import torch
 from torch import nn
@@ -30,8 +30,13 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
+<<<<<<< HEAD
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, supports_blocked_kv
 from QEfficient.blocking.blocked_attention_forwards import _normalize_int
+=======
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
+from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
+>>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -712,6 +717,146 @@ def eager_attention_forward_blockedQ(
 
     output = output.view(BS, NH, CL, DH).transpose(1, 2).contiguous()
     return output, output
+
+def eager_attention_forward_blockedKV(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: Optional[int] = None,
+    cache_kwargs: Optional[Dict[str, Any]] = None,
+    layer_idx: int = None,
+    past_key_value: Optional[Cache] = None,
+    dropout: float = 0.0,
+    **kwargs,
+):
+    """
+    KV Blocking with Future Block Skipping Only Without Skip Softmax.
+    - Uses torch.where for conditional execution during export
+    """
+    
+    # logger.info("Are we in Blocked KV Attention? V2")
+
+    output = torch.zeros_like(query)
+    batch_size, num_heads, seq_len, head_dim = query.shape
+    current_max = torch.full(
+        (batch_size, num_heads, seq_len),
+        float(MIN_MASKED_ATTENTION_VALUE),
+        dtype=query.dtype,
+        device=query.device
+    )
+    current_denominator = torch.zeros(
+        batch_size, num_heads, seq_len,
+        dtype=query.dtype,
+        device=query.device
+    )
+    
+    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    position_ids = cache_kwargs.get("position_ids")
+    block_size = -(-past_seen_tokens // num_kv_blocks)
+    
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+    sinks = module.sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+    
+    current_position = position_ids.max()
+    
+    for j in range(num_kv_blocks):
+        start_index = j * block_size
+        end_index = (j + 1) * block_size
+        
+        # Skip Condition: Future blocks
+        skip_future = torch.tensor(start_index, device=query.device) > current_position
+        
+        # Eager mode Only
+        if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if skip_future.item():
+                continue
+        # breakpoint()
+        K_block, V_block = past_key_value.read_only_blockedKV(
+            start_index, end_index, layer_idx, cache_kwargs
+        )
+        
+        K_block_states = repeat_kv(K_block, module.num_key_value_groups)
+        V_block_states = repeat_kv(V_block, module.num_key_value_groups)
+        
+        past_seen_tokens_start = start_index
+        past_seen_tokens_end = torch.where(
+            torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+            past_seen_tokens,
+            end_index,
+        )
+        causal_mask_block = _create_causal_mask(
+            position_ids=position_ids,
+            target_length=past_seen_tokens_end,
+            start_index=past_seen_tokens_start
+        )
+        
+        # Compute Attention Scores for Blocked KV
+        attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
+        
+        # Apply causal mask
+        if attention_mask is not None:
+            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+        
+        if attn_weights_block.shape[-1] > 0:
+            block_max = attn_weights_block.max(dim=-1, keepdim=True).values
+        else:
+            block_max = torch.full(
+                (batch_size, num_heads, seq_len, 1),
+                float(MIN_MASKED_ATTENTION_VALUE),
+                dtype=query.dtype,
+                device=query.device
+            )
+        
+        block_max_scalar = block_max.squeeze(-1)
+        
+        prev_max = current_max
+        current_max_updated = torch.maximum(prev_max, block_max_scalar)
+        delta_max = prev_max - current_max_updated
+        
+        attn_weights_block_stable = attn_weights_block - current_max_updated.unsqueeze(-1)
+        kv_exp = torch.exp(attn_weights_block_stable)
+        
+        prev_denominator = current_denominator
+        current_denominator_updated = prev_denominator * torch.exp(delta_max) + kv_exp.sum(dim=-1)
+        
+        block_contribution = torch.matmul(kv_exp, V_block_states)
+        
+        prev_output = output
+        output_updated = prev_output * torch.exp(delta_max).unsqueeze(-1) + block_contribution
+        
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+            skip_mask = skip_future.view(1, 1, 1).expand(batch_size, num_heads, seq_len)
+            current_max = torch.where(skip_mask, prev_max, current_max_updated)
+            current_denominator = torch.where(skip_mask, prev_denominator, current_denominator_updated)
+            output = torch.where(skip_mask.unsqueeze(-1), prev_output, output_updated)
+        else:
+            # Eager mode
+            current_max = current_max_updated
+            current_denominator = current_denominator_updated
+            output = output_updated
+    
+    # Apply Attention Sinks
+    prev_max = current_max 
+    sink_max = sinks.max(dim=-1, keepdim=True).values.squeeze(-1)
+    current_max = torch.maximum(prev_max, sink_max)
+    delta_max = prev_max - current_max
+    
+    sinks_stable = sinks - current_max.unsqueeze(-1)
+    sink_exp = torch.exp(sinks_stable)
+    
+    prev_denominator = current_denominator
+    current_denominator = prev_denominator * torch.exp(delta_max) + sink_exp.sum(dim=-1)
+    
+    output = output * torch.exp(delta_max).unsqueeze(-1)
+    output = output / current_denominator.unsqueeze(-1)
+    
+    attn_output = output.transpose(1, 2).contiguous()
+    attn_weights = None
+    
+    return attn_output, attn_weights
 
 
 def eager_attention_forward_blockedKV(
@@ -1656,19 +1801,8 @@ class QEffGptOssAttention(GptOssAttention):
             attention_mask = attention_mask
 
         # do not block on sliding window layers
-        if use_blocking and self.sliding_window is None:
-            if blocking_config.mode == "h":
-                attention_interface: Callable = eager_attention_forward_blockedHeadKV
-            elif blocking_config.mode == "kv":
-                attention_interface: Callable = eager_attention_forward_blockedKV
-            elif blocking_config.mode == "q":
-                attention_interface: Callable = eager_attention_forward_blockedQ
-            elif blocking_config.mode == "qkv":
-                attention_interface: Callable = eager_attention_forward_blockedQKV
-            elif blocking_config.mode == "hqkv":
-                attention_interface: Callable = eager_attention_forward_blockedHQKV
-            else:
-                raise ValueError("Invalid attention mode selected")
+        if use_kv_blocked and self.sliding_window is None:
+            attention_interface: Callable = eager_attention_forward_blockedKV
             kwargs["cache_kwargs"] = cache_kwargs
             attn_output, attn_weights = attention_interface(
                 self,
@@ -1681,8 +1815,6 @@ class QEffGptOssAttention(GptOssAttention):
                 sliding_window=self.sliding_window,
                 s_aux=self.sinks,  # diff with Llama
                 num_kv_blocks=num_kv_blocks,
-                num_q_blocks=num_q_blocks,
-                head_block_size=head_block_size,
                 past_key_value=past_key_value,
                 layer_idx=self.layer_idx,
                 **kwargs,

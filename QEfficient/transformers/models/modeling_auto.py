@@ -2757,11 +2757,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
         # self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         # self.is_tlm = transformed
+<<<<<<< HEAD
         self.is_tlm = (
             (qaic_config is not None)
             and (qaic_config.get("speculative_model_type") is not None)
             and (model.__class__ in SpDTransform._module_mapping)
         )
+=======
+        self.is_tlm = (not qaic_config is None) and (not qaic_config.get("speculative_model_type") is None) and (model.__class__ in SpDTransform._module_mapping)
+>>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = False
@@ -2791,12 +2795,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         #         )
         #         self.model.qaic_config["attn_blocking_config"] = blocking_config
 
-        if blocking_config is not None and blocking_config.mode == "kv":
-            KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=blocking_config.num_kv_blocks)
-        elif blocking_config is not None and blocking_config.mode == "q":
-            QBlockingAttentionTransform.apply(self.model, num_q_blocks=blocking_config.num_q_blocks)
-        elif self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+        # if blocking_config is not None and blocking_config.mode == "kv":
+        #     KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=blocking_config.num_kv_blocks)
+        # elif blocking_config is not None and blocking_config.mode == "q":
+        #     QBlockingAttentionTransform.apply(self.model, num_q_blocks=blocking_config.num_q_blocks)
+        # elif self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+        #     KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -2980,16 +2984,25 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+<<<<<<< HEAD
 
+=======
+        
+>>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
         # increase seq_len if using a larger number of blocks
         if self.hash_params.get("blocking_kwargs", None):
             max_blocks = -1
             for num_blocks in self.hash_params.get("blocking_kwargs").values():
                 max_blocks = max(max_blocks, num_blocks)
+<<<<<<< HEAD
             block_size = -(-seq_len // max_blocks)
             while seq_len < max_blocks or (seq_len % max_blocks > block_size):
                 seq_len = seq_len * 2
                 block_size = -(-seq_len // max_blocks)
+=======
+            while seq_len < max_blocks:
+                seq_len = seq_len * 2
+>>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
 
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
@@ -3246,6 +3259,84 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         result = {k: v for k, v in spec.items() if v is not None}
         result["_graph_name"] = "Decode"
         return result
+
+    def build_specialization(
+        self,
+        prefill_seq_len: int = 32,
+        ctx_len: int = 128,
+        batch_size: int = 1,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
+        num_speculative_tokens: Optional[int] = None,
+        prefill_only: Optional[bool] = None,
+        enable_chunking: Optional[bool] = False,
+        **kwargs,
+    ):
+        """
+        Builds a dictionary representing a compilation specialization for both decode and prefill phase.
+        """
+        specializations = []
+        if prefill_only is None or prefill_only or prefill_seq_len == 1:
+            # TODO: we are handling decode-only case inside prefill call which is utterly mis-leading
+            if self.comp_ctx_lengths_prefill is not None:
+                # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
+                for i in range(0, len(self.comp_ctx_lengths_prefill)):
+                    if prefill_only or enable_chunking:
+                        raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
+                    specializations.append(
+                        self.build_prefill_specialization(
+                            prefill_seq_len=prefill_seq_len,
+                            ctx_len=ctx_len,
+                            comp_ctx_lengths=self.comp_ctx_lengths_prefill[i],
+                            batch_size=batch_size,
+                            kv_cache_batch_size=kv_cache_batch_size,
+                            full_batch_size=full_batch_size,
+                        )
+                    )
+
+            else:
+                specializations.append(
+                    self.build_prefill_specialization(
+                        prefill_seq_len=prefill_seq_len,
+                        ctx_len=ctx_len,
+                        batch_size=batch_size,
+                        kv_cache_batch_size=kv_cache_batch_size,
+                        full_batch_size=full_batch_size,
+                        prefill_only=prefill_only,
+                        enable_chunking=enable_chunking,
+                    )
+                )
+
+        if prefill_only is None or not prefill_only:
+            if self.comp_ctx_lengths_decode is not None:
+                # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
+                for i in range(0, len(self.comp_ctx_lengths_decode)):
+                    decode_spec = self.build_decode_specialization(
+                        prefill_seq_len=prefill_seq_len,
+                        ctx_len=ctx_len,
+                        comp_ctx_lengths=self.comp_ctx_lengths_decode[i],
+                        batch_size=batch_size,
+                        kv_cache_batch_size=kv_cache_batch_size,
+                        full_batch_size=full_batch_size,
+                        num_speculative_tokens=num_speculative_tokens,
+                    )
+                    if decode_spec:
+                        specializations.append(decode_spec)
+
+            else:
+                decode_spec = self.build_decode_specialization(
+                    prefill_seq_len=prefill_seq_len,
+                    ctx_len=ctx_len,
+                    batch_size=batch_size,
+                    kv_cache_batch_size=kv_cache_batch_size,
+                    full_batch_size=full_batch_size,
+                    num_speculative_tokens=num_speculative_tokens,
+                    prefill_only=prefill_only,
+                )
+                if decode_spec:
+                    specializations.append(decode_spec)
+        return specializations
+
 
     def compile(
         self,

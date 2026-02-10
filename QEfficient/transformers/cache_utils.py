@@ -850,11 +850,19 @@ class QEffHybridCacheForGPTOSS:
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         position_ids = cache_kwargs.get("position_ids")
+        is_sliding_layer = cache_kwargs.get("is_sliding")
+        sliding_window = cache_kwargs.get("sliding_window")
         batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
 
         k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
         batch, num_kv_heads, _, _ = k_out.shape
+
+        # Original Gather
+        if is_sliding_layer:
+            ctx_len = self.key_cache[layer_idx].shape[2]
+        else:
+            ctx_len = cache_kwargs.get("CCL", self.key_cache[layer_idx].shape[2])
 
         ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
