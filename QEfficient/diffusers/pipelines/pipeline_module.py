@@ -5,12 +5,12 @@
 #
 # ----------------------------------------------------------------------------
 
+import copy
 from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
-from diffusers.models.transformers.transformer_wan import WanTransformerBlock
-import copy
+
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.diffusers.models.pytorch_transforms import (
@@ -250,11 +250,8 @@ class QEffVAE(QEFFBaseModel):
         model_copy = copy.deepcopy(model)
         super().__init__(model_copy)
         self.model = model_copy
-        self.model.type = type
 
         # To have different hashing for encoder/decoder
-        # Create a unique config copy for this instance
-        # self.model.config = copy.deepcopy(model.config) # not working - cant set attribute config
         self.model.config["type"] = type
 
     def get_onnx_params(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
@@ -290,7 +287,7 @@ class QEffVAE(QEFFBaseModel):
 
     def get_img_encoder_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
         """
-        Generate ONNX export configuration for the VAE decoder.
+        Generate ONNX export configuration for the VAE Encoder.
 
         Returns:
             Tuple containing:
@@ -298,19 +295,27 @@ class QEffVAE(QEFFBaseModel):
                 - dynamic_axes (Dict): Specification of dynamic dimensions
                 - output_names (List[str]): Names of model outputs
         """
-        #TODO update for less resolution further
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        num_frames = constants.WAN_ONNX_EXPORT_FRAMES
+        height = constants.WAN_I2V_HEIGHT_480P
+        width = constants.WAN_I2V_WIDTH_480P
+        # TODO update for less resolution further
         example_inputs = {
             "image": torch.randn(
-                1, 3, 81, 208, 272 # batch_size, img channels, frames, height, width
+                bs,
+                3,  # channels
+                num_frames,
+                height,
+                width,
             ),
-            }
+        }
         output_names = ["latents"]
         # All dimensions except channels can be dynamic
         dynamic_axes = {
             "image": {
                 0: "batch_size",
                 # 1: "num_channels",
-                2: "frames",
+                2: "num_frames",
                 3: "height",
                 4: "width",
             },

@@ -60,7 +60,7 @@ __all__ = [
     "QEFFCommonLoader",
     "QEffFluxPipeline",
     "QEffWanPipeline",
-    "QEffWanImageToVideoPipeline"
+    "QEffWanImageToVideoPipeline",
 ]
 
 
