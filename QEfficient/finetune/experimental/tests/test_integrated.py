@@ -368,16 +368,16 @@ def run_inference_causal_lm(model, tokenizer):
         model: Model instance
         tokenizer: Tokenizer instance
     """
-    test_prompt = "Test prompt for generation"
-    inputs = tokenizer(test_prompt, return_tensors="pt")
-
-    with torch.no_grad():
+    test_prompt = "Test prompt for generation."
+    texts = tokenizer(test_prompt, return_tensors="pt")
+    texts = texts.to(model.device)
+    with torch.inference_mode():
         outputs = model.generate(
-            **inputs,
+            **texts,
+            temperature=0.4,
             max_new_tokens=10,
             do_sample=False,
         )
-
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
     logger.warning(f"Generated text: {generated_text}")
 
@@ -441,6 +441,11 @@ class TestCausalLMIntegration:
         model, tokenizer = create_model_and_tokenizer(pipeline)
         logger.warning(f"Model loaded: {model_config['model_name']}")
 
+        callbacks = []
+        optimizer = pipeline._create_optimizer()
+        logger.warning(f"Optimizer created: {type(optimizer[0]).__name__}")
+        # Create trainer using ComponentRegistry
+        training_config = pipeline._prepare_training_config()
         # Load and prepare dataset
         train_dataset, test_dataset = load_and_prepare_dataset(
             dataset_config_test=dataset_config,
@@ -448,11 +453,6 @@ class TestCausalLMIntegration:
             pipeline=pipeline,
         )
         logger.warning(f"Dataset loaded: {len(train_dataset)} samples")
-        callbacks = []
-        optimizer = pipeline._create_optimizer()
-        logger.warning(f"Optimizer created: {type(optimizer[0]).__name__}")
-        # Create trainer using ComponentRegistry
-        training_config = pipeline._prepare_training_config()
         trainer = create_sft_trainer(
             model=model,
             tokenizer=tokenizer,
