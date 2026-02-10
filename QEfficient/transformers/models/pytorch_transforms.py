@@ -249,7 +249,7 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
 from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
     QEffDisentangledSelfAttention,
 )
-from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3Attention, QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model
+from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3Attention, QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model, QEffPrefillOnlyDeepseekV3MoE
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -732,6 +732,7 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        QEffDeepseekV3MoE: QEffPrefillOnlyDeepseekV3MoE,
     }
 
 
