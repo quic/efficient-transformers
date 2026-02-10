@@ -201,8 +201,8 @@ class Constants:
     GB = 2**30
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
+    NUM_KV_BLOCKS = 2
     NUM_SPECULATIVE_TOKENS = 2
-    NUM_KV_BLOCKS = 8
     MAX_TOP_K_IDS = ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
     SAMPLER_OPS = {
         "repetition_penalties",
