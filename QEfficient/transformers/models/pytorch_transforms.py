@@ -220,7 +220,7 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
-from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3Attention, QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model
+from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import QEffDeepseekV3Attention, QEffDeepseekV3DecoderLayer, QEffDeepseekV3ForCausalLM, QEffDeepseekV3MoE, QEffDeepseekV3Model, QEffPrefillOnlyDeepseekV3MoE
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -659,6 +659,7 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        QEffDeepseekV3MoE: QEffPrefillOnlyDeepseekV3MoE,
     }
 
 
@@ -667,6 +668,7 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+        QEffDeepseekV3MoE: QEffPrefillOnlyDeepseekV3MoE,
     }
 
 
@@ -677,6 +679,7 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+        QEffPrefillOnlyDeepseekV3MoE: QEffDeepseekV3MoE,
     }
 
 
