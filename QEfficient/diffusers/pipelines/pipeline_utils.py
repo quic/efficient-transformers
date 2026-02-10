@@ -130,8 +130,9 @@ def set_execute_params(cls):
                     f"Given qpc path: {module_obj.qpc_path} does not exist. Please provide correct path or keep null"
                 )
 
-def update_npi_path(cls, npi_full_path, module_name ):
-    """ To Set NPI for path in compilation config """
+
+def update_npi_path(cls, npi_full_path, module_name):
+    """To Set NPI for path in compilation config"""
     if module_name in cls.custom_config["modules"]:
         # Check if the NPI file exists
         if not os.path.exists(npi_full_path):

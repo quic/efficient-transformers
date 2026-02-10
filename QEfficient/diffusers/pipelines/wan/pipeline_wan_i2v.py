@@ -12,7 +12,7 @@ for high-performance image-to-video generation on Qualcomm AI hardware.
 The pipeline supports WAN 2.2 architectures with unified transformer for converting
 static images into dynamic video sequences with temporal consistency.
 
-TODO: 1. Update umt5 to Qaic; present running on cpu
+TODO: 1. Update Umt5 to Qaic; present running on cpu
 """
 
 import os
@@ -36,8 +36,8 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
-    update_npi_path,
     set_execute_params,
+    update_npi_path,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -110,35 +110,32 @@ class QEffWanImageToVideoPipeline:
 
         # Text encoder (TODO: Replace with QEfficient UMT5 optimization)
         self.text_encoder = model.text_encoder
-        #TODO check and clean up
-        # model.vae.encoder.config = model.vae.config
-        # model.vae.decoder.config = model.vae.config
         self.vae_encoder = QEffVAE(model.vae, "encoder")
-
         # Create unified transformer wrapper combining dual-stage models(high, low noise DiTs)
         self.unified_wrapper = QEffWanUnifiedWrapper(model.transformer, model.transformer_2)
         self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper)
-
         # VAE decoder for latent-to-video conversion
         self.vae_decoder = QEffVAE(model.vae, "decoder")
+
         # Store all modules in a dictionary for easy iteration during export/compile
-        self.modules = {"vae_encoder": self.vae_encoder,"transformer": self.transformer, "vae_decoder": self.vae_decoder }
+        self.modules = {
+            "vae_encoder": self.vae_encoder,
+            "transformer": self.transformer,
+            "vae_decoder": self.vae_decoder,
+        }
 
         # Copy tokenizers and scheduler from the original model
         self.tokenizer = model.tokenizer
         self.text_encoder.tokenizer = model.tokenizer
         self.scheduler = model.scheduler
 
+        self.vae_encoder.model.forward = lambda image: self.vae_encoder.model.encode(image)
         self.vae_decoder.model.forward = lambda latent_sample, return_dict: self.vae_decoder.model.decode(
             latent_sample, return_dict
-        )
-        self.vae_encoder.model.forward = lambda image : self.vae_encoder.model.encode(
-            image
         )
 
         self.vae_encoder.get_onnx_params = self.vae_decoder.get_img_encoder_onnx_params
         self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
-
 
         # Extract patch dimensions from transformer configuration
         _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
@@ -183,7 +180,7 @@ class QEffWanImageToVideoPipeline:
 
         Example:
             >>> # Load from HuggingFace Hub
-            >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("path/to/wan/i2v/model")
+            >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
             >>>
             >>> # Load from local path
             >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("/local/path/to/wan/i2v")
@@ -215,7 +212,7 @@ class QEffWanImageToVideoPipeline:
         """
         Export all pipeline modules to ONNX format for deployment preparation.
 
-        This method systematically exports the unified transformer and VAE decoder to ONNX format with
+        This method systematically exports the VAE encoder, unified transformer, and VAE decoder to ONNX format with
         image-to-video specific configurations including temporal dimensions, dynamic axes, and
         optimization settings.
 
@@ -240,7 +237,7 @@ class QEffWanImageToVideoPipeline:
             ValueError: If module configurations are invalid
 
         Example:
-            >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("path/to/wan/i2v/model")
+            >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
             >>> export_path = pipeline.export(
             ...     export_dir="/path/to/export",
             ...     use_onnx_subfunctions=True
@@ -281,10 +278,10 @@ class QEffWanImageToVideoPipeline:
     @staticmethod
     def get_vae_encoder_npi_path():
         """
-        Get the default configuration file path for WAN pipeline.
+        Get the default VAE encoder NPI configuration file path for WAN I2V pipeline.
 
         Returns:
-            str: Path to the default WAN VAE encoder NPI file.
+            str: Path to the default WAN I2V VAE encoder NPI file.
         """
         return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/npi_wan_i2v_vae_encoder.yaml")
 
@@ -323,7 +320,7 @@ class QEffWanImageToVideoPipeline:
             OSError: If there are issues with file I/O during compilation
 
         Example:
-            >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
+            >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
             >>> # Sequential compilation with default config
             >>> pipeline.compile(height=480, width=832, num_frames=81)
             >>>
@@ -365,19 +362,16 @@ class QEffWanImageToVideoPipeline:
         )
 
         # # Update NPI path for vae encoder
-        abs_vae_npi_path = self.get_vae_encoder_npi_path()
-        # import pdb; pdb.set_trace()
-        update_npi_path(self, abs_vae_npi_path, module_name= "vae_encoder" )
-
-
+        vae_npi_full_path = self.get_vae_encoder_npi_path()
+        update_npi_path(self, vae_npi_full_path, module_name="vae_encoder")
 
         # Prepare dynamic specialization updates based on video dimensions
         specialization_updates = {
             "vae_encoder": {
-                    "frames": num_frames,
-                    "height": height,
-                    "width": width,
-                },
+                "num_frames": num_frames,
+                "height": height,
+                "width": width,
+            },
             "transformer": [
                 # high noise
                 {
@@ -397,10 +391,10 @@ class QEffWanImageToVideoPipeline:
                 },
             ],
             "vae_decoder": {
-                    "latent_frames": latent_frames,
-                    "latent_height": latent_height,
-                    "latent_width": latent_width,
-                },
+                "latent_frames": latent_frames,
+                "latent_height": latent_height,
+                "latent_width": latent_width,
+            },
         }
 
         # Use generic utility functions for compilation
@@ -455,18 +449,12 @@ class QEffWanImageToVideoPipeline:
                   OR (if expand_timesteps=True):
                 - latents: Initial noise latents
                 - latent_condition: Image conditioning latents
-                - first_frame_mask: Temporal mask for first frame consistency
 
         Raises:
             ValueError: If generator list length doesn't match batch size
             RuntimeError: If VAE encoding fails or tensor operations fail
 
-        Note:
-            The method supports two conditioning modes:
-            1. expand_timesteps=True: Uses first-frame masking for WAN 2.2 I2V models
-            2. expand_timesteps=False: Uses concatenated conditioning with temporal masks
         """
-        # import pdb; pdb.set_trace()
         num_latent_frames = (num_frames - 1) // self.model.vae.config.scale_factor_temporal + 1
         latent_height = height // self.model.vae.config.scale_factor_spatial
         latent_width = width // self.model.vae.config.scale_factor_spatial
@@ -509,16 +497,19 @@ class QEffWanImageToVideoPipeline:
             1, self.model.vae.config.z_dim, 1, 1, 1
         ).to(latents.device, latents.dtype)
 
-
         # Initialize VAE encoder inference session
         if self.vae_encoder.qpc_session is None:
             # self.vae_encoder.qpc_path = "/home/vtirumal/pr_i2v/480p_with_npi"
             self.vae_encoder.qpc_session = QAICInferenceSession(
-                str(self.vae_encoder.qpc_path), device_ids=None # self.vae_encoder.device_ids
+                str(self.vae_encoder.qpc_path), device_ids=self.vae_encoder.device_ids
             )
 
-        # Allocate output buffer for VAE encoder
-        output_buffer = {"latents": np.random.rand(batch_size, constants.WAN_DIT_I2V_IMG_LATENT_CHANNELS , num_latent_frames, latent_height, latent_width).astype(np.int32)}
+        # # Allocate output buffer for VAE encoder
+        output_buffer = {
+            "latents": np.random.rand(
+                batch_size, constants.WAN_DIT_I2V_IMG_LATENT_CHANNELS, num_latent_frames, latent_height, latent_width
+            ).astype(np.int32)
+        }
         self.vae_encoder.qpc_session.set_buffers(output_buffer)
 
         aic_vae_encoder_input = {"image": video_condition.detach().numpy()}
@@ -532,7 +523,6 @@ class QEffWanImageToVideoPipeline:
         qaic_op = torch.from_numpy(outputs["latents"])
         latent_condition_mean, logvar = torch.chunk(qaic_op, 2, dim=1)
         latent_condition = latent_condition_mean.repeat(batch_size, 1, 1, 1, 1)
-
 
         latent_condition = latent_condition.to(dtype)
         latent_condition = (latent_condition - latents_mean) * latents_std
@@ -681,7 +671,7 @@ class QEffWanImageToVideoPipeline:
             ...     num_frames=81
             ... )
         """
-        device = "cpu"
+        device = self.model._execution_device
 
         # Compile models with custom configuration if needed
         self.compile(
@@ -692,7 +682,6 @@ class QEffWanImageToVideoPipeline:
             width=width,
             num_frames=num_frames,
         )
-
 
         # Step 1: Validate all inputs
         self.model.check_inputs(
@@ -801,7 +790,7 @@ class QEffWanImageToVideoPipeline:
             # self.transformer.qpc_path = "/home/vtirumal/imp_qpcs/wani2v_480p/"
             qpc_load_start = time.perf_counter()
             self.transformer.qpc_session = QAICInferenceSession(
-                str(self.transformer.qpc_path), device_ids=None #self.transformer.device_ids
+                str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
             )
             qpc_load_end = time.perf_counter()
             print(f" DIT QAICInferenceSession time {qpc_load_end - qpc_load_start:.2f} seconds")
@@ -864,11 +853,11 @@ class QEffWanImageToVideoPipeline:
                     timestep = t.expand(latents.shape[0])
 
                 # Extract dimensions for patch processing
-                batch_size, num_channels, num_frames, height, width = latent_model_input.shape
+                batch_size, num_channels, latent_frames, latent_height, latent_width = latent_model_input.shape
                 p_t, p_h, p_w = current_model.config.patch_size
-                post_patch_num_frames = num_frames // p_t
-                post_patch_height = height // p_h
-                post_patch_width = width // p_w
+                post_patch_num_frames = latent_frames // p_t
+                post_patch_height = latent_height // p_h
+                post_patch_width = latent_width // p_w
 
                 # Generate rotary position embeddings
                 rotary_emb = current_model.rope(latent_model_input)
@@ -1003,10 +992,10 @@ class QEffWanImageToVideoPipeline:
             if self.vae_decoder.qpc_session is None:
                 # self.vae_decoder.qpc_path = "/home/vtirumal/imp_qpcs/i2v_vae_decoder_480p_81f"
                 self.vae_decoder.qpc_session = QAICInferenceSession(
-                    str(self.vae_decoder.qpc_path), device_ids=None #self.vae_decoder.device_ids
+                    str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
                 )
 
-            # Allocate output buffer for VAE decoder
+            # # Allocate output buffer for VAE decoder
             output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
             self.vae_decoder.qpc_session.set_buffers(output_buffer)
             inputs = {"latent_sample": latents.numpy()}
