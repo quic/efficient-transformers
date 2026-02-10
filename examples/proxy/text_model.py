@@ -57,18 +57,20 @@ causal_models = [
 
 for model_name in causal_models:
     print(f"\n\nTesting model: {model_name}")
-    model = QEFFAutoModelForCausalLM.from_pretrained(model_name)  # Standard model load
+    layers = 2
+    export_dir = "qeff_models/" + model_name.split("/")[-1] + f"_{layers}layers"
+    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=layers)  # Standard model load
     print("\n============Original Qeff Model===============\n")
     print(model)
     print("\n=====================================\n")
 
     model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_name, enable_proxy=True
+        model_name, num_hidden_layers=layers, enable_proxy=True
     )  # enable_proxy=True to use proxy model export i.e., export model disable the embedding and LM head layers
     print("\n============Proxy Qeff Model===============\n")
     print(model)
     print("\n=====================================\n")
-
+    model.export(export_dir=export_dir)  # export the proxy model to disk
     model.compile(num_cores=16)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model.generate(prompts=["Hi there!!"], tokenizer=tokenizer, write_io=True)  # write_io = True to save io files
