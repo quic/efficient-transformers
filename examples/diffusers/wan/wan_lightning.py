@@ -50,8 +50,8 @@ output = pipeline(
     guidance_scale_2=1.0,
     num_inference_steps=4,
     generator=torch.manual_seed(0),
-    height=192,
-    width=320,
+    height=480,
+    width=832,
     use_onnx_subfunctions=True,
     parallel_compile=True,
 )

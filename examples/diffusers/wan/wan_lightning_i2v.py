@@ -42,7 +42,7 @@ pipeline.transformer.model.transformer_low.load_lora_adapter(
 )
 pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 
-
+# TODO create a custom file and move it there
 # # Configure for 2-layer model (faster inference)
 # pipeline.transformer.model.transformer_high.config['num_layers'] = 1
 # pipeline.transformer.model.transformer_low.config['num_layers']= 1
@@ -70,6 +70,7 @@ mod_value = pipeline.model.vae.config.scale_factor_spatial * pipeline.model.tran
 height = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
 width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
 
+# heigth : 544, width : 720 for 480p
 image = image.resize((width, height))
 prompt = (
     "An astronaut hatching from an egg, on the surface of the moon, the darkness and depth of space realised in "
@@ -87,7 +88,7 @@ output = pipeline(
     generator=torch.manual_seed(0),
     # custom_config_path="examples/diffusers/wan/wan_i2v_config.json",
     use_onnx_subfunctions=True,
-    parallel_compile=False,
+    parallel_compile=True,
 )
 frames = output.images[0]
 export_to_video(frames, "output_i2v.mp4", fps=16)
