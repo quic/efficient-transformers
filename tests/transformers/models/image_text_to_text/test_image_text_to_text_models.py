@@ -289,7 +289,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             config=config,
         )
     else:
-        qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=kv_offload)
+        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_name,
+            kv_offload=kv_offload,
+            config=config,
+        )
 
     qeff_model.export()
 
