@@ -719,7 +719,7 @@ class SpDTransform:
             supported_spd_model_types := [SPD_TARGET] + list(model_type_registry.keys())
         ):
             raise ValueError(
-                f"Specualtive model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
+                f"Speculative model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
             )
         elif (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
@@ -920,9 +920,7 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
 
 
 class KVBlockingAttentionTransform:
-    _skip_classes = {
-        QEffGptOssAttention,
-    }
+    _skip_classes = {}
 
     @classmethod
     def apply(cls, model: nn.Module, num_kv_blocks) -> Tuple[nn.Module, bool]:
@@ -941,6 +939,7 @@ class KVBlockingAttentionTransform:
                 module.attn_blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
+                import ipdb; ipdb.set_trace()
                 warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
         return model, transformed
 

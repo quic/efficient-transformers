@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from typing import Callable, Optional, Union
+from typing import Any,Callable, Dict, Optional, Union
 
 import torch
 from torch import nn
@@ -30,6 +30,8 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
+from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -671,6 +673,146 @@ def eager_attention_forward_blocked(
     output = output.view(BS, NH, CL, DH).transpose(1, 2).contiguous()
     return output, output
 
+def eager_attention_forward_blockedKV(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: Optional[int] = None,
+    cache_kwargs: Optional[Dict[str, Any]] = None,
+    layer_idx: int = None,
+    past_key_value: Optional[Cache] = None,
+    dropout: float = 0.0,
+    **kwargs,
+):
+    """
+    KV Blocking with Future Block Skipping Only Without Skip Softmax.
+    - Uses torch.where for conditional execution during export
+    """
+    
+    # logger.info("Are we in Blocked KV Attention? V2")
+
+    output = torch.zeros_like(query)
+    batch_size, num_heads, seq_len, head_dim = query.shape
+    current_max = torch.full(
+        (batch_size, num_heads, seq_len),
+        float(MIN_MASKED_ATTENTION_VALUE),
+        dtype=query.dtype,
+        device=query.device
+    )
+    current_denominator = torch.zeros(
+        batch_size, num_heads, seq_len,
+        dtype=query.dtype,
+        device=query.device
+    )
+    
+    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    position_ids = cache_kwargs.get("position_ids")
+    block_size = -(-past_seen_tokens // num_kv_blocks)
+    
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+    sinks = module.sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+    
+    current_position = position_ids.max()
+    
+    for j in range(num_kv_blocks):
+        start_index = j * block_size
+        end_index = (j + 1) * block_size
+        
+        # Skip Condition: Future blocks
+        skip_future = torch.tensor(start_index, device=query.device) > current_position
+        
+        # Eager mode Only
+        if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if skip_future.item():
+                continue
+        # breakpoint()
+        K_block, V_block = past_key_value.read_only_blockedKV(
+            start_index, end_index, layer_idx, cache_kwargs
+        )
+        
+        K_block_states = repeat_kv(K_block, module.num_key_value_groups)
+        V_block_states = repeat_kv(V_block, module.num_key_value_groups)
+        
+        past_seen_tokens_start = start_index
+        past_seen_tokens_end = torch.where(
+            torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+            past_seen_tokens,
+            end_index,
+        )
+        causal_mask_block = _create_causal_mask(
+            position_ids=position_ids,
+            target_length=past_seen_tokens_end,
+            start_index=past_seen_tokens_start
+        )
+        
+        # Compute Attention Scores for Blocked KV
+        attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
+        
+        # Apply causal mask
+        if attention_mask is not None:
+            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+        
+        if attn_weights_block.shape[-1] > 0:
+            block_max = attn_weights_block.max(dim=-1, keepdim=True).values
+        else:
+            block_max = torch.full(
+                (batch_size, num_heads, seq_len, 1),
+                float(MIN_MASKED_ATTENTION_VALUE),
+                dtype=query.dtype,
+                device=query.device
+            )
+        
+        block_max_scalar = block_max.squeeze(-1)
+        
+        prev_max = current_max
+        current_max_updated = torch.maximum(prev_max, block_max_scalar)
+        delta_max = prev_max - current_max_updated
+        
+        attn_weights_block_stable = attn_weights_block - current_max_updated.unsqueeze(-1)
+        kv_exp = torch.exp(attn_weights_block_stable)
+        
+        prev_denominator = current_denominator
+        current_denominator_updated = prev_denominator * torch.exp(delta_max) + kv_exp.sum(dim=-1)
+        
+        block_contribution = torch.matmul(kv_exp, V_block_states)
+        
+        prev_output = output
+        output_updated = prev_output * torch.exp(delta_max).unsqueeze(-1) + block_contribution
+        
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+            skip_mask = skip_future.view(1, 1, 1).expand(batch_size, num_heads, seq_len)
+            current_max = torch.where(skip_mask, prev_max, current_max_updated)
+            current_denominator = torch.where(skip_mask, prev_denominator, current_denominator_updated)
+            output = torch.where(skip_mask.unsqueeze(-1), prev_output, output_updated)
+        else:
+            # Eager mode
+            current_max = current_max_updated
+            current_denominator = current_denominator_updated
+            output = output_updated
+    
+    # Apply Attention Sinks
+    prev_max = current_max 
+    sink_max = sinks.max(dim=-1, keepdim=True).values.squeeze(-1)
+    current_max = torch.maximum(prev_max, sink_max)
+    delta_max = prev_max - current_max
+    
+    sinks_stable = sinks - current_max.unsqueeze(-1)
+    sink_exp = torch.exp(sinks_stable)
+    
+    prev_denominator = current_denominator
+    current_denominator = prev_denominator * torch.exp(delta_max) + sink_exp.sum(dim=-1)
+    
+    output = output * torch.exp(delta_max).unsqueeze(-1)
+    output = output / current_denominator.unsqueeze(-1)
+    
+    attn_output = output.transpose(1, 2).contiguous()
+    attn_weights = None
+    
+    return attn_output, attn_weights
+
 
 def opt_eager_attention_forward_blocked(
     module: nn.Module,
@@ -925,8 +1067,19 @@ class QEffGptOssAttention(GptOssAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
             max_seq_len_cached = 32 * 1024
+        past_seen_tokens = past_key_value.get_seq_length(self.layer_idx) if past_key_value is not None else 0
         cos, sin = self.rotary_emb(value_states, seq_len=max_seq_len_cached)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+
+        num_kv_blocks = getattr(self, "num_kv_blocks", None)
+        blocking_config = getattr(self, "attn_blocking_config", None)
+
+        if blocking_config is None and num_kv_blocks is not None:
+            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+
+        use_kv_blocked = (
+            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
+        )
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -939,29 +1092,53 @@ class QEffGptOssAttention(GptOssAttention):
                 "is_sliding": self.sliding_window is not None,
                 "sliding_window": past_key_value.sliding_window_len,
             }
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if use_kv_blocked and self.sliding_window is None:
+                cache_kwargs["past_seen_tokens"] = past_seen_tokens
+                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                if comp_ctx_lengths is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         if self.sliding_window is not None:
             attention_mask = sliding_mask
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = eager_attention_forward
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            dropout=0.0 if not self.training else self.attention_dropout,
-            scaling=self.scaling,
-            sliding_window=self.sliding_window,
-            s_aux=self.sinks,  # diff with Llama
-            **kwargs,
-        )
+        # do not block on sliding window layers
+        if use_kv_blocked and self.sliding_window is None:
+            attention_interface: Callable = eager_attention_forward_blockedKV
+            kwargs["cache_kwargs"] = cache_kwargs
+            attn_output, attn_weights = attention_interface(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                dropout=0.0 if not self.training else self.attention_dropout,
+                scaling=self.scaling,
+                sliding_window=self.sliding_window,
+                s_aux=self.sinks,  # diff with Llama
+                num_kv_blocks=num_kv_blocks,
+                past_key_value=past_key_value,
+                layer_idx=self.layer_idx,
+                **kwargs,
+            )
+        else:
+            attention_interface: Callable = eager_attention_forward
+            attn_output, attn_weights = attention_interface(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                dropout=0.0 if not self.training else self.attention_dropout,
+                scaling=self.scaling,
+                sliding_window=self.sliding_window,
+                s_aux=self.sinks,  # diff with Llama
+                **kwargs,
+            )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)

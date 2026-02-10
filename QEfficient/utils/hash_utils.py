@@ -62,6 +62,10 @@ def create_export_hash(**kwargs):
     export_params["dynamic_axes"] = kwargs.get("dynamic_axes")
     export_hash_params["export_params"] = export_params
 
+    blocking_kwargs = export_hash_params.pop("blocking_kwargs", None)
+    if blocking_kwargs:
+        export_hash_params.update(blocking_kwargs)
+
     export_kwargs = kwargs.get("export_kwargs")
     if export_kwargs:
         export_hash_params.update(export_kwargs)

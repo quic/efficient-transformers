@@ -69,7 +69,8 @@ test_models_spd = [
 
 test_models_blockedKV = [
     # "meta-llama/Llama-3.3-70B-Instruct",
-    "meta-llama/Llama-3.2-1B",
+    "openai/gpt-oss-20b",
+    # "meta-llama/Llama-3.2-1B",
 ]
 
 
@@ -187,6 +188,15 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qeff_model = QEFFAutoModelForCausalLM(
         copy.deepcopy(model_hf), is_tlm=is_tlm, pretrained_model_name_or_path=model_name, qaic_config=qaic_config
     )
+    specialization = qeff_model.build_specialization(
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        batch_size=batch_size,
+        kv_cache_batch_size=batch_size,
+        num_speculative_tokens=num_speculative_tokens,
+        prefill_only=prefill_only,
+    )
+    qeff_model.transform(specialization, num_devices=1)
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
     if model_name not in ModelConfig.SWIFTKV_MODELS:
@@ -249,12 +259,20 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytorch_hf_tokens = [pytorch_hf_tokens for _ in range(full_batch_size)]
 
     qeff_model = QEFFAutoModelForCausalLM(
-        model_hf,
+        copy.deepcopy(model_hf),
         continuous_batching=True,
         is_tlm=is_tlm,
         pretrained_model_name_or_path=model_name,
         qaic_config=qaic_config,
     )
+    specialization = qeff_model.build_specialization(
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        full_batch_size=full_batch_size,
+        kv_cache_batch_size=batch_size,
+        num_speculative_tokens=num_speculative_tokens,
+    )
+    qeff_model.transform(specialization, num_devices=4)
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
@@ -298,6 +316,15 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     model, _ = load_causal_lm_model(model_name, n_layer=1)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
+    specialization = qeff_model.build_specialization(
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        batch_size=batch_size,
+        kv_cache_batch_size=batch_size,
+        num_speculative_tokens=num_speculative_tokens,
+        prefill_only=prefill_only,
+    )
+    qeff_model.transform(specialization, num_devices=1)
     new_api_onnx_model_path = qeff_model.export()
 
     # Again loading model since the export moves model to meta device
