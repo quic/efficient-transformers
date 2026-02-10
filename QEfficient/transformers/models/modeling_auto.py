@@ -485,6 +485,8 @@ class QEFFAutoModel(QEFFTransformersBase):
         torch.Tensor or np.ndarray
             Output from the AI 100 or PyTorch runtime. The type depends on the runtime and model.
         """
+        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+
         # AI_100 runtime
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
@@ -1346,13 +1348,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if (processor and images) or (tokenizer and prompts):
             # Create VisionLanguageGeneration instance
             batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
-            write_io = kwargs.pop("write_io", False)
-            print("\nUsing VisionLanguageGeneration for inference.\n")
-            print("\n=============================\n")
-            print(self.onnx_path)
-            print(self.onnx_path())
-            print(os.path.dirname(self.onnx_path))
-            print("\n=============================\n")
             vlm_gen = VisionLanguageGeneration(
                 qeff_model=self,
                 lang_qpc_path=self.lang_model.qpc_path,
@@ -1366,7 +1361,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
                 image_height=image_height,
                 image_width=image_width,
-                write_io_dir=os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None,
+                write_io_dir=self._write_io_dir,
                 **kwargs,
             )
 
@@ -1379,8 +1374,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
 
         # Fallback to kv_offload_generate for direct inputs (backward compatibility)
-        print("\nUsing KV offload generate for inference.\n")
-
         return self.kv_offload_generate(
             inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
         )
@@ -1977,7 +1970,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        print("\nUsing single QPC generate for inference.\n")
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
