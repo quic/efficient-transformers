@@ -83,9 +83,20 @@ def blocked_kv_attention_forward(
     block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks > 0 else past_seen_tokens
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
 
+    current_position = position_ids.max()
+
     for j in range(num_kv_blocks):
         start_index = j * block_size
         end_index = (j + 1) * block_size
+
+        # import ipdb; ipdb.set_trace()
+
+        skip_future = torch.tensor(start_index, device=query.device) > current_position
+        
+        # Eager mode Only
+        if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+            if skip_future.item():
+                break
 
         k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
         k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
@@ -101,7 +112,12 @@ def blocked_kv_attention_forward(
                 mask_block = None
 
         if use_causal_mask or mask_block is None:
-            target_length = min(total_seen_tokens, end_index)
+            # target_length = min(total_seen_tokens, end_index)
+            target_length = torch.where(
+                torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+                past_seen_tokens,
+                end_index,
+            )
             causal_mask_block = _create_causal_mask(
                 position_ids=position_ids,
                 target_length=target_length,
@@ -118,22 +134,54 @@ def blocked_kv_attention_forward(
 
         # Update Running row maximum
         prev_max = current_max
-        current_max = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
-        delta_max = prev_max - current_max
+        current_max_updated = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
+        delta_max = prev_max - current_max_updated
 
-        current_exp = torch.exp(attn_weights_block - current_max.unsqueeze(-1))
+        current_exp = torch.exp(attn_weights_block - current_max_updated.unsqueeze(-1))
 
         # update running denominator
         prev_denominator = current_denominator
         curr_exp_sum = torch.einsum("bhqk->bhq", current_exp)
-        current_denominator = prev_denominator * torch.exp(delta_max) + curr_exp_sum
+        current_denominator_updated = prev_denominator * torch.exp(delta_max) + curr_exp_sum
 
-        prob = current_exp / current_denominator.unsqueeze(-1)
+        prob = current_exp / current_denominator_updated.unsqueeze(-1)
 
         prev_output = output
-        output = ((prev_denominator / current_denominator).unsqueeze(-1)) * prev_output * torch.exp(
+        output_updated = ((prev_denominator / current_denominator_updated).unsqueeze(-1)) * prev_output * torch.exp(
             delta_max.unsqueeze(-1)
         ) + torch.matmul(prob, v_block_states)
+
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+            skip_mask = skip_future.view(1, 1, 1).expand(batch_size, num_heads, seq_len)
+            current_max = torch.where(skip_mask, prev_max, current_max_updated)
+            current_denominator = torch.where(skip_mask, prev_denominator, current_denominator_updated)
+            output = torch.where(skip_mask.unsqueeze(-1), prev_output, output_updated)
+        else:
+            # Eager mode
+            current_max = current_max_updated
+            current_denominator = current_denominator_updated
+            output = output_updated
+
+    sinks = getattr(module, "sinks", None)
+    if sinks is not None:
+        sinks = sinks.reshape(1, -1, 1, 1).expand(
+                    batch_size, -1, seq_len, -1
+                )
+        # Apply attention sinks    
+        prev_max = current_max
+        sink_max = sinks.max(dim=-1, keepdim=True).values.squeeze(-1)
+        current_max = torch.maximum(prev_max, sink_max)
+        delta_max = prev_max - current_max
+        
+        sinks_stable = sinks - current_max.unsqueeze(-1)
+        sink_exp = torch.exp(sinks_stable)
+        
+        prev_denominator = current_denominator
+        current_denominator = prev_denominator * torch.exp(delta_max) + sink_exp.sum(dim=-1)
+        
+        output = output * torch.exp(delta_max).unsqueeze(-1)
+        
+        output = output / current_denominator.unsqueeze(-1)
 
     attn_output = output.transpose(1, 2).contiguous()
     attn_weights = None
