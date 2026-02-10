@@ -13,8 +13,6 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import PIL.Image
-import torch
-import torch.nn as nn
 from tqdm import tqdm
 
 from QEfficient.utils._utils import load_json
@@ -297,69 +295,3 @@ class QEffPipelineOutput:
 # List of module name that require special handling during export
 # when use_onnx_subfunctions is enabled
 ONNX_SUBFUNCTION_MODULE = ["transformer"]
-
-
-class QEffWanUnifiedWrapper(nn.Module):
-    """
-    A wrapper class that combines WAN high and low noise transformers into a single unified transformer.
-
-    This wrapper dynamically selects between high and low noise transformers based on the timestep shape
-    in the ONNX graph during inference. This approach enables efficient deployment of both transformer
-    variants in a single model.
-
-    Attributes:
-        transformer_high(nn.Module): The high noise transformer component
-        transformer_low(nn.Module): The low noise transformer component
-        config: Configuration shared between both transformers (from high noise transformer)
-    """
-
-    def __init__(self, transformer_high, transformer_low):
-        super().__init__()
-        self.transformer_high = transformer_high
-        self.transformer_low = transformer_low
-        # Both high and low noise transformers share the same configuration
-        self.config = transformer_high.config
-
-    def forward(
-        self,
-        hidden_states,
-        encoder_hidden_states,
-        rotary_emb,
-        temb,
-        timestep_proj,
-        tsp,
-        attention_kwargs=None,
-        return_dict=False,
-    ):
-        # Condition based on timestep shape
-        is_high_noise = tsp.shape[0] == torch.tensor(1)
-
-        high_hs = hidden_states.detach()
-        ehs = encoder_hidden_states.detach()
-        rhs = rotary_emb.detach()
-        ths = temb.detach()
-        projhs = timestep_proj.detach()
-
-        noise_pred_high = self.transformer_high(
-            hidden_states=high_hs,
-            encoder_hidden_states=ehs,
-            rotary_emb=rhs,
-            temb=ths,
-            timestep_proj=projhs,
-            attention_kwargs=attention_kwargs,
-            return_dict=return_dict,
-        )[0]
-
-        noise_pred_low = self.transformer_low(
-            hidden_states=hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-            rotary_emb=rotary_emb,
-            temb=temb,
-            timestep_proj=timestep_proj,
-            attention_kwargs=attention_kwargs,
-            return_dict=return_dict,
-        )[0]
-
-        # Select based on timestep condition
-        noise_pred = torch.where(is_high_noise, noise_pred_high, noise_pred_low)
-        return noise_pred
