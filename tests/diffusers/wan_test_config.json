@@ -10,7 +10,8 @@
     "mad_validation": {
                          "tolerances": {
                                 "transformer_high": 0.3,
-                                "transformer_low": 0.2
+                                "transformer_low": 0.2,
+                                "vae_decoder" : 0.04
                             }
                         },
     "pipeline_params": {
@@ -60,6 +61,27 @@
                                 "device_ids": null,
                                 "qpc_path" : null
                           }
+        },
+        "vae_decoder": {
+            "specializations": {
+                "batch_size": "1",
+                "num_channels": "16"
+            },
+            "compilation": {
+                "onnx_path": null,
+                "compile_dir": null,
+                "mdp_ts_num_devices": 1,
+                "mxfp6_matmul": false,
+                "convert_to_fp16": true,
+                "compile_only": true,
+                "aic_num_cores": 16,
+                "mos": 1,
+                "mdts_mos": 1
+            },
+            "execute": {
+                "device_ids": null,
+                "qpc_path": null
+            }
         }
     }
 }

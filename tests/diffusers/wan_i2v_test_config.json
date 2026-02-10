@@ -1,0 +1,111 @@
+{
+    "model_setup": {
+        "max_area": 61440,
+        "num_frames": 81,
+        "num_transformer_layers_high": 1,
+        "num_transformer_layers_low": 1,
+        "use_onnx_subfunctions": false
+    },
+    "mad_validation": {
+        "tolerances": {
+            "vae_encoder": 7,
+            "transformer_high": 0.3,
+            "transformer_low": 0.2,
+            "vae_decoder": 0.1
+        }
+    },
+    "pipeline_params": {
+        "test_prompt": "A cat walking in a garden with flowing motion",
+        "test_image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/astronaut.jpg",
+        "num_inference_steps": 2,
+        "guidance_scale": 1.0,
+        "guidance_scale_2": 1.0,
+        "max_sequence_length": 512,
+        "validate_gen_video": true,
+        "min_video_variance": 1.0
+    },
+    "validation_checks": {
+        "video_generation": true,
+        "onnx_export": true,
+        "compilation": true,
+        "image_conditioning": true,
+        "dynamic_sizing": true
+    },
+    "modules": {
+        "vae_encoder": {
+            "specializations": {
+                "batch_size": "1",
+                "num_channels": "16"
+            },
+            "compilation": {
+                "onnx_path": null,
+                "compile_dir": null,
+                "mdp_ts_num_devices": 1,
+                "mxfp6_matmul": false,
+                "convert_to_fp16": true,
+                "compile_only": true,
+                "aic_num_cores": 16,
+                "mos": 1,
+                "mdts_mos": 1
+            },
+            "execute": {
+                "device_ids": null,
+                "qpc_path": null
+            }
+        },
+        "transformer": {
+            "specializations": [
+                {
+                    "batch_size": "1",
+                    "num_channels": "20",
+                    "steps": "1",
+                    "sequence_length": "512",
+                    "model_type": 1
+                },
+                {
+                    "batch_size": "1",
+                    "num_channels": "20",
+                    "steps": "1",
+                    "sequence_length": "512",
+                    "model_type": 2
+                }
+            ],
+            "compilation": {
+                "onnx_path": null,
+                "compile_dir": null,
+                "mdp_ts_num_devices": 1,
+                "mxfp6_matmul": true,
+                "convert_to_fp16": true,
+                "compile_only": true,
+                "aic_num_cores": 16,
+                "mos": 1,
+                "mdts_mos": 1
+            },
+            "execute": {
+                "device_ids": null,
+                "qpc_path": null
+            }
+        },
+        "vae_decoder": {
+            "specializations": {
+                "batch_size": "1",
+                "num_channels": "16"
+            },
+            "compilation": {
+                "onnx_path": null,
+                "compile_dir": null,
+                "mdp_ts_num_devices": 1,
+                "mxfp6_matmul": false,
+                "convert_to_fp16": true,
+                "compile_only": true,
+                "aic_num_cores": 16,
+                "mos": 1,
+                "mdts_mos": 1
+            },
+            "execute": {
+                "device_ids": null,
+                "qpc_path": null
+            }
+        }
+    }
+}

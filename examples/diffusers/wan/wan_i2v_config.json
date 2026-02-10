@@ -3,17 +3,15 @@
   "modules": {
     "vae_encoder":
                   {
-                    "specializations":
-                                        {
+                    "specializations":{
                                           "batch_size": 1,
                                           "num_channels": 16
-                                        }
-                                    ,
+                                      },
                     "compilation":
                                       {
                                         "onnx_path": null,
                                         "compile_dir": null,
-                                        "mdp_ts_num_devices": 8,
+                                        "mdp_ts_num_devices": 4,
                                         "mxfp6_matmul": false,
                                         "convert_to_fp16": true,
                                         "aic_num_cores": 16,
@@ -67,13 +65,12 @@
                                         {
                                           "batch_size": 1,
                                           "num_channels": 16
-                                        }
-                                    ,
+                                        },
                     "compilation":
                                       {
                                         "onnx_path": null,
                                         "compile_dir": null,
-                                        "mdp_ts_num_devices": 8,
+                                        "mdp_ts_num_devices": 4,
                                         "mxfp6_matmul": false,
                                         "convert_to_fp16": true,
                                         "aic_num_cores": 16,
