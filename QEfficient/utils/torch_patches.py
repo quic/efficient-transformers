@@ -11,7 +11,9 @@ import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
 
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
