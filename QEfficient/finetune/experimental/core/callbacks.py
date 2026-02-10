@@ -19,7 +19,7 @@ from transformers import (
 from transformers.integrations.integration_utils import TensorBoardCallback
 from transformers.trainer_callback import TrainerCallback, TrainerControl, TrainerState
 
-from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
 from QEfficient.finetune.experimental.core.utils.profiler_utils import (
     get_op_verifier_ctx,
     init_qaic_profiling,
@@ -197,14 +197,6 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
                 self.op_verifier_ctx_step.__exit__(None, None, None)
 
 
-def create_callbacks(name: str, **kwargs) -> Any:
-    """Create a callback instance."""
-    callback_class = registry.get_callback(name)
-    if callback_class is None:
-        raise ValueError(f"Unknown callback: {name}. Available: {registry.list_callbacks()}")
-    return callback_class(**kwargs)
-
-
 def replace_progress_callback(trainer: Any, callbacks: list[Any], logger: Any = None) -> None:
     """
     Replace default ProgressCallback with EnhancedProgressCallback if not already present.
@@ -221,13 +213,18 @@ def replace_progress_callback(trainer: Any, callbacks: list[Any], logger: Any = 
         try:
             # Remove default ProgressCallback if present
             trainer.remove_callback(ProgressCallback)
-        except (AttributeError, ValueError):
+        except (AttributeError, ValueError) as e:
             # Callback not present or method doesn't exist, continue
+            if logger:
+                logger.log_rank_zero(
+                    f"Debug: Could not remove default ProgressCallback: {e}. This is expected if callback is not present.",
+                    level="debug",
+                )
             pass
 
         try:
             # Add EnhancedProgressCallback
-            enhanced_callback = create_callbacks("enhanced_progressbar")
+            enhanced_callback = ComponentFactory.create_callback("enhanced_progressbar")
             trainer.add_callback(enhanced_callback)
         except Exception as e:
             if logger:

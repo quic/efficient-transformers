@@ -210,6 +210,35 @@ class ComponentFactory:
         return model_instance
 
     @staticmethod
+    def create_trainer_config(name: str, **dependencies) -> tuple:
+        """
+        Create trainer configuration based on registered trainer modules.
+
+        Args:
+            name: Name of the trainer type
+            **dependencies: Any dependencies needed to configure the trainer
+
+        Returns:
+            tuple: (trainer_class, args_class, additional_kwargs)
+        """
+        config = registry.get_trainer_module(name)
+
+        # Process required kwargs based on available dependencies
+        additional_kwargs = {}
+        for kwarg, default in config["required_kwargs"].items():
+            if kwarg in dependencies:
+                additional_kwargs[kwarg] = dependencies[kwarg]
+            elif default != "REQUIRED":
+                additional_kwargs[kwarg] = default
+
+        # Check for missing required arguments
+        for kwarg, default in config["required_kwargs"].items():
+            if kwarg not in additional_kwargs and default == "REQUIRED":
+                raise ValueError(f"Required argument '{kwarg}' not provided for trainer '{name}'")
+
+        return config["trainer_cls"], config["args_cls"], additional_kwargs
+
+    @staticmethod
     def create_dataset(dataset_type: str, dataset_name: str, split: str, seed: int = 42, **kwargs) -> Any:
         """
         Create a dataset instance.
@@ -229,3 +258,20 @@ class ComponentFactory:
             raise ValueError(f"Unknown dataset type: {dataset_type}. Available: {registry.list_datasets()}")
         dataset_instance = dataset_class(dataset_name=dataset_name, split=split, seed=seed, **kwargs)
         return dataset_instance
+
+    @staticmethod
+    def create_callback(name: str, **kwargs) -> Any:
+        """
+        Create a callback instance.
+
+        Args:
+            name: Name of the callback to create
+            **kwargs: Additional callback configuration parameters
+
+        Returns:
+            Callback instance
+        """
+        callback_class = registry.get_callback(name)
+        if callback_class is None:
+            raise ValueError(f"Unknown callback: {name}. Available: {registry.list_callbacks()}")
+        return callback_class(**kwargs)

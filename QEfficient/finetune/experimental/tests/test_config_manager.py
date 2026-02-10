@@ -4,13 +4,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
-
 from pathlib import Path
 
 import pytest
 
-from QEfficient.finetune.experimental.core.config_manager import ConfigManager, parse_arguments
+from QEfficient.finetune.experimental.core.config_manager import ConfigManager
 
 
 @pytest.fixture
@@ -19,15 +17,15 @@ def config_path() -> Path:
     return (here / "test_config.yaml").resolve()
 
 
+def test_default_config():
+    config_manager = ConfigManager()
+    assert config_manager is not None
+    assert config_manager.config is not None
+
+
 def test_config(config_path):
-    master_config = parse_arguments(args=[])
-    config_manager = ConfigManager(master_config)
+    config_manager = ConfigManager(config_path=config_path)
     assert isinstance(config_manager, ConfigManager)
-    config_manager.load_config(config_path)
-    try:
-        config_manager.validate_config()
-    except Exception as e:
-        pytest.fail(f"Config validation failed with error: {e}")
 
     # Test that all required fields are present
     missing = [
@@ -60,3 +58,30 @@ def test_config(config_path):
     assert optimizer_config is not None
     assert isinstance(optimizer_config, dict)
     assert (hasattr(optimizer_config, attr) for attr in ("optimizer_name", "lr"))
+
+
+def test_torch_dtype_validation():
+    """Test that torch_dtype validation works correctly."""
+    # Test with default config - should have torch_dtype set to fp16 by default
+    config_manager = ConfigManager()
+    training_config = config_manager.get_training_config()
+    assert training_config.get("torch_dtype") == "fp16"
+
+    # Validation should pass with default config
+    config_manager.validate_config()  # Should not raise
+
+
+def test_torch_dtype_invalid():
+    """Test that invalid torch_dtype raises validation error."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    # Create config with invalid torch_dtype
+    training_config = TrainingConfig(torch_dtype="invalid_dtype")
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    # Validation should fail
+    with pytest.raises(ValueError) as exc_info:
+        config_manager.validate_config()
+
+    assert "torch_dtype must be one of" in str(exc_info.value)

@@ -13,13 +13,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from QEfficient.finetune.experimental.core.callbacks import create_callbacks, replace_progress_callback
+from QEfficient.finetune.experimental.core.callbacks import replace_progress_callback
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory
 from QEfficient.finetune.experimental.core.config_manager import (
     ConfigManager,
     MasterConfig,
-    create_trainer_config,
-    parse_arguments,
 )
 from QEfficient.finetune.experimental.core.dataset import SFTDataset  # noqa: F401
 from QEfficient.finetune.experimental.core.logger import Logger
@@ -46,14 +44,14 @@ class FineTuningPipeline:
     Main pipeline class for fine-tuning LLMs.
     """
 
-    def __init__(self, config: MasterConfig):
+    def __init__(self, config_manager: ConfigManager):
         """
         Initialize the fine-tuning pipeline with configuration.
 
         Args:
-            config: Master configuration object containing all training parameters
+            config_manager: ConfigManager instance with loaded and validated configuration
         """
-        self.config_manager = ConfigManager(config)
+        self.config_manager = config_manager
         self.config = self.config_manager.config
         self.output_dir = Path(self.config.training["output_dir"])
         self._setup_environment()
@@ -64,17 +62,6 @@ class FineTuningPipeline:
         os.environ["TRACKIO_DIR"] = str(self.output_dir / "trackio_logs")
         os.environ["TENSORBOARD_LOGGING_DIR"] = str(self.output_dir)
 
-    def _prepare_training_config(self) -> Dict[str, Any]:
-        """
-        Prepare and validate training configuration.
-
-        Returns:
-            Dictionary of training arguments ready for trainer initialization
-        """
-        return prepare_training_config(
-            config_manager=self.config_manager,
-        )
-
     def _create_datasets(self) -> Tuple[Any, Any]:
         """
         Create training and evaluation datasets.
@@ -83,9 +70,6 @@ class FineTuningPipeline:
             Tuple of (train_dataset, eval_dataset)
         """
         dataset_config = self.config_manager.get_dataset_config()
-        # Convert to dict if it's not already to ensure proper filtering
-        if not isinstance(dataset_config, dict):
-            dataset_config = dict(dataset_config)
 
         dataset_type = dataset_config.get("dataset_type")
         dataset_name = dataset_config.get("dataset_name")
@@ -122,18 +106,11 @@ class FineTuningPipeline:
             Model instance with loaded model and tokenizer
         """
         # Get model config as dict
-        model_config = dict(self.config_manager.get_model_config())
+        model_config = self.config_manager.get_model_config()
 
         # Extract required fields
         model_type = model_config.pop("model_type")
         model_name = model_config.pop("model_name")
-
-        # Get torch_dtype from training config and convert to model format
-        training_config_dict = self.config_manager.get_training_config()
-        # To do: (For Tanisha) Check if torch_dtype should rather be added directly in model_config only in config_manager.py
-        model_dtype = training_config_dict.get("torch_dtype")
-        dtype_mapping = {"fp16": "float16", "bf16": "bfloat16"}
-        model_config["torch_dtype"] = dtype_mapping.get(model_dtype, "auto")
 
         # Filter out PEFT-related fields, these shouldn't be passed to model creation
         excluded_keys = {"use_peft", "peft_config"}
@@ -165,7 +142,7 @@ class FineTuningPipeline:
         # callback_config.callbacks is a dictionary of callback configurations
         for callback_name, callback_kwargs in callback_config["callbacks"].items():
             try:
-                callback_instance = create_callbacks(callback_name, **callback_kwargs)
+                callback_instance = ComponentFactory.create_callback(callback_name, **callback_kwargs)
                 callbacks.append(callback_instance)
             except ValueError as e:
                 logger.log_rank_zero(f"Warning: Failed to create callback '{callback_name}': {e}", level="warning")
@@ -211,20 +188,13 @@ class FineTuningPipeline:
         dependencies = {}
         if peft_config is not None:
             dependencies["peft_config"] = peft_config
-
-        trainer_cls, args_cls, additional_kwargs = create_trainer_config(trainer_type, **dependencies)
+        trainer_cls, args_cls, additional_kwargs = ComponentFactory.create_trainer_config(trainer_type, **dependencies)
 
         # Clean up training config: remove fields that shouldn't be passed to TrainingArguments
         training_config.pop("device", None)
         # Note: torch_dtype was already converted to fp16/bf16 flag in prepare_training_config
         training_config.pop("deepspeed_config", None)
         training_config.pop("torch_dtype", None)
-
-        # Ensure dtype flag is set (prepare_training_config should have set fp16/bf16 already)
-        # Fallback to fp16 if neither is set (shouldn't happen, but safety check)
-        if "fp16" not in training_config and "bf16" not in training_config:
-            training_config["fp16"] = True
-            logger.log_rank_zero("Warning: No dtype flag found, defaulting to fp16", level="warning")
 
         # Create trainer arguments instance
         args = args_cls(**training_config)
@@ -253,7 +223,8 @@ class FineTuningPipeline:
         self.config_manager.validate_config()
 
         # Prepare training configuration
-        training_config = self._prepare_training_config()
+        training_config = prepare_training_config(config_manager=self.config_manager)
+
         # Create datasets
         logger.log_rank_zero("Creating datasets...")
         train_dataset, eval_dataset = self._create_datasets()
@@ -295,10 +266,15 @@ def main():
 
     Parses command-line arguments or config file and runs the fine-tuning pipeline.
     """
-    # Parse arguments/config
-    master_config = parse_arguments()
-    # Create and run pipeline
-    pipeline = FineTuningPipeline(master_config)
+    # ConfigManager now handles argument parsing internally via its __init__
+    # It will automatically detect and parse:
+    # - Command-line args (if len(sys.argv) > 1)
+    # - Config file path (if sys.argv[1] ends with .yaml)
+    # - Or use defaults if no args provided
+    config_manager = ConfigManager()
+
+    # Create and run pipeline - pass ConfigManager directly to avoid redundant wrapping
+    pipeline = FineTuningPipeline(config_manager)
     pipeline.run()
 
 
