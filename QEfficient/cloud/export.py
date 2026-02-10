@@ -12,7 +12,9 @@ from typing import Optional
 from QEfficient.base.common import QEFFCommonLoader
 from QEfficient.utils import check_and_assign_cache_dir
 from QEfficient.utils.custom_yaml import generate_custom_io
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 # Specifically for Docker images.
 ROOT_DIR = os.path.dirname(os.path.abspath(""))

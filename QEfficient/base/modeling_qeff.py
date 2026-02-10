@@ -7,7 +7,6 @@
 
 import gc
 import inspect
-import logging
 import shutil
 import subprocess
 import warnings
@@ -35,8 +34,9 @@ from QEfficient.utils import (
     load_json,
 )
 from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = logging.getLogger(__name__)
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 
 class QEFFBaseModel(ABC):
@@ -319,6 +319,8 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         self.onnx_path = onnx_path
+        logger.info("Model export is finished and saved at: %s", onnx_path)
+        self.onnx_path = onnx_path
         return onnx_path
 
     def get_onnx_path(
@@ -540,4 +542,5 @@ class QEFFBaseModel(ABC):
         logger.info("Hashed parameters exported successfully.")
 
         self.qpc_path = qpc_path
+        logger.info("Model compilation is finished and saved at: %s", qpc_path)
         return qpc_path
