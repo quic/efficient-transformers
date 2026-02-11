@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
+from diffusers.models.transformers.transformer_wan import WanTransformerBlock
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -17,6 +18,11 @@ from QEfficient.diffusers.models.pytorch_transforms import (
     CustomOpsTransform,
     NormalizationTransform,
 )
+from QEfficient.diffusers.models.transformers.transformer_flux import (
+    QEffFluxSingleTransformerBlock,
+    QEffFluxTransformerBlock,
+)
+from QEfficient.diffusers.models.transformers.transformer_qwenimage import QEffQwenImageTransformerBlock
 from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
 )
@@ -470,6 +476,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
+        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """
@@ -480,6 +487,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             output_names (List[str]): Names of model outputs
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
+            export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
 
@@ -487,15 +495,22 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             str: Path to the exported ONNX model
         """
 
+        if use_onnx_subfunctions:
+            export_kwargs = {
+                "export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock},
+                "use_onnx_subfunctions": True,
+            }
+
         # Sort _use_default_values in config to ensure consistent hash generation during export
         self.model.config["_use_default_values"].sort()
+
         return self._export(
             example_inputs=inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
             offload_pt_weights=False,  # As weights are needed with AdaLN changes
+            **export_kwargs,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
@@ -617,6 +632,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
+        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """Export the Wan transformer model to ONNX format.
@@ -626,11 +642,14 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             output_names (List[str]): Names of model outputs
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
+            export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
         Returns:
             str: Path to the exported ONNX model
         """
+        if use_onnx_subfunctions:
+            export_kwargs = {"export_modules_as_functions": {WanTransformerBlock}, "use_onnx_subfunctions": True}
 
         return self._export(
             example_inputs=inputs,
@@ -638,7 +657,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            **export_kwargs,
         )
 
     def compile(self, specializations, **compiler_options) -> None:
@@ -654,7 +673,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
 
 class QEffQwenImageTransformer2DModel(QEFFBaseModel):
     _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [SplitTensorsTransform]
 
     """
     QEffQwenImageTransformer2DModel is a wrapper class for QwenImage Transformer2D models that provides ONNX export and compilation capabilities.
@@ -668,7 +687,7 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         super().__init__(model)
         self.model = model
 
-    def get_onnx_config(self):
+    def get_onnx_params(self):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
 
         # For testing purpose I have set this to constant values from the original models
@@ -685,6 +704,8 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
             "height": torch.tensor([58], dtype=torch.int64),
             "width": torch.tensor([104], dtype=torch.int64),
             "txt_seq_lens": torch.tensor([126], dtype=torch.int64),
+            # "img_rotary_emb": torch.randn(6032, 64, dtype=torch.float32),
+            # "text_rotary_emb": torch.randn(126, 64, dtype=torch.float32)
         }
 
         output_names = ["output"]
@@ -699,67 +720,46 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
 
     def export(
         self,
-        inputs,
-        output_names,
-        dynamic_axes,
-        export_dir=None,
-        export_kwargs=None,
-    ):
+        inputs: Dict,
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_dir: str = None,
+        export_kwargs: Dict = {},
+        use_onnx_subfunctions: bool = False,
+    ) -> str:
+        """#TODO update docs"""
+
+        if use_onnx_subfunctions:
+            export_kwargs = {
+                "export_modules_as_functions": {QEffQwenImageTransformerBlock},
+                "use_onnx_subfunctions": True,
+            }
+
         return self._export(
             example_inputs=inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            export_kwargs=export_kwargs,
+            offload_pt_weights=False,  # As weights are needed with AdaLN changes
+            **export_kwargs,
         )
 
-    def get_specializations(
-        self,
-        batch_size: int,
-        latent_seq_len: int,
-        text_seq_len: int,
-    ):
-        specializations = [
-            {
-                "batch_size": batch_size,
-                "latent_seq_len": latent_seq_len,
-                "text_seq_len": text_seq_len,
-            }
-        ]
+    def compile(self, specializations: List[Dict], **compiler_options) -> None:
+        """
+        Compile the ONNX model for Qualcomm AI hardware.
 
-        return specializations
-
-    def compile(
-        self,
-        compile_dir,
-        compile_only,
-        specializations,
-        convert_to_fp16,
-        mxfp6_matmul,
-        mdp_ts_num_devices,
-        aic_num_cores,
-        custom_io,
-        **compiler_options,
-    ) -> str:
-        return self._compile(
-            compile_dir=compile_dir,
-            compile_only=compile_only,
-            specializations=specializations,
-            convert_to_fp16=convert_to_fp16,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            aic_num_cores=aic_num_cores,
-            custom_io=custom_io,
-            **compiler_options,
-        )
+        Args:
+            specializations (List[Dict]): Model specialization configurations
+            **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
+        """
+        self._compile(specializations=specializations, **compiler_options)
 
     @property
-    def model_name(self) -> str:
-        mname = self.model.__class__.__name__
-        if mname.startswith("QEff") or mname.startswith("QEFF"):
-            mname = mname[4:]
-        return mname
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
 
-    @property
-    def get_model_config(self) -> dict:
+        Returns:
+            Dict: The configuration dictionary of the underlying Wan transformer model
+        """
         return self.model.config.__dict__

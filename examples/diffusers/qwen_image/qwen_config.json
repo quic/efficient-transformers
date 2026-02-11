@@ -1,0 +1,26 @@
+{
+  "description": "Default configuration for QWEN",
+  "modules": {
+    "transformer": {
+          "specializations": {
+                                "batch_size":"1",
+                                "text_seq_len":"126"
+                            },
+          "compilation":  {
+                              "onnx_path": null,
+                              "compile_dir": null,
+                              "mdp_ts_num_devices": 16,
+                              "convert_to_fp16": true,
+                              "compile_only":true,
+                              "aic_num_cores": 16,
+                              "mos": 1,
+                              "mdts_mos": 1,
+                              "node_precision_info": "/home/vtirumal/pr_qwen_img/efficient-transformers/QEfficient/diffusers/pipelines/configs/qwen_image.yaml"
+                         },
+          "execute":     {
+                              "device_ids": null,
+                              "qpc_path" : null
+                          }
+    }
+  }
+}

@@ -4,30 +4,47 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
+"""
+QEfficient QWEN image Pipeline Implementation
+
+This module provides an optimized implementation of QWEN image pipeline
+for high-performance text-to-image generation on Qualcomm AI hardware.
+
+TODO: 1. Update Qwen text encoder, Vae decoder to Qaic; present running on cpu
+"""
 
 import os
+import time
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
 from diffusers import QwenImagePipeline
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutput
 from diffusers.pipelines.qwenimage.pipeline_qwenimage import calculate_shift
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
+from tqdm import tqdm
 
 from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffQwenImageTransformer2DModel,
-    QEffTextEncoder,
-    QEffVAE,
+)
+from QEfficient.diffusers.pipelines.pipeline_utils import (
+    ONNX_SUBFUNCTION_MODULE,
+    ModulePerf,
+    QEffPipelineOutput,
+    calculate_compressed_latent_dimension,
+    compile_modules_parallel,
+    compile_modules_sequential,
+    config_manager,
+    set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils import constants
 
 
 class QEFFQwenImagePipeline(QwenImagePipeline):
-    _hf_auto_class = QwenImagePipeline
     """
-
+    #TODO : update docs
     A QEfficient-optimized QwenImage pipeline, inheriting from `diffusers.QwenImagePipeline`.
 
     This class integrates QEfficient components (e.g., optimized models for text encoder,
@@ -35,25 +52,48 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
     It provides methods for text-to-image generation leveraging these optimized components.
     """
 
-    def __init__(self, model, *args, **kwargs):
-        self.text_encoder = QEffTextEncoder(model.text_encoder)
-        self.text_encoder.tokenizer = model.tokenizer
+    _hf_auto_class = QwenImagePipeline
+
+    def __init__(self, model, **kwargs):
+        "#TODO : update docs"
+        self.model = model
+        self.kwargs = kwargs
+
+        self.text_encoder = model.text_encoder  # TODO: Text encoder on QAIC
         self.transformer = QEffQwenImageTransformer2DModel(model.transformer)
-        self.vae_decode = QEffVAE(model.vae, "decoder")
-        self.vae_cpu = model.vae
+        self.vae_cpu = model.vae  # TODO enable in QAIC
+
+        # Store all modules in a dictionary for easy iteration during export/compile
+        self.modules = {
+            "transformer": self.transformer,
+        }
+
+        # Copy tokenizers and scheduler from the original model
         self.tokenizer = model.tokenizer
+        self.text_encoder.tokenizer = model.tokenizer  # TODO check and remove if not utlising it
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
+
         self.prompt_template_encode = model.prompt_template_encode
         self.prompt_template_encode_start_idx = model.prompt_template_encode_start_idx
 
-        self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
-            latent_sample, return_dict
-        )
+        # self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
+        #     latent_sample, return_dict
+        # )
 
         self.vae_scale_factor = 2 ** len(model.vae.temperal_downsample) if getattr(model, "vae", None) else 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
         self.default_sample_size = model.default_sample_size
+
+    @property
+    def do_classifier_free_guidance(self):
+        """
+        Determine if classifier-free guidance should be used.
+
+        Returns:
+            bool: True if CFG should be applied based on current guidance scales
+        """
+        return self._guidance_scale > 1.0 and (self._guidance_scale_2 is None or self._guidance_scale_2 > 1.0)
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
@@ -70,222 +110,162 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         model = cls._hf_auto_class.from_pretrained(
             pretrained_model_name_or_path,
             torch_dtype=torch.float32,
+            device_map="cpu",
             **kwargs,
         )
-        model.to("cpu")
         return cls(
             model=model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
+            **kwargs,
         )
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(
+        self,
+        export_dir: Optional[str] = None,
+        use_onnx_subfunctions: bool = False,
+    ) -> str:
         """
-        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        Export all pipeline modules to ONNX format for deployment preparation.
 
-        ``Optional`` Args:
-           :export_dir (str, optional): The directory path to store ONNX-graph.
+        This method systematically exports the unified transformer to ONNX format with
+        video-specific configurations including temporal dimensions, dynamic axes, and
+        optimization settings. The export process prepares the model for subsequent
+        compilation to QPC format for efficient inference on QAIC hardware.
+
+        Args:
+            export_dir (str, optional): Target directory for saving ONNX model files. If None,
+                uses the default export directory structure. The directory will be created
+                if it doesn't exist.
+            use_onnx_subfunctions (bool, default=False): Whether to enable ONNX subfunction
+                optimization for supported modules. This can optimize the graph structure
+                and improve compilation efficiency for complex models like the transformer.
 
         Returns:
-            :str: Path of the generated ``ONNX`` graph.
+            str: Absolute path to the export directory containing all ONNX model files.
+
+        Raises:
+            RuntimeError: If ONNX export fails for any module
+            OSError: If there are issues creating the export directory or writing files
+            ValueError: If module configurations are invalid
+
+        Example:
+            >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
+            >>> export_path = pipeline.export(
+            ...     export_dir="/path/to/export",
+            ...     use_onnx_subfunctions=True
+            ... )
         """
 
-        # transformer
-        example_inputs_transformer, dynamic_axes_transformer, output_names_transformer = (
-            self.transformer.get_onnx_config()
-        )
+        # Export each module with video-specific parameters
+        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
+            # Get ONNX export configuration with video dimensions
+            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
 
-        self.transformer.export(
-            inputs=example_inputs_transformer,
-            output_names=output_names_transformer,
-            dynamic_axes=dynamic_axes_transformer,
-            export_dir=export_dir,
-        )
-        print("Exported transformers")
+            # Prepare export parameters
+            export_params = {
+                "inputs": example_inputs,
+                "output_names": output_names,
+                "dynamic_axes": dynamic_axes,
+                "export_dir": export_dir,
+            }
+
+            # Enable ONNX subfunctions for supported modules if requested
+            if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
+                export_params["use_onnx_subfunctions"] = True
+
+            if module_obj.qpc_path is None:
+                module_obj.export(**export_params)
+
+    @staticmethod
+    def get_default_config_path():
+        """
+        Get the default configuration file path for WAN pipeline.
+
+        Returns:
+            str: Path to the default WAN configuration JSON file.
+        """
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/qwen_config.json")
 
     def compile(
         self,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
-        *,
-        batch_size: int = 1,
-        num_devices_text_encoder: int = 1,
-        num_devices_transformer: int = 4,
-        num_devices_vae_decoder: int = 1,
-        num_cores: int = 16,
-        mxfp6_matmul: bool = False,
-        **compiler_options,
+        compile_config: Optional[str] = None,
+        parallel: bool = False,
+        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
+        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
+        use_onnx_subfunctions: bool = False,
     ) -> str:
         """
         Compiles the ONNX graphs of the different model components for deployment on Qualcomm AI hardware.
 
-        This method takes the ONNX paths of the text encoder, transformer, and VAE decoder,
-        and compiles them into an optimized format for inference.
+        This method takes the ONNX paths of the transformer and compiles them into an optimized format
+        for inference using JSON-based configuration.
 
         Args:
-            onnx_path (`str`, *optional*):
-                The base directory where ONNX files were exported.
-            compile_dir (`str`, *optional*):
-                The directory path to store the compiled artifacts.
-            batch_size (`int`, *optional*, defaults to 1):
-                The batch size to use for compilation.
-            num_devices_text_encoder (`int`, *optional*, defaults to 1):
-                The number of AI devices to deploy the text encoder model on.
-            num_devices_transformer (`int`, *optional*, defaults to 4):
-                The number of AI devices to deploy the transformer model on.
-            num_devices_vae_decoder (`int`, *optional*, defaults to 1):
-                The number of AI devices to deploy the VAE decoder model on.
-            num_cores (`int`, *optional*, defaults to 16):
-                The number of cores to use for compilation.
-            mxfp6_matmul (`bool`, *optional*, defaults to `False`):
-                If `True`, enables mixed-precision floating-point 6-bit matrix multiplication
-                optimization during compilation.
-            **compiler_options:
-                Additional keyword arguments to pass to the underlying compiler.
+            compile_config (str, optional): Path to a JSON configuration file containing
+                compilation settings, device mappings, and optimization parameters. If None,
+                uses the default configuration.
+            parallel (bool, default=False): Compilation mode selection:
+                - True: Compile modules in parallel using ThreadPoolExecutor for faster processing
+                - False: Compile modules sequentially for lower resource usage
+            height (int, default=192): Target image height in pixels.
+            width (int, default=320): Target image width in pixels.
+            use_onnx_subfunctions (bool, default=False): Whether to export models with ONNX
+                subfunctions before compilation if not already exported.
 
-        Returns:
-            `str`: A message indicating the compilation status or path to compiled artifacts.
+        Raises:
+            RuntimeError: If compilation fails for any module or if QAIC compiler is not available
+            FileNotFoundError: If ONNX models haven't been exported or config file is missing
+            ValueError: If configuration parameters are invalid
+            OSError: If there are issues with file I/O during compilation
+
+        Example:
+            >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
+            >>> # Sequential compilation with default config
+            >>> pipeline.compile(height=480, width=832, num_frames=81)
+            >>>
+            >>> # Parallel compilation with custom config
+            >>> pipeline.compile(
+            ...     compile_config="/path/to/custom_config.json",
+            ...     parallel=True,
+            ...     height=480,
+            ...     width=832,
+            ... )
         """
+        # Load compilation configuration
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
+
+        # Set device IDs, qpc path if precompiled qpc exist
+        set_execute_params(self)
+
+        # Ensure all modules are exported to ONNX before compilation
         if any(
             path is None
             for path in [
-                self.text_encoder.onnx_path,
                 self.transformer.onnx_path,
-                self.vae_decode.onnx_path,
             ]
         ):
-            self.export()
+            self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
-        latent_seq_len = 6032
-        batch_size = 1
-        text_seq_len = 126
+        # Calculate compressed latent dimension using utility function
+        cl, latent_height, latent_width = calculate_compressed_latent_dimension(
+            height, width, self.model.vae_scale_factor
+        )
 
-        specializations = [
-            {
-                "batch_size": batch_size,
-                "latent_seq_len": latent_seq_len,
-                "text_seq_len": text_seq_len,
+        # Prepare dynamic specialization updates based on video dimensions
+        specialization_updates = {
+            "transformer": {
+                "latent_seq_len": "6032",  # TODO : Make it dynamic
+                # "cl": cl,  # Compressed latent dimension
+                # "latent_height": latent_height,  # Latent space height
+                # "latent_width": latent_width,  # Latent space width
             }
-        ]
+        }
 
-        compiler_options_transformer = {"mos": 1, "ols": 2, "mdts-mos": 1}
-        self.transformer_compile_path = self.transformer._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            specializations=specializations,
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=num_devices_transformer,
-            node_precision_info="/home/dipankar/fp32_nodes_scale_woscale_womatmul.yaml",
-            aic_num_cores=num_cores,
-            **compiler_options_transformer,
-        )
-
-    def _extract_masked_hidden(self, hidden_states: torch.Tensor, mask: torch.Tensor):
-        """Extract hidden states based on attention mask."""
-        bool_mask = mask.bool()
-        valid_lengths = bool_mask.sum(dim=1)
-        selected = hidden_states[bool_mask]
-        split_result = torch.split(selected, valid_lengths.tolist(), dim=0)
-        return split_result
-
-    def _get_qwen_prompt_embeds(
-        self,
-        prompt: Union[str, List[str]] = None,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
-        device_ids: List[int] = None,
-    ):
-        """
-        Get Qwen prompt embeddings for the given prompt(s) using QAICInferenceSession.
-
-        Args:
-            prompt (Union[str, List[str]], optional): The input prompt(s) to encode.
-            device (Optional[torch.device], optional): The device to place tensors on.
-            dtype (Optional[torch.dtype], optional): The data type for tensors.
-            device_ids (List[int], optional): List of device IDs to use for inference.
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: The prompt embeddings and attention mask.
-        """
-        device = device or "cpu"
-        dtype = dtype or torch.float32
-
-        prompt = [prompt] if isinstance(prompt, str) else prompt
-
-        template = self.prompt_template_encode
-        drop_idx = self.prompt_template_encode_start_idx
-        txt = [template.format(e) for e in prompt]
-        txt_tokens = self.tokenizer(
-            txt, max_length=self.tokenizer_max_length + drop_idx, padding=True, truncation=True, return_tensors="pt"
-        )
-
-        # HACK: Currently working on Pytorch
-        encoder_hidden_states = self.text_encoder.model(
-            input_ids=txt_tokens.input_ids,
-            attention_mask=txt_tokens.attention_mask,
-            output_hidden_states=True,
-        )
-
-        hidden_states = encoder_hidden_states.hidden_states[-1]
-        split_hidden_states = self._extract_masked_hidden(hidden_states, txt_tokens.attention_mask)
-        split_hidden_states = [e[drop_idx:] for e in split_hidden_states]
-        attn_mask_list = [torch.ones(e.size(0), dtype=torch.long, device=e.device) for e in split_hidden_states]
-        max_seq_len = max([e.size(0) for e in split_hidden_states])
-        prompt_embeds = torch.stack(
-            [torch.cat([u, u.new_zeros(max_seq_len - u.size(0), u.size(1))]) for u in split_hidden_states]
-        )
-        encoder_attention_mask = torch.stack(
-            [torch.cat([u, u.new_zeros(max_seq_len - u.size(0))]) for u in attn_mask_list]
-        )
-
-        prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
-
-        return prompt_embeds, encoder_attention_mask
-
-    def encode_prompt(
-        self,
-        prompt: Union[str, List[str]],
-        device: Optional[torch.device] = None,
-        num_images_per_prompt: int = 1,
-        prompt_embeds: Optional[torch.Tensor] = None,
-        prompt_embeds_mask: Optional[torch.Tensor] = None,
-        max_sequence_length: int = 1024,
-        device_ids: List[int] = None,
-    ):
-        """
-        Encode the given prompts into text embeddings using the Qwen text encoder.
-
-        Args:
-            prompt (Union[str, List[str]]): The prompt(s) to encode.
-            device (Optional[torch.device], optional): The device to place tensors on.
-            num_images_per_prompt (int, defaults to 1): Number of images to generate per prompt.
-            prompt_embeds (Optional[torch.Tensor], optional): Pre-computed prompt embeddings.
-            prompt_embeds_mask (Optional[torch.Tensor], optional): Pre-computed prompt embeddings mask.
-            max_sequence_length (int, defaults to 1024): Maximum sequence length for tokenization.
-            device_ids (List[int], optional): List of device IDs to use for inference.
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: The prompt embeddings and attention mask.
-        """
-        device = device or "cpu"
-
-        prompt = [prompt] if isinstance(prompt, str) else prompt
-        batch_size = len(prompt) if prompt_embeds is None else prompt_embeds.shape[0]
-
-        if prompt_embeds is None:
-            prompt_embeds, prompt_embeds_mask = self._get_qwen_prompt_embeds(prompt, device, device_ids=device_ids)
-
-        prompt_embeds = prompt_embeds[:, :max_sequence_length]
-        prompt_embeds_mask = prompt_embeds_mask[:, :max_sequence_length]
-
-        _, seq_len, _ = prompt_embeds.shape
-        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
-        prompt_embeds_mask = prompt_embeds_mask.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds_mask = prompt_embeds_mask.view(batch_size * num_images_per_prompt, seq_len)
-
-        return prompt_embeds, prompt_embeds_mask
+        # Use generic utility functions for compilation
+        if parallel:
+            compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
+        else:
+            compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
 
     def __call__(
         self,
@@ -310,8 +290,12 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
+        custom_config_path: Optional[str] = None,
+        parallel_compile: bool = False,
+        use_onnx_subfunctions: bool = False,
     ):
         """
+        # TODO update docs
         Generate images from text prompts using the QEfficient-optimized QwenImage pipeline.
 
         This method performs text-to-image generation by encoding the input prompts through the
@@ -356,12 +340,21 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             image.save("qwenimage.png")
             ```
         """
-        height = height or self.default_sample_size * self.vae_scale_factor
-        width = width or self.default_sample_size * self.vae_scale_factor
         device = "cpu"
+        height = height
+        width = width
+
+        # Compile models with custom configuration if needed
+        self.compile(
+            compile_config=custom_config_path,
+            parallel=parallel_compile,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            height=height,
+            width=width,
+        )
 
         # 1. Check inputs
-        self.check_inputs(
+        self.model.check_inputs(
             prompt,
             height,
             width,
@@ -375,7 +368,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         )
 
         self._guidance_scale = guidance_scale
-        self._attention_kwargs = attention_kwargs
         self._current_timestep = None
         self._interrupt = False
 
@@ -457,46 +449,63 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None
         )
 
-        # Initialize transformer session
+        # # Initialize transformer session
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(str(self.transformer.qpc_path))
 
         # 6. Denoising loop
         self.scheduler.set_begin_index(0)
+        transformer_perf = []
+        cfg_perf = []
+
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
+
                 timestep = (t.expand(latents.shape[0]) / 1000).detach().numpy().astype(np.float32)
 
                 # Conditional pass
                 transformer_inputs = {
                     "hidden_states": latents.detach().numpy().astype(np.float32),
                     "encoder_hidden_states": prompt_embeds.detach().numpy().astype(np.float32),
+                    # "img_rotary_emb" : img_rotary_emb,
+                    # "text_rotary_emb" : text_rotary_emb,
+                    # "image_rotary_emb" : image_rotary_emb.detach().numpy().astype(np.float32),
                     "timestep": timestep,
                 }
                 if guidance is not None:
                     transformer_inputs["guidance"] = guidance.numpy().astype(np.float32)
 
+                # Run transformer inference and measure time
+                start_transformer_step_time = time.perf_counter()
                 noise_pred = self.transformer.qpc_session.run(transformer_inputs)
+                end_transformer_step_time = time.perf_counter()
+                transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+
                 noise_pred = torch.tensor(noise_pred["output"])
-                # if do_true_cfg:
-                #     # Unconditional pass
-                #     transformer_inputs_uncond = {
-                #         "hidden_states": latents.detach().numpy().astype(np.float32),
-                #         "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
-                #         "timestep": timestep,
-                #     }
-                #     if guidance is not None:
-                #         transformer_inputs_uncond["guidance"] = guidance.numpy().astype(np.float32)
 
-                #     neg_noise_pred = self.transformer.qpc_session.run(transformer_inputs_uncond)
-                #     neg_noise_pred = torch.tensor(neg_noise_pred["output"])
+                if do_true_cfg:
+                    # Unconditional pass
+                    transformer_inputs_uncond = {
+                        "hidden_states": latents.detach().numpy().astype(np.float32),
+                        "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
+                        "timestep": timestep,
+                    }
+                    if guidance is not None:
+                        transformer_inputs_uncond["guidance"] = guidance.numpy().astype(np.float32)
 
-                #     comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
-                #     cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
-                #     noise_norm = torch.norm(comb_pred, dim=-1, keepdim=True)
-                #     noise_pred = comb_pred * (cond_norm / noise_norm)
+                    start_cfg_step_time = time.perf_counter()
+                    neg_noise_pred = self.transformer.qpc_session.run(transformer_inputs_uncond)
+                    end_cfg_step_time = time.perf_counter()
+                    cfg_perf.append(end_cfg_step_time - start_cfg_step_time)
+
+                    neg_noise_pred = torch.tensor(neg_noise_pred["output"])
+
+                    comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
+                    cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
+                    noise_norm = torch.norm(comb_pred, dim=-1, keepdim=True)
+                    noise_pred = comb_pred * (cond_norm / noise_norm)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
@@ -520,15 +529,16 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         if output_type == "latent":
             image = latents
         else:
+            # TODO replace vae_cpu : with self.vae_decode.model # to run on QAIC
             latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
-            latents = latents.to(self.vae_decode.model.dtype)
+            latents = latents.to(self.vae_cpu.dtype)
             latents_mean = (
-                torch.tensor(self.vae_decode.model.config.latents_mean)
-                .view(1, self.vae_decode.model.config.z_dim, 1, 1, 1)
+                torch.tensor(self.vae_cpu.config.latents_mean)
+                .view(1, self.vae_cpu.config.z_dim, 1, 1, 1)
                 .to(latents.device, latents.dtype)
             )
-            latents_std = 1.0 / torch.tensor(self.vae_decode.model.config.latents_std).view(
-                1, self.vae_decode.model.config.z_dim, 1, 1, 1
+            latents_std = 1.0 / torch.tensor(self.vae_cpu.config.latents_std).view(
+                1, self.vae_cpu.config.z_dim, 1, 1, 1
             ).to(latents.device, latents.dtype)
             latents = latents / latents_std + latents_mean
 
@@ -538,4 +548,12 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         if not return_dict:
             return (image,)
 
-        return QwenImagePipelineOutput(images=image)
+        # Build performance metrics
+        perf_metrics = [
+            ModulePerf(module_name="transformer", perf=transformer_perf),
+        ]
+
+        return QEffPipelineOutput(
+            pipeline_module=perf_metrics,
+            images=image,
+        )

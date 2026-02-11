@@ -4,23 +4,28 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
+"""
+Qwen-Image Image Generation Example
+
+This example demonstrates how to use the QEFFQwenImagePipeline to generate images
+#TODO update docs
+"""
 
 import torch
 
 from QEfficient import QEFFQwenImagePipeline
 
-model_name = "Qwen/Qwen-Image"
+# Initialize the Qwen Image pipeline from pretrained weights
+pipe = QEFFQwenImagePipeline.from_pretrained("Qwen/Qwen-Image")
 
-pipe = QEFFQwenImagePipeline.from_pretrained(model_name)
 positive_magic = {
     "en": ", Ultra HD, 4K, cinematic composition.",  # for english prompt
 }
 
 # Generate image
 prompt = """A coffee shop entrance features a chalkboard sign reading "Qwen Coffee 😊 $2 per cup," with a neon light beside it displaying "通义千问". Next to it hangs a poster showing a beautiful Chinese woman, and beneath the poster is written "π≈3.1415926-53589793-23846264-33832795-02384197". Ultra HD, 4K, cinematic composition"""
-
-negative_prompt = " "  # using an empty string if you do not have specific concept to remove
-
+# negative_prompt = " "  # using an empty string if you do not have specific concept to remove
+negative_prompt = "do not use green color" * 24 + " "  # TODO: resolve issue with dynamic shapes
 
 # Generate with different aspect ratios
 aspect_ratios = {
@@ -36,23 +41,24 @@ aspect_ratios = {
 width, height = aspect_ratios["16:9"]
 
 # Config for two layers
-
 # original_blocks = pipe.transformer.model.transformer_blocks
 # pipe.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1]])
 # pipe.transformer.model.config.num_layers = 2
 
-# Pipeline Compile
-pipe.compile()
-
-
-image = pipe(
+output = pipe(
     prompt=prompt + positive_magic["en"],
     negative_prompt=negative_prompt,
     width=width,
     height=height,
-    num_inference_steps=5,
+    num_inference_steps=50,
     true_cfg_scale=4.0,
-    generator=torch.Generator(device="cpu").manual_seed(42),
-).images[0]
+    generator=torch.manual_seed(42),
+    parallel_compile=True,
+)
 
-image.save("example.png")
+# Extract the generated image from the output
+image = output.images[0]
+
+# Save the generated image to disk
+image.save("output.png")  # working with neg prompt
+print(output)
