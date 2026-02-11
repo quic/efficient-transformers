@@ -457,7 +457,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None
         )
 
-        # Initialize transformer session
+        # # Initialize transformer session
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(str(self.transformer.qpc_path))
 
@@ -543,6 +543,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         if output_type == "latent":
             image = latents
         else:
+            # TODO replace vae_cpu : with self.vae_decode.model # to run on QAIC
             latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
             latents = latents.to(self.vae_decoder.model.dtype)
             latents_mean = (

@@ -107,6 +107,7 @@ class AttentionTransform(ModuleMappingTransform):
         Attention: QEffQwenImageAttention,
         AutoencoderKLWan: QEffAutoencoderKLWan,
         QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
+        QwenImageTransformerBlock: QEffQwenImageTransformerBlock,
         QwenDoubleStreamAttnProcessor2_0: QEffQwenDoubleStreamAttnProcessor2_0,
         Attention: QEffQwenImageAttention,
         WanDecoder3d: QEffWanDecoder3d,

@@ -45,7 +45,6 @@ width, height = aspect_ratios["16:9"]
 # pipe.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1]])
 # pipe.transformer.model.config.num_layers = 2
 
-
 output = pipe(
     prompt=prompt + positive_magic["en"],
     negative_prompt=negative_prompt,

@@ -289,6 +289,14 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
         # if hidden_states.dtype == torch.float16:
         #     hidden_states = hidden_states.clip(-65504, 65504)
 
+        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)
+        hidden_states = hidden_states / (sf_value * sf_value * 4)
+
+        # if encoder_hidden_states.dtype == torch.float16:
+        #     encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
+        # if hidden_states.dtype == torch.float16:
+        #     hidden_states = hidden_states.clip(-65504, 65504)
+
         # Use only the image part (hidden_states) from the dual-stream blocks
         hidden_states = self.norm_out(hidden_states, temb)
         output = self.proj_out(hidden_states)
