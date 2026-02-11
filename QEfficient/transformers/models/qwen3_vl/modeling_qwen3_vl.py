@@ -68,7 +68,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    # breakpoint()
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -76,116 +75,10 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
-# class QEffQwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
-
-#     def __init__(self, config: Qwen3VLTextConfig, device=None):
-#         super().__init__(config, device)
-#         self.mrope_section = config.rope_scaling.get("mrope_section", [24, 20, 20])
-#         self._set_cos_sin_cache(
-#             seq_len=self.original_max_seq_len,
-#             device=self.inv_freq.device,
-#             dtype=torch.get_default_dtype()
-#         )
-
-#     def _set_cos_sin_cache(self, seq_len, device, dtype):
-#         # #breakpoint()
-#         self.max_seq_len_cached = seq_len
-#         position_ids = torch.arange(seq_len, device=device, dtype=torch.long)
-#         position_ids = position_ids.unsqueeze(0).expand(3, 1, -1)  # (3, 1, seq_len)
-
-#         inv_freq_expanded = self.inv_freq[None, None, :, None].float().expand(3, 1, -1, 1)
-#         position_ids_expanded = position_ids[:, :, None, :].float()  # (3, 1, 1, seq_len)
-
-#         device_type = device.type if isinstance(device.type, str) and device.type != "mps" else "cpu"
-
-#         with torch.autocast(device_type=device_type, enabled=False):
-#             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
-
-#             freqs_interleaved = self._apply_interleaved_mrope_cached(freqs, self.mrope_section)
-#             emb = torch.cat((freqs_interleaved, freqs_interleaved), dim=-1)
-#             self.register_buffer(
-#                 "cos_cached",
-#                 (emb.cos() * self.attention_scaling).squeeze(0).to(dtype),
-#                 persistent=False
-#             )
-#             self.register_buffer(
-#                 "sin_cached",
-#                 (emb.sin() * self.attention_scaling).squeeze(0).to(dtype),
-#                 persistent=False
-#             )
-
-#     def _apply_interleaved_mrope_cached(self, freqs, mrope_section):
-#         freqs_t = freqs[0].clone()  # (bs, seq_len, head_dim // 2)
-#         for dim, offset in enumerate((1, 2), start=1):
-#             length = mrope_section[dim] * 3
-#             idx = slice(offset, length, 3)
-#             freqs_t[..., idx] = freqs[dim, ..., idx]
-#         # #breakpoint()
-#         return freqs_t
-
-#     def forward(self, x, position_ids,seq_len=None):
-#         if position_ids.ndim == 2:
-#             position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
-#         seq_len = position_ids.shape[-1]
-#         if seq_len > self.max_seq_len_cached:
-#             self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-#         cos = self.cos_cached[:seq_len].to(dtype=x.dtype)
-#         sin = self.sin_cached[:seq_len].to(dtype=x.dtype)
-
-#         if position_ids.shape[1] > 1:
-#             cos = cos.unsqueeze(0).expand(position_ids.shape[1], -1, -1)
-#             sin = sin.unsqueeze(0).expand(position_ids.shape[1], -1, -1)
-#         else:
-#             cos = cos.unsqueeze(0)
-#             sin = sin.unsqueeze(0)
-#         # #breakpoint()
-#         return cos, sin
-
-
 class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
-    # def rot_pos_emb(self, grid_thw):
-    #     pos_ids = []
-
-    #     bs, t, h, w = grid_thw.shape
-
-    #     hpos_ids = torch.arange(h).unsqueeze(1).expand(-1, w)
-    #     hpos_ids = hpos_ids.reshape(
-    #         h // self.spatial_merge_size,
-    #         self.spatial_merge_size,
-    #         w // self.spatial_merge_size,
-    #         self.spatial_merge_size,
-    #     )
-    #     hpos_ids = hpos_ids.permute(0, 2, 1, 3)
-    #     hpos_ids = hpos_ids.flatten()
-
-    #     wpos_ids = torch.arange(w).unsqueeze(0).expand(h, -1)
-    #     wpos_ids = wpos_ids.reshape(
-    #         h // self.spatial_merge_size,
-    #         self.spatial_merge_size,
-    #         w // self.spatial_merge_size,
-    #         self.spatial_merge_size,
-    #     )
-    #     wpos_ids = wpos_ids.permute(0, 2, 1, 3)
-    #     wpos_ids = wpos_ids.flatten()
-    #     pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
-    #     pos_ids = torch.cat(pos_ids, dim=0)
-
-    #     x_expanded = pos_ids.unsqueeze(0)
-    #     x_expanded = x_expanded.expand(bs, -1, -1)
-    #     pos_ids = x_expanded.reshape(-1, pos_ids.size(1))
-
-    #     max_grid_size = max(grid_thw.shape)
-    #     rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
-    #     rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
-    #     return rotary_pos_emb
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
-        # breakpoint()
         merge_size = self.spatial_merge_size
 
-        # max_hw = int(grid_thw[:, 1:].max().item())
-        # ##breakpoint()
-        # max_hw = max(grid_thw.shape).item()
         max_hw = max(grid_thw.shape)
         freq_table = self.rotary_pos_emb(max_hw)  # (max_hw, dim // 2)
         device = freq_table.device
@@ -195,10 +88,6 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
         pos_ids = torch.empty((total_tokens, 2), dtype=torch.long, device=device)
 
-        # offset = 0
-        # breakpoint()
-
-        # for bs,num_frames, height, width in grid_thw:
         merged_h, merged_w = height // merge_size, width // merge_size
 
         block_rows = torch.arange(merged_h, device=device)  # block row indices
@@ -217,12 +106,7 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
 
         if num_frames > 1:
             coords = coords.repeat(num_frames, 1)
-        # breakpoint()
-        # num_tokens = len(coords)
-        # pos_ids[offset : offset + num_tokens] = coords
-        # offset += num_tokens
-        # breakpoint()
-        # pos_ids = torch.cat([pos_ids, coords], dim=-1)
+
         pos_ids = coords
         embeddings = freq_table[pos_ids]  # lookup rotary embeddings
         embeddings = embeddings.flatten(1)
@@ -230,22 +114,11 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
 
     def fast_pos_embed_interpolate(self, grid_thw):
         bs, t, h, w = grid_thw.shape
-        # grid_ts = torch.tensor([grid_ts], device=grid_thw.device)
-        # grid_hs = torch.tensor([grid_hs], device=grid_thw.device)
-        # grid_ws = torch.tensor([grid_ws], device=grid_thw.device)
-        # idx_list = [[] for _ in range(4)]
-        # weight_list = [[] for _ in range(4)]
-        # t,h,w = grid_ts[0],grid_hs[0],grid_ws[0]
-        # for t, h, w in zip(grid_ts, grid_hs, grid_ws):
         h_idxs = torch.linspace(0, self.num_grid_per_side - 1, h)
         w_idxs = torch.linspace(0, self.num_grid_per_side - 1, w)
 
         h_idxs_floor = h_idxs.int()
         w_idxs_floor = w_idxs.int()
-        # h_idxs_ceil = (h_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
-        # w_idxs_ceil = (w_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
-        # h_idxs_ceil = torch.clip(h_idxs.int(),0,self.num_grid_per_side - 1)
-        # w_idxs_ceil = torch.clip(w_idxs.int(),0,self.num_grid_per_side - 1)
         max_t = torch.tensor(self.num_grid_per_side - 1, device=h_idxs.device)
 
         h_idxs_ceil = torch.minimum(h_idxs_floor + 1, max_t)  # working
@@ -354,7 +227,6 @@ class QEffQwen3VLVisionAttention(Qwen3VLVisionAttention):
         rotary_pos_emb: Optional[torch.Tensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
-        # breakpoint()
         seq_length = hidden_states.shape[0]
         q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
         if position_embeddings is None:
@@ -407,7 +279,6 @@ class QEffQwen3VLVisionAttention(Qwen3VLVisionAttention):
         attn_output = attn_output.transpose(0, 1)
         attn_output = attn_output.reshape(seq_length, -1)
         attn_output = self.proj(attn_output)
-        ##breakpoint()
         return attn_output
 
 
@@ -422,7 +293,6 @@ def eager_attention_forward(
     past_key_value: Optional[Cache] = None,
     **kwargs,
 ):
-    # breakpoint()
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
@@ -435,13 +305,10 @@ def eager_attention_forward(
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
-    ##breakpoint()
     return attn_output, attn_weights
 
 
 class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
-    # def __qeff_init__(self):
-    #     self.rotary_emb = QEffQwen3VLTextRotaryEmbedding(config=self.config)
 
     def forward(
         self,
@@ -457,7 +324,6 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        # breakpoint()
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         bsz, q_len, _ = hidden_states.size()
@@ -465,11 +331,7 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        # kv_seq_len = past_key_values.get_seq_length(self.layer_idx)
-        # past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-        # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len,position_ids=position_ids)
         cos, sin = position_embeddings
-        # breakpoint()
         query_states, key_states = qeff_apply_rotary_pos_emb(
             query_states, key_states, cos, sin, position_ids[1:], self.config.rope_scaling["mrope_section"]
         )
@@ -506,7 +368,6 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
 
         if not output_attentions:
             attn_weights = None
-        ##breakpoint()
         return attn_output, attn_weights, past_key_values
 
 
@@ -547,7 +408,6 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
                 Arbitrary kwargs to be ignored, used for FSDP and other methods that injects code
                 into the model
         """
-        # ##breakpoint()
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
@@ -580,7 +440,6 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
 
         if use_cache:
             outputs += (present_key_value,)
-        ##breakpoint()
         return outputs
 
 
@@ -603,11 +462,6 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
         deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
         **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        ##breakpoint()
-        # output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        # output_hidden_states = (
-        #     output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        # )
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
         if self.config.use_cache and not isinstance(past_key_values, Cache):
@@ -635,7 +489,6 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
 
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
-        # position_embeddings=None
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -672,7 +525,6 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
                 )
 
         hidden_states = self.norm(hidden_states)
-        ##breakpoint()
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -696,7 +548,6 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
         self.model.vision_model = self.model.visual
 
     def forward(self, pixel_values, image_grid_thw):
-        # ##breakpoint()
         image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)[0]
         bs = image_grid_thw.shape[0]
         split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
@@ -720,7 +571,6 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
-        # breakpoint()
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_id
@@ -742,7 +592,6 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
         logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        # ##breakpoint()
         return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
@@ -763,7 +612,6 @@ class QEffQwen3VLModel(Qwen3VLModel):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        # ##breakpoint()
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -817,10 +665,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         batch_index: Optional[torch.LongTensor] = None,
         image_grid_thw=None,
     ):
-        # ##breakpoint()
         image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)[0]
-        # bs = image_grid_thw.shape[0]
-        # split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
 
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
@@ -831,7 +676,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         image_features_expanded = image_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        # ##breakpoint()
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
@@ -844,9 +688,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        # ##breakpoint()
         return logits, image_embeds, image_idx, outputs.past_key_values
-        # ##breakpoint()
 
     def get_dummy_inputs(
         self,
@@ -855,7 +697,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
-        # #breakpoint()
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         # vision_size = 1024
@@ -881,7 +722,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
-        # ##breakpoint()
         lang_inputs["position_ids"] = (
             (
                 torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
@@ -893,7 +733,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
-        # ##breakpoint()
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
@@ -921,7 +760,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         else:
             lang_inputs.pop("vision_embeds")
             inputs = {**vision_inputs, **lang_inputs}
-        # #breakpoint()
         return inputs
 
     def get_specializations(
@@ -930,8 +768,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: None,
-        # height: int = None,
-        # width: int = None,
         dimensions: List = None,
         num_frames: int = 1,
         kv_offload: bool = False,
@@ -940,7 +776,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
-        # ##breakpoint()
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
         if dimensions is None:
@@ -980,7 +815,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             min_pixels: int = MIN_PIXELS,
             max_pixels: int = MAX_PIXELS,
         ) -> tuple[int, int]:
-            # breakpoint()
             """
             Rescales the image so that the following conditions are met:
 
@@ -990,7 +824,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
             3. The aspect ratio of the image is maintained as closely as possible.
             """
-            # breakpoint()
             if max(height, width) / min(height, width) > MAX_RATIO:
                 raise ValueError(
                     f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
@@ -1005,26 +838,10 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 beta = math.sqrt(min_pixels / (height * width))
                 h_bar = ceil_by_factor(height * beta, factor)
                 w_bar = ceil_by_factor(width * beta, factor)
-            # breakpoint()
             return h_bar, w_bar
 
-        # resized_height, resized_width = smart_resize(height=height, width=width)
-        # grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        # grid_height = grid_h * grid_w
-        # grid_width = patch_size * patch_size * temporal_patch_size * channel
-        # vision_size = grid_height // 4
-        # vision_size = vision_size * num_frames
-        # grid_height = grid_height * batch_size
-        # # breakpoint()
-        # # vision_size = 176
-        # # grid_height = 704
-        # # grid_width = 1536
-        # # grid_h = 22
-        # # grid_w = 32
-        # # breakpoint()
         vision = []
         max_vision_size = 0
-        # breakpoint()
         for dimension in dimensions:
             resized_height, resized_width = smart_resize(height=dimension[0], width=dimension[1])
             grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
@@ -1035,16 +852,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             grid_height = grid_height * batch_size
 
             max_vision_size = max(max_vision_size, vision_size)
-            # vision = [
-            #     {
-            #         "batch_size": batch_size,
-            #         "vision_size": max_vision_size,
-            #         "grid_height": grid_height,
-            #         "grid_width": grid_width,
-            #         "grid_h": grid_h,
-            #         "grid_w": grid_w,
-            #     }
-            # ]
             vision.append(
                 {
                     "batch_size": batch_size,
@@ -1055,7 +862,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     "grid_w": grid_w,
                 }
             )
-        # ##breakpoint()
 
         if comp_ctx_lengths_prefill is not None:
             lang = []
@@ -1142,7 +948,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
     ):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
-        # ##breakpoint()
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
             "image_grid_thw": {0: "batch_size", 2: "grid_h", 3: "grid_w"},
@@ -1203,12 +1008,10 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         input_ids_length = inputs["input_ids"].shape[1]
 
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
-        # ##breakpoint()
         pos_ids, rope_deltas = self.model.get_rope_index(
             inputs["input_ids"],
             None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
             video_grid_thw=None,
-            # second_per_grid_ts=None,
             attention_mask=inputs["attention_mask"],
         )
 
@@ -1221,7 +1024,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
         )
 
-        # inputs.pop("image_grid_thw", None)
 
         return inputs
 
