@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 
-import functools
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -18,9 +17,8 @@ from diffusers.models.transformers.transformer_2d import Transformer2DModelOutpu
 from diffusers.models.transformers.transformer_qwenimage import (
     QwenDoubleStreamAttnProcessor2_0,
     QwenImageTransformer2DModel,
+    QwenImageTransformerBlock,
 )
-from diffusers.utils.constants import USE_PEFT_BACKEND
-from diffusers.utils.peft_utils import scale_lora_layers, unscale_lora_layers
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +57,7 @@ def qeff_apply_rotary_emb_qwen(x, freqs_cos, freqs_sin):
 
 
 class QEffQwenEmbedRope(nn.Module):
+    # TODO : better do with transformer ???
     def __init__(self, theta: int, axes_dim: List[int], scale_rope=False):
         super().__init__()
         self.theta = theta
@@ -86,7 +85,6 @@ class QEffQwenEmbedRope(nn.Module):
 
         self.rope_cache = {}
 
-    @functools.lru_cache(maxsize=None)
     def _compute_video_freqs(self, frame, height, width, idx=0):
         seq_lens = frame * height * width
         freqs_pos_cos = self.pos_freqs_cos.split([x // 2 for x in self.axes_dim], dim=1)
@@ -236,6 +234,7 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
             `tuple` where the first element is the sample tensor.
         """
         # Convert scalar tensors to Python integers and create img_shapes list
+        global sf_value
         if isinstance(frame, torch.Tensor):
             frame = frame.item() if frame.numel() == 1 else int(frame[0])
         if isinstance(height, torch.Tensor):
@@ -250,20 +249,11 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
         if isinstance(txt_seq_lens, torch.Tensor):
             txt_seq_lens = txt_seq_lens.tolist()
 
-        if attention_kwargs is not None:
-            attention_kwargs = attention_kwargs.copy()
-            lora_scale = attention_kwargs.pop("scale", 1.0)
-        else:
-            lora_scale = 1.0
-
-        if USE_PEFT_BACKEND:
-            # weight the lora layers by setting `lora_scale` for each PEFT layer
-            scale_lora_layers(self, lora_scale)
-        else:
-            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
-                logger.warning(
-                    "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
-                )
+        # if attention_kwargs is not None:
+        #     attention_kwargs = attention_kwargs.copy()
+        #     lora_scale = attention_kwargs.pop("scale", 1.0)
+        # else:
+        #     lora_scale = 1.0
 
         hidden_states = self.img_in(hidden_states)
 
@@ -292,6 +282,11 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
                 )
 
             else:
+                if index_block < 59:
+                    sf_value = 32
+                else:
+                    sf_value = 256
+
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
@@ -301,13 +296,17 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
                     joint_attention_kwargs=attention_kwargs,
                 )
 
+        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)
+        hidden_states = hidden_states / (sf_value * sf_value * 4)
+
+        # if encoder_hidden_states.dtype == torch.float16:
+        #     encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
+        # if hidden_states.dtype == torch.float16:
+        #     hidden_states = hidden_states.clip(-65504, 65504)
+
         # Use only the image part (hidden_states) from the dual-stream blocks
         hidden_states = self.norm_out(hidden_states, temb)
         output = self.proj_out(hidden_states)
-
-        if USE_PEFT_BACKEND:
-            # remove `lora_scale` from each PEFT layer
-            unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
             return (output,)
@@ -336,6 +335,7 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
         img_value = attn.to_v(hidden_states)
 
         # Compute QKV for text stream (context projections)
+        encoder_hidden_states = encoder_hidden_states / 2
         txt_query = attn.add_q_proj(encoder_hidden_states)
         txt_key = attn.add_k_proj(encoder_hidden_states)
         txt_value = attn.add_v_proj(encoder_hidden_states)
@@ -348,15 +348,17 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
         txt_query = txt_query.unflatten(-1, (attn.heads, -1))
         txt_key = txt_key.unflatten(-1, (attn.heads, -1))
         txt_value = txt_value.unflatten(-1, (attn.heads, -1))
-
+        txt_value = txt_value * 2
         # Apply QK normalization
         if attn.norm_q is not None:
             img_query = attn.norm_q(img_query)
         if attn.norm_k is not None:
             img_key = attn.norm_k(img_key)
         if attn.norm_added_q is not None:
+            txt_query = txt_query * 2  # FP32 #INP #MUL
             txt_query = attn.norm_added_q(txt_query)
         if attn.norm_added_k is not None:
+            txt_key = txt_key * 2  # FP32 #INP #MUL
             txt_key = attn.norm_added_k(txt_key)
 
         # Apply RoPE
@@ -394,16 +396,108 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
         txt_attn_output = joint_hidden_states[:, :seq_txt, :]  # Text part
         img_attn_output = joint_hidden_states[:, seq_txt:, :]  # Image part
 
+        img_attn_output = img_attn_output / 4
+        txt_attn_output = txt_attn_output / 64
+
         # Apply output projections
         img_attn_output = attn.to_out[0](img_attn_output)
         if len(attn.to_out) > 1:
             img_attn_output = attn.to_out[1](img_attn_output)  # dropout
 
         txt_attn_output = attn.to_add_out(txt_attn_output)
-
+        # FP32 #INP and MUL
+        img_attn_output = img_attn_output * 4
+        txt_attn_output = txt_attn_output * 32
         return img_attn_output, txt_attn_output
 
 
 class QEffQwenImageAttention(Attention):
     def __qeff_init__(self):
         self.processor = QEffQwenDoubleStreamAttnProcessor2_0()
+
+
+class QEffQwenImageTransformerBlock(QwenImageTransformerBlock):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        encoder_hidden_states_mask: torch.Tensor,
+        temb: torch.Tensor,
+        image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        global sf_value
+        # Get modulation parameters for both streams
+        img_mod_params = self.img_mod(temb)  # [B, 6*dim]
+        txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
+
+        # Split modulation parameters for norm1 and norm2
+        img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
+        txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
+
+        # Process image stream - norm1 + modulation
+        img_normed = self.img_norm1(hidden_states)  # FP32 #INP #OUTPUT
+        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1)  # FP32 #INP
+
+        # Process text stream - norm1 + modulation
+        txt_normed = self.txt_norm1(encoder_hidden_states)  # FP32 #INP #OUTPUT
+        txt_modulated, txt_gate1 = self._modulate(txt_normed, txt_mod1)
+
+        # Use QwenAttnProcessor2_0 for joint attention computation
+        # This directly implements the DoubleStreamLayerMegatron logic:
+        # 1. Computes QKV for both streams
+        # 2. Applies QK normalization and RoPE
+        # 3. Concatenates and runs joint attention
+        # 4. Splits results back to separate streams
+        joint_attention_kwargs = joint_attention_kwargs or {}
+        attn_output = self.attn(
+            hidden_states=img_modulated,  # Image stream (will be processed as "sample")
+            encoder_hidden_states=txt_modulated,  # Text stream (will be processed as "context")
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+            image_rotary_emb=image_rotary_emb,
+            **joint_attention_kwargs,
+        )
+
+        # QwenAttnProcessor2_0 returns (img_output, txt_output) when encoder_hidden_states is provided
+        img_attn_output, txt_attn_output = attn_output
+
+        # Apply attention gates and add residual (like in Megatron)
+        img_attn_output = img_attn_output / (sf_value * sf_value * 4)  # FP32
+        hidden_states = hidden_states / (sf_value * sf_value * 4)  # FP32
+
+        hidden_states = hidden_states + img_gate1 * img_attn_output
+
+        txt_attn_output = txt_attn_output / (sf_value * sf_value * 64)  # FP32
+        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)  # FP32
+        encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
+
+        # Process image stream - norm2 + MLP
+        hidden_states = hidden_states * (sf_value * sf_value * 4)  # FP32
+        img_normed2 = self.img_norm2(hidden_states)  # FP32 #INP #OUT
+        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2)  # FP32 #INP #OUT
+        img_modulated2 = img_modulated2 / (sf_value)  # FP32
+        img_mlp_output = self.img_mlp(img_modulated2)  # FP16
+        img_mlp_output = img_mlp_output / (sf_value * 4)  # FP16
+        hidden_states = hidden_states / (sf_value * sf_value * 4)  # FP32
+        hidden_states = hidden_states + img_gate2 * img_mlp_output
+
+        # Process text stream - norm2 + MLP
+        encoder_hidden_states = encoder_hidden_states * (sf_value * sf_value * 64)  # FP32
+        txt_normed2 = self.txt_norm2(encoder_hidden_states)
+        txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2)
+        txt_modulated2 = txt_modulated2 / (sf_value)  # FP32
+        txt_mlp_output = self.txt_mlp(txt_modulated2)  # FP16
+        txt_mlp_output = txt_mlp_output / (sf_value * 64)  # FP16
+        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)  # FP32
+        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+
+        hidden_states = hidden_states * (sf_value * sf_value * 4)  # FP32
+        encoder_hidden_states = encoder_hidden_states * (sf_value * sf_value * 64)  # FP32
+
+        # Clip to prevent overflow for fp16
+        # if encoder_hidden_states.dtype == torch.float16:
+        #     encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
+        # if hidden_states.dtype == torch.float16:
+        #     hidden_states = hidden_states.clip(-65504, 65504)
+
+        return encoder_hidden_states, hidden_states
