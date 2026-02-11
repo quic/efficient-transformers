@@ -9,7 +9,6 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
-from diffusers.models.transformers.transformer_wan import WanTransformerBlock
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -17,10 +16,6 @@ from QEfficient.diffusers.models.pytorch_transforms import (
     AttentionTransform,
     CustomOpsTransform,
     NormalizationTransform,
-)
-from QEfficient.diffusers.models.transformers.transformer_flux import (
-    QEffFluxSingleTransformerBlock,
-    QEffFluxTransformerBlock,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
@@ -475,7 +470,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """
@@ -486,7 +480,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             output_names (List[str]): Names of model outputs
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
-            export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
 
@@ -494,22 +487,15 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             str: Path to the exported ONNX model
         """
 
-        if use_onnx_subfunctions:
-            export_kwargs = {
-                "export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock},
-                "use_onnx_subfunctions": True,
-            }
-
         # Sort _use_default_values in config to ensure consistent hash generation during export
         self.model.config["_use_default_values"].sort()
-
         return self._export(
             example_inputs=inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             offload_pt_weights=False,  # As weights are needed with AdaLN changes
-            **export_kwargs,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
@@ -631,7 +617,6 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """Export the Wan transformer model to ONNX format.
@@ -641,14 +626,11 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             output_names (List[str]): Names of model outputs
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
-            export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
         Returns:
             str: Path to the exported ONNX model
         """
-        if use_onnx_subfunctions:
-            export_kwargs = {"export_modules_as_functions": {WanTransformerBlock}, "use_onnx_subfunctions": True}
 
         return self._export(
             example_inputs=inputs,
@@ -656,7 +638,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=True,
-            **export_kwargs,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(self, specializations, **compiler_options) -> None:
