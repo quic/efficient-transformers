@@ -3,192 +3,66 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# -----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 
-from typing import List
+"""
+Simple example: How to enable proxy models for audio processing and generate IO files.
+Demonstrates two model types: Speech-to-Seq2Seq (Whisper) and CTC (Wav2Vec2).
+"""
 
 from datasets import load_dataset
 from transformers import AutoProcessor
 
 from QEfficient import QEFFAutoModelForCTC, QEFFAutoModelForSpeechSeq2Seq
 
+# Load audio sample
+print("Loading audio sample...")
+dataset = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+audio_data = dataset[0]["audio"]["array"]
+sample_rate = dataset[0]["audio"]["sampling_rate"]
 
-def load_audio_sample(
-    dataset_id: str = "hf-internal-testing/librispeech_asr_dummy",
-    config: str = "clean",
-    split: str = "validation",
-    sample_idx: int = 0,
-):
-    """Load audio sample from a HuggingFace dataset."""
-    print(f"Loading audio sample from dataset: {dataset_id}")
-    ds = load_dataset(dataset_id, config, split=split)
-    audio_data = ds[sample_idx]["audio"]["array"]
-    sample_rate = ds[sample_idx]["audio"]["sampling_rate"]
+# ===================================================================
+# ============ Model Type 1: Speech-to-Seq2Seq (Whisper) ============
+# ===================================================================
 
-    # Reshape to batch size 1
-    audio_data = audio_data.reshape(-1)
+print("\n" + "=" * 70)
+print("MODEL 1: WHISPER (Speech-to-Seq2Seq)")
+print("=" * 70)
 
-    return audio_data, sample_rate
+model_name_seq2seq = "openai/whisper-tiny"
+processor_seq2seq = AutoProcessor.from_pretrained(model_name_seq2seq)
 
+# Load proxy model
+model_seq2seq = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_name_seq2seq, enable_proxy=True)
+print(model_seq2seq)
 
-def infer_speech_seq2seq(
-    model, processor, audio_data: list, sample_rate: int, generation_len: int = 25, num_cores: int = 16
-):
-    """
-    Inference for Speech-to-Seq2Seq models (e.g., Whisper).
+# Compile model
+model_seq2seq.compile(num_cores=16)
 
-    Returns:
-        str: Transcribed text
-    """
-    print("Running Speech-to-Seq2Seq inference...")
-
-    # Compile the model
-    model.compile(num_cores=num_cores)
-
-    # Process audio
-    inputs = processor(audio_data, sampling_rate=sample_rate, return_tensors="pt")
-
-    # Generate output
-    exec_info = model.generate(
-        inputs=inputs, generation_len=generation_len, write_io=True
-    )  # write_io = True to save io files
-
-    # Decode output
-    transcription = processor.batch_decode(exec_info.generated_ids)[0]
-
-    return transcription
+# Process audio and generate
+inputs = processor_seq2seq(audio_data, sampling_rate=sample_rate, return_tensors="pt")
+result = model_seq2seq.generate(inputs=inputs, generation_len=25, write_io=True)
+transcription = processor_seq2seq.batch_decode(result.generated_ids)[0]
+print(f"Transcription: {transcription}\n")
 
 
-def infer_ctc(model, processor, audio_data: list, num_cores: int = 16):
-    """
-    Inference for CTC models (e.g., Wav2Vec2).
+# ===================================================================
+# ============ Model Type 2: CTC (Wav2Vec2) ============
+# ===================================================================
 
-    Returns:
-        str: Transcribed text
-    """
-    print("Running CTC inference...")
+print("=" * 70)
+print("MODEL 2: WAV2VEC2 (CTC)")
+print("=" * 70)
 
-    # Compile the model
-    model.compile(num_cores=num_cores)
+model_name_ctc = "facebook/wav2vec2-base"
+processor_ctc = AutoProcessor.from_pretrained(model_name_ctc)
 
-    # Generate output
-    transcription = model.generate(processor, inputs=audio_data, write_io=True)  # write_io = True to save io files
+# Load proxy model
+model_ctc = QEFFAutoModelForCTC.from_pretrained(model_name_ctc, enable_proxy=True)
+print(model_ctc)
+# Compile model
+model_ctc.compile(num_cores=16)
 
-    return transcription
-
-
-def detect_model_type(model_name: str) -> str:
-    """
-    Auto-detect model type based on model name.
-
-    Args:
-        model_name: HuggingFace model ID
-
-    Returns:
-        str: 'seq2seq' for Whisper models or 'ctc' for Wav2Vec2 models
-    """
-    model_name_lower = model_name.lower()
-
-    if "whisper" in model_name_lower:
-        return "seq2seq"
-    elif "wav2vec" in model_name_lower:
-        return "ctc"
-    else:
-        raise ValueError(
-            f"Cannot auto-detect model type for {model_name}. "
-            "Please use models containing 'whisper' or 'wav2vec' in their names."
-        )
-
-
-def run_inference_on_models(
-    models: List[str],
-    dataset_id: str = "hf-internal-testing/librispeech_asr_dummy",
-    dataset_config: str = "clean",
-    dataset_split: str = "validation",
-    sample_idx: int = 0,
-    generation_len: int = 25,
-    num_cores: int = 16,
-):
-    """
-    Run inference on a list of audio models.
-
-    Args:
-        models: List of HuggingFace model IDs
-        dataset_id: Dataset ID for audio samples
-        dataset_config: Dataset configuration
-        dataset_split: Dataset split
-        sample_idx: Index of audio sample to use
-        generation_len: Context length for generation (seq2seq models only)
-        num_cores: Number of cores for compilation
-    """
-    # Load audio data once
-    print("Loading audio sample...")
-    audio_data, sample_rate = load_audio_sample(
-        dataset_id=dataset_id,
-        config=dataset_config,
-        split=dataset_split,
-        sample_idx=sample_idx,
-    )
-
-    results = {}
-
-    for model_name in models:
-        try:
-            print(f"\n{'=' * 60}")
-            print(f"Processing: {model_name}")
-            print(f"{'=' * 60}")
-
-            # Auto-detect model type
-            model_type = detect_model_type(model_name)
-            print(f"Detected model type: {model_type.upper()}")
-
-            # Load processor
-            processor = AutoProcessor.from_pretrained(model_name)
-
-            # Load and run appropriate model
-            if model_type == "seq2seq":
-                model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_name)
-                print("\n============Original Qeff Model===============\n")
-                print(model)
-                print("\n=====================================\n")
-                model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_name, enable_proxy=True)
-                print("\n============Proxy Qeff Model===============\n")
-                print(model)
-                print("\n=====================================\n")
-
-                transcription = infer_speech_seq2seq(
-                    model, processor, audio_data, sample_rate, generation_len=generation_len, num_cores=num_cores
-                )
-            else:  # ctc
-                model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_name)
-                print("\n============Original Qeff Model===============\n")
-                print(model)
-                print("\n=====================================\n")
-                model = QEFFAutoModelForCTC.from_pretrained(model_name, enable_proxy=True)
-                print("\n============Proxy Qeff Model===============\n")
-                print(model)
-                print("\n=====================================\n")
-                transcription = infer_ctc(model, processor, audio_data, num_cores=num_cores)
-
-            print(f"Transcription: {transcription}")
-            results[model_name] = {"status": "success", "transcription": transcription}
-
-        except Exception as e:
-            print(f"Error processing {model_name}: {str(e)}")
-            results[model_name] = {"status": "failed", "error": str(e)}
-
-    return results
-
-
-models = [
-    "openai/whisper-tiny",
-    # "openai/whisper-base",
-    # "openai/whisper-small",
-    # "openai/whisper-medium",
-    # "openai/whisper-large",
-    # "openai/whisper-large-v3-turbo",
-    "facebook/wav2vec2-base",
-    # "facebook/wav2vec2-large",
-]
-
-results = run_inference_on_models(models, num_cores=16)
+# Generate with IO files
+transcription = model_ctc.generate(processor_ctc, inputs=audio_data, write_io=True)
+print(f"Transcription: {transcription}\n")

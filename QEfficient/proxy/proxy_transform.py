@@ -14,7 +14,7 @@ class QeffProxyEmbedding(nn.Module):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states, past_key_values_length=None):
         inputs_embeds = torch.unsqueeze(hidden_states.float(), 2).expand(-1, -1, self.embedding_dim)
         return inputs_embeds
 

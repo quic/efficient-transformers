@@ -1342,7 +1342,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
         write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path[1]), "io_dir") if write_io else None
 
         # Use VisionLanguageGeneration for image-prompt pairs
         if (processor and images) or (tokenizer and prompts):
