@@ -19,13 +19,10 @@ from typing import Any, Dict, List, Optional, Union
 import yaml
 from transformers.hf_argparser import HfArgumentParser
 
-<<<<<<< HEAD
 from QEfficient.finetune.experimental.core.logger import Logger
 
 logger = Logger(__name__)
 
-=======
->>>>>>> 2df8976 (Changing Readme.md)
 
 @dataclass
 class OptimizerConfig:
@@ -83,10 +80,6 @@ class DatasetConfig:
         default="yahma/alpaca-cleaned",
         metadata={"help": "The name or path of the dataset."},
     )
-    json_file_path: str = field(
-        default=None,
-        metadata={"help": "Path to a custom JSON file containing the dataset."},
-    )
     dataset_subset: str = field(
         default="default",
         metadata={"help": "The subset of the dataset to use, if applicable."},
@@ -132,11 +125,11 @@ class DatasetConfig:
         metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     prompt_func: str = field(
-        default=None,
+        default="QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt",
         metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     completion_template: str = field(
-        default=None,
+        default="{output}",
         metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
     )
     completion_func: str = field(
@@ -679,6 +672,16 @@ class ConfigManager:
         training_device = model.get("device", "qaic")
         if training_device not in valid_devices:
             self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
+        if training_device == "qaic":
+            try:
+                import torch_qaic  # noqa: F401
+
+                logger.log_rank_zero("torch_qaic package found. Using QAIC devices.")
+            except ImportError as e:
+                logger.log_rank_zero(
+                    f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+                    level=0,
+                )
         # PEFT validation
         if model.get("use_peft"):
             pc = model.get("peft_config", {})
@@ -785,12 +788,3 @@ class ConfigManager:
         if hasattr(self.config, name):
             return getattr(self.config, name)
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-
-
-
->>>>>>> 86e642a (Changing Readme.md)
-=======
->>>>>>> 2df8976 (Changing Readme.md)

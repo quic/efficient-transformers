@@ -96,13 +96,9 @@ class SFTDataset(BaseDataset):
         if self.json_file_path not in (None, ""):
             if not os.path.isfile(self.json_file_path):
                 raise FileNotFoundError(f"JSON file not found or invalid: '{self.json_file_path}'")
-        if (self.prompt_template is None and self.prompt_func_path is None) or (
-            self.prompt_template is not None and self.prompt_func_path is not None
-        ):
+        if self.prompt_template is None and self.prompt_func_path is None:
             raise RuntimeError("Either provide prompt_template or prompt_func in the config.")
-        if (self.completion_template is None and self.completion_func_path is None) or (
-            self.completion_template is not None and self.completion_func_path is not None
-        ):
+        if self.completion_template is None and self.completion_func_path is None:
             raise RuntimeError("Either provide completion_template or completion_func in the config.")
 
         # Call parent class __init__ which will call _initialize_dataset
