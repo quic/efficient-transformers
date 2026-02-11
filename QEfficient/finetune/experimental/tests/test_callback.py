@@ -8,8 +8,7 @@
 import pytest
 from transformers import TrainerCallback
 
-from QEfficient.finetune.experimental.core.callbacks import create_callbacks
-from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
 
 
 class ModelSummaryCallback(TrainerCallback):
@@ -46,7 +45,7 @@ def test_callbacks(callback_name):
     # Create callbacks using the factory
     config = CALLBACK_CONFIGS[callback_name]
     try:
-        callback_inst = create_callbacks(**config)
+        callback_inst = ComponentFactory.create_callback(**config)
     except ValueError as e:
         assert "Unknown callback" in str(e)
         return
