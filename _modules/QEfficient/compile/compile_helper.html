@@ -44,8 +44,7 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html">Efficient Transformer Library - 1.21.0 Release Notes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html#efficient-transformer-library-1-20-0-release-notes">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
@@ -68,14 +67,11 @@
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/qeff_autoclasses.html">QEfficient Auto Classes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/diffuser_classes.html">Diffuser Classes</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html">CLI API Reference</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -182,7 +178,7 @@
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Compiles an ONNX Key-Value (KV) model for Cloud AI 100 hardware using `qaic-compile`.</span>
+<span class="sd">    Compiles an ONNX Key-Value (KV) model for Cloud AI 100 hardware using `qaic-exec`.</span>
 
 <span class="sd">    This function sets up and executes the Qualcomm AI 100 compiler with various options</span>
 <span class="sd">    to generate a QPC package.</span>
@@ -214,7 +210,7 @@
 <span class="sd">        List of device IDs for multi-device compilation (tensor slicing). If `len(device_group) &gt; 1`,</span>
 <span class="sd">        a multi-device partition configuration is generated. Default is None.</span>
 <span class="sd">    **kwargs :</span>
-<span class="sd">        Additional compiler options passed directly to `qaic-compile`. These are formatted as</span>
+<span class="sd">        Additional compiler options passed directly to `qaic-exec`. These are formatted as</span>
 <span class="sd">        `-key=value` or `-key` for boolean flags.</span>
 
 <span class="sd">    Returns</span>
@@ -229,7 +225,7 @@
 <span class="sd">    FileNotFoundError</span>
 <span class="sd">        If the `specializations_json` or `custom_io_path` files are not found.</span>
 <span class="sd">    RuntimeError</span>
-<span class="sd">        If the `qaic-compile` compilation process fails.</span>
+<span class="sd">        If the `qaic-exec` compilation process fails.</span>
 
 <span class="sd">    Warnings</span>
 <span class="sd">    --------</span>
@@ -251,7 +247,7 @@
     <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">custom_io_path</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">custom_io_path</span><span class="si">}</span><span class="s2"> file was not found!&quot;</span><span class="p">)</span>
     <span class="n">command</span> <span class="o">=</span> <span class="p">[</span>
-        <span class="s2">&quot;/opt/qti-aic/exec/qaic-compile&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;/opt/qti-aic/exec/qaic-exec&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-m=</span><span class="si">{</span><span class="n">onnx_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
         <span class="s2">&quot;-aic-hw&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-aic-hw-version=</span><span class="si">{</span><span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s1">&#39;aic_hw_version&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s1">&#39;aic-hw-version&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">constants</span><span class="o">.</span><span class="n">DEFAULT_AIC_HW_VERSION</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
@@ -391,7 +387,6 @@
 <span class="sd">        This method will be removed soon; use `QEFFAutoModelForCausalLM.compile` instead.</span>
 
 <span class="sd">    &quot;&quot;&quot;</span>
-
     <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">and</span> <span class="n">batch_size</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Only either batch_size or full_batch_size should be greater than one&quot;</span><span class="p">)</span>
 
@@ -406,20 +401,11 @@
         <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="n">dtype_suffix</span> <span class="o">=</span> <span class="s2">&quot;int8&quot;</span> <span class="k">if</span> <span class="n">mxint8</span> <span class="k">else</span> <span class="s2">&quot;fp16&quot;</span>
-    <span class="n">source_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;./custom_io_</span><span class="si">{</span><span class="n">dtype_suffix</span><span class="si">}</span><span class="s2">.yaml&quot;</span>
-    <span class="n">destination_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;custom_io_</span><span class="si">{</span><span class="n">dtype_suffix</span><span class="si">}</span><span class="s2">.yaml&quot;</span><span class="p">)</span>
+    <span class="c1"># Select the customIO config based on the mx flag.</span>
+    <span class="n">custom_io_file_name</span> <span class="o">=</span> <span class="s2">&quot;custom_io_int8.yaml&quot;</span> <span class="k">if</span> <span class="n">mxint8</span> <span class="k">else</span> <span class="s2">&quot;custom_io_fp16.yaml&quot;</span>
 
-    <span class="c1"># Move the custom YAML file to the cache/qeff_model directory</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="n">shutil</span><span class="o">.</span><span class="n">move</span><span class="p">(</span><span class="n">source_path</span><span class="p">,</span> <span class="n">destination_path</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Successfully moved &#39;</span><span class="si">{</span><span class="n">source_path</span><span class="si">}</span><span class="s2">&#39; to &#39;</span><span class="si">{</span><span class="n">destination_path</span><span class="si">}</span><span class="s2">&#39;.&quot;</span><span class="p">)</span>
-    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error while moving file &#39;</span><span class="si">{</span><span class="n">source_path</span><span class="si">}</span><span class="s2">&#39;: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
-    <span class="n">custom_io_file_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;custom_io_</span><span class="si">{</span><span class="n">dtype_suffix</span><span class="si">}</span><span class="s2">.yaml&quot;</span>
     <span class="k">if</span> <span class="n">custom_io_file_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">custom_io_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">),</span> <span class="n">custom_io_file_name</span><span class="p">)</span>
+        <span class="n">custom_io_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">),</span> <span class="n">custom_io_file_name</span><span class="p">)</span>
 
     <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">custom_io_file_path</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
