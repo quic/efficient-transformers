@@ -41,7 +41,7 @@ from QEfficient.utils import (
     hash_dict_params,
     load_json,
 )
-from QEfficient.utils.blocking_configurator import build_transformer_blocking_config
+from QEfficient.utils.blocking_configurator import _get_attr_or_key, _require_value, build_transformer_blocking_config
 from QEfficient.utils.export_utils import export_wrapper
 
 
@@ -81,21 +81,6 @@ class QEFFBaseModel(ABC):
 
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
-
-        # import ipdb; ipdb.set_trace()
-
-        # # Apply the transformations
-        # any_transformed = False
-
-        # for transform in self._pytorch_transforms:
-        #     self.model, transformed = transform.apply(self.model)
-        #     any_transformed = any_transformed or transformed
-            
-        # if not any_transformed:
-        #     warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
-        # else:
-        #     logger.info(f"Pytorch transforms applied to model: {self.model_name}")
-        #     self.is_transformed = True
 
     def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
@@ -366,8 +351,11 @@ class QEFFBaseModel(ABC):
 
     def transform(
         self,
-        specializations: Optional[List[Dict[str, int]]] = None,
+        ctx_len: Optional[int] = None,
+        seq_len: Optional[int] = None,
+        bs: Optional[int] = 1,
         num_devices: int = 1,
+        disable_blocking: Optional[bool] = False,
         **compiler_options,
     ):  
         # Apply the transformations
@@ -388,29 +376,45 @@ class QEFFBaseModel(ABC):
                 self.model.qaic_config["return_pdfs"] = True
 
         # blocking transforms reapplied based on num_kv_blocks
-        if self.model.qaic_config is None or (not self.model.qaic_config.get("num_kv_blocks", False)):
-            blocking_config = build_transformer_blocking_config(self.model.config, specializations=specializations, blocking_mode="kv", compile_config={"mdp_ts_num_devices": num_devices, "aic_num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)})
+        if self.model.qaic_config is None and self.model.qaic_config["disable_blocking"]:
+            blocking_config = build_transformer_blocking_config(self.model.config, blocking_mode="hqkv", ctx_len=ctx_len, seq_len=seq_len, bs=bs, compile_config={"mdp_ts_num_devices": num_devices, "aic_num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)})
         else:
             blocking_config = {}
-            blocking_config["effective_blocking_mode"] = "kv"
-            blocking_config["attention"] = {"num_kv_blocks": self.model.qaic_config.get("num_kv_blocks")}
+            blocking_config["effective_blocking_mode"] = ""
+            blocking_config["attention"] = {}
+            if self.model.qaic_config.get("num_kv_blocks", False) and not disable_blocking:
+                blocking_config["effective_blocking_mode"] = "kv" + blocking_config["effective_blocking_mode"]
+                blocking_config["attention"]["num_kv_blocks"] = self.model.qaic_config.get("num_kv_blocks")
+            if self.model.qaic_config.get("num_q_blocks", False) and not disable_blocking:
+                blocking_config["effective_blocking_mode"] = "q" + blocking_config["effective_blocking_mode"]
+                blocking_config["attention"]["num_q_blocks"] = self.model.qaic_config.get("num_q_blocks")
+            if self.model.qaic_config.get("head_block_size", False) and not disable_blocking:
+                blocking_config["effective_blocking_mode"] = "h" + blocking_config["effective_blocking_mode"]
+                blocking_config["attention"]["head_block_size"] = self.model.qaic_config.get("head_block_size")
+            
+            # check if qaic config did not provide any blocking details
+            if blocking_config["effective_blocking_mode"] == "" and not disable_blocking:
+                blocking_config = build_transformer_blocking_config(self.model.config, blocking_mode="hqkv", ctx_len=ctx_len, seq_len=seq_len, bs=bs, compile_config={"mdp_ts_num_devices": num_devices, "aic_num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)})
+
+        if disable_blocking:
+            block_config = None
 
         if blocking_config is not None and "kv" in blocking_config["effective_blocking_mode"]:
             self.model, _ = KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=blocking_config["attention"]["num_kv_blocks"])
             if not self.hash_params.get("blocking_kwargs", None):
                 self.hash_params["blocking_kwargs"] = {} 
             self.hash_params["blocking_kwargs"]["num_kv_blocks"] = blocking_config["attention"]["num_kv_blocks"]
-        if blocking_config is not None and "h" in blocking_config["effective_blocking_mode"]:
-            self.model, _ = HeadBlockingAttentionTransform.apply(self.model, num_h_blocks=blocking_config["attention"]["h_blocks"]) 
-            if not self.hash_params.get("blocking_kwargs", None):
-                self.hash_params["blocking_kwargs"] = {} 
-            self.hash_params["blocking_kwargs"]["h_blocks"] = blocking_config["attention"]["h_blocks"]
         if blocking_config is not None and "q" in blocking_config["effective_blocking_mode"]:
             self.model, _ = QBlockingAttentionTransform.apply(self.model, num_q_blocks=blocking_config["attention"]["num_q_blocks"])
             if not self.hash_params.get("blocking_kwargs", None):
                 self.hash_params["blocking_kwargs"] = {} 
             self.hash_params["blocking_kwargs"]["num_q_blocks"] = blocking_config["attention"]["num_q_blocks"]
-
+        if blocking_config is not None and "h" in blocking_config["effective_blocking_mode"]:
+            self.model, _ = HeadBlockingAttentionTransform.apply(self.model, head_block_size=blocking_config["attention"]["head_block_size"]) 
+            if not self.hash_params.get("blocking_kwargs", None):
+                self.hash_params["blocking_kwargs"] = {} 
+            self.hash_params["blocking_kwargs"]["head_block_size"] = blocking_config["attention"]["head_block_size"]
+        
         if self.hash_params.get("blocking_kwargs", None):
             invalid_blocking = False
             if len(self.hash_params["blocking_kwargs"]) == 0:
@@ -446,6 +450,7 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        disable_blocking: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
@@ -472,7 +477,10 @@ class QEFFBaseModel(ABC):
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
         # Transform before export
-        self.transform(specializations, mdp_ts_num_devices, **compiler_options)
+        bs = _require_value(_get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
+        seq_len = _get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
+        ctx_len = _get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
+        self.transform(ctx_len=ctx_len, seq_len=seq_len, bs=bs, num_devices=mdp_ts_num_devices, disable_blocking=disable_blocking, **compiler_options)
 
         onnx_path = Path(
             onnx_path
