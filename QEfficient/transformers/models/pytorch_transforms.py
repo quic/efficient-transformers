@@ -936,10 +936,13 @@ class KVBlockingAttentionTransform:
                 continue
             if type(module) in supported_attention_classes:
                 module.num_kv_blocks = num_kv_blocks
-                module.attn_blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+                if getattr(module, "attn_blocking_config", None):
+                    module.attn_blocking_config.num_kv_blocks = int(num_kv_blocks)
+                    module.attn_blocking_config.mode = "kv" + module.attn_blocking_config.mode
+                else:
+                    module.attn_blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
-                import ipdb; ipdb.set_trace()
                 warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
         return model, transformed
 
@@ -963,7 +966,11 @@ class QBlockingAttentionTransform:
                 continue
             if type(module) in supported_attention_classes:
                 module.num_q_blocks = num_q_blocks
-                module.attn_blocking_config = AttentionBlockingConfig(mode="q", num_q_blocks=int(num_q_blocks))
+                if getattr(module, "attn_blocking_config", None):
+                    module.attn_blocking_config.num_q_blocks = int(num_q_blocks)
+                    module.attn_blocking_config.mode = "q" + module.attn_blocking_config.mode
+                else:
+                    module.attn_blocking_config = AttentionBlockingConfig(mode="q", num_q_blocks=int(num_q_blocks))
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Q blocking is not yet supported for {type(module)}.")
@@ -989,7 +996,11 @@ class HeadBlockingAttentionTransform:
                 continue
             if type(module) in supported_attention_classes:
                 module.head_block_size = head_block_size
-                module.attn_blocking_config = AttentionBlockingConfig(mode="head", head_block_size=int(head_block_size))
+                if getattr(module, "attn_blocking_config", None):
+                    module.attn_blocking_config.head_block_size = int(head_block_size)
+                    module.attn_blocking_config.mode = "h" + module.attn_blocking_config.mode
+                else:
+                    module.attn_blocking_config = AttentionBlockingConfig(mode="head", head_block_size=int(head_block_size))
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Head blocking is not yet supported for {type(module)}.")

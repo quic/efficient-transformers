@@ -69,8 +69,8 @@ test_models_spd = [
 
 test_models_blockedKV = [
     # "meta-llama/Llama-3.3-70B-Instruct",
-    "openai/gpt-oss-20b",
-    # "meta-llama/Llama-3.2-1B",
+    # "openai/gpt-oss-20b",
+    "meta-llama/Llama-3.2-1B",
 ]
 
 
@@ -188,15 +188,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qeff_model = QEFFAutoModelForCausalLM(
         copy.deepcopy(model_hf), is_tlm=is_tlm, pretrained_model_name_or_path=model_name, qaic_config=qaic_config
     )
-    specialization = qeff_model.build_specialization(
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        batch_size=batch_size,
-        kv_cache_batch_size=batch_size,
-        num_speculative_tokens=num_speculative_tokens,
-        prefill_only=prefill_only,
-    )
-    qeff_model.transform(specialization, num_devices=1)
+    qeff_model.transform(ctx_len=ctx_len, seq_len=prompt_len, batch_size=batch_size, num_devices=1)
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
     if model_name not in ModelConfig.SWIFTKV_MODELS:
@@ -238,6 +230,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if prefill_only is not None:
         return
 
+    # return # skip CB tests for now
+
     # testing for CB models
     full_batch_size = 4
     fbs_prompts = Constants.INPUT_STR * 4
@@ -265,14 +259,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pretrained_model_name_or_path=model_name,
         qaic_config=qaic_config,
     )
-    specialization = qeff_model.build_specialization(
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        full_batch_size=full_batch_size,
-        kv_cache_batch_size=batch_size,
-        num_speculative_tokens=num_speculative_tokens,
-    )
-    qeff_model.transform(specialization, num_devices=4)
+    qeff_model.transform(ctx_len=ctx_len, seq_len=prompt_len, batch_size=full_batch_size, num_devices=1)
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
@@ -538,6 +525,36 @@ def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     n_layer = get_custom_n_layers(model_name)
 
     qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
+
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("model_name", test_models_blockedKV)
+def test_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    n_layer = get_custom_n_layers(model_name)
+
+    # head blocking only
+    qaic_config = dict(head_block_size=Constants.HEAD_BLOCK_SIZE)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
+
+    # kv blocking only
+    qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
+
+    # q block only
+    qaic_config = dict(num_q_blocks=Constants.NUM_Q_BLOCKS)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
+
+    # qkv blocking
+    qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS, num_q_blocks=Constants.NUM_Q_BLOCKS)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
+
+    # head qkv blocking
+    qaic_config = dict(head_block_size=Constants.HEAD_BLOCK_SIZE, num_kv_blocks=Constants.NUM_KV_BLOCKS, num_q_blocks=Constants.NUM_Q_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
 
 

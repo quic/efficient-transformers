@@ -2864,84 +2864,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["batch_size"] = kv_cache_batch_size
         return {k: v for k, v in spec.items() if v is not None}
 
-    def build_specialization(
-        self,
-        prefill_seq_len: int = 32,
-        ctx_len: int = 128,
-        batch_size: int = 1,
-        kv_cache_batch_size: Optional[int] = None,
-        full_batch_size: Optional[int] = None,
-        num_speculative_tokens: Optional[int] = None,
-        prefill_only: Optional[bool] = None,
-        enable_chunking: Optional[bool] = False,
-        **kwargs,
-    ):
-        """
-        Builds a dictionary representing a compilation specialization for both decode and prefill phase.
-        """
-        specializations = []
-        if prefill_only is None or prefill_only or prefill_seq_len == 1:
-            # TODO: we are handling decode-only case inside prefill call which is utterly mis-leading
-            if self.comp_ctx_lengths_prefill is not None:
-                # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
-                for i in range(0, len(self.comp_ctx_lengths_prefill)):
-                    if prefill_only or enable_chunking:
-                        raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
-                    specializations.append(
-                        self.build_prefill_specialization(
-                            prefill_seq_len=prefill_seq_len,
-                            ctx_len=ctx_len,
-                            comp_ctx_lengths=self.comp_ctx_lengths_prefill[i],
-                            batch_size=batch_size,
-                            kv_cache_batch_size=kv_cache_batch_size,
-                            full_batch_size=full_batch_size,
-                        )
-                    )
-
-            else:
-                specializations.append(
-                    self.build_prefill_specialization(
-                        prefill_seq_len=prefill_seq_len,
-                        ctx_len=ctx_len,
-                        batch_size=batch_size,
-                        kv_cache_batch_size=kv_cache_batch_size,
-                        full_batch_size=full_batch_size,
-                        prefill_only=prefill_only,
-                        enable_chunking=enable_chunking,
-                    )
-                )
-
-        if prefill_only is None or not prefill_only:
-            if self.comp_ctx_lengths_decode is not None:
-                # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
-                for i in range(0, len(self.comp_ctx_lengths_decode)):
-                    decode_spec = self.build_decode_specialization(
-                        prefill_seq_len=prefill_seq_len,
-                        ctx_len=ctx_len,
-                        comp_ctx_lengths=self.comp_ctx_lengths_decode[i],
-                        batch_size=batch_size,
-                        kv_cache_batch_size=kv_cache_batch_size,
-                        full_batch_size=full_batch_size,
-                        num_speculative_tokens=num_speculative_tokens,
-                    )
-                    if decode_spec:
-                        specializations.append(decode_spec)
-
-            else:
-                decode_spec = self.build_decode_specialization(
-                    prefill_seq_len=prefill_seq_len,
-                    ctx_len=ctx_len,
-                    batch_size=batch_size,
-                    kv_cache_batch_size=kv_cache_batch_size,
-                    full_batch_size=full_batch_size,
-                    num_speculative_tokens=num_speculative_tokens,
-                    prefill_only=prefill_only,
-                )
-                if decode_spec:
-                    specializations.append(decode_spec)
-        return specializations
-
-
     def compile(
         self,
         onnx_path: Optional[str] = None,
@@ -3104,16 +3026,66 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
 
         # --- Specializations ---
-        specializations = self.build_specialization(
-            prefill_seq_len=prefill_seq_len,
-            ctx_len=ctx_len,
-            batch_size=batch_size,
-            kv_cache_batch_size=kv_cache_batch_size,
-            full_batch_size=full_batch_size,
-            num_speculative_tokens=num_speculative_tokens,
-            prefill_only=prefill_only,
-            enable_chunking=enable_chunking,
-        )
+        specializations = []
+        if prefill_only is None or prefill_only or prefill_seq_len == 1:
+            # TODO: we are handling decode-only case inside prefill call which is utterly mis-leading
+            if self.comp_ctx_lengths_prefill is not None:
+                # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
+                for i in range(0, len(self.comp_ctx_lengths_prefill)):
+                    if prefill_only or enable_chunking:
+                        raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
+                    specializations.append(
+                        self.build_prefill_specialization(
+                            prefill_seq_len=prefill_seq_len,
+                            ctx_len=ctx_len,
+                            comp_ctx_lengths=self.comp_ctx_lengths_prefill[i],
+                            batch_size=batch_size,
+                            kv_cache_batch_size=kv_cache_batch_size,
+                            full_batch_size=full_batch_size,
+                        )
+                    )
+
+            else:
+                specializations.append(
+                    self.build_prefill_specialization(
+                        prefill_seq_len=prefill_seq_len,
+                        ctx_len=ctx_len,
+                        batch_size=batch_size,
+                        kv_cache_batch_size=kv_cache_batch_size,
+                        full_batch_size=full_batch_size,
+                        prefill_only=prefill_only,
+                        enable_chunking=enable_chunking,
+                    )
+                )
+
+        if prefill_only is None or not prefill_only:
+            if self.comp_ctx_lengths_decode is not None:
+                # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
+                for i in range(0, len(self.comp_ctx_lengths_decode)):
+                    decode_spec = self.build_decode_specialization(
+                        prefill_seq_len=prefill_seq_len,
+                        ctx_len=ctx_len,
+                        comp_ctx_lengths=self.comp_ctx_lengths_decode[i],
+                        batch_size=batch_size,
+                        kv_cache_batch_size=kv_cache_batch_size,
+                        full_batch_size=full_batch_size,
+                        num_speculative_tokens=num_speculative_tokens,
+                    )
+                    if decode_spec:
+                        specializations.append(decode_spec)
+
+            else:
+                decode_spec = self.build_decode_specialization(
+                    prefill_seq_len=prefill_seq_len,
+                    ctx_len=ctx_len,
+                    batch_size=batch_size,
+                    kv_cache_batch_size=kv_cache_batch_size,
+                    full_batch_size=full_batch_size,
+                    num_speculative_tokens=num_speculative_tokens,
+                    prefill_only=prefill_only,
+                )
+                if decode_spec:
+                    specializations.append(decode_spec)
 
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
