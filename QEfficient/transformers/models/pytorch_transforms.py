@@ -914,37 +914,7 @@ class PoolingTransform:
         return model, transformed
 
 
-<<<<<<< HEAD
 class BlockingAttentionTransform:
-=======
-def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
-    """
-    Dynamically determine which DecoderLayer classes should be exported as functions
-    based on the model's architecture using the existing KVCacheTransform mapping.
-    """
-    # Define patterns that identify decoder layer classes
-    DECODER_LAYER_PATTERNS = ["DecoderLayer", "Block", "Layer"]
-
-    # Get all QEff classes that are decoder layers from the existing mapping
-    decoder_layer_classes = set()
-
-    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
-        # Check if the QEff class name contains decoder layer patterns
-        qeff_class_name = qeff_class.__name__
-        if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
-            decoder_layer_classes.add(qeff_class)
-
-    # Filter to only include classes that are actually used in the current model
-    model_decoder_classes = set()
-    for module in model.modules():
-        if module.__class__ in decoder_layer_classes:
-            model_decoder_classes.add(module.__class__)
-
-    return model_decoder_classes
-
-
-class KVBlockingAttentionTransform:
->>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
     _skip_classes = {}
 
     @classmethod
@@ -963,12 +933,7 @@ class KVBlockingAttentionTransform:
                 module.attn_blocking_config = attn_blocking_config
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
-<<<<<<< HEAD
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
-=======
-                import ipdb; ipdb.set_trace()
-                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
->>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
         return model, transformed
 
 
@@ -991,7 +956,11 @@ class QBlockingAttentionTransform:
                 continue
             if type(module) in supported_attention_classes:
                 module.num_q_blocks = num_q_blocks
-                module.attn_blocking_config = AttentionBlockingConfig(mode="q", num_q_blocks=int(num_q_blocks))
+                if getattr(module, "attn_blocking_config", None):
+                    module.attn_blocking_config.num_q_blocks = int(num_q_blocks)
+                    module.attn_blocking_config.mode = "q" + module.attn_blocking_config.mode
+                else:
+                    module.attn_blocking_config = AttentionBlockingConfig(mode="q", num_q_blocks=int(num_q_blocks))
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Q blocking is not yet supported for {type(module)}.")
@@ -1017,7 +986,11 @@ class HeadBlockingAttentionTransform:
                 continue
             if type(module) in supported_attention_classes:
                 module.head_block_size = head_block_size
-                module.attn_blocking_config = AttentionBlockingConfig(mode="head", head_block_size=int(head_block_size))
+                if getattr(module, "attn_blocking_config", None):
+                    module.attn_blocking_config.head_block_size = int(head_block_size)
+                    module.attn_blocking_config.mode = "h" + module.attn_blocking_config.mode
+                else:
+                    module.attn_blocking_config = AttentionBlockingConfig(mode="head", head_block_size=int(head_block_size))
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Head blocking is not yet supported for {type(module)}.")

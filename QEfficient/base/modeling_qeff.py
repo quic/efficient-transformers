@@ -43,7 +43,7 @@ from QEfficient.utils import (
     require_value,
     to_named_specializations,
 )
-from QEfficient.utils.blocking_configurator import build_transformer_blocking_config
+from QEfficient.utils.blocking_configurator import _get_attr_or_key, _require_value, build_transformer_blocking_config
 from QEfficient.utils.export_utils import export_wrapper
 
 
@@ -82,21 +82,6 @@ class QEFFBaseModel(ABC):
 
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
-
-        # import ipdb; ipdb.set_trace()
-
-        # # Apply the transformations
-        # any_transformed = False
-
-        # for transform in self._pytorch_transforms:
-        #     self.model, transformed = transform.apply(self.model)
-        #     any_transformed = any_transformed or transformed
-            
-        # if not any_transformed:
-        #     warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
-        # else:
-        #     logger.info(f"Pytorch transforms applied to model: {self.model_name}")
-        #     self.is_transformed = True
 
     def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
