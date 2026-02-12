@@ -311,7 +311,9 @@ def build_transformer_blocking_config(
     pipeline_config: Optional[Any] = None,
     module_name: str = "transformer",
     blocking_mode: Optional[str] = None,
-    specializations: Optional[Dict[str, Any]] = None,
+    ctx_len: Optional[int] = None,
+    seq_len: Optional[int] = None,
+    bs: Optional[int] = 1,
     compile_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -319,24 +321,17 @@ def build_transformer_blocking_config(
     """
     pipeline_config_dict = _infer_pipeline_config(pipeline_config)
 
-    if specializations is None or compile_config is None:
-        spec, comp = _extract_module_configs(pipeline_config_dict, module_name)
-        specializations = specializations or spec
-        compile_config = compile_config or comp
-    if isinstance(specializations, list):
-        if not specializations:
-            raise ValueError("Missing specializations for blocking configuration.")
-        specializations = specializations[0]
-
-    bs = _require_value(_get_attr_or_key(specializations, ("batch_size", "batch")), "batch size")
-    seq_len = _get_attr_or_key(specializations, ("cl", "seq_len", "sequence_length"))
-    if seq_len is None:
-        raise ValueError("Missing sequence length (cl/seq_len/sequence_length) to compute blocking configuration.")
-    ctx_len = _get_attr_or_key(specializations, ("ctx_len", "context_length"))
-    if ctx_len is None:
-        ctx_len = _get_attr_or_key(model_config, ("context_length", "max_position_embeddings"))
     if ctx_len is None:
         ctx_len = seq_len
+    
+    if seq_len is None and ctx_len is None:
+        return {
+        "blocking_mode": blocking_mode,
+        "effective_blocking_mode": "",
+        "attention": {},
+        "ffn": {},
+        "compile_flags": {},
+    }
 
     num_heads = _require_value(
         _get_attr_or_key(model_config, ("num_attention_heads", "num_heads", "attention_heads", "n_heads")),
@@ -353,8 +348,6 @@ def build_transformer_blocking_config(
     num_socs = int(compile_config.get("mdp_ts_num_devices", 1))
     num_nsps = int(compile_config.get("aic_num_cores", 1))
     data_bytes = _infer_data_bytes(compile_config)
-
-    # import ipdb; ipdb.set_trace()
 
     attention_cfg = attention_configurator(
         int(bs),
