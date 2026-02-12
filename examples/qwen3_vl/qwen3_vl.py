@@ -6,14 +6,12 @@
 # -----------------------------------------------------------------------------
 
 import requests
-import transformers
 from PIL import Image
 from qwen_vl_utils import process_vision_info
-from transformers import AutoConfig, AutoProcessor, TextStreamer
+from transformers import AutoConfig, AutoProcessor, AutoTokenizer, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-# model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
@@ -24,9 +22,9 @@ config.text_config.num_hidden_layers = 1
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
 )
-tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
+tokenizer = AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
-### use skip_vision=Ture, if want to run only text, ow false ###
+### use skip_vision=Ture, if want to run only text, or false ###
 skip_vision = False
 
 if skip_vision:
@@ -92,8 +90,6 @@ else:
 
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
-    # image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-
     image = Image.open(requests.get(image_url, stream=True).raw)
 
     messages_1 = [
@@ -106,15 +102,15 @@ else:
         },
     ]
 
-    # messages_2 = [
-    #     {
-    #         "role": "user",
-    #         "content": [
-    #             {"type": "image", "image": image},
-    #             {"type": "text", "text": "Describe about the color of the dog."},
-    #         ],
-    #     },
-    # ]
+    messages_2 = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": "Describe about the color of the dog."},
+            ],
+        },
+    ]
 
     messages = [messages_1] * batch_size
 

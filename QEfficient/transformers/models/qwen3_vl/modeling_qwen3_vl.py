@@ -309,7 +309,6 @@ def eager_attention_forward(
 
 
 class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1023,7 +1022,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         inputs["position_ids"] = F.pad(
             inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
         )
-
 
         return inputs
 
