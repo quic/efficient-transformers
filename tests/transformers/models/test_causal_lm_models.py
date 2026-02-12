@@ -25,7 +25,7 @@ from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "causal_model_configs.json")
+CONFIG_PATH = "tests/configs/causal_model_configs.json"
 
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
