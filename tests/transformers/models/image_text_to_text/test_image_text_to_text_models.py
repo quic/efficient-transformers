@@ -33,7 +33,7 @@ from QEfficient.utils.test_utils import InternProcessor
 
 NEW_GENERATION_TOKENS = 10
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "image_text_model_configs.json")
+CONFIG_PATH = "tests/configs/image_text_model_configs.json"
 
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
