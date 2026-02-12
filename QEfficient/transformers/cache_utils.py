@@ -293,6 +293,60 @@ class QEffDynamicLayer(DynamicLayer):
         return k_out, v_out
 
 
+class QEffDynamicCompressedKVLayer:
+    def __init__(self, ckv):
+        self.ckv = ckv
+        
+    def update(self, compressed_kv, cache_kwargs):
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)  # TODO: add support later
+        
+        self.ckv = CtxScatterFunc3D.apply(self.ckv, position_ids, compressed_kv)
+        
+        ckv_out = self.ckv
+        ctx_len = ckv_out.shape[1]
+        ctx_indices = torch.arange(ctx_len)[None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values
+        invalid_mask = ctx_indices > gather_limit
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+        
+        ckv_out = CtxGatherFunc3D.apply(ckv_out, ctx_indices)
+        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
+        return ckv_out
+    
+        
+
+class QEffDynamicCompressedKVCache:
+    def __init__(self,):
+        self.layers=[]
+    
+    def add_new(self, ckv, layer_idx):
+        self.layers.append(QEffDynamicCompressedKVLayer(ckv))
+    
+    def update(self, ckv, layer_idx, cache_kwargs):
+        return self.layers[layer_idx].update(ckv, cache_kwargs)
+    
+    @classmethod
+    def from_legacy_cache(cls, past_key_values):
+        cache = cls()
+        if past_key_values is not None:
+            for layer_idx in range(len(past_key_values)):
+                ckv = past_key_values[layer_idx]
+                cache.add_new(ckv, layer_idx)
+        return cache
+
+    def to_legacy_cache(self, ):
+        legacy_cache = ()
+        for layer in self.layers:
+            legacy_cache += (layer.ckv,)
+        return legacy_cache
+        
+
+
 class QEffDynamicCache(DynamicCache):
     """
     A cache that grows dynamically as more tokens are generated. This is the default for generative models.

@@ -271,9 +271,13 @@ class QEFFBaseModel(ABC):
                             raise ValueError(
                                 f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
                             )
+                elif param == "compressed_kvs":
+                    for i in range(len(example_inputs["compressed_kvs"])):
+                        input_names.extend([f"compressed_kvs.{i}",])
                 else:
                     input_names.append(param)
 
+        #import ipdb; ipdb.set_trace()
         try:
             torch.onnx.export(
                 self.model,
@@ -329,11 +333,15 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
+        enable_mla: Optional[bool] = False,
+        mla_absorption_config: Optional[bool] = False,
     ):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
+            "enable_mla": enable_mla,
+            "mla_absorption_config": mla_absorption_config,
         }
 
         if prefill_only:
@@ -366,6 +374,8 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        enable_mla: Optional[bool] = False,
+        mla_absorption_config: Optional[Dict[str, bool]] = False,
         **compiler_options,
     ) -> str:
         """
@@ -403,6 +413,8 @@ class QEFFBaseModel(ABC):
                 offload_pt_weights,
                 use_onnx_subfunctions,
                 retain_full_kv,
+                enable_mla,
+                mla_absorption_config,
             )
         )
         compile_dir = Path(compile_dir or onnx_path.parent)
