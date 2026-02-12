@@ -30,7 +30,6 @@ skip_vision = False
 
 if skip_vision:
     ## Only Text ##
-
     ## Set Batch_Size ##
     batch_size = 1
     qeff_model.compile(
@@ -84,7 +83,7 @@ else:
 
     ## The dimensions list stores all the height × width pairs required for compilation ##
     # dimension [hxw]
-    dimensions = [[354, 536], [240, 360], [1024, 1024], [180, 320]]
+    dimensions = [[354, 536], [240, 360], [1024, 1024], [180, 320], [325, 670], [421, 777]]
 
     ## Vision + Text ##
     qeff_model.compile(
@@ -106,7 +105,7 @@ else:
 
     ## Resize to any deimnsion present in specializations ##
     # [wxh]
-    image = image.resize((536, 354))
+    image = image.resize((777, 421))
     messages_1 = [
         {
             "role": "user",
