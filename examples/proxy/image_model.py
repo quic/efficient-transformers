@@ -164,6 +164,7 @@ for model_config in models:
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
             model_name,
             config=config,
+            trust_remote_code=True,
             kv_offload=True,
             enable_proxy=True,
         )
