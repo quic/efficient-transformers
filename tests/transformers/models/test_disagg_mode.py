@@ -38,7 +38,8 @@ prompts = [prompt1, prompt2]
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_id", model_names_blocking)
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model_id", [model_id])
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill(model_id, prompt):
     # Run prefill
@@ -111,7 +112,8 @@ def test_disagg_mode_prefill(model_id, prompt):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_id", model_names_chunking)
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model_id", [model_id])
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill_chunked(model_id, prompt):
     # Run prefill

@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import os
 from importlib import reload
 from typing import List, Optional
@@ -25,9 +26,11 @@ from QEfficient.utils._utils import create_json, load_hf_processor
 from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 
-test_models = [
-    "openai/whisper-tiny",
-]
+CONFIG_PATH = "tests/configs/speech_seq2seq_model_configs.json"
+
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    test_models = config_data["speech_seq2seq_models"]
 
 
 def load_seq2seq_model(model_config):
@@ -350,6 +353,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -361,6 +365,7 @@ def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.skip(reason="Whisper is currently not supported on QNN")
 @pytest.mark.parametrize("model_name", test_models)
