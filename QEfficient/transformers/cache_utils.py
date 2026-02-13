@@ -842,6 +842,7 @@ class QEffHybridCacheForGPTOSS:
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
         return k_out, v_out
 
+
     def read_only_blockedKV(
         self,
         start_idx: torch.Tensor,

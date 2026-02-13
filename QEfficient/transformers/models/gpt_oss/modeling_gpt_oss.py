@@ -30,13 +30,8 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
-<<<<<<< HEAD
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, supports_blocked_kv
 from QEfficient.blocking.blocked_attention_forwards import _normalize_int
-=======
-from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
-from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
->>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -1752,28 +1747,14 @@ class QEffGptOssAttention(GptOssAttention):
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         num_kv_blocks = getattr(self, "num_kv_blocks", None)
-        num_q_blocks = getattr(self, "num_q_blocks", None)
-        head_block_size = getattr(self, "head_block_size", None)
         blocking_config = getattr(self, "attn_blocking_config", None)
 
-        if blocking_config is None:
-            blocking_config = AttentionBlockingConfig(mode="")
-            if num_kv_blocks is not None:
-                blocking_config.mode = "kv" + blocking_config.mode
-                blocking_config.num_kv_blocks = int(num_q_blocks)
-            if num_q_blocks is not None:
-                blocking_config.mode = "q" + blocking_config.mode
-                blocking_config.num_q_blocks = int(num_q_blocks)
-            if head_block_size is not None:
-                blocking_config.mode = "h" + blocking_config.mode
-                blocking_config.head_block_size = int(head_block_size)
-            if blocking_config.mode == "":
-                blocking_config = None
+        if blocking_config is None and num_kv_blocks is not None:
+            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
 
         use_kv_blocked = (
-            blocking_config is not None and "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
+            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
         )
-        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache

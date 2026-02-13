@@ -1972,12 +1972,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
 
-<<<<<<< HEAD
-=======
-        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
-
->>>>>>> 5a1b7e7 (nit: rename BlockedKVAttentionTransform to KVBlockingAttentionTransform)
     @classmethod
     def from_pretrained(
         cls,
@@ -2984,25 +2978,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-<<<<<<< HEAD
-
-=======
-        
->>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
         # increase seq_len if using a larger number of blocks
         if self.hash_params.get("blocking_kwargs", None):
             max_blocks = -1
             for num_blocks in self.hash_params.get("blocking_kwargs").values():
                 max_blocks = max(max_blocks, num_blocks)
-<<<<<<< HEAD
             block_size = -(-seq_len // max_blocks)
             while seq_len < max_blocks or (seq_len % max_blocks > block_size):
                 seq_len = seq_len * 2
                 block_size = -(-seq_len // max_blocks)
-=======
-            while seq_len < max_blocks:
-                seq_len = seq_len * 2
->>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
 
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
