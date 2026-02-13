@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import os
 from typing import List, Optional
 
@@ -23,9 +24,11 @@ from QEfficient.utils._utils import create_json, load_hf_processor
 from QEfficient.utils.constants import WAV2VEC2_MAX_SEQ_LEN, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 
-test_models = [
-    "facebook/wav2vec2-base-960h",
-]
+CONFIG_PATH = "tests/configs/embedding_model_configs.json"
+
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    test_models = config_data["audio_embedding_models"]
 
 
 def load_ctc_model(model_config):
@@ -173,6 +176,7 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -184,6 +188,7 @@ def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.skip(reason="Wav2Vec2 is currently not supported on QNN")
 @pytest.mark.parametrize("model_name", test_models)
