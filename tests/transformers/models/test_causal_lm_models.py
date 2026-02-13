@@ -292,6 +292,72 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
 
+def check_kv_repeat_causal_lm_pytorch_vs_ai100(
+    model_name: str,
+    prompt_len: int = Constants.PROMPT_LEN,
+    ctx_len: int = Constants.CTX_LEN,
+    n_layer: int = 1,
+    num_kv_heads_repeat: int = 1,
+    config: Optional[AutoConfig] = None,
+    pytorch_hf_tokens: Optional[list] = None,
+):
+    """
+    Validate the PyTorch model and the Cloud AI 100 model with repeating original KV heads.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+        :prompt_len (int): Prompt length for the model to compile.
+        :ctx_len (int): Maximum context length to compile the model.
+        :n_layers (int): Number of layers for the Model.
+        :num_kv_heads_repeat (int): Number of times to repeat KV heads.
+    """
+    replace_transformers_quantizers()
+    if config is None:
+        n_layer = get_custom_n_layers(model_name)
+        model_hf, _ = load_causal_lm_model(model_name, n_layer=n_layer)
+    else:
+        model_hf, _ = load_causal_lm_model(model_name, config=config)
+
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
+    config = model_hf.config
+    batch_size = len(Constants.INPUT_STR)
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        config,
+        Constants.INPUT_STR,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+    )
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
+        pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+
+    # TODO: Add support for custom repeat_kv in models to handle uneven replications.
+    # Generate num_kv_heads_repeat from config so that divisibility error doesn't occur.
+    num_kv_heads_repeat = config.num_attention_heads // config.num_key_value_heads
+    qeff_model = QEFFAutoModelForCausalLM(
+        copy.deepcopy(model_hf),
+        pretrained_model_name_or_path=model_name,
+        num_kv_heads_repeat=num_kv_heads_repeat,
+    )
+
+    if not get_available_device_id():
+        pytest.skip("No available devices to run model on Cloud AI 100")
+    qpc_path = qeff_model.compile(
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        num_cores=14,
+        mxfp6=False,
+        aic_enable_depth_first=False,
+    )
+    exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
+    gen_len = len(pytorch_hf_tokens)
+    cloud_ai_100_tokens = exec_info.generated_ids[0][:, :gen_len]
+    assert (pytorch_hf_tokens == cloud_ai_100_tokens).all(), (
+        "Tokens don't match for Pytorch HF output and Cloud AI 100 output."
+    )
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+
+
 # FIXME: there should be a CB test here
 @pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
 def test_causal_lm_export_with_deprecated_api(model_name):
@@ -366,6 +432,28 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         pytorch_hf_tokens = ModelConfig.EXTERNAL_MODELS[model_name]["pytorch_hf_tokens_normal_case"]
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, pytorch_hf_tokens=pytorch_hf_tokens
+    )
+
+
+@pytest.mark.nightly
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("model_name", test_models_causal)
+def test_check_kv_repeat_causal_lm_pytorch_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model and the Cloud AI 100 model with repeating original KV heads.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    n_layer = get_custom_n_layers(model_name)
+
+    # Using fixed reference tokens for external models for specific test cases.
+    # These tokens are hardcoded, therefore will not match if the model config changes.
+    pytorch_hf_tokens = None
+    if model_name in ModelConfig.EXTERNAL_MODELS:
+        pytorch_hf_tokens = ModelConfig.EXTERNAL_MODELS[model_name]["pytorch_hf_tokens_normal_case"]
+
+    check_kv_repeat_causal_lm_pytorch_vs_ai100(
         model_name=model_name, n_layer=n_layer, pytorch_hf_tokens=pytorch_hf_tokens
     )
 
