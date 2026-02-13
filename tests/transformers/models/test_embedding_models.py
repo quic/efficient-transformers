@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
+import json
 import os
 from typing import Optional
 
@@ -19,10 +19,11 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import Constants, QnnConstants
 
-embed_test_models = [
-    {"model_name": "jinaai/jina-embeddings-v2-base-code", "pooling": "mean"},
-    {"model_name": "sentence-transformers/nli-bert-base-cls-pooling", "pooling": "cls"},
-]
+CONFIG_PATH = "tests/configs/embedding_model_configs.json"
+
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    embed_test_models = config_data["embedding_models"]
 
 
 def check_embed_pytorch_vs_ort_vs_ai100(
@@ -101,6 +102,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100(model):
     """
@@ -110,6 +112,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100(model):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
     """
@@ -119,6 +122,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
 def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
     """
@@ -131,6 +135,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
@@ -147,6 +152,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model):
@@ -168,6 +174,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model", [embed_test_models[0]])
 def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model):
