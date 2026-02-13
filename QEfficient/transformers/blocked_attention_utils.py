@@ -84,13 +84,13 @@ def blocked_kv_attention_forward(
     block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks > 0 else past_seen_tokens
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
 
-    # current_position = position_ids.max(dim=-1).values
+    current_position = position_ids.max(dim=-1).values
 
     for j in range(num_kv_blocks):
         start_index = j * block_size
         end_index = (j + 1) * block_size
 
-        # skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+        skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
 
         k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
         k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
@@ -140,16 +140,15 @@ def blocked_kv_attention_forward(
             delta_max.unsqueeze(-1)
         ) + torch.matmul(prob, v_block_states)
 
-        # if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
-        #     skip_mask = skip_future.view(1, 1, 1).expand(batch_size, num_heads, seq_len)
-        #     current_max = torch.where(skip_mask, prev_max, current_max_updated)
-        #     current_denominator = torch.where(skip_mask, prev_denominator, current_denominator_updated)
-        #     output = torch.where(skip_mask.unsqueeze(-1), prev_output, output_updated)
-        # else:
-        #     # Eager mode
-        current_max = current_max_updated
-        current_denominator = current_denominator_updated
-        output = output_updated
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+            current_max = torch.where(skip_future, prev_max, current_max_updated)
+            current_denominator = torch.where(skip_future, prev_denominator, current_denominator_updated)
+            output = torch.where(skip_future.unsqueeze(-1), prev_output, output_updated)
+        else:
+            # Eager mode
+            current_max = current_max_updated
+            current_denominator = current_denominator_updated
+            output = output_updated
 
     attn_output = output.transpose(1, 2).contiguous()
     attn_weights = None
@@ -192,7 +191,7 @@ def blocked_qkv_attention_forward(
     block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks > 0 else past_seen_tokens
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
 
-    current_position = position_ids.max()
+    current_position = position_ids.max(dim=-1).values
 
     for q_block_idx in range(num_q_blocks):
         q_start = q_block_positions[q_block_idx]
@@ -215,7 +214,7 @@ def blocked_qkv_attention_forward(
             start_index = j * block_size
             end_index = (j + 1) * block_size
 
-            skip_future = torch.tensor(start_index, device=query.device) > current_position
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
             
             # Eager mode Only
             if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
@@ -337,7 +336,7 @@ def blocked_hqkv_attention_forward(
     block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks > 0 else past_seen_tokens
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
 
-    current_position = position_ids.max()
+    current_position = position_ids.max(dim=-1).values
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -371,7 +370,7 @@ def blocked_hqkv_attention_forward(
                 start_index = j * block_size
                 end_index = (j + 1) * block_size
 
-                skip_future = torch.tensor(start_index, device=query.device) > current_position
+                skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
                 
                 # Eager mode Only
                 if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():

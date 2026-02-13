@@ -31,6 +31,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     rotate_half,
 )
 
+from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
 from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 
@@ -535,6 +536,8 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         num_kv_blocks: Optional[torch.Tensor] = None,
+        num_q_blocks: Optional[torch.Tensor] = None,
+        head_block_size: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -558,9 +561,31 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         )
 
         num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
-        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
+        num_q_blocks = num_q_blocks if num_q_blocks is not None else getattr(self, "num_q_blocks", None)
+        head_block_size = head_block_size if head_block_size is not None else getattr(self, "head_block_size", None)
+        blocking_config = getattr(self, "attn_blocking_config", None)
+        
+        if blocking_config is None: 
+            blocking_config = AttentionBlockingConfig(mode="")
+            if num_kv_blocks is not None:
+                blocking_config.mode = "kv" + blocking_config.mode
+                blocking_config.num_kv_blocks = int(num_q_blocks)
+            if num_q_blocks is not None:
+                blocking_config.mode = "q" + blocking_config.mode
+                blocking_config.num_q_blocks = int(num_q_blocks)
+            if head_block_size is not None:
+                blocking_config.mode = "h" + blocking_config.mode
+                blocking_config.head_block_size = int(head_block_size)
+            if blocking_config.mode == "":
+                blocking_config = None
+
+        use_kv_blocked = (
+            blocking_config is not None and "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
+        )
+        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
+
         if past_key_value is not None:
-            if use_blocked_kv:
+            if use_kv_blocked:
                 cache_kwargs = {
                     "sin": sin,
                     "cos": cos,
@@ -582,20 +607,33 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
                 key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        attention_interface: Callable = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            num_kv_blocks=num_kv_blocks if use_blocked_kv else None,
-            cache_kwargs=cache_kwargs,
-            layer_idx=self.layer_idx,
-            past_key_value=past_key_value,
-            **kwargs,
-        )
+        if use_blocking:
+            strategy = get_blocking_strategy(blocking_config)
+            attn_output, attn_weights = strategy.apply(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+                config=blocking_config,
+            )
+        else:
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                num_kv_blocks=num_kv_blocks if use_kv_blocked else None,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+                **kwargs,
+            )
 
         attn_output = attn_output.reshape(bsz, q_len, -1)
 

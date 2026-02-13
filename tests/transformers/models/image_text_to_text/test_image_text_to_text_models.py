@@ -26,7 +26,7 @@ from transformers import (
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import create_json, get_num_layers_vlm
-from QEfficient.utils.constants import QnnConstants
+from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import InternProcessor
@@ -158,6 +158,20 @@ test_models_config = [
     # ),
 ]
 
+test_blocked_models_config = [
+(
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        True,
+        1,
+        128,
+        4096,
+        1540,
+        "https://picsum.photos/id/237/536/354",
+        "Can you describe the image in detail.",
+        1,
+    ),
+]
+
 intern_model_config = [
     (
         "OpenGVLab/InternVL2_5-1B",
@@ -263,6 +277,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
+    qaic_config: Optional[dict] = None,
 ):
     model_config = {"model_name": model_name}
     model_config["img_size"] = img_size
@@ -308,6 +323,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_config["model_name"],
         kv_offload=kv_offload,
         config=config,
+        qaic_config=qaic_config,
     )
 
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
@@ -586,6 +602,35 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
         qnn_config=qnn_config_json_path,
     )
 
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_blocked_models_config
+)
+def test_image_text_to_text_blocked_pytorch_vs_kv_vs_ort_vs_ai100(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
+):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    # kv blocking
+    qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
+
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+        qaic_config=qaic_config,
+    )
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal

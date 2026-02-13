@@ -69,7 +69,7 @@ test_models_spd = [
 
 test_models_blockedKV = [
     # "meta-llama/Llama-3.3-70B-Instruct",
-    # "openai/gpt-oss-20b",
+    "openai/gpt-oss-20b",
     "meta-llama/Llama-3.2-1B",
 ]
 

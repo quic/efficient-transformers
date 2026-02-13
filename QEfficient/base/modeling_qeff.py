@@ -82,6 +82,17 @@ class QEFFBaseModel(ABC):
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
 
+        # Apply the transformations
+        any_transformed = False
+        for transform in self._pytorch_transforms:
+            self.model, transformed = transform.apply(self.model)
+            any_transformed = any_transformed or transformed
+
+        if not any_transformed:
+            warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
+        else:
+            logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+
     def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         if offload_pt_weights and not self._is_weights_offloaded:
@@ -358,26 +369,31 @@ class QEFFBaseModel(ABC):
         disable_blocking: Optional[bool] = False,
         **compiler_options,
     ):  
-        # Apply the transformations
-        any_transformed = False
+        # # Apply the transformations
+        # any_transformed = False
 
-        # check whether default transforms have already been applied
-        if not self.is_transformed:
-            for transform in self._pytorch_transforms:
-                self.model, transformed = transform.apply(self.model)
-                any_transformed = any_transformed or transformed
+        # # check whether default transforms have already been applied
+        # if not self.is_transformed:
+        #     for transform in self._pytorch_transforms:
+        #         self.model, transformed = transform.apply(self.model)
+        #         any_transformed = any_transformed or transformed
             
-            # transforms that need qaic_config
-            self.model, transformed_spd = SpDTransform.apply(self.model, self.model.qaic_config, pretrained_model_name_or_path=self.model.pretrained_path)
-            self.is_tlm = transformed_spd
-            self.model, _ = SamplerTransform.apply(self.model, self.model.qaic_config)
+        #     # transforms that need qaic_config
+        #     self.model, transformed_spd = SpDTransform.apply(self.model, self.model.qaic_config, pretrained_model_name_or_path=self.model.pretrained_path)
+        #     self.is_tlm = transformed_spd
+        #     self.model, _ = SamplerTransform.apply(self.model, self.model.qaic_config)
 
-            if self.is_tlm:
-                self.model.qaic_config["return_pdfs"] = True
+        #     if self.is_tlm:
+        #         self.model.qaic_config["return_pdfs"] = True
 
         # blocking transforms reapplied based on num_kv_blocks
-        if self.model.qaic_config is None and self.model.qaic_config["disable_blocking"]:
-            blocking_config = build_transformer_blocking_config(self.model.config, blocking_mode="hqkv", ctx_len=ctx_len, seq_len=seq_len, bs=bs, compile_config={"mdp_ts_num_devices": num_devices, "aic_num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)})
+        
+        if getattr(self.model, "qaic_config", None) is None and not disable_blocking:
+            if hasattr(self.model, "config"):
+                blocking_config = build_transformer_blocking_config(self.model.config, blocking_mode="hqkv", ctx_len=ctx_len, seq_len=seq_len, bs=bs, compile_config={"mdp_ts_num_devices": num_devices, "aic_num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)})
+            else:
+                # without a model config, this is not a model that is possible to block
+                blocking_config = None
         else:
             blocking_config = {}
             blocking_config["effective_blocking_mode"] = ""
@@ -424,13 +440,13 @@ class QEFFBaseModel(ABC):
             if invalid_blocking:
                 raise ValueError(f"Invalid number of blocks computed or passed in qaic_config")
 
-        if self.is_transformed:
-            logger.info(f"Pytorch transforms previously applied to model: {self.model_name}")
-        elif not any_transformed:
-            warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
-        else:
-            logger.info(f"Pytorch transforms applied to model: {self.model_name}")
-            self.is_transformed = True
+        # if self.is_transformed:
+        #     logger.info(f"Pytorch transforms previously applied to model: {self.model_name}")
+        # elif not any_transformed:
+        #     warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
+        # else:
+        #     logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+        #     self.is_transformed = True
 
     @dump_qconfig
     def _compile(

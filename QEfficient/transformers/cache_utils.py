@@ -698,21 +698,28 @@ class QEffHybridCacheForGPTOSS:
             is_sliding_layer = cache_kwargs.get("is_sliding")
             sliding_window = cache_kwargs.get("sliding_window")
             _, _, ctx_len, _ = self.key_cache[layer_idx].shape
+            batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
+
             if is_sliding_layer:
                 kv_position_ids = torch.where(position_ids == -1, position_ids, position_ids % sliding_window)
-                self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
-                self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                    self.value_cache[layer_idx], kv_position_ids, value_states
-                )
             else:
                 kv_position_ids = position_ids
-
+            
+            if batch_index is not None:
+                invalid_scatter_index = torch.iinfo(torch.int32).max
+                scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+                self.key_cache[layer_idx] = CtxScatterFuncCB.apply(self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states)
+                self.value_cache[layer_idx] = CtxScatterFuncCB.apply(
+                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
+                )
+            else:
                 self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
                 self.value_cache[layer_idx] = CtxScatterFunc.apply(
                     self.value_cache[layer_idx], kv_position_ids, value_states
                 )
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
         return k_out, v_out
+
 
     def read_only_blockedKV(
         self,
