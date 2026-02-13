@@ -309,7 +309,7 @@ class ApiRunnerVlm:
             # Process inputs
             inputs = self.processor(images=image, text=prompt, return_tensors="pt")
             if "pixel_values" in inputs:
-                inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+                inputs["pixel_values"] = inputs["pixel_values"].to(self.config.torch_dtype)
 
             # Generate tokens
             output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)

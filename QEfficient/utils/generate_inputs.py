@@ -18,6 +18,12 @@ from QEfficient.utils import (
     padding_check_and_fix,
 )
 
+MODEL_DTYPE_TO_INPUT_DTYPE_MAP = {
+    torch.float32: np.float32,
+    torch.float16: np.float16,
+    torch.bfloat16: np.float16,  # bfloat16 not supported by onnxruntime, so we cast it to float16 for now.
+}
+
 
 class InputHandler:
     def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size):
@@ -100,8 +106,8 @@ class InputHandler:
                 pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
             else:
                 pad_shape = self.padding_shape
-            past_key = torch.zeros((pad_shape), dtype=torch.float32)
-            past_value = torch.zeros((pad_shape), dtype=torch.float32)
+            past_key = torch.zeros((pad_shape), dtype=self.config.torch_dtype)
+            past_value = torch.zeros((pad_shape), dtype=self.config.torch_dtype)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
@@ -170,8 +176,12 @@ class InputHandler:
         if hasattr(self.config, "model_type") and self.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH:
             for i in range(self.n_layer):
                 cache_shape = self.global_shape if not self.is_chunked_attention[i] else self.sliding_shape
-                inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
-                inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+                inputs["past_key." + str(i)] = np.zeros(
+                    (cache_shape), dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype]
+                )
+                inputs["past_value." + str(i)] = np.zeros(
+                    (cache_shape), dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype]
+                )
         else:
             for i in range(self.n_layer):
                 if (
@@ -181,8 +191,12 @@ class InputHandler:
                     pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
                 else:
                     pad_shape = self.padding_shape
-                inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
-                inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
+                inputs["past_key." + str(i)] = np.zeros(
+                    (pad_shape), dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype]
+                )
+                inputs["past_value." + str(i)] = np.zeros(
+                    (pad_shape), dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype]
+                )
         if self.full_batch_size:
             inputs["batch_index"] = np.arange(self.full_batch_size).reshape(-1, 1)
         return inputs
@@ -324,17 +338,21 @@ class InputHandlerVLM:
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
                 inputs["past_key." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float32
+                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim),
+                    dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype],
                 )
                 inputs["past_value." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float32
+                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim),
+                    dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype],
                 )
             else:
                 inputs["past_key." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
+                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim),
+                    dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype],
                 )
                 inputs["past_value." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
+                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim),
+                    dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype],
                 )
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         return vision_inputs, lang_inputs
@@ -474,10 +492,12 @@ class InputHandlerInternVL(InputHandlerVLM):
 
         for i in range(num_hidden_layers):
             inputs["past_key." + str(i)] = np.zeros(
-                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
+                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim),
+                dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype],
             )
             inputs["past_value." + str(i)] = np.zeros(
-                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
+                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim),
+                dtype=MODEL_DTYPE_TO_INPUT_DTYPE_MAP[self.config.torch_dtype],
             )
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         return vision_inputs, lang_inputs
