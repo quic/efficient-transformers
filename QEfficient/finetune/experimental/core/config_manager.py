@@ -145,6 +145,11 @@ class DatasetConfig:
         default=1,
         metadata={"help": "Number of workers for the DataLoader."},
     )
+    config_name: str = field(
+        default="default",
+        metadata={"help": "Name of the hf configuration file."},
+    )
+    json_file_path: str = field(default=None, metadata={"help": "Path to a JSON file containing data."})
 
 
 @dataclass
@@ -635,6 +640,20 @@ class ConfigManager:
         self._push(errors, dataset.get("max_seq_length", 0) <= 0, "dataset.max_seq_length must be positive.")
 
         # ---------- Training ----------
+        # torch_dtype validation
+        torch_dtype = training.get("torch_dtype")
+        valid_dtypes = {"fp16", "bf16", "fp32"}
+        self._push(
+            errors,
+            not torch_dtype,
+            "training.torch_dtype is required.",
+        )
+        self._push(
+            errors,
+            torch_dtype and torch_dtype not in valid_dtypes,
+            f"training.torch_dtype must be one of {valid_dtypes}.",
+        )
+
         # Batch sizes
         self._push(
             errors,
@@ -710,8 +729,24 @@ class ConfigManager:
         return self.config.dataset
 
     def get_model_config(self) -> Dict[str, Any]:
-        """Get model configuration as dictionary."""
-        return self.config.model
+        """
+        Get model configuration as dictionary.
+
+        Automatically handles torch_dtype conversion from training config if not set in model config.
+        """
+        model_config = self.config.model
+
+        # Get torch_dtype from training config and convert
+        # To do: check if it can be moved from training config to model config instead
+        if model_config.get("torch_dtype") is None:
+            training_config = self.get_training_config()
+            training_dtype = training_config.get("torch_dtype")
+            if training_dtype:
+                # Convert from training format (fp16/bf16) to model format (float16/bfloat16)
+                dtype_mapping = {"fp16": "float16", "bf16": "bfloat16"}
+                model_config["torch_dtype"] = dtype_mapping.get(training_dtype, "auto")
+
+        return model_config
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
