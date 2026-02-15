@@ -1,11 +1,12 @@
-# Training Configuration
-(training-configuration)=
+
+# Training Configuration with LoRA Finetuning
+
 ## Overview
 
 This configuration file defines the setup for fine-tuning a Hugging Face causal language model using **LoRA (Low-Rank Adaptation)** and **PEFT (Parameter-Efficient Fine-Tuning)** techniques. It also includes dataset, training, optimizer, and scheduler settings.
 
 ***
-## 1. Model Configuration
+### 1. Model Configuration
 
 Model-related parameters for loading and fine-tuning.
 
@@ -37,7 +38,7 @@ Model-related parameters for loading and fine-tuning.
 ***
 
 
-## 2. Dataset Configuration
+### 2. Dataset Configuration
 
 This section defines parameters for dataset handling during fine-tuning with Hugging Face models. It covers dataset type, splits, prompt formatting, and DataLoader settings.
 
@@ -51,12 +52,12 @@ If provided, this takes precedence over dataset_name.
 *   **prompt\_func**: Path to python function to format prompts. Use when you need complex preprocessing or conditional logic to build the final prompt string from a dataset row (e.g alpaca dataset).
 *   **prompt\_template**: Template for formatting prompts from dataset rows.Prompt_template should contain the column names which are available in the dataset.
 
-     **Note** :If both prompt_template and prompt_func are provided, then prompt_template will take precedence over prompt_func.
+     **Note** :prompt_func and prompt_template cannot be used together. Please specify only one of these options at a time.
 *  **completion\_func**: Path to python function to format completions. Use when you need complex preprocessing or conditional logic to build the final completion string from a dataset row.
 *   **completion\_template**: string pattern that tells the fine-tuning pipeline which part of the dataset should be treated as the target output (completion) for the model to learn.
 
-     **Note** :If both completion_template and completion_func are provided, then completion_template will take precedence over completion_func.
-*   **dataset_subset**: `default = "default"` → dataset_subset is used to pick a specific configuration of a dataset when the dataset provides multiple variants. The default is "default" but you can specify something like "en", "movies", "cleaned", etc., depending on the dataset.
+     **Note** : completion_func and completion_template cannot be used together. Please specify only one of these options at a time.
+*   **dataset_subset**: `default = "default"` → The subset of the dataset to use (useful for multi-configuration datasets).
 *   **max_seq_length**: `default = 512` → Maximum sequence length for tokenization. Longer inputs are truncated; shorter inputs may be padded depending on the collation.
 *   **input_columns**: `default = ["text"]` → Column names that contain input text to be tokenized.
 *   **target_column**: `default=None` → Column containing target labels (classification/regression). Set to `None` for generation-only workloads.
@@ -76,9 +77,9 @@ If provided, this takes precedence over dataset_name.
 
 
 ***
-### Example Dataset Configs 
+### Example Dataset Configs
 
-#### **1. Alpaca (yahma/alpaca-cleaned)**
+### **1. Alpaca (yahma/alpaca-cleaned)**
 
 ```yaml
 dataset:
@@ -88,16 +89,61 @@ dataset:
   train_split: "train"
   test_split: "test"
   max_seq_length: 512
-  prompt_func: "preprocess/alpaca_func:create_alpaca_prompt"
+  prompt_func: "alpaca_func:create_alpaca_prompt"
   completion_template: "{output}"
 
 ```
-(example-prompt-functions)=
-### Prompt Function Example
+
+***
+
+### **2. Samsum (knkarthick/samsum)**
+
+```yaml
+dataset:
+  tokenizer_name: "meta-llama/Llama-3.2-1B"
+  dataset_type: "seq_completion"
+  dataset_name: "knkarthick/samsum"
+  train_split: "train"
+  test_split: "test"
+  prompt_template: "Summarize the following conversation:\n\n{'dialogue'}\n\nSummary:\n"
+  completion_template: "{summary}"
+
+```
+
+***
+### **3. gsm8k (openai/gsm8k)**
+
+```yaml
+dataset:
+  tokenizer_name: "meta-llama/Llama-3.2-1B"
+  dataset_type: "seq_completion"
+  dataset_name: "openai/gsm8k"
+  train_split: "train"
+  test_split: "test"
+  prompt_template: "Solve the following math problem step by step:\n\n{'question'}\n\nAnswer:\n"
+  completion_template: "{answer}"
+
+```
+
+***
+### **4. grammar (grammar_dataset)**
+
+```yaml
+dataset:
+  tokenizer_name: "meta-llama/Llama-3.2-1B"
+  dataset_type: "seq_completion"
+  dataset_name: "grammar"
+  train_split: "train"
+  split_ratio: 0.8
+  prompt_template: f"Correct the grammar in the following sentence:\n\n{'input'}\n\nCorrected:\n"
+  completion_template: "{target}"
+```
+
+ *** 
+### Prompt Function Examples
 
 ```python
 # Alpaca
-#preprocess/alpaca_func.py
 def prompt_no_input(row):
     return ("Below is an instruction that describes a task. "
             "Write a response that appropriately completes the request.\n\n"
@@ -113,54 +159,11 @@ def prompt_input(row):
 def create_alpaca_prompt(row):
     return prompt_no_input(row) if row["input"] == "" else prompt_input(row)
 ```
-***
 
-#### **2. Samsum (knkarthick/samsum)**
-
-```yaml
-dataset:
-  tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
-  dataset_name: "knkarthick/samsum"
-  train_split: "train"
-  test_split: "test"
-  prompt_template: "Summarize the following conversation:\n\n{'dialogue'}\n\nSummary:\n"
-  completion_template: "{summary}"
-
-```
-
-***
-#### **3. gsm8k (openai/gsm8k)**
-
-```yaml
-dataset:
-  tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
-  dataset_name: "openai/gsm8k"
-  train_split: "train"
-  test_split: "test"
-  prompt_template: "Solve the following math problem step by step:\n\n{'question'}\n\nAnswer:\n"
-  completion_template: "{answer}"
-
-```
-
-***
-#### **4. grammar (grammar_dataset)**
-
-```yaml
-dataset:
-  tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
-  dataset_name: "grammar"
-  train_split: "train"
-  split_ratio: 0.8
-  prompt_template: f"Correct the grammar in the following sentence:\n\n{'input'}\n\nCorrected:\n"
-  completion_template: "{target}"
-```
 
 ***
 
-## 3. Training Configuration
+### 3. Training Configuration
 
 This section defines core parameters for fine-tuning and evaluation.
 
@@ -218,7 +221,7 @@ This section defines core parameters for fine-tuning and evaluation.
 
 ***
 
-## 4. Optimizer & Scheduler
+### 4. Optimizer & Scheduler
 
 *   **optimizer**: `adamw`  → Optimizer for weight-decoupled regularization; options: `adamw`, `adam`, `sgd`.
     *   **lr**: Initial learning rate (e.g., `5e-5` for fine-tuning).
@@ -232,7 +235,7 @@ https://huggingface.co/docs/transformers/v5.0.0rc1/en/main_classes/optimizer_sch
  
 ***
 
-## 5. Callbacks
+### 5. Callbacks
 
 Callbacks allow custom actions during training, such as logging, early stopping, or hardware profiling. Once these callbacks are registered, the trainer class will call these callbacks based on the state of the training. If a callback has "on_epoch_end" method defined then this method will be executed at the end of each epoch.
 

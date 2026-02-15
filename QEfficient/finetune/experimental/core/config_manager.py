@@ -125,11 +125,11 @@ class DatasetConfig:
         metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     prompt_func: str = field(
-        default=None,
+        default="QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt",
         metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     completion_template: str = field(
-        default=None,
+        default="{output}",
         metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
     )
     completion_func: str = field(
@@ -673,6 +673,16 @@ class ConfigManager:
         training_device = model.get("device", "qaic")
         if training_device not in valid_devices:
             self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
+        if training_device == "qaic":
+            try:
+                import torch_qaic  # noqa: F401
+
+                logger.log_rank_zero("torch_qaic package found. Using QAIC devices.")
+            except ImportError as e:
+                logger.log_rank_zero(
+                    f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+                    level=0,
+                )
         # PEFT validation
         if model.get("use_peft"):
             pc = model.get("peft_config", {})
