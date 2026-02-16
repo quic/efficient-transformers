@@ -40,10 +40,11 @@ aspect_ratios = {
 
 width, height = aspect_ratios["16:9"]
 
-# Config for two layers
+# # Config for two layers
 # original_blocks = pipe.transformer.model.transformer_blocks
 # pipe.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1]])
 # pipe.transformer.model.config.num_layers = 2
+
 
 output = pipe(
     prompt=prompt + positive_magic["en"],
@@ -52,7 +53,7 @@ output = pipe(
     height=height,
     num_inference_steps=50,
     true_cfg_scale=4.0,
-    generator=torch.manual_seed(42),
+    generator=torch.Generator(device="cpu").manual_seed(42),
     parallel_compile=True,
 )
 

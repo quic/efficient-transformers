@@ -303,9 +303,16 @@ class QEffVAE(QEFFBaseModel):
                 - output_names (List[str]): Names of model outputs
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
-        latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P
-        latent_width = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P
+
+        # TODO : clean up for qwen imge
+        if self.model.__class__.__name__ == "AutoencoderKLQwenImage":
+            latent_frames = 1
+            latent_height = 116
+            latent_width = 208
+        else:
+            latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
+            latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P
+            latent_width = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P
 
         # VAE decoder takes latent representation as input
         example_inputs = {
@@ -691,10 +698,11 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
 
         # For testing purpose I have set this to constant values from the original models
-        latent_seq_len = 6032
+        latent_seq_len = 6032  # image cl
         text_seq_len = 126
         hidden_dim = 64
         encoder_hidden_dim = 3584
+        rot_dim = 128
         example_inputs = {
             "hidden_states": torch.randn(bs, latent_seq_len, hidden_dim, dtype=torch.float32),
             "encoder_hidden_states": torch.randn(bs, text_seq_len, encoder_hidden_dim, dtype=torch.float32),
@@ -704,8 +712,8 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
             "height": torch.tensor([58], dtype=torch.int64),
             "width": torch.tensor([104], dtype=torch.int64),
             "txt_seq_lens": torch.tensor([126], dtype=torch.int64),
-            # "img_rotary_emb": torch.randn(6032, 64, dtype=torch.float32),
-            # "text_rotary_emb": torch.randn(126, 64, dtype=torch.float32)
+            "img_rotary_emb": torch.randn(latent_seq_len, rot_dim, dtype=torch.float32),
+            "txt_rotary_emb": torch.randn(text_seq_len, rot_dim, dtype=torch.float32),
         }
 
         output_names = ["output"]
@@ -714,6 +722,8 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
             "hidden_states": {0: "batch_size", 1: "latent_seq_len"},
             "encoder_hidden_states": {0: "batch_size", 1: "text_seq_len"},
             "encoder_hidden_states_mask": {0: "batch_size", 1: "text_seq_len"},
+            "img_rotary_emb": {0: "latent_seq_len"},
+            "txt_rotary_emb": {0: "text_seq_len"},
         }
 
         return example_inputs, dynamic_axes, output_names

@@ -6,6 +6,12 @@
 # -----------------------------------------------------------------------------
 
 from diffusers.models.attention_processor import Attention
+from diffusers.models.autoencoders.autoencoder_kl_qwenimage import (
+    QwenImageDecoder3d,
+    QwenImageEncoder3d,
+    QwenImageResample,
+    QwenImageResidualBlock,
+)
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
     WanDecoder3d,
     WanEncoder3d,
@@ -30,6 +36,11 @@ from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
+from QEfficient.diffusers.models.autoencoders.autoencoder_kl_qwenimage import (
+    QEffQwenImageDecoder3d,
+    QEffQwenImageResample,
+    QEffQwenImageResidualBlock,
+)
 from QEfficient.diffusers.models.autoencoders.autoencoder_kl_wan import (
     QEffWanDecoder3d,
     QEffWanEncoder3d,
@@ -86,6 +97,10 @@ class AttentionTransform(ModuleMappingTransform):
         WanEncoder3d: QEffWanEncoder3d,
         WanResidualBlock: QEffWanResidualBlock,
         WanResample: QEffWanResample,
+        QwenImageResample: QEffQwenImageResample,
+        QwenImageResidualBlock: QEffQwenImageResidualBlock,
+        QwenImageEncoder3d: QEffQwenImageResidualBlock,
+        QwenImageDecoder3d: QEffQwenImageDecoder3d,
     }
 
 

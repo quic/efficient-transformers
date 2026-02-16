@@ -1,5 +1,5 @@
 {
-  "description": "Default configuration for QWEN",
+  "description": "Default configuration for QWEN image",
   "modules": {
     "transformer": {
           "specializations": {
@@ -15,12 +15,35 @@
                               "aic_num_cores": 16,
                               "mos": 1,
                               "mdts_mos": 1,
-                              "node_precision_info": "/home/vtirumal/pr_qwen_img/efficient-transformers/QEfficient/diffusers/pipelines/configs/qwen_image.yaml"
+                              "node_precision_info": "QEfficient/diffusers/pipelines/configs/qwen_image.yaml"
                          },
           "execute":     {
                               "device_ids": null,
                               "qpc_path" : null
                           }
-    }
+    },
+    "vae_decoder":{
+          "specializations":{
+                                "batch_size": 1,
+                                "num_channels": 16
+                            },
+          "compilation":   {
+                              "onnx_path": null,
+                              "compile_dir": null,
+                              "mdp_ts_num_devices": 8,
+                              "mxfp6_matmul": false,
+                              "convert_to_fp16": true,
+                              "aic_num_cores": 16,
+                              "aic-enable-depth-first": true,
+                              "compile_only":true,
+                              "mos": 1,
+                              "mdts_mos": 1
+                            },
+          "execute":
+                            {
+                              "device_ids": null,
+                              "qpc_path" : null
+                            }
+     }
   }
 }
