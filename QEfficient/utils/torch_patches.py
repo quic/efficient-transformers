@@ -11,8 +11,6 @@ import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
 
-from QEfficient.utils.logging_utils import logger
-
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
