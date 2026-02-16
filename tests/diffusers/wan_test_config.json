@@ -1,8 +1,8 @@
 {
     "model_setup": {
-                        "height": 192,
-                        "width": 320,
-                        "num_frames": 81,
+                        "height": 48,
+                        "width": 80,
+                        "num_frames": 61,
                         "num_transformer_layers_high": 1,
                         "num_transformer_layers_low": 1
                     },
