@@ -58,6 +58,17 @@
 
 ---
 
+## Sequence Classification Models
+
+### Text Classification Task
+**QEff Auto Class:** `QEFFAutoModelForSequenceClassification`
+
+| Architecture | Model Family | Representative Models | vLLM Support |
+|--------------|--------------|----------------------|--------------|
+| **DebertaV2ForSequenceClassification** | Llama Prompt Guard | [meta-llama/Llama-Prompt-Guard-2-22M](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M) | ✕ |
+
+---
+
 ## Multimodal Language Models
 
 ### Vision-Language Models (Text + Image Generation)
@@ -133,6 +144,8 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 ③ Pass `disable_sliding_window` for few family models when using vLLM.
 ```
 ---
+
+
 
 (models_coming_soon)=
 # Models Coming Soon

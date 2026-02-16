@@ -29,9 +29,9 @@ pipeline {
                '''
            }
        }
-       stage('Non CLI Tests') {
+       stage('HL APIs Tests') {
            parallel {
-               stage('Run Non-CLI Non-QAIC Tests') {
+               stage('Model Export & ONNX Tests') {
                    steps {
                        timeout(time: 40, unit: 'MINUTES') {
                            sh '''
@@ -41,25 +41,42 @@ pipeline {
                            mkdir -p $PWD/Non_cli_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic &&
-                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log1.xml &&
+                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm --ignore tests/transformers/models/image_text_to_text -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
                            '''
                        }
                    }
                }
-               stage('Run Non-CLI QAIC Tests') {
+               stage('QAIC LLM Tests') {
                    steps {
-                       timeout(time: 200, unit: 'MINUTES') {
+                       timeout(time: 120, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/Non_qaic &&
+                           mkdir -p $PWD/Non_qaic_llm &&
                            export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=$PWD/Non_qaic &&
-                           pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log2.xml &&
+                           export QEFF_HOME=$PWD/Non_qaic_llm &&
+                           pytest tests -m '(not cli) and (on_qaic) and (llm_model) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log2.xml --durations=10 &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
+               }
+               stage('QAIC Feature Tests') {
+                   steps {
+                       timeout(time: 80, unit: 'MINUTES') {
+                           sh '''
+                           sudo docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_qaic_feature &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_qaic_feature &&
+                           pytest tests -m '(not cli) and (on_qaic) and (feature) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                           junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
                            deactivate"
                            '''
                        }
@@ -77,7 +94,7 @@ pipeline {
                            mkdir -p $PWD/Non_cli_qaic_multimodal &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log6.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log6.xml --durations=10 &&
                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -95,14 +112,14 @@ pipeline {
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
                     export HF_HUB_CACHE=/huggingface_hub &&
-                    pytest tests -m '(not cli) and (on_qaic) and (diffusion_models) and (not wan) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log_diffusion.xml &&
+                    pytest tests -m '(not cli) and (on_qaic) and (diffusion_models) and (not wan) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
                     junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
                     deactivate"
                     '''
                 }
             }
         }
-       stage('Inference Tests') {
+       stage('CLI Inference Tests') {
                    steps {
                        timeout(time: 120, unit: 'MINUTES') {
                            sh '''
@@ -114,7 +131,7 @@ pipeline {
                            mkdir -p $PWD/cli &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/cli &&
-                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log3.xml &&
+                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log3.xml --durations=10 &&
                            junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -190,7 +207,7 @@ pipeline {
                     mkdir -p $PWD/cli_qaic_finetuning &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli_qaic_finetuning &&
-                    pytest tests -m '(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)' --ignore tests/vllm --junitxml=tests/tests_log_finetune.xml &&
+                    pytest tests -m '(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)' --ignore tests/vllm --junitxml=tests/tests_log_finetune.xml --durations=10 &&
                     junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
                     deactivate"
                     '''

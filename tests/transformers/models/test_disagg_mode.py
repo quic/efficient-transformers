@@ -31,6 +31,7 @@ prompts = [prompt1, prompt2]
 
 
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", [model_id])
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill(model_id, prompt):
@@ -106,6 +107,7 @@ def test_disagg_mode_prefill(model_id, prompt):
 
 @pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
 @pytest.mark.on_qaic
+@pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", [model_id])
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill_chunked(model_id, prompt):
