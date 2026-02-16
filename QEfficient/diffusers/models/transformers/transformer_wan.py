@@ -13,15 +13,17 @@ The implementation includes multiple blocking modes: head-only, KV-blocking, Q-b
 and combined QKV-blocking.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
+import torch.nn as nn
 from diffusers.loaders.peft import _SET_ADAPTER_SCALE_FN_MAPPING
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.transformers.transformer_wan import (
     WanAttention,
     WanAttnProcessor,
     WanTransformer3DModel,
+    WanTransformerBlock,
     _get_qkv_projections,
 )
 from diffusers.utils import set_weights_and_activate_adapters
@@ -289,3 +291,78 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
             return (output,)
 
         return Transformer2DModelOutput(sample=output)
+
+
+class QEffWanUnifiedWrapper(nn.Module):
+    """
+    A wrapper class that combines WAN high and low noise transformers into a single unified transformer.
+
+    This wrapper dynamically selects between high and low noise transformers based on the timestep shape
+    in the ONNX graph during inference. This approach enables efficient deployment of both transformer
+    variants in a single model.
+
+    Attributes:
+        transformer_high(nn.Module): The high noise transformer component
+        transformer_low(nn.Module): The low noise transformer component
+        config: Configuration shared between both transformers (from high noise transformer)
+    """
+
+    def __init__(self, transformer_high, transformer_low):
+        super().__init__()
+        self.transformer_high = transformer_high
+        self.transformer_low = transformer_low
+        # Both high and low noise transformers share the same configuration
+        self.config = transformer_high.config
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {WanTransformerBlock}
+
+    def forward(
+        self,
+        hidden_states,
+        encoder_hidden_states,
+        rotary_emb,
+        temb,
+        timestep_proj,
+        tsp,
+        attention_kwargs=None,
+        return_dict=False,
+    ):
+        # Condition based on timestep shape
+        is_high_noise = tsp.shape[0] == torch.tensor(1)
+
+        high_hs = hidden_states.detach()
+        ehs = encoder_hidden_states.detach()
+        rhs = rotary_emb.detach()
+        ths = temb.detach()
+        projhs = timestep_proj.detach()
+
+        noise_pred_high = self.transformer_high(
+            hidden_states=high_hs,
+            encoder_hidden_states=ehs,
+            rotary_emb=rhs,
+            temb=ths,
+            timestep_proj=projhs,
+            attention_kwargs=attention_kwargs,
+            return_dict=return_dict,
+        )[0]
+
+        noise_pred_low = self.transformer_low(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            rotary_emb=rotary_emb,
+            temb=temb,
+            timestep_proj=timestep_proj,
+            attention_kwargs=attention_kwargs,
+            return_dict=return_dict,
+        )[0]
+
+        # Select based on timestep condition
+        noise_pred = torch.where(is_high_noise, noise_pred_high, noise_pred_low)
+        return noise_pred
