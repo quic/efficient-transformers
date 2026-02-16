@@ -543,7 +543,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         if output_type == "latent":
             image = latents
         else:
-            # TODO replace vae_cpu : with self.vae_decode.model # to run on QAIC
             latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
             latents = latents.to(self.vae_decoder.model.dtype)
             latents_mean = (
