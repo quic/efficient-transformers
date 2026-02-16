@@ -160,7 +160,6 @@ def compile_modules_parallel(
         """Prepare specializations and compile a single module."""
         specializations = config["modules"][module_name]["specializations"].copy()
         compile_kwargs = config["modules"][module_name]["compilation"]
-        # import pdb; pdb.set_trace()
 
         if (
             specialization_updates and module_name in specialization_updates
@@ -213,8 +212,6 @@ def compile_modules_sequential(
     for module_name, module_obj in tqdm(modules.items(), desc="Compiling modules", unit="module"):
         module_config = config["modules"]
         specializations = module_config[module_name]["specializations"].copy()
-        # import pdb; pdb.set_trace()
-
         compile_kwargs = module_config[module_name]["compilation"]
 
         if (

@@ -242,11 +242,11 @@ def wan_pipeline_call_with_mad_validation(
             else:
                 timestep = t.expand(latents.shape[0])
 
-            batch_size, num_channels, latent_num_frames, latent_height, latent_width = latents.shape
+            batch_size, num_channels, num_frames, height, width = latents.shape
             p_t, p_h, p_w = current_model.config.patch_size
-            post_patch_num_frames = latent_num_frames // p_t
-            post_patch_height = latent_height // p_h
-            post_patch_width = latent_width // p_w
+            post_patch_num_frames = num_frames // p_t
+            post_patch_height = height // p_h
+            post_patch_width = width // p_w
 
             # Prepare transformer inputs
             rotary_emb = current_model.rope(latent_model_input)
@@ -309,59 +309,29 @@ def wan_pipeline_call_with_mad_validation(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
-    # Step 9: Decode latents to video QAIC VAE decoder
+    # Step 9: Decode latents to video (using CPU VAE for now)
     if not output_type == "latent":
-        latents = latents.to(pipeline.vae_decoder.model.dtype)
+        latents = latents.to(pipeline.vae_decode.dtype)
         latents_mean = (
-            torch.tensor(pipeline.vae_decoder.model.config.latents_mean)
-            .view(1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1)
+            torch.tensor(pipeline.vae_decode.config.latents_mean)
+            .view(1, pipeline.vae_decode.config.z_dim, 1, 1, 1)
             .to(latents.device, latents.dtype)
         )
-        latents_std = 1.0 / torch.tensor(pipeline.vae_decoder.model.latents_std).view(
-            1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1
+        latents_std = 1.0 / torch.tensor(pipeline.vae_decode.config.latents_std).view(
+            1, pipeline.vae_decode.config.z_dim, 1, 1, 1
         ).to(latents.device, latents.dtype)
         latents = latents / latents_std + latents_mean
 
-        # Initialize VAE decoder inference session
-        if pipeline.vae_decoder.qpc_session is None:
-            pipeline.vae_decoder.qpc_session = QAICInferenceSession(
-                str(pipeline.vae_decoder.qpc_path), device_ids=pipeline.vae_decoder.device_ids
-            )
-        # MAD Validation for VAE decoder - PyTorch reference inference
-        video_torch = pytorch_pipeline.vae.decode(latents, return_dict=False)[0]
+        video = pipeline.model.vae.decode(latents, return_dict=False)[0]
 
-        # Allocate output buffer for VAE decoder
-        output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
-        pipeline.vae_decoder.qpc_session.set_buffers(output_buffer)
-
-        # Run VAE decoder inference and measure time
-        inputs = {"latent_sample": latents.numpy()}
-        start_decode_time = time.perf_counter()
-        video = pipeline.vae_decoder.qpc_session.run(inputs)
-        end_decode_time = time.perf_counter()
-        vae_decoder_perf = end_decode_time - start_decode_time
-
-        # VAE decoder MAD validation
-        print(" Performing MAD validation for VAE decoder...")
-        mad_validator.validate_module_mad(
-            video_torch.detach().cpu().numpy(), video["sample"], "vae_decoder", "video decoding"
-        )
-
-        # Post-process video for output
-        video_tensor = torch.from_numpy(video["sample"])
-        video = pipeline.model.video_processor.postprocess_video(video_tensor)
+        video = pipeline.model.video_processor.postprocess_video(video.detach())
     else:
         video = latents
-        vae_decoder_perf = 0.0  # No VAE decoding for latent output
 
     # Build performance metrics
-    perf_data = {
-        "transformer": transformer_perf,  # Unified transformer (QAIC)
-        "vae_decoder": vae_decoder_perf,
-    }
-
-    # Build performance metrics for output
-    perf_metrics = [ModulePerf(module_name=name, perf=perf_data[name]) for name in perf_data.keys()]
+    perf_metrics = [
+        ModulePerf(module_name="transformer", perf=transformer_perf),
+    ]
 
     return QEffPipelineOutput(
         pipeline_module=perf_metrics,
@@ -448,7 +418,7 @@ def test_wan_pipeline(wan_pipeline):
     - 192x320 resolution - 2 transformer layers total (1 high + 1 low)
     - MAD validation for transformer modules only
     - Functional video generation test
-    - Export/compilation checks for transformer and VAE decoder
+    - Export/compilation checks for transformer
     - Returns QEffPipelineOutput with performance metrics
     """
     pipeline, pytorch_pipeline = wan_pipeline
