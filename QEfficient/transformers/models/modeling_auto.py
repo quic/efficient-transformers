@@ -2311,6 +2311,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
+    def mla(
+        self,
+        enable_mla: Optional[bool] = False,
+        mla_absorption_config: Optional[Dict[str, bool]] = False,
+    ):
+        setattr(self.model.model, "enable_mla", enable_mla)
+        setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
+
     def prefill(
         self,
         enable: Optional[bool] = True,
@@ -2596,6 +2604,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # kv_cache_shape = get_padding_shape_from_config(
         #     self.model.config, fbs if self.continuous_batching else bs, seq_len
         # )
+        ckv_shape = (1,seq_len, 512)
+        k_pe_shape = (1,1, seq_len, 64)
         kv_cache_shape = (1, 64, seq_len, 192)
         kv_cache_shape_v = (1, 64, seq_len, 128)
         enable_chunking = kwargs.get("enable_chunking", False)
@@ -2723,12 +2733,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             example_inputs = {k:v for k,v in example_inputs.items() if "past" not in k}
             dynamic_axes = {k:v for k,v in dynamic_axes.items() if "past" not in k}
             output_names = [v for v in output_names if "past" not in v]
-            example_inputs['compressed_kvs'] = []
+            example_inputs['compressed_kvs'] = [[] for _ in range(self.num_layers)]
             for i in range(self.num_layers):
-                example_inputs['compressed_kvs'].append(torch.zeros((bs, seq_len, self.model.config.kv_lora_rank + self.model.config.qk_rope_head_dim), dtype=torch.float32))
-                dynamic_axes[f"compressed_kvs.{i}"] = {0: "batch_size", 1: "seq_len"}
-                output_names.append(f"compressed_kvs.{i}_RetainedState")
-
+                ckv = torch.zeros((bs, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32)
+                k_pe = torch.zeros((bs, 1, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32)
+                example_inputs['compressed_kvs'][i].append(ckv)
+                example_inputs['compressed_kvs'][i].append(k_pe)
+                dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 1: "seq_len"}
+                dynamic_axes[f"k_pe.{i}"] = {0: "batch_size", 2: "seq_len"}
+                output_names.append(f"compressed_kv.{i}_RetainedState")
+                output_names.append(f"k_pe.{i}_RetainedState")
+        
         return self._export(
             example_inputs,
             output_names=output_names,
@@ -3099,7 +3114,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
-                    custom_io[f'compressed_kvs.{i}{suffix}'] = kv_cache_dtype
+                    custom_io[f'compressed_kv.{i}{suffix}'] = kv_cache_dtype
+                    custom_io[f'k_pe.{i}{suffix}'] = kv_cache_dtype
 
         qpc_path = self._compile(
             onnx_path=onnx_path,
