@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import json
 from typing import Optional
 
 import onnx
@@ -21,34 +22,18 @@ from transformers import (
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import get_num_layers_vlm
-from QEfficient.utils.device_utils import get_available_device_id
 
 NEW_GENERATION_TOKENS = 10
-test_models_config = [
-    # CONFIG PARAMS NEEDED FOR A MODEL TO BE TESTED
-    # (
-    # model_name,
-    # kv_offload,
-    # batch_size,
-    # prompt_len,
-    # ctx_len,
-    # img_size,
-    # img_url",
-    # text_prompt,
-    # number of layers of the model,
-    # ),
-    (
-        "Qwen/Qwen2.5-VL-3B-Instruct",
-        True,
-        1,
-        128,
-        4096,
-        1540,
-        "https://picsum.photos/id/237/536/354",
-        "Can you describe the image in detail.",
-        1,
-    ),
-]
+
+
+CONFIG_PATH = "tests/configs/image_text_model_configs.json"
+
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    multimodal_models = config_data["image_text_subfunction_models"]
+
+test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
+model_config_dict = {model["model_name"]: model for model in multimodal_models}
 
 
 def load_image_text_to_text_model(model_config):
@@ -123,9 +108,6 @@ def check_image_text_to_text_subfunction_core(
 
     with_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
 
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
-
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
         inputs = qeff_model.model.prepare_inputs_for_generation(
@@ -155,26 +137,25 @@ def check_image_text_to_text_subfunction_core(
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize(
-    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
-)
-def test_image_text_to_text_subfunction(
-    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
-):
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True])
+def test_image_text_to_text_subfunction(model_name, kv_offload):
     """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
     ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+        :model_name (str): Hugging Face Model Card name, Example: ``Qwen/Qwen2.5-VL-3B-Instruct``
     """
+
+    img_size = model_config_dict[model_name].get("img_size")
     check_image_text_to_text_subfunction_core(
         model_name=model_name,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
+        prompt_len=model_config_dict[model_name]["prompt_len"],
+        ctx_len=model_config_dict[model_name]["ctx_len"],
         max_gen_len=NEW_GENERATION_TOKENS,
         img_size=img_size,
-        img_url=img_url,
-        query=query,
-        n_layer=n_layer,
-        batch_size=batch_size,
+        img_url=model_config_dict[model_name]["img_url"],
+        query=model_config_dict[model_name]["text_prompt"],
+        n_layer=model_config_dict[model_name]["num_layers"],
+        batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
     )
