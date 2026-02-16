@@ -14,7 +14,7 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-model_id="Qwen/Qwen3-VL-32B-Instruct"
+model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
 # For Testing Purpose Only
@@ -97,7 +97,9 @@ else:
 
     ### IMAGE + TEXT ###
     # image_url = "https://picsum.photos/id/237/536/354"
-    image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
+    image_url = (
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
+    )
 
     image = Image.open(requests.get(image_url, stream=True).raw)
 
@@ -140,4 +142,3 @@ else:
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
-    

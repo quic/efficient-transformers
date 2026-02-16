@@ -13,13 +13,12 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-# model_id = "Qwen/Qwen2.5-VL-32B-Instruct"
 model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
 # For Testing Purpose Only
-# config.vision_config.depth = 1
-# config.text_config.num_hidden_layers = 1
+config.vision_config.depth = 1
+config.text_config.num_hidden_layers = 1
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -27,13 +26,11 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
-breakpoint()
 ### use skip_vision=Ture, if want to run only text, ow false ###
 skip_vision = False
 
 if skip_vision:
     ## Only Text ##
-
     ## Set Batch_Size ##
     batch_size = 1
     qeff_model.compile(
@@ -68,9 +65,7 @@ if skip_vision:
         return_dict=True,
         return_tensors="pt",
     )
-    # breakpoint()
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    # breakpoint()
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
@@ -80,7 +75,6 @@ if skip_vision:
 else:
     batch_size = 1
     ## Vision + Text ##
-    # breakpoint()
     qeff_model.compile(
         batch_size=batch_size,
         prefill_seq_len=128,
@@ -133,10 +127,8 @@ else:
         return_tensors="pt",
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    breakpoint()
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
-    
