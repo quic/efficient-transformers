@@ -27,6 +27,7 @@ from tqdm import tqdm
 
 from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffQwenImageTransformer2DModel,
+    QEffVAE,
 )
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
@@ -61,11 +62,12 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
         self.text_encoder = model.text_encoder  # TODO: Text encoder on QAIC
         self.transformer = QEffQwenImageTransformer2DModel(model.transformer)
-        self.vae_cpu = model.vae  # TODO enable in QAIC
+        self.vae_decoder = QEffVAE(model.vae, "decoder")  # TODO make as vae_decoder
 
         # Store all modules in a dictionary for easy iteration during export/compile
         self.modules = {
             "transformer": self.transformer,
+            "vae_decoder": self.vae_decoder,
         }
 
         # Copy tokenizers and scheduler from the original model
@@ -77,13 +79,15 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         self.prompt_template_encode = model.prompt_template_encode
         self.prompt_template_encode_start_idx = model.prompt_template_encode_start_idx
 
-        # self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
-        #     latent_sample, return_dict
-        # )
+        self.vae_decoder.model.forward = lambda latent_sample, return_dict: self.vae_decoder.model.decode(
+            latent_sample, return_dict
+        )
 
         self.vae_scale_factor = 2 ** len(model.vae.temperal_downsample) if getattr(model, "vae", None) else 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
         self.default_sample_size = model.default_sample_size
+
+        self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
 
     @property
     def do_classifier_free_guidance(self):
@@ -155,7 +159,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             ...     use_onnx_subfunctions=True
             ... )
         """
-
         # Export each module with video-specific parameters
         for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration with video dimensions
@@ -254,11 +257,16 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         # Prepare dynamic specialization updates based on video dimensions
         specialization_updates = {
             "transformer": {
-                "latent_seq_len": "6032",  # TODO : Make it dynamic
+                "latent_seq_len": cl,  # TODO : Make it dynamic
                 # "cl": cl,  # Compressed latent dimension
                 # "latent_height": latent_height,  # Latent space height
                 # "latent_width": latent_width,  # Latent space width
-            }
+            },
+            "vae_decoder": {
+                "latent_frames": 1,
+                "latent_height": latent_height,
+                "latent_width": latent_width,
+            },
         }
 
         # Use generic utility functions for compilation
@@ -458,6 +466,13 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         transformer_perf = []
         cfg_perf = []
 
+        # rotary emb
+        qaic_image_rotary_emb = self.transformer.model.pos_embed(img_shapes, txt_seq_lens, device="cpu")
+        qaic_img_freqs_cos, qaic_img_freqs_sin, qaic_txt_freqs_cos, qaic_txt_freqs_sin = qaic_image_rotary_emb
+
+        img_rotary_emb = torch.cat([qaic_img_freqs_cos, qaic_img_freqs_sin], dim=-1)  # [6032, 128]
+        txt_rotary_emb = torch.cat([qaic_txt_freqs_cos, qaic_txt_freqs_sin], dim=-1)  # [126, 128]
+
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -469,9 +484,8 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                 transformer_inputs = {
                     "hidden_states": latents.detach().numpy().astype(np.float32),
                     "encoder_hidden_states": prompt_embeds.detach().numpy().astype(np.float32),
-                    # "img_rotary_emb" : img_rotary_emb,
-                    # "text_rotary_emb" : text_rotary_emb,
-                    # "image_rotary_emb" : image_rotary_emb.detach().numpy().astype(np.float32),
+                    "img_rotary_emb": img_rotary_emb.detach().numpy().astype(np.float32),
+                    "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
                     "timestep": timestep,
                 }
                 if guidance is not None:
@@ -529,21 +543,39 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         if output_type == "latent":
             image = latents
         else:
-            # TODO replace vae_cpu : with self.vae_decode.model # to run on QAIC
             latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
-            latents = latents.to(self.vae_cpu.dtype)
+            latents = latents.to(self.vae_decoder.model.dtype)
             latents_mean = (
-                torch.tensor(self.vae_cpu.config.latents_mean)
-                .view(1, self.vae_cpu.config.z_dim, 1, 1, 1)
+                torch.tensor(self.vae_decoder.model.config.latents_mean)
+                .view(1, self.vae_decoder.model.config.z_dim, 1, 1, 1)
                 .to(latents.device, latents.dtype)
             )
-            latents_std = 1.0 / torch.tensor(self.vae_cpu.config.latents_std).view(
-                1, self.vae_cpu.config.z_dim, 1, 1, 1
+            latents_std = 1.0 / torch.tensor(self.vae_decoder.model.config.latents_std).view(
+                1, self.vae_decoder.model.config.z_dim, 1, 1, 1
             ).to(latents.device, latents.dtype)
             latents = latents / latents_std + latents_mean
 
-            image = self.vae_cpu.decode(latents, return_dict=False)[0][:, :, 0]
-            image = self.image_processor.postprocess(image.detach(), output_type=output_type)
+            ########## QAIC
+            # Initialize VAE decoder inference session
+            if self.vae_decoder.qpc_session is None:
+                self.vae_decoder.qpc_session = QAICInferenceSession(
+                    str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
+                )
+
+            # Allocate output buffer for VAE decoder
+            output_buffer = {"sample": np.random.rand(batch_size, 3, 1, height, width).astype(np.int32)}
+            self.vae_decoder.qpc_session.set_buffers(output_buffer)
+
+            # Run VAE decoder inference and measure time
+            inputs = {"latent_sample": latents.numpy()}
+            start_decode_time = time.perf_counter()
+            image = self.vae_decoder.qpc_session.run(inputs)
+            end_decode_time = time.perf_counter()
+            vae_decoder_perf = end_decode_time - start_decode_time
+
+            image_tensor = torch.from_numpy(image["sample"])
+            image_tensor = image_tensor[:, :, 0]
+            image = self.image_processor.postprocess(image_tensor, output_type=output_type)
 
         if not return_dict:
             return (image,)
@@ -551,6 +583,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         # Build performance metrics
         perf_metrics = [
             ModulePerf(module_name="transformer", perf=transformer_perf),
+            ModulePerf(module_name="vae_decoder", perf=vae_decoder_perf),
         ]
 
         return QEffPipelineOutput(

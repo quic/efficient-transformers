@@ -205,6 +205,8 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
         width: torch.Tensor = None,
         txt_seq_lens: torch.Tensor = None,
         img_shapes: Optional[List[Tuple[int, int, int]]] = None,
+        img_rotary_emb: torch.Tensor = None,
+        txt_rotary_emb: torch.Tensor = None,
         guidance: torch.Tensor = None,  # TODO: this should probably be removed
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
@@ -249,12 +251,6 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
         if isinstance(txt_seq_lens, torch.Tensor):
             txt_seq_lens = txt_seq_lens.tolist()
 
-        # if attention_kwargs is not None:
-        #     attention_kwargs = attention_kwargs.copy()
-        #     lora_scale = attention_kwargs.pop("scale", 1.0)
-        # else:
-        #     lora_scale = 1.0
-
         hidden_states = self.img_in(hidden_states)
 
         timestep = timestep.to(hidden_states.dtype)
@@ -268,33 +264,22 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
             if guidance is None
             else self.time_text_embed(timestep, guidance, hidden_states)
         )
-        image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens, device=hidden_states.device)
 
         for index_block, block in enumerate(self.transformer_blocks):
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
-                    block,
-                    hidden_states,
-                    encoder_hidden_states,
-                    encoder_hidden_states_mask,
-                    temb,
-                    image_rotary_emb,
-                )
-
+            if index_block < 59:
+                sf_value = 32
             else:
-                if index_block < 59:
-                    sf_value = 32
-                else:
-                    sf_value = 256
+                sf_value = 256
 
-                encoder_hidden_states, hidden_states = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states_mask=encoder_hidden_states_mask,
-                    temb=temb,
-                    image_rotary_emb=image_rotary_emb,
-                    joint_attention_kwargs=attention_kwargs,
-                )
+            encoder_hidden_states, hidden_states = block(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_hidden_states_mask=encoder_hidden_states_mask,
+                temb=temb,
+                img_rotary_emb=img_rotary_emb,
+                txt_rotary_emb=txt_rotary_emb,
+                joint_attention_kwargs=attention_kwargs,
+            )
 
         encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)
         hidden_states = hidden_states / (sf_value * sf_value * 4)
@@ -322,7 +307,8 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
         encoder_hidden_states: torch.FloatTensor = None,  # Text stream
         encoder_hidden_states_mask: torch.FloatTensor = None,
         attention_mask: Optional[torch.FloatTensor] = None,
-        image_rotary_emb: Optional[torch.Tensor] = None,
+        img_rotary_emb: Optional[torch.Tensor] = None,  # TODO : must tensor not optional
+        txt_rotary_emb: Optional[torch.Tensor] = None,  # TODO : must tensor not optional, check if neg  prompt = ""
     ) -> torch.FloatTensor:
         if encoder_hidden_states is None:
             raise ValueError("QwenDoubleStreamAttnProcessor2_0 requires encoder_hidden_states (text stream)")
@@ -362,9 +348,10 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
             txt_key = attn.norm_added_k(txt_key)
 
         # Apply RoPE
-        if image_rotary_emb is not None:
+        if img_rotary_emb is not None and txt_rotary_emb is not None:  # TODO: clean up all ways  not none
             # Unpack the 4 tensors (cos and sin for both img and txt)
-            img_freqs_cos, img_freqs_sin, txt_freqs_cos, txt_freqs_sin = image_rotary_emb
+            img_freqs_cos, img_freqs_sin = torch.chunk(img_rotary_emb, 2, dim=-1)  # [6032,64] each
+            txt_freqs_cos, txt_freqs_sin = torch.chunk(txt_rotary_emb, 2, dim=-1)  # [126,64] each
 
             img_query = qeff_apply_rotary_emb_qwen(img_query, img_freqs_cos, img_freqs_sin)
             img_key = qeff_apply_rotary_emb_qwen(img_key, img_freqs_cos, img_freqs_sin)
@@ -423,7 +410,8 @@ class QEffQwenImageTransformerBlock(QwenImageTransformerBlock):
         encoder_hidden_states: torch.Tensor,
         encoder_hidden_states_mask: torch.Tensor,
         temb: torch.Tensor,
-        image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        img_rotary_emb: torch.Tensor = None,
+        txt_rotary_emb: torch.Tensor = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         global sf_value
@@ -454,7 +442,8 @@ class QEffQwenImageTransformerBlock(QwenImageTransformerBlock):
             hidden_states=img_modulated,  # Image stream (will be processed as "sample")
             encoder_hidden_states=txt_modulated,  # Text stream (will be processed as "context")
             encoder_hidden_states_mask=encoder_hidden_states_mask,
-            image_rotary_emb=image_rotary_emb,
+            img_rotary_emb=img_rotary_emb,
+            txt_rotary_emb=txt_rotary_emb,
             **joint_attention_kwargs,
         )
 

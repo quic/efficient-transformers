@@ -633,6 +633,7 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
+        print(f"Running compiler: {' '.join(command)}")
 
         try:
             subprocess.run(command, capture_output=True, check=True)
