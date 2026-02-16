@@ -25,7 +25,7 @@ from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 #     logger,
 # )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVCache
+from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 
 
 def rotate_half(x):
@@ -370,6 +370,7 @@ class QEffDeepseekV3Attention(nn.Module):
         # self.register_buffer("fusedqk", fusedqk.detach().clone(), persistent=False)
         self.fusedqk = torch.nn.Parameter(fusedqk.detach().clone())
 
+        
     def fused_forward(
         self,
         hidden_states: torch.Tensor,
@@ -386,38 +387,34 @@ class QEffDeepseekV3Attention(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
-        
+
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
-        # import ipdb; ipdb.set_trace()
-        if compressed_kvs is not None:
-            cache_kwargs = {
-                "position_ids": position_ids,
-                "batch_index": batch_index,
-            }
-            compressed_kv = compressed_kvs.update(compressed_kv, self.layer_idx, cache_kwargs)
+        #compressed_kv = self.kv_a_proj_with_mqa_ckv(hidden_states)
+        #k_pe = self.kv_a_proj_with_mqa_k_pe(hidden_states)
+        compressed_kv, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
         
         q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
-        # import ipdb; ipdb.set_trace()
         q_pe = torch.bmm(q_a_proj_out, self.q_rope)
         q_pe = q_pe.view(bsz, q_len, self.num_heads, self.qk_rope_head_dim).transpose(1, 2)
         q_nope = torch.bmm(q_a_proj_out, self.q_up)
         q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
 
-
-        
-        compressed_kv, k_pe = torch.split(
-            compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
-        )
-        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
+        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        if compressed_kvs is not None:
+            compressed_kv = compressed_kvs.update_ckv(compressed_kv, self.layer_idx, cache_kwargs)
 
         kva = self.kv_a_layernorm(compressed_kv)
         k_nope = torch.bmm(kva, self.k_up)
-        k_nope = k_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
+        k_nope = k_nope.view(bsz, -1, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
         value_states = torch.bmm(kva, self.v_up)
-        value_states = value_states.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, -1, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
 
         cos, sin = self.rotary_emb(value_states, seq_len=32*1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+
+        if compressed_kvs is not None:
+            k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
         if mla_absorption is not None:
             enable_absorption = mla_absorption.get("enable", False)
@@ -428,10 +425,8 @@ class QEffDeepseekV3Attention(nn.Module):
         if enable_absorption:
             if absorb_online:
                 print("online absorption")
-
                 atn =  torch.matmul(torch.matmul(q_a_proj_out.unsqueeze(1), torch.bmm(self.per_head_q_up, self.per_head_k_up)), kva.transpose(1, 2).unsqueeze(1))
             else:
-                
                 print("using fused qk")
                 atn = torch.matmul(torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk), kva.transpose(1, 2).unsqueeze(1))
         else:
@@ -443,22 +438,15 @@ class QEffDeepseekV3Attention(nn.Module):
 
         if attention_mask is not None:  # no matter the length, we just slice it
             attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
-        # ctx_len = past_key_value[self.layer_idx][0].shape[2]
-        # ctx_indices = torch.arange(ctx_len)[None, None, ...]
-        # gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
-        # invalid_mask = ctx_indices > gather_limit
-        # value_states = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), value_states)
-        # attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
         attn_output = self.o_proj(attn_output)
 
-        # if not output_attentions:
-        #     attn_weights = None
-
         return attn_output, attn_weights, compressed_kvs, value_states
+
 
     def forward(
         self,
@@ -499,13 +487,12 @@ class QEffDeepseekV3Attention(nn.Module):
         )
 
         cos, sin = self.rotary_emb(value_states, seq_len=32*1024)
-        
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         query_states = torch.cat((q_nope, q_pe), -1)
         k_pe_new = k_pe.repeat(1,self.num_heads,1,1)
         key_states = torch.cat((k_nope, k_pe_new), -1)
-        # import ipdb; ipdb.set_trace()
+
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
@@ -521,7 +508,6 @@ class QEffDeepseekV3Attention(nn.Module):
 
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
         attn_output = self.o_proj(attn_output)
-
 
         return attn_output, attn_weights, past_key_value, value_states
 
@@ -579,12 +565,11 @@ class QEffDeepseekV3MoE(nn.Module):
     def forward(self, hidden_states):
         residuals = hidden_states
         orig_shape = hidden_states.shape
-        # breakpoint()
         topk_indices, topk_weights = self.gate(hidden_states)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
         hidden_states = hidden_states + self.shared_experts(residuals)
-        return hidden_states + self.shared_experts(residuals)
+        return hidden_states
 
     # def moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
     #     final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
@@ -736,7 +721,6 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
                 cache_position=cache_position,
                 **kwargs,
             )
-        # import ipdb; ipdb.set_trace()
         hidden_states = residual + hidden_states
 
         residual = hidden_states
@@ -814,7 +798,7 @@ class QEffDeepseekV3Model(nn.Module):
         enable_mla = getattr(self, "enable_mla", False)
 
         if enable_mla:
-            compressed_kvs = QEffDynamicCompressedKVCache.from_legacy_cache(compressed_kvs)
+            compressed_kvs = QEffDynamicCompressedKVRopeCache.from_legacy_cache(compressed_kvs)
             target_len = compressed_kvs.layers[0].ckv.shape[-2]
         else:
             target_len = past_key_values[0][0].shape[2]
@@ -840,35 +824,21 @@ class QEffDeepseekV3Model(nn.Module):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    decoder_layer.__call__,
-                    hidden_states,
-                    causal_mask,
-                    position_ids,
-                    past_key_values,
-                    batch_index,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                    position_embeddings,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    compressed_kvs = compressed_kvs,
-                    past_key_value=past_key_values,
-                    batch_index=batch_index,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    cache_position=cache_position,
-                    position_embeddings=position_embeddings,
-                    enable_mla = getattr(self, "enable_mla", False),
-                    mla_absorption = getattr(self, "mla_absorption_config", None),
-                    **kwargs,
-                )
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                compressed_kvs = compressed_kvs,
+                past_key_value=past_key_values,
+                batch_index=batch_index,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                enable_mla = getattr(self, "enable_mla", False),
+                mla_absorption = getattr(self, "mla_absorption_config", None),
+                **kwargs,
+            )
 
             hidden_states = layer_outputs[0]
             if use_cache:
@@ -954,8 +924,7 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
         if not return_dict:
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
-        after_keys = self.state_dict().keys()
-        #import ipdb; ipdb.set_trace()
+
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
