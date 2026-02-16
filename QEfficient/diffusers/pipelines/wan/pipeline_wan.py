@@ -616,11 +616,11 @@ class QEffWanPipeline:
                     timestep = t.expand(latents.shape[0])
 
                 # Extract dimensions for patch processing
-                batch_size, num_channels, latent_frames, latent_height, latent_width = latents.shape
+                batch_size, num_channels, num_frames, height, width = latents.shape
                 p_t, p_h, p_w = current_model.config.patch_size
-                post_patch_num_frames = latent_frames // p_t
-                post_patch_height = latent_height // p_h
-                post_patch_width = latent_width // p_w
+                post_patch_num_frames = num_frames // p_t
+                post_patch_height = height // p_h
+                post_patch_width = width // p_w
 
                 # Generate rotary position embeddings
                 rotary_emb = current_model.rope(latent_model_input)
@@ -757,7 +757,7 @@ class QEffWanPipeline:
 
             # Allocate output buffer for VAE decoder
             output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
-            self.vae_decoder.qpc_session.set_buffers(output_buffer)
+
             inputs = {"latent_sample": latents.numpy()}
 
             start_decode_time = time.perf_counter()
@@ -773,7 +773,7 @@ class QEffWanPipeline:
 
         # Step 10: Collect performance metrics
         perf_data = {
-            "transformer": transformer_perf,
+            "transformer": transformer_perf,  # Unified transformer (QAIC)
             "vae_decoder": vae_decoder_perf,
         }
 

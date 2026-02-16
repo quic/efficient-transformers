@@ -206,7 +206,6 @@ class QEffAutoencoderKLWan(AutoencoderKLWan):
         Args:
             x (`torch.Tensor`): Input batch of images.
         """
-        # import pdb; pdb.set_trace()
         if self.use_slicing and x.shape[0] > 1:
             encoded_slices = [self._encode(x_slice) for x_slice in x.split(1)]
             h = torch.cat(encoded_slices)
