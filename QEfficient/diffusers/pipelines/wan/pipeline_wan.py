@@ -260,8 +260,8 @@ class QEffWanPipeline:
         self,
         compile_config: Optional[str] = None,
         parallel: bool = False,
-        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
-        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
+        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_45P,
+        width: int = constants.WAN_ONNX_EXPORT_WIDTH_45P,
         num_frames: int = constants.WAN_ONNX_EXPORT_FRAMES,
         use_onnx_subfunctions: bool = False,
     ) -> str:
@@ -615,11 +615,11 @@ class QEffWanPipeline:
                     timestep = t.expand(latents.shape[0])
 
                 # Extract dimensions for patch processing
-                batch_size, num_channels, num_frames, height, width = latents.shape
+                batch_size, num_channels, latent_frames, latent_height, latent_width = latents.shape
                 p_t, p_h, p_w = current_model.config.patch_size
-                post_patch_num_frames = num_frames // p_t
-                post_patch_height = height // p_h
-                post_patch_width = width // p_w
+                post_patch_num_frames = latent_frames // p_t
+                post_patch_height = latent_height // p_h
+                post_patch_width = latent_width // p_w
 
                 # Generate rotary position embeddings
                 rotary_emb = current_model.rope(latent_model_input)
