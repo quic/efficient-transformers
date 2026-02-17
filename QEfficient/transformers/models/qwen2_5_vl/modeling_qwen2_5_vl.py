@@ -135,7 +135,7 @@ class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
         block_mask = row_mask & col_mask  # shape: (num_blocks, seq_len, seq_len)
 
         # Combine all blocks into one mask
-        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float32)
+        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float16)
         final_mask[block_mask.any(dim=0)] = 0
 
         final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
@@ -147,7 +147,7 @@ class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
         v = v.transpose(0, 1)
         attn_weights = torch.matmul(q, k.transpose(1, 2)) / math.sqrt(self.head_dim)
         attn_weights = attn_weights + attention_mask
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float16).to(q.dtype)
         attn_output = torch.matmul(attn_weights, v)
         attn_output = attn_output.transpose(0, 1)
         attn_output = attn_output.reshape(seq_length, -1)
@@ -384,7 +384,7 @@ def eager_attention_forward_blockedKV(
     past_seen_tokens = cache_kwargs.get("past_seen_tokens")
     position_ids = cache_kwargs.get("position_ids")
     block_size = -(-past_seen_tokens // num_kv_blocks)
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float16)
 
     for j in range(num_kv_blocks):
         start_index = j * block_size
@@ -484,11 +484,11 @@ def eager_attention_forward_q_blocked(
         if attn_mask_block is not None:
             attn_weights = torch.where(
                 attn_mask_block,
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=attn_weights.device),
+                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float16, device=attn_weights.device),
                 attn_weights,
             )
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float16).to(query.dtype)
 
         # Compute output for this Q block
         output_block = torch.matmul(attn_weights, value_states)
@@ -546,10 +546,10 @@ def eager_attention_forward(
 
         if attention_mask is not None:
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float16), attn_weights
             )
 
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float16).to(query.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
         attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -974,10 +974,10 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         # Define inputs
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float16)
         vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float16)
         lang_inputs["position_ids"] = (
             (
                 torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
@@ -1002,7 +1002,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float16))
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -1290,5 +1290,5 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "image_size", "image_size")),
+            IOInfo(name="pixel_values", datatype=torch.float16, shape=("batch_size", 3, "image_size", "image_size")),
         ]
