@@ -556,7 +556,6 @@ class ConfigManager:
 
         else:
             logger.log_rank_zero("Using default configuration...")
-        print(self.config)
         self.config = asdict(self.config)
         self.config = MasterConfig(**self.config)
         # Validate loaded config
