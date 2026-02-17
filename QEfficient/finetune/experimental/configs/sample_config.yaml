@@ -30,11 +30,11 @@ training:
   type: "sft"
   gradient_accumulation_steps: 1
   num_train_epochs: 1
-  torch_compile: True
+  torch_compile: False
 
 # Optimizer configuration
 optimizers:
-  optimizer_name: "adamw"
+  optimizer_name: "AdamW"
   lr: 5e-5
 
 scheduler:
