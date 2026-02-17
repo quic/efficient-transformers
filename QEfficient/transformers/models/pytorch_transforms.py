@@ -17,6 +17,9 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.deberta_v2.modeling_deberta_v2 import (
+    DisentangledSelfAttention,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconDecoderLayer,
@@ -219,6 +222,9 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
+    QEffDisentangledSelfAttention,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -871,6 +877,14 @@ class T5ModelTransform(ModuleMappingTransform):
     _module_mapping = {
         T5Attention: QEffT5Attention,
         T5LayerNorm: QEffT5LayerNorm,
+    }
+
+
+class TextClassificationTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        # DebertaV2
+        DisentangledSelfAttention: QEffDisentangledSelfAttention,
     }
 
 

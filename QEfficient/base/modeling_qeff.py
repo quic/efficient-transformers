@@ -180,7 +180,7 @@ class QEFFBaseModel(ABC):
                     :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
                     :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
 
-                for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+                for QAIC compilation path, any flag that is supported by ``qaic-compile`` can be passed. Params are converted to flags as below:
 
                     - aic_num_cores=16 -> -aic-num-cores=16
                     - convert_to_fp16=True -> -convert-to-fp16
@@ -369,7 +369,7 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ) -> str:
         """
-        Interface for qaic-exec compiler
+        Interface for qaic-compile compiler
 
         Args:
             :onnx_path (str): Onnx file to compile
@@ -382,7 +382,7 @@ class QEFFBaseModel(ABC):
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
             :compiler_options: Pass any compiler option as input.
-                Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+                Any flag that is supported by `qaic-compile` can be passed. Params are converted to flags as below:
 
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16

@@ -11,5 +11,6 @@ from QEfficient.transformers.models.modeling_auto import (  # noqa: F401
     QEFFAutoModelForCausalLM,
     QEFFAutoModelForCTC,
     QEFFAutoModelForImageTextToText,
+    QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
 )
