@@ -1618,7 +1618,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         AssertionError
             If `generation_len` is not greater than zero.
         """
-        # breakpoint()
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
@@ -1650,7 +1649,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [x[lang_session.binding_index_map["input_ids"]][1][1] for x in lang_session.allowed_shapes]
             + [lang_session.bindings[lang_session.binding_index_map["input_ids"]].dims[1]]
         )
-        # breakpoint()
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
         input_ids_length = inputs["input_ids"].shape[1]
         num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
@@ -1696,7 +1694,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_end = perf_counter()
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-        # breakpoint()
         if "position_ids" in inputs:
             lang_inputs["position_ids"] = inputs["position_ids"]
             lang_inputs.pop("attention_mask")
@@ -1708,7 +1705,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         if not_mllama:
             lang_inputs["image_idx"] = np.array([[0]])
-        # breakpoint()
         if self.vision_model.qpc_path:
             vision_session.deactivate()
         lang_session.activate()
@@ -1723,7 +1719,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
         lang_start = perf_counter()
-        # breakpoint()
         # Run prefill
         chunk_inputs = lang_inputs.copy()
         for i in range(num_chunks):
@@ -1752,7 +1747,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
         if not_mllama:
             lang_session.skip_buffers(vision_outputs.keys())
-        # breakpoint()
+
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
         lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1

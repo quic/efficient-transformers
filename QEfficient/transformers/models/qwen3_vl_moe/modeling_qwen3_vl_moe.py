@@ -711,23 +711,29 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
-        hidden_states = hidden_states.view(T, H)
-        router_logits = self.gate(hidden_states)  # [T, E]
-        prob = F.softmax(router_logits, -1, dtype=torch.float)
-        top_w, top_i = torch.topk(prob, self.top_k, -1)
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-        gate_proj_up_w = self.experts.gate_up_proj.requires_grad_(False)[top_i.flatten()]
-        down_proj_w = self.experts.down_proj.requires_grad_(False)[top_i.flatten()]
+        x = hidden_states.view(T, H)
 
-        expert_in = hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
-        gate_up = torch.bmm(expert_in, gate_proj_up_w)
-        gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+        router_logits = self.gate(x)
+        prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
+        top_w = top_w / top_w.sum(dim=1, keepdim=True)
+        top_w = top_w.to(x.dtype)
+        idx = top_i.reshape(-1)
+        w_up = self.experts.gate_up_proj.index_select(0, idx)
+        w_dn = self.experts.down_proj.index_select(0, idx)
+
+        xk = x.unsqueeze(1).expand(-1, self.top_k, -1).contiguous()
+        xk = xk.view(-1, 1, H)
+        gate_up = torch.bmm(xk, w_up)
+        I2 = gate_up.size(-1)
+        half = I2 // 2
+        gate, up = gate_up[..., :half], gate_up[..., half:]
         intermediate = up * self.experts.act_fn(gate)
-        experts_out = torch.bmm(intermediate, down_proj_w)
-        experts_out = experts_out.view(B * S, self.top_k, H)
-        experts_out = experts_out * top_w.unsqueeze(-1)
-        experts_out = experts_out.sum(dim=1)
-        return experts_out.view(B, S, H), router_logits
+        experts_out = torch.bmm(intermediate, w_dn)
+        experts_out = experts_out.view(T, self.top_k, H) * top_w.unsqueeze(-1)
+        experts_out = experts_out.sum(dim=1).view(B, S, H)
+
+        return experts_out, router_logits
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):

@@ -178,6 +178,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextDecoderLayer,
     Qwen3VLMoeTextModel,
     Qwen3VLMoeTextRMSNorm,
+    Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
 )
@@ -398,7 +399,7 @@ from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     QEffQwen3VLMoeTextAttention,
     QEffQwen3VLMoeTextDecoderLayer,
     QEffQwen3VLMoeTextModel,
-    # QEffQwen3VLMoeTextSparseMoeBlock,
+    QEffQwen3VLMoeTextSparseMoeBlock,
     QEffQwen3VLMoeVisionAttention,
     QEffQwen3VLMoeVisionModel,
 )
@@ -603,7 +604,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
         Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
         Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
-        # Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
+        Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
         # Grok1
         # Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
         # Starcoder2
