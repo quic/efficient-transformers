@@ -42,8 +42,8 @@ class QEffCodeGenAttention(CodeGenAttention):
         head_mask=None,
     ):
         # Keep the attention weights computation in fp32 to avoid overflow issues
-        query = query.to(torch.float32)
-        key = key.to(torch.float32)
+        query = query.to(torch.float16)
+        key = key.to(torch.float16)
 
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
 
