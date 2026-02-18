@@ -24,6 +24,29 @@ from QEfficient.finetune.experimental.core.logger import Logger
 logger = Logger(__name__)
 
 
+def is_NSP_free():
+    import re
+    import subprocess
+
+    import torch
+
+    device_count = torch.qaic.device_count()  # Get the number of available devices
+
+    for device_idx in range(device_count):
+        qid_idx = torch.qaic.get_device_info(device_idx).qid_index
+        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_idx}"]
+        result = subprocess.run(command, capture_output=True, text=True)
+        text = result.stdout
+        match = re.search(r"Nsp Free:\s*(\d+)", text)
+        if match:
+            nsp_free = int(match.group(1))
+        # Check if NSP free is 16 (indicating no other processes are using it)
+        if nsp_free != 16:
+            raise RuntimeError(f"QAIC device {qid_idx} does not have 16 NSP free")
+        else:
+            logger.info(f"QAIC device {qid_idx} has {nsp_free} NSP free")
+
+
 @dataclass
 class OptimizerConfig:
     """Configuration for optimizers."""
@@ -697,6 +720,8 @@ class ConfigManager:
                 import torch_qaic  # noqa: F401
 
                 logger.log_rank_zero("torch_qaic package found. Using QAIC devices.")
+                is_NSP_free()
+
             except ImportError as e:
                 logger.log_rank_zero(
                     f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",

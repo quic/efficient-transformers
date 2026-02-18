@@ -83,7 +83,7 @@ If provided, this takes precedence over dataset_name.
 ```yaml
 dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "yahma/alpaca-cleaned"
   train_split: "train"
   test_split: "test"
@@ -120,7 +120,7 @@ def create_alpaca_prompt(row):
 ```yaml
 dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "knkarthick/samsum"
   train_split: "train"
   test_split: "test"
@@ -135,7 +135,7 @@ dataset:
 ```yaml
 dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "openai/gsm8k"
   train_split: "train"
   test_split: "test"
@@ -150,7 +150,7 @@ dataset:
 ```yaml
 dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "grammar"
   train_split: "train"
   split_ratio: 0.8
