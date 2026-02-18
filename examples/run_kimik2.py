@@ -1,14 +1,19 @@
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
 prompt = "Once upon a time,"
 
-model = AutoModelForCausalLM.from_pretrained("/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd", torch_dtype=torch.float32, num_hidden_layers=2, trust_remote_code=True)
+model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
+model = AutoModelForCausalLM.from_pretrained(
+    model_path, torch_dtype=torch.float32, num_hidden_layers=2, trust_remote_code=True
+)
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
-PREFILL_SEQ_LEN=32
+
+
+PREFILL_SEQ_LEN = 32
 CTX_LEN = 128
 generation_len = 10
 generated_ids = []
@@ -23,8 +28,7 @@ with torch.no_grad():
     predictions = torch.argmax(out.logits, dim=-1)
 
 qeff_model = QEFFAutoModelForCausalLM(model)
-qeff_model.mla(enable_mla=True, mla_absorption_config={"enable":False, "online": False})
-
+qeff_model.mla(enable_mla=True, mla_absorption_config={"enable": True, "online": True})
 
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
 inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -45,7 +49,7 @@ for i in range(model.config.num_hidden_layers):
     past_value = torch.zeros((pad_shape_v), dtype=torch.float32)
     pkv = (past_key, past_value)
     past_key_values.append(pkv)
-    
+
     ckv = torch.zeros((pad_shape_ckv), dtype=torch.float32)
     k_pe = torch.zeros((pad_shape_k_pe), dtype=torch.float32)
     x = (ckv, k_pe)
@@ -80,9 +84,18 @@ print("Prompt:", repr(prompt))
 print("Completion:", repr(predicted_string))
 
 
-onnx_path = qeff_model.export(prefill_seq_len=1, enable_mla=True)#, mla_absorption_config={"enable":True, "online": False})
-qpc_path = qeff_model.compile(prefill_seq_len=1, ctx_len=128, enable_mla=True, #mla_absorption_config={"enable":True, "online": False}, 
-mxfp6_matmul=False, mxint8_kv_cache=False, num_devices=2, num_cores=16)
+onnx_path = qeff_model.export(
+    prefill_seq_len=1, enable_mla=True, mla_absorption_config={"enable": True, "online": True}
+)
+qpc_path = qeff_model.compile(
+    prefill_seq_len=1,
+    ctx_len=1024,
+    enable_mla=True,
+    mla_absorption_config={"enable": True, "online": True},
+    mxfp6_matmul=True,
+    mxint8_kv_cache=False,
+    num_devices=1,
+    num_cores=16,
+)
 
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)
-

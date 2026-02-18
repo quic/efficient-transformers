@@ -1,10 +1,12 @@
-import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from QEfficient import QEFFAutoModelForCausalLM
-
-model = AutoModelForCausalLM.from_pretrained("/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd", torch_dtype=torch.float32, num_hidden_layers=2, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd",
+    torch_dtype=torch.float32,
+    num_hidden_layers=2,
+    trust_remote_code=True,
+)
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
 
 prompt = "Once upon a time,"
