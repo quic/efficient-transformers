@@ -289,18 +289,15 @@ def custom_completion(example):
         self.assertIn("Either provide prompt_template or prompt_func", str(context.exception))
 
     def test_sft_dataset_both_prompt_template_and_func(self):
-        """Test error when both prompt_template and prompt_func are provided."""
-        with self.assertRaises(RuntimeError) as context:
-            SFTDataset(
-                dataset_name="dummy",
-                split="train",
-                json_file_path=self.json_file_path,
-                prompt_template="Q: {question}",
-                prompt_func="module:function",
-                completion_template="A: {answer}",
-            )
-
-        self.assertIn("Either provide prompt_template or prompt_func", str(context.exception))
+        """Test when both prompt_template and prompt_func are provided."""
+        SFTDataset(
+            dataset_name="dummy",
+            split="train",
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            prompt_func="module:function",
+            completion_template="A: {answer}",
+        )
 
     def test_sft_dataset_no_completion_template_or_func(self):
         """Test error when neither completion_template nor completion_func is provided."""
@@ -318,20 +315,14 @@ def custom_completion(example):
         )
 
     def test_sft_dataset_both_completion_template_and_func(self):
-        """Test error when both completion_template and completion_func are provided."""
-        with self.assertRaises(RuntimeError) as context:
-            SFTDataset(
-                dataset_name="dummy",
-                split="train",
-                json_file_path=self.json_file_path,
-                prompt_template="Q: {question}",
-                completion_template="A: {answer}",
-                completion_func="module:function",
-            )
-
-        self.assertIn(
-            "Either provide completion_template or completion_func",
-            str(context.exception),
+        """Test when both completion_template and completion_func are provided."""
+        SFTDataset(
+            dataset_name="dummy",
+            split="train",
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+            completion_func="module:function",
         )
 
     def test_sft_dataset_invalid_func_path_format(self):
@@ -523,13 +514,14 @@ def custom_completion(example):
         """Test error when requesting an invalid split."""
         # Mock the dataset builder to return specific splits
         mock_info = MagicMock()
-        mock_info.splits = {"train": MagicMock(), "validation": MagicMock()}
+        mock_info.splits = {"test": MagicMock(), "validation": MagicMock()}
         mock_builder.return_value.info = mock_info
 
         with self.assertRaises(ValueError) as context:
             SFTDataset(
-                dataset_name="dummy_dataset",
-                split="nonexistent_split",
+                dataset_name="dummy",
+                split="train",
+                split_ratio=SPLIT_RATIO,
                 prompt_template="Q: {question}",
                 completion_template="A: {answer}",
             )

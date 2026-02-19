@@ -140,6 +140,8 @@ class FineTuningPipeline:
 
         # callback_config.callbacks is a dictionary of callback configurations
         for callback_name, callback_kwargs in callback_config["callbacks"].items():
+            if callback_kwargs is None:
+                callback_kwargs = {}
             try:
                 callback_instance = ComponentFactory.create_callback(callback_name, **callback_kwargs)
                 callbacks.append(callback_instance)

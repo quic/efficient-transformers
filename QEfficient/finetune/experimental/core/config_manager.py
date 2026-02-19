@@ -14,7 +14,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 import yaml
 from transformers.hf_argparser import HfArgumentParser
@@ -24,12 +24,35 @@ from QEfficient.finetune.experimental.core.logger import Logger
 logger = Logger(__name__)
 
 
+def is_NSP_free():
+    import re
+    import subprocess
+
+    import torch
+
+    device_count = torch.qaic.device_count()  # Get the number of available devices
+
+    for device_idx in range(device_count):
+        qid_idx = torch.qaic.get_device_info(device_idx).qid_index
+        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_idx}"]
+        result = subprocess.run(command, capture_output=True, text=True)
+        text = result.stdout
+        match = re.search(r"Nsp Free:\s*(\d+)", text)
+        if match:
+            nsp_free = int(match.group(1))
+        # Check if NSP free is 16 (indicating no other processes are using it)
+        if nsp_free != 16:
+            raise RuntimeError(f"QAIC device {qid_idx} does not have 16 NSP free")
+        else:
+            logger.info(f"QAIC device {qid_idx} has {nsp_free} NSP free")
+
+
 @dataclass
 class OptimizerConfig:
     """Configuration for optimizers."""
 
     optimizer_name: str = field(
-        default="adamw",
+        default="AdamW",
         metadata={"help": "The name of the optimizer to use."},
     )
     lr: float = field(
@@ -125,11 +148,11 @@ class DatasetConfig:
         metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     prompt_func: str = field(
-        default=None,
+        default="QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt",
         metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     completion_template: str = field(
-        default=None,
+        default="{output}",
         metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
     )
     completion_func: str = field(
@@ -581,6 +604,39 @@ class ConfigManager:
             raise ValueError(f"Unsupported configuration file format: {config_path.suffix}")
         self.update_config(config_dict)
 
+    def _merge_dataclass_inplace(self, dc_obj: Any, updates: Dict[str, Any], parent_path: str = "") -> None:
+        """
+        Recursively merge 'updates' (dict) into the dataclass instance 'dc_obj',
+        preserving defaults by updating nested dataclasses/dicts in place.
+        """
+        if not is_dataclass(dc_obj):
+            raise TypeError("dc_obj must be a dataclass instance")
+        field_names = {f.name for f in fields(dc_obj)}
+        for key, value in updates.items():
+            path = f"{parent_path}.{key}" if parent_path else key
+
+            if key not in field_names:
+                self._stash_top_level_extra(parent_path or "__root__", key, value)
+                continue
+
+            current = getattr(dc_obj, key)
+
+            # Case A: current is dataclass, incoming is dict -> deep merge
+            if is_dataclass(current) and isinstance(value, Mapping):
+                self._merge_dataclass_inplace(current, value, path)
+
+            # Case B: both dicts -> shallow update
+            elif isinstance(current, dict) and isinstance(value, Mapping):
+                current.update(value)
+
+            # Case C: both lists -> by default replace; switch to extend if desired
+            elif isinstance(current, list) and isinstance(value, list):
+                setattr(dc_obj, key, value)
+
+            # Case D: simple assignment
+            else:
+                setattr(dc_obj, key, value)
+
     def _ensure_extra_params(self, obj) -> Dict[str, Any]:
         """Ensure obj.extra_params exists and is a dict; return it."""
         ep = getattr(obj, "extra_params", None)
@@ -615,21 +671,7 @@ class ConfigManager:
                     else:
                         self._stash_top_level_extra(key, "__all__", value)
                     continue
-
-                if isinstance(value, dict) and is_dataclass(target):
-                    known = {f.name for f in fields(target)}
-                    for nested_key, nested_value in value.items():
-                        if nested_key in known:
-                            setattr(target, nested_key, nested_value)
-                        else:
-                            self._stash_top_level_extra(key, nested_key, nested_value)
-                    continue
-
-                if isinstance(value, dict) and isinstance(target, dict):
-                    target.update(value)
-                    continue
-                setattr(self.config, key, value)
-
+                self._merge_dataclass_inplace(target, value, parent_path=key)
             else:
                 ep = self._ensure_extra_params(self.config)
                 ep[key] = value
@@ -673,6 +715,18 @@ class ConfigManager:
         training_device = model.get("device", "qaic")
         if training_device not in valid_devices:
             self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
+        if training_device == "qaic":
+            try:
+                import torch_qaic  # noqa: F401
+
+                logger.log_rank_zero("torch_qaic package found. Using QAIC devices.")
+                is_NSP_free()
+
+            except ImportError as e:
+                logger.log_rank_zero(
+                    f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+                    level=0,
+                )
         # PEFT validation
         if model.get("use_peft"):
             pc = model.get("peft_config", {})

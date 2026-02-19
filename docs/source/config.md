@@ -51,11 +51,11 @@ If provided, this takes precedence over dataset_name.
 *   **prompt\_func**: Path to python function to format prompts. Use when you need complex preprocessing or conditional logic to build the final prompt string from a dataset row (e.g alpaca dataset).
 *   **prompt\_template**: Template for formatting prompts from dataset rows.Prompt_template should contain the column names which are available in the dataset.
 
-     **Note** :prompt_func and prompt_template cannot be used together. Please specify only one of these options at a time.
+     **Note** :If both prompt_template and prompt_func are provided, then prompt_template will take precedence over prompt_func.
 *  **completion\_func**: Path to python function to format completions. Use when you need complex preprocessing or conditional logic to build the final completion string from a dataset row.
 *   **completion\_template**: string pattern that tells the fine-tuning pipeline which part of the dataset should be treated as the target output (completion) for the model to learn.
 
-     **Note** : completion_func and completion_template cannot be used together. Please specify only one of these options at a time.
+     **Note** :If both completion_template and completion_func are provided, then completion_template will take precedence over completion_func.
 *   **dataset_subset**: `default = "default"` → dataset_subset is used to pick a specific configuration of a dataset when the dataset provides multiple variants. The default is "default" but you can specify something like "en", "movies", "cleaned", etc., depending on the dataset.
 *   **max_seq_length**: `default = 512` → Maximum sequence length for tokenization. Longer inputs are truncated; shorter inputs may be padded depending on the collation.
 *   **input_columns**: `default = ["text"]` → Column names that contain input text to be tokenized.
@@ -83,7 +83,7 @@ If provided, this takes precedence over dataset_name.
 ```yaml
 dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "yahma/alpaca-cleaned"
   train_split: "train"
   test_split: "test"
@@ -120,7 +120,7 @@ def create_alpaca_prompt(row):
 ```yaml
 dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "knkarthick/samsum"
   train_split: "train"
   test_split: "test"
@@ -135,7 +135,7 @@ dataset:
 ```yaml
 dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "openai/gsm8k"
   train_split: "train"
   test_split: "test"
@@ -150,7 +150,7 @@ dataset:
 ```yaml
 dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "seq_completion"
+  dataset_type: "sft_dataset"
   dataset_name: "grammar"
   train_split: "train"
   split_ratio: 0.8
