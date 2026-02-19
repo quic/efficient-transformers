@@ -14,7 +14,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 def main():
     parser = argparse.ArgumentParser(description="Basic text generation inference")
-    parser.add_argument("--model-name", type=str, default="Salesforce/codegen-350M-mono", help="HuggingFace model ID")
+    parser.add_argument("--model-name", type=str, default="ibm-granite/granite-3.1-2b-instruct", help="HuggingFace model ID")
     parser.add_argument("--prompt", type=str, default="Hello, how are you?", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")

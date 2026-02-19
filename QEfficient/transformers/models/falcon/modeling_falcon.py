@@ -153,7 +153,6 @@ class QEffFalconAttention(FalconAttention):
 
         attention_scores = query_layer @ key_layer.transpose(-1, -2)
         attention_scores /= math.sqrt(self.head_dim)
-        # breakpoint()
         attention_scores = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype), attention_scores
         )
