@@ -7,30 +7,30 @@
 # Model configuration
 model:
   model_type: "hf"  # Hugging Face model
-  auto_class_name: "AutoModelForCausalLM"
+  auto_class_name: "AutoModelForCausalLM" # Auto class to load the model with
   model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
-  use_peft: true
+  use_peft: true # Enable PEFT (Parameter Efficient Fine-Tuning)
   peft_config:
     lora_r: 8
     lora_alpha: 16
-    target_modules: ["q_proj", "v_proj"]
+    target_modules: ["q_proj", "v_proj"] # Target modules for LoRA
     task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
     peft_type: "LORA"  # Options: LORA, IA3, etc.
 
 # Dataset configuration
 dataset:
   dataset_type: "sft_dataset"
-  dataset_name: "yahma/alpaca-cleaned"
-  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt"
-  completion_template: "{output}" 
+  dataset_name: "yahma/alpaca-cleaned" # Dataset name from Hugging Face Hub
+  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt" # Function to create prompt from dataset fields
+  completion_template: "{output}" # Template for completion field in dataset
 
 
 # Training configuration
 training:
   type: "sft"
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 1  # Number of steps to accumulate gradients
   num_train_epochs: 1
-  torch_compile: False
+  torch_compile: False # Whether to use torch.compile
 
 # Optimizer configuration
 optimizers:
@@ -42,6 +42,6 @@ scheduler:
 
 callbacks:
   early_stopping:
-    early_stopping_patience: 3
-    early_stopping_threshold: 0.001
+    early_stopping_patience: 3 # Number of epochs to wait before stopping training
+    early_stopping_threshold: 0.001 # Minimum change in metric to qualify as improvement
   tensorboard:
