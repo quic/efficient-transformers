@@ -743,44 +743,6 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
     def get_qeff_language_decoder(self):
         return QEffQwen3VLDecoderWrapper(self)
 
-    # def forward(
-    #     self,
-    #     input_ids,
-    #     position_ids,
-    #     past_key_values,
-    #     pixel_values:Optional[torch.FloatTensor] = None,
-    #     image_idx:Optional[torch.LongTensor] = None,
-    #     comp_ctx_lengths: Optional[List[int]] = None,
-    #     batch_index: Optional[torch.LongTensor] = None,
-    #     image_grid_thw=None,
-    # ):
-    #     image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)[0]
-    #     bs = image_grid_thw.shape[0]
-    #     split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
-
-    #     inputs_embeds = self.model.get_input_embeddings()(input_ids)
-    #     B, N, C = inputs_embeds.shape
-    #     selected = input_ids == self.model.config.image_token_id
-    #     indices1 = selected.to(torch.int64).cumsum(1) - 1
-    #     indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-    #     indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-    #     image_features_expanded = image_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
-    #     image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-    #     inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-    #     outputs = self.language_model(
-    #         inputs_embeds=inputs_embeds,
-    #         position_ids=position_ids,
-    #         past_key_values=past_key_values,
-    #         comp_ctx_lengths=comp_ctx_lengths,
-    #         batch_index=batch_index,
-    #         use_cache=True,
-    #     )
-    #     logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-    #     hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-    #     logits = self.lm_head(hidden_states)
-    #     image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-    #     return logits, image_embeds, image_idx, outputs.past_key_values
-
     def get_dummy_inputs(
         self,
         comp_ctx_lengths: Optional[List[int]] = None,
@@ -1042,7 +1004,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {1: "batch_size", 2: "seq_len"},
-            "vision_embeds": {0: "batch_size", 1: "vision_size"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
         }
 
         for i in range(num_layers):
@@ -1108,6 +1070,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         inputs["position_ids"] = F.pad(
             inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
         )
+        inputs.pop("image_grid_thw", None)
         return inputs
 
     def get_inputs_info(self):

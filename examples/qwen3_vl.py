@@ -82,10 +82,10 @@ else:
         ctx_len=4096,
         num_cores=16,
         num_devices=4,
-        # height=354,
-        # width=536,
-        height=1024,
-        width=1024,
+        height=354,
+        width=536,
+        # height=1024,
+        # width=1024,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
@@ -93,10 +93,10 @@ else:
     )
 
     ### IMAGE + TEXT ###
-    # image_url = "https://picsum.photos/id/237/536/354"
-    image_url = (
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    )
+    image_url = "https://picsum.photos/id/237/536/354"
+    # image_url = (
+    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
+    # )
 
     image = Image.open(requests.get(image_url, stream=True).raw)
 
