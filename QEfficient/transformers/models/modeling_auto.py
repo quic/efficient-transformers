@@ -1545,6 +1545,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         NotImplementedError
             If `runtime_ai100` is False.
         """
+        breakpoint()
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
