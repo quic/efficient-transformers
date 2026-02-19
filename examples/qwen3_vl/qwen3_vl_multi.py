@@ -64,11 +64,6 @@ if skip_vision:
         return_dict=True,
         return_tensors="pt",
     )
-
-    import ipdb
-
-    ipdb.set_trace()
-
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
 
     streamer = TextStreamer(tokenizer)
