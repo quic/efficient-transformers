@@ -68,7 +68,7 @@ If provided, this takes precedence over dataset_name.
 *   **num_workers**: `default = 4` → Number of subprocesses to use for data loading.
 *   **dataloader_pin_memory**: `default = true` → Whether to pin memory for faster GPU transfer.
 *   **dataloader_drop_last**: `default = false` → Whether to drop the last incomplete batch.
-
+*   **dataset_num_samples**: `default = -1` → Number of samples to use from the dataset. If -1, all samples are used.
 *   **dataloader_prefetch_factor**: `default = 1` → Number of batches loaded in advance by the DataLoader to overlap I/O with computations.
 
 *   **dataloader_persistent_workers**: `default = true` → Whether to keep workers alive between epochs.
@@ -137,6 +137,7 @@ dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
   dataset_type: "sft_dataset"
   dataset_name: "openai/gsm8k"
+  config_name: "main"
   train_split: "train"
   test_split: "test"
   prompt_template: "Solve the following math problem step by step:\n\n{'question'}\n\nAnswer:\n"
@@ -187,11 +188,11 @@ This section defines core parameters for fine-tuning and evaluation.
 *   **metric\_for\_best\_model**: `default = "eval_loss"` → Metric used to determine the best model.
 *   **include\_num\_input\_tokens\_seen**: `default = true` → Log the number of input tokens processed.
 *   **average\_tokens\_across\_devices**: `default = true` → Average token counts across devices in distributed training.
-*   **fsdp\_config**: `default = false` → FSDP configuration dictionary.
+*   **fsdp\_config**: `default = None` → FSDP configuration dictionary.
 
-*   **deepspeed\_config**: `default = false` → DeepSpeed configuration dictionary.
+*   **deepspeed\_config**: `default = None` → DeepSpeed configuration dictionary.
 
-*   **accelerator\_config**: `default = false` → Accelerate configuration dictionary.
+*   **accelerator\_config**: `default = None` → Accelerate configuration dictionary.
 
 *   **ddp\_config**: DDP configuration dictionary.
 
@@ -210,7 +211,7 @@ This section defines core parameters for fine-tuning and evaluation.
      *   **ddp\_broadcast\_buffers**: `default = true` → Whether to broadcast model buffers (e.g., BatchNorm stats) across all ranks. Use `null` or `false` to skip for speed if safe.
      *   **ddp\_timeout**: `default = 1800` → Timeout (in seconds) for DDP operations. Increase for large models or slow networks.
  
-*   **torch\_compile**: `default = true` → Wraps your model with torch.compile() (PyTorch 2.0+) to fuse ops, reduce Python overhead, and generate optimized kernels—often yielding speed-ups without code changes.
+*   **torch\_compile**: `default = false` → Wraps your model with torch.compile() (PyTorch 2.0+) to fuse ops, reduce Python overhead, and generate optimized kernels—often yielding speed-ups without code changes.
 *   **Optional distributed configs**: FSDP, DeepSpeed, or DDP for multi-QAIC or large-scale training.
 *    **resume_from_checkpoint**: Path to a checkpoint to resume training from.
 *    **disable_tqdm**: `default = false` → set to `true` to disable progress bar (if running in Notebook).

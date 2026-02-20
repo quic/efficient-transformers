@@ -85,6 +85,10 @@ class DatasetConfig:
         default="default",
         metadata={"help": "The subset of the dataset to use, if applicable."},
     )
+    dataset_num_samples: int = field(
+        default=-1,
+        metadata={"help": "Number of samples to use from the dataset. -1 means all samples."},
+    )
     train_split: str = field(
         default="train",
         metadata={"help": "The name of the training split."},

@@ -200,13 +200,4 @@ The training script supports multiple parallelism strategies:
     ddp_broadcast_buffers: null
     ddp_timeout: 1800
  ```
-- **FSDP**: Fully Sharded Data Parallelism (FSDP) is supported for model sharding.
-```bash
-  fsdp: "full_shard"
-  fsdp_config: "./configs/accelerate/fsdp_config.yaml"
-  fsdp_config: "./configs/accelerate/fsdp_tp_parallelism_config.yaml"
-```
-- **Pipeline Parallelism**: Split model layers across devices.
-- **Tensor Parallelism**: Split tensors across devices.
-
 ***
