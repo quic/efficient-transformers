@@ -76,7 +76,7 @@ class QEffMptAttention(MptAttention):
 
         if attention_mask is not None:
             attention_scores = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype), attention_scores
             )
 
         # (batch_size, n_heads, seq_length, key_length)
