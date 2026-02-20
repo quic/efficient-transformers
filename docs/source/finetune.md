@@ -127,7 +127,8 @@ In distributed ML setups, all nodes must resolve each other’s hostnames. If DN
 
 2. Set QAIC Device Visibility
 
-``` export QAIC_VISIBLE_DEVICES=$(seq -s, 0 63)
+``` 
+export QAIC_VISIBLE_DEVICES=$(seq -s, 0 63)
 ```
 
 This exposes devices 0–63 to the training process.
