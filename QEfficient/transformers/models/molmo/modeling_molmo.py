@@ -719,6 +719,14 @@ class QEffMolmoModel(nn.Module):
         full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
+
+        #Extract Molmo specific paramters from compiler options if not provided as named args
+        # vLLM passes num_crops instead of num_images, so that user don't get confused
+        if num_images is None and "num_crops" in compiler_options:
+            num_images = int(compiler_options["num_crops"])
+        if valid_size is None and "valid_size" in compiler_options:
+            valid_size = int(compiler_options["valid_size"])
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 1024
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
 
@@ -844,6 +852,9 @@ class QEffMolmoModel(nn.Module):
                     lang_decode[key] = value
 
             lang = [lang_prefill, lang_decode]
+
+        compiler_options.pop("num_crops", None)
+        compiler_options.pop("valid_size", None)
 
         specializations = {}
 
