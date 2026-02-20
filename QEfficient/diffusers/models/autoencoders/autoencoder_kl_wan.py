@@ -7,6 +7,7 @@
 
 import torch
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
+    AutoencoderKLWan,
     WanDecoder3d,
     WanEncoder3d,
     WanResample,
@@ -15,8 +16,6 @@ from diffusers.models.autoencoders.autoencoder_kl_wan import (
 )
 
 CACHE_T = 2
-
-modes = []
 
 # Used max(0, x.shape[2] - CACHE_T) instead of CACHE_T because x.shape[2] is either 1 or 4,
 # and CACHE_T = 2. This ensures the value never goes negative
@@ -58,7 +57,6 @@ class QEffWanResample(WanResample):
                     x = x.reshape(b, c, t * 2, h, w)
         t = x.shape[2]
         x = x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
-        modes.append(self.mode)
         x = self.resample(x)
         x = x.view(b, t, x.size(1), x.size(2), x.size(3)).permute(0, 2, 1, 3, 4)
 
@@ -198,3 +196,19 @@ class QEffWanDecoder3d(WanDecoder3d):
         else:
             x = self.conv_out(x)
         return x
+
+
+class QEffAutoencoderKLWan(AutoencoderKLWan):
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        r"""
+        Encode a batch of images into latents.
+
+        Args:
+            x (`torch.Tensor`): Input batch of images.
+        """
+        if self.use_slicing and x.shape[0] > 1:
+            encoded_slices = [self._encode(x_slice) for x_slice in x.split(1)]
+            h = torch.cat(encoded_slices)
+        else:
+            h = self._encode(x)
+        return h
