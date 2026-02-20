@@ -22,8 +22,6 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeParallelExperts,
     GraniteMoeRotaryEmbedding,
     GraniteMoeTopKGating,
-    load_balancing_loss_func,
-    logger,
     repeat_kv,
     rotate_half,
 )
