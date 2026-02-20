@@ -59,6 +59,7 @@ quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/d
 
 [tool.setuptools.package-data]
 "QEfficient.transformers.models.gemma3.configs" = ["*.yaml"]
+"QEfficient.diffusers.pipelines.configs" = ["*.json"]
 
 [build-system]
 requires = ["setuptools>=62.0.0"]
