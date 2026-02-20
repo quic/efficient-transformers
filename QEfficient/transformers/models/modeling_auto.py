@@ -29,7 +29,7 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.base.onnx_transforms import BaseOnnxTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
@@ -220,7 +220,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     _hf_auto_class = AutoModel
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
         """
@@ -592,7 +592,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
     _hf_auto_class = AutoModelForSequenceClassification
     _pytorch_transforms = [CustomOpsTransform, TextClassificationTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
         """
@@ -831,7 +831,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     def __init__(self, model: nn.modules, **kwargs):
         """
@@ -969,7 +969,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         VlmKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     def __init__(self, model, qaic_config: Optional[dict] = None, **kwargs):
         """
@@ -1829,7 +1829,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         VlmNoKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     def __init__(
         self,
@@ -2560,7 +2560,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         KVCacheExternalModuleMapperTransform,
     ]
 
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     def prefill(
         self,
@@ -2912,7 +2912,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -2935,7 +2935,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -3489,7 +3489,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
         """
@@ -3837,7 +3837,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
     _hf_auto_class = AutoModelForCTC
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [BaseOnnxTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model, **kwargs)

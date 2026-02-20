@@ -80,7 +80,7 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             up = (hidden @ W_u) + b_u  # [T, I]
 
             # Apply GptOss activation with clamping
-            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+            gate = gate.clamp(min=torch.finfo(self.config.torch_dtype).min, max=self.experts.limit)
             up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
             # GLU activation
@@ -135,7 +135,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
             up = (hidden @ W_u) + b_u  # [T, I]
 
             # Apply GptOss activation with clamping
-            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+            gate = gate.clamp(min=torch.finfo(self.config.torch_dtype).min, max=self.experts.limit)
             up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
             # GLU activation
@@ -203,7 +203,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                 up = (tgb @ W_u) + b_u  # [T, I]
 
                 # Apply GptOss activation with clamping
-                gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+                gate = gate.clamp(min=torch.finfo(self.config.torch_dtype).min, max=self.experts.limit)
                 up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
                 # GLU activation
@@ -284,7 +284,7 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                         cur_gate = (tgb @ W_g[:, i * 128 : (i + 1) * 128]) + b_g[i * 128 : (i + 1) * 128]
                         cur_up = (tgb @ W_u[:, i * 128 : (i + 1) * 128]) + b_u[i * 128 : (i + 1) * 128]
 
-                    cur_gate = cur_gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+                    cur_gate = cur_gate.clamp(min=torch.finfo(self.config.torch_dtype).min, max=self.experts.limit)
                     cur_up = cur_up.clamp(min=-self.experts.limit, max=self.experts.limit)
                     cur_glu = cur_gate * torch.sigmoid(cur_gate * self.experts.alpha)
                     cur_intermediate = (cur_up + 1) * cur_glu
@@ -367,7 +367,6 @@ class QEffGptOssMLP(GptOssMLP):
         router_logits = F.linear(hidden_states, self.router.weight, self.router.bias)
         router_top_value, router_indices = torch.topk(router_logits, self.router.top_k, dim=-1)
         router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=router_top_value.dtype)
-
         # GATHER - collect weights for selected experts (separate gate and up projections)
         gate_proj = self.experts.gate_proj[router_indices.flatten()]
         gate_proj_bias = self.experts.gate_proj_bias[router_indices.flatten()]
@@ -389,7 +388,7 @@ class QEffGptOssMLP(GptOssMLP):
         up = torch.bmm(expert_in, up_proj) + up_proj_bias.unsqueeze(1)
 
         # Apply activation with clamping
-        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+        gate = gate.clamp(min=torch.finfo(self.config.torch_dtype).min, max=self.experts.limit)
         up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
         # GLU activation
@@ -603,7 +602,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     sinks = module.sinks.reshape(1, -1, 1, 1).expand(query.shape[0], -1, query.shape[-2], -1)
@@ -654,14 +653,14 @@ def eager_attention_forward_blocked(
         scores = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
         attn_mask_block = attention_mask[:, :, qi : qi + real_q_len, :]
         curr_attn_weights = torch.where(
-            attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), scores
+            attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), scores
         )
         sinks = module.sinks.reshape(1, -1, 1, 1).expand(
             curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1
         )
         combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
         combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
-        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
+        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=module.config.torch_dtype)
         curr_attn_weights = curr_attn_weights[..., :-1]
         out_block = torch.matmul(curr_attn_weights, value_states)
         outs.append(out_block)
@@ -717,14 +716,14 @@ def opt_eager_attention_forward_blocked(
 
         scores = torch.matmul(q_block, k_block.transpose(2, 3)) * scaling
         curr_attn_weights = torch.where(
-            attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), scores
+            attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), scores
         )
         sinks = module.sinks.reshape(1, -1, 1, 1).expand(
             curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1
         )
         combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
         combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
-        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
+        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=module.config.torch_dtype)
         curr_attn_weights = curr_attn_weights[..., :-1]
         out_block = torch.matmul(curr_attn_weights, v_block)
         outs.append(out_block)
