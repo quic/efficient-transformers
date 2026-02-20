@@ -260,6 +260,21 @@ class VisionHandler:
                 inputs = self._qeff_model.model.prepare_inputs_for_generation(
                     inputs=inputs, prefill_seq_len=prefill_seq_len, batch_size=inputs["input_ids"].shape[0]
                 )
+            if (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "qwen3_vl"
+            ):
+                inputs = self._qeff_model.model.prepare_inputs_for_generation(
+                    inputs=inputs, prefill_seq_len=prefill_seq_len, batch_size=inputs["input_ids"].shape[0]
+                )
+
+            if (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "qwen3_vl_moe"
+            ):
+                inputs = self._qeff_model.model.prepare_inputs_for_generation(
+                    inputs=inputs, prefill_seq_len=prefill_seq_len, batch_size=inputs["input_ids"].shape[0]
+                )
 
             # Convert to float32 if needed
             if "pixel_values" in inputs:
