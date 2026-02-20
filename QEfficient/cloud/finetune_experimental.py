@@ -94,7 +94,6 @@ class FineTuningPipeline:
         # Create training and evaluation datasets using config values
         train_dataset = create_dataset_for_split(train_split)
         eval_dataset = create_dataset_for_split(test_split)
-
         return train_dataset, eval_dataset
 
     def _create_model(self) -> Any:
@@ -140,6 +139,8 @@ class FineTuningPipeline:
 
         # callback_config.callbacks is a dictionary of callback configurations
         for callback_name, callback_kwargs in callback_config["callbacks"].items():
+            if callback_kwargs is None:
+                callback_kwargs = {}
             try:
                 callback_instance = ComponentFactory.create_callback(callback_name, **callback_kwargs)
                 callbacks.append(callback_instance)
@@ -197,14 +198,23 @@ class FineTuningPipeline:
 
         # Create trainer arguments instance
         args = args_cls(**training_config)
-        # Initialize trainer
+        dataset_config_dict = self.config_manager.get_dataset_config()
+        split_ratio = dataset_config_dict.get("split_ratio", 0.8)
+        num_samples = dataset_config_dict.get("dataset_num_samples", -1)
+        train_dataset = train_dataset.dataset
+        eval_dataset = eval_dataset.dataset
+        if num_samples > 0:
+            subset_train_indices = list(range(0, int(num_samples * split_ratio)))
+            subset_eval_indices = list(range(0, int(num_samples - num_samples * split_ratio)))
+            eval_dataset = eval_dataset.select(subset_eval_indices)
+            train_dataset = train_dataset.select(subset_train_indices)
         trainer = trainer_cls(
             model=model,
             processing_class=tokenizer,
             args=args,
             compute_loss_func=None,
-            train_dataset=train_dataset.dataset,
-            eval_dataset=eval_dataset.dataset,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             optimizer_cls_and_kwargs=optimizer_cls_and_kwargs,
             callbacks=callbacks,
             **additional_kwargs,

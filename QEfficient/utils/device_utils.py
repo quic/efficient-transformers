@@ -9,6 +9,8 @@ import math
 import re
 import subprocess
 
+import torch
+
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -19,6 +21,28 @@ def is_networks_loaded(stdout):
     if network_loaded and int(network_loaded.group(1)) > 0:
         return True
     return False
+
+
+def is_nsp_free():
+    device_count = torch.qaic.device_count()  # Get the number of available devices
+
+    for device_idx in range(device_count):
+        qid_idx = torch.qaic.get_device_info(device_idx).qid_index
+        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_idx}"]
+        result = subprocess.run(command, capture_output=True, text=True)
+        text = result.stdout
+        free_nsp = re.search(r"Nsp Free:\s*(\d+)", text)
+        total_nsp = re.search(r"Nsp Total:\s*(\d+)", text)
+        if free_nsp and total_nsp:
+            nsp_free = int(free_nsp.group(1))
+            nsp_total = int(total_nsp.group(1))
+            # Check if NSP free is eqaul to total nsp
+            if nsp_free != nsp_total:
+                raise RuntimeError(f"QAIC device {qid_idx} does not have {nsp_total} NSP free")
+            else:
+                logger.info(f"QAIC device {qid_idx} has {nsp_free} NSP free")
+        else:
+            raise RuntimeError("Failed to parse NSP free information from qaic-util output")
 
 
 def get_available_device_id():
