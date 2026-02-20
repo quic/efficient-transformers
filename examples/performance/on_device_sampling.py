@@ -114,7 +114,7 @@ if __name__ == "__main__":
     """
     Example usage:
     1. For continuous batching:
-        python3.10 examples/on_device_sampling.py \
+        python examples/on_device_sampling.py \
             --model-name 'meta-llama/Llama-3.1-8B' \
             --prompt-len 128 \
             --ctx-len 256 \
@@ -134,7 +134,7 @@ if __name__ == "__main__":
             --random-number 26
 
     2. For non-continuous batching:
-        python3.10 examples/on_device_sampling.py \
+        python examples/on_device_sampling.py \
             --model-name 'meta-llama/Llama-3.1-8B' \
             --prompt-len 128 \
             --ctx-len 256 \
@@ -154,7 +154,7 @@ if __name__ == "__main__":
             --random-number 26
 
     3. With guided decoding:
-        python3.10 examples/on_device_sampling.py \
+        python examples/on_device_sampling.py \
             --model-name 'meta-llama/Llama-3.1-8B' \
             --prompt-len 128 \
             --ctx-len 256 \

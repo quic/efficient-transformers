@@ -95,9 +95,9 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ## Quick Installation
 ```bash
 
-# Create Python virtual env and activate it. (Recommended Python 3.10)
-sudo apt install python3.10-venv
-python3.10 -m venv qeff_env
+# Create Python virtual env and activate it. (Recommended Python 3.12)
+sudo apt install python3.12-venv
+python3.12 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
@@ -136,4 +136,4 @@ Thanks to:
 If you run into any problems with the code, please file Github issues directly to this repo.
 
 ## Contributing
-This project welcomes contributions and suggestions. Please check the License. Integration with a CLA Bot is underway. 
+This project welcomes contributions and suggestions. Please check the License. Integration with a CLA Bot is underway.
