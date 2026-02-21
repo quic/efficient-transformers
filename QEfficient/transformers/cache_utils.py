@@ -55,6 +55,12 @@ class InvalidIndexProvider:
 
 
 class QEffDynamicLayer(DynamicLayer):
+    def lazy_initialization(self, key_states: torch.Tensor):
+        self.dtype, self.device = key_states.dtype, key_states.device
+        self.keys = torch.tensor([], dtype=self.dtype, device=self.device)
+        self.values = torch.tensor([], dtype=self.dtype, device=self.device)
+        self.is_initialized = True
+
     def read_only(self, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer.
@@ -186,10 +192,13 @@ class QEffDynamicLayer(DynamicLayer):
             A tuple containing the updated key and value states.
         """
         # Update the cache
+        # if not self.is_initialized:
+
         if self.keys is None:
             self.keys = key_states
             self.values = value_states
             k_out, v_out = self.keys, self.values
+            self.is_initialized = True
         else:
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
@@ -306,15 +315,46 @@ class QEffDynamicCache(DynamicCache):
 
     """
 
-    def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
+    def __init__(
+        self,
+        ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None,
+        config=None,
+        offloading: bool = False,
+        offload_only_non_sliding: bool = False,
+        *args,
+        **kwargs,
+    ):
         # Remove layer_classes if present to avoid duplicate argument
-        kwargs.pop("layer_classes", None)
+        kwargs.pop("layers", None)
         from transformers.cache_utils import Cache  # Import here to avoid circular import
 
-        Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
+        layers = []
+        # If a config is passed, use it to infer the layer types and initialize accordingly
+        if len(layers) == 0:
+            Cache.__init__(
+                self,
+                layer_class_to_replicate=QEffDynamicLayer,
+                offloading=offloading,
+                offload_only_non_sliding=offload_only_non_sliding,
+                # args=args,
+                # kwargs=kwargs,
+            )
+        else:
+            Cache.__init__(
+                self,
+                layers=layers,
+                offloading=offloading,
+                offload_only_non_sliding=offload_only_non_sliding,
+                # args=args,
+                # kwargs=kwargs,
+            )
+
         if ddp_cache_data is not None:
-            for key_states, value_states in ddp_cache_data:
-                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+            for layer_idx, (key_states, value_states) in enumerate(ddp_cache_data):
+                # If the config was not passed above, initialize a DynamicLayer for each entry of the ddp_data
+                layers.append(QEffDynamicLayer())
+                # Update the layer with the data
+                _, _ = layers[layer_idx].update(key_states, value_states)
 
     def read_only(self, layer_idx, cache_kwargs):
         """
@@ -393,6 +433,18 @@ class QEffDynamicCache(DynamicCache):
         """
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].update3D(key_states, value_states, cache_kwargs)
+
+    # def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
+    #     """Returns the sequence length of the cached states. A layer index can be optionally passed."""
+    #     # TODO: deprecate this function in favor of `cache_position`
+    #     breakpoint()
+    #     is_empty_layer = (
+    #         len(self.key_cache) == 0  # no cache in any layer
+    #         or len(self.key_cache) <= layer_idx  # skipped `layer_idx` and hasn't run a layer with cache after it
+    #         or len(self.key_cache[layer_idx]) == 0  # the layer has no cache
+    #     )
+    #     layer_seq_length = self.key_cache[layer_idx].shape[-2] if not is_empty_layer else 0
+    #     return layer_seq_length
 
 
 class QEffEncoderDecoderCache(EncoderDecoderCache):
