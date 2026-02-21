@@ -504,7 +504,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
 
         if past_key_value is not None:
             chunk_position_ids = position_ids
-            if self.use_rope:
+            if self.use_rope and self.config.attention_chunk_size:
                 chunk_position_ids = torch.where(
                     chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
                 )
@@ -663,10 +663,16 @@ class QEffLlama4TextModel(Llama4TextModel):
         causal_mask = _create_causal_mask(
             position_ids=position_ids, target_length=past_key_values.layers[3].keys.shape[-2]
         )
-        chunk_position_ids = torch.where(
-            position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
-        )
-        target_length = min(past_key_values.layers[0].keys.shape[-2], torch.tensor(self.config.attention_chunk_size))
+        if self.config.attention_chunk_size:
+            chunk_position_ids = torch.where(
+                position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
+            )
+            target_length = min(
+                past_key_values.layers[0].keys.shape[-2], torch.tensor(self.config.attention_chunk_size)
+            )
+        else:
+            chunk_position_ids = position_ids
+            target_length = past_key_values.layers[0].keys.shape[-2]
         chunk_causal_mask = _create_causal_mask(position_ids=chunk_position_ids, target_length=target_length)
         causal_mask_mapping = {
             "full_attention": causal_mask,
@@ -798,7 +804,7 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
         is_chunked_attention = torch.tensor(
             [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
         )
-        attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
+        attention_chunk_size = getattr(config, "attention_chunk_size", None) or seq_len
         global_cache_shape = [batch_size, n_heads, seq_len, d_head]
         chunked_cache_shape = [
             batch_size,
@@ -967,13 +973,12 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        attention_chunk_size = getattr(
+            getattr(getattr(self, "config", None), "text_config", None), "attention_chunk_size", None
+        )
         chunk_ctx_len = min(
             ctx_len,
-            (
-                self.config.text_config.attention_chunk_size
-                if hasattr(self, "config")
-                else constants.LLAMA4_ATTENTION_CHUNK_SIZE
-            ),
+            (attention_chunk_size if attention_chunk_size is not None else constants.LLAMA4_ATTENTION_CHUNK_SIZE),
         )
         if (
             prefill_seq_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
@@ -1158,7 +1163,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         is_chunked_attention = torch.tensor(
             [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
         )
-        attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
+        attention_chunk_size = getattr(config, "attention_chunk_size", None) or seq_len
         global_cache_shape = [batch_size, n_heads, seq_len, d_head]
         chunked_cache_shape = [
             batch_size,
