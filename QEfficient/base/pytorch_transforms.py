@@ -152,10 +152,16 @@ class SplitGateUpWeightsTransform(PytorchTransform):
             # ---- build the textual prefix once per layer ----------
             if is_gpt_oss:
                 prefix = f"model.layers.{layer_idx}.mlp.experts."
-                experts = model_tmp.model.layers[layer_idx].mlp.experts
+                # experts = model_tmp.model.layers[layer_idx].mlp.experts
+                ff = model_tmp.model.layers[layer_idx].mlp
             else:
                 prefix = f"model.layers.{layer_idx}.feed_forward.experts."
-                experts = model_tmp.model.layers[layer_idx].feed_forward.experts
+                # experts = model_tmp.model.layers[layer_idx].feed_forward.experts
+                ff = model_tmp.model.layers[layer_idx].feed_forward
+
+            if not hasattr(ff, "experts"):
+                continue
+            experts = ff.experts
 
             fused_key = prefix + "gate_up_proj"
             gate_key = prefix + "gate_proj"
