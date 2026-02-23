@@ -24,11 +24,14 @@ def is_networks_loaded(stdout):
 
 
 def is_nsp_free():
+    # FIXME: Give incorrect results when user doesn't have permission.
+    # To reproduce change the ownership of available devices.
     device_count = torch.qaic.device_count()  # Get the number of available devices
-
+    if device_count == 0:
+        logger.warning("No QAIC devices found.")
     for device_idx in range(device_count):
         qid_idx = torch.qaic.get_device_info(device_idx).qid_index
-        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_idx}"]
+        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", str(qid_idx)]
         result = subprocess.run(command, capture_output=True, text=True)
         text = result.stdout
         free_nsp = re.search(r"Nsp Free:\s*(\d+)", text)
@@ -42,7 +45,7 @@ def is_nsp_free():
             else:
                 logger.info(f"QAIC device {qid_idx} has {nsp_free} NSP free")
         else:
-            raise RuntimeError("Failed to parse NSP free information from qaic-util output")
+            logger.warning("Failed to parse NSP free information from qaic-util output")
 
 
 def get_available_device_id():
