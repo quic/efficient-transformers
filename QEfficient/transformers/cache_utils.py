@@ -196,7 +196,11 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.values = value_states
             self._mark_initialized(self.keys)
         else:
+<<<<<<< HEAD
             self._mark_initialized(self.keys)
+=======
+            # breakpoint()
+>>>>>>> 657a757 (Add fp8 support (#802))
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
@@ -231,6 +235,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         Return:
             A tuple containing the updated key and value states.
         """
+        # breakpoint()
         # Update the cache
 
         if self.keys is None:
@@ -358,6 +363,7 @@ class QEffDynamicCache(Cache):
 
     """
 
+<<<<<<< HEAD
     def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
         # Remove cache-layer construction args if present to avoid duplicate arguments.
         kwargs.pop("layer_classes", None)
@@ -370,12 +376,51 @@ class QEffDynamicCache(Cache):
         except TypeError:
             # transformers<=4.56
             Cache.__init__(self, *args, layer_classes=QEffDynamicLayer, **kwargs)
+=======
+    def __init__(
+        self,
+        ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None,
+        config=None,
+        offloading: bool = False,
+        offload_only_non_sliding: bool = False,
+        *args,
+        **kwargs,
+    ):
+        # Remove layer_classes if present to avoid duplicate argument
+        # breakpoint()
+        kwargs.pop("layers", None)
+        from transformers.cache_utils import Cache  # Import here to avoid circular import
+
+        # breakpoint()
+        layers = []
+        # If a config is passed, use it to infer the layer types and initialize accordingly
+        if len(layers) == 0:
+            Cache.__init__(
+                self,
+                layer_class_to_replicate=QEffDynamicLayer,
+                offloading=offloading,
+                offload_only_non_sliding=offload_only_non_sliding,
+                # args=args,
+                # kwargs=kwargs,
+            )
+        else:
+            Cache.__init__(
+                self,
+                layers=layers,
+                offloading=offloading,
+                offload_only_non_sliding=offload_only_non_sliding,
+                # args=args,
+                # kwargs=kwargs,
+            )
+
+>>>>>>> 657a757 (Add fp8 support (#802))
         if ddp_cache_data is not None:
             for layer_idx, (key_states, value_states) in enumerate(ddp_cache_data):
                 # If the config was not passed above, initialize a DynamicLayer for each entry of the ddp_data
                 layers.append(QEffDynamicLayer())
                 # Update the layer with the data
                 _, _ = layers[layer_idx].update(key_states, value_states)
+<<<<<<< HEAD
 
     def append_new_layers(self, layer_idx: int) -> None:
         while len(self.layers) <= layer_idx:
@@ -401,6 +446,8 @@ class QEffDynamicCache(Cache):
         Keep backward-compatible call shape while deferring to upstream implementation.
         """
         return super().get_seq_length(layer_idx)
+=======
+>>>>>>> 657a757 (Add fp8 support (#802))
 
     def read_only(self, layer_idx, cache_kwargs):
         """
@@ -415,6 +462,7 @@ class QEffDynamicCache(Cache):
         Return:
             A tuple containing the updated key and value states.
         """
+        # breakpoint()
         return self.layers[layer_idx].read_only(cache_kwargs)
 
     def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
@@ -479,6 +527,18 @@ class QEffDynamicCache(Cache):
         """
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].update3D(key_states, value_states, cache_kwargs)
+
+    # def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
+    #     """Returns the sequence length of the cached states. A layer index can be optionally passed."""
+    #     # TODO: deprecate this function in favor of `cache_position`
+    #     breakpoint()
+    #     is_empty_layer = (
+    #         len(self.key_cache) == 0  # no cache in any layer
+    #         or len(self.key_cache) <= layer_idx  # skipped `layer_idx` and hasn't run a layer with cache after it
+    #         or len(self.key_cache[layer_idx]) == 0  # the layer has no cache
+    #     )
+    #     layer_seq_length = self.key_cache[layer_idx].shape[-2] if not is_empty_layer else 0
+    #     return layer_seq_length
 
 
 class QEffEncoderDecoderCache(EncoderDecoderCache):
