@@ -172,6 +172,7 @@ def test_auto_peft_model_for_causal_lm_activate_invalid(base_config, adapter_con
         qeff_model.set_adapter("invalid")
 
 
+@pytest.mark.feature
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("batch_size", [1, 4], ids=["bs1", "bs4"])
 @pytest.mark.parametrize("base_config,adapter_config", configs)

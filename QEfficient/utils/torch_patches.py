@@ -11,8 +11,6 @@ import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
 
-from QEfficient.utils.logging_utils import logger
-
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
@@ -40,9 +38,11 @@ def _setup_trace_module_map_patched(
                 onnx_attrs = getattr(module, attr_name)
                 delattr(module, attr_name)
             try:
+                onnx_attrs = {}  # HACK: to reduce export time # TODO: study behaviour across models
                 _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
-            except Exception as e:
-                logger.warning(f"Failed to track ONNX scope attributes: {e}. Skipping this step.")
+            except Exception:
+                # Silently skip: scope-attribute tracking is best-effort and not required for export.
+                pass
 
         for m in model.modules():
             m.register_forward_hook(_track_module_attributes_forward_hook)
