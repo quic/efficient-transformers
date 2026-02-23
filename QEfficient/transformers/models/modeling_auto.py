@@ -595,6 +595,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         if self._write_io_dir is not None:
             write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
+        return outputs
 
 
 class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
