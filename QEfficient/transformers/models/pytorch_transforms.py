@@ -171,6 +171,16 @@ from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Model,
     Qwen3RMSNorm,
 )
+from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+    Qwen3VLMoeForConditionalGeneration,
+    Qwen3VLMoeModel,
+    Qwen3VLMoeTextAttention,
+    Qwen3VLMoeTextDecoderLayer,
+    Qwen3VLMoeTextModel,
+    Qwen3VLMoeTextRMSNorm,
+    Qwen3VLMoeVisionAttention,
+    Qwen3VLMoeVisionModel,
+)
 from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLForConditionalGeneration,
     Qwen3VLModel,
@@ -393,6 +403,16 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3ForCausalLM,
     QEffQwen3Model,
 )
+from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+    QEffQwen3VLMoeForConditionalGeneration,
+    QEffQwen3VLMoeModel,
+    QEffQwen3VLMoeTextAttention,
+    QEffQwen3VLMoeTextDecoderLayer,
+    QEffQwen3VLMoeTextModel,
+    # QEffQwen3VLMoeTextSparseMoeBlock,
+    QEffQwen3VLMoeVisionAttention,
+    QEffQwen3VLMoeVisionModel,
+)
 from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLForConditionalGeneration,
     QEffQwen3VLModel,
@@ -445,8 +465,10 @@ class CustomOpsTransform(ModuleMappingTransform):
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
-        Qwen3VLTextRMSNorm: CustomRMSNormAIC,
+        Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
+        # Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
+        # Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -594,17 +616,17 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
         Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
-        
-
-        #Qwen3vl
-        Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
-        Qwen3VLModel: QEffQwen3VLModel,
-        Qwen3VLTextAttention: QEffQwen3VLTextAttention,
-        Qwen3VLTextDecoderLayer: QEffQwen3VLTextDecoderLayer,
-        Qwen3VLVisionAttention: QEffQwen3VLVisionAttention,
-        Qwen3VLVisionModel: QEffQwen3VLVisionModel,
-        Qwen3VLTextModel: QEffQwen3VLTextModel,
-        Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,  # reusing decoder layer for rotary embedding as they are tightly coupled in forward pass
+        # Qwen3vlmoe
+        Qwen3VLMoeForConditionalGeneration: QEffQwen3VLMoeForConditionalGeneration,
+        Qwen3VLMoeModel: QEffQwen3VLMoeModel,
+        Qwen3VLMoeTextAttention: QEffQwen3VLMoeTextAttention,
+        Qwen3VLMoeTextDecoderLayer: QEffQwen3VLMoeTextDecoderLayer,
+        Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
+        Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
+        Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
+        # Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
+        # Grok1
+        # Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
