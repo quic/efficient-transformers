@@ -232,7 +232,9 @@ class QEffWanPipeline:
         for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration with video dimensions
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
+            import ipdb
 
+            ipdb.set_trace()
             # Prepare export parameters
             export_params = {
                 "inputs": example_inputs,
@@ -364,7 +366,6 @@ class QEffWanPipeline:
         else:
             compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
 
-
     def check_cache_conditions(
         self,
         new_first_block_residual: torch.Tensor,
@@ -383,20 +384,20 @@ class QEffWanPipeline:
         """
         # Compute similarity (L1 distance normalized by magnitude)
         # This must be computed BEFORE any conditional logic
-    
+
         if current_step < cache_warmup_steps or prev_first_block_residual is None:
             return False
-        
+
         diff = (new_first_block_residual - prev_first_block_residual).abs().mean()
         norm = new_first_block_residual.abs().mean()
-        
+
         similarity = diff / (norm + 1e-8)
-            
+
         is_similar = similarity < cache_threshold  # scalar bool tensor
-        
+
         if is_similar:
             print(f"Residual similarity {similarity:.4f} is below threshold {cache_threshold}. Using cache.")
-         
+
         if is_similar:
             return True
 
@@ -621,7 +622,6 @@ class QEffWanPipeline:
                 cl,  # Compressed latent dimension
                 constants.WAN_DIT_OUT_CHANNELS,
             ).astype(np.int32),
-
         }
         self.transformer.qpc_session.set_buffers(output_buffer)
         self.transformer.qpc_session.skip_buffers(
@@ -631,18 +631,18 @@ class QEffWanPipeline:
                 if x.startswith("prev_") or x.endswith("_RetainedState")
             ]
         )
-        
-        for x in self.transformer.qpc_session.input_names+self.transformer.qpc_session.output_names:
+
+        for x in self.transformer.qpc_session.input_names + self.transformer.qpc_session.output_names:
             if x.startswith("prev_") or x.endswith("_RetainedState"):
                 print(f"Skipping buffer {x} for caching")
-        
+
         transformer_perf = []
-        
-        ## 
+
+        ##
         prev_first_block_residual_high = None
         prev_first_block_residual_low = None
         prev_remaining_blocks_residual_high = None
-        prev_first_block_residual_low=None
+        prev_first_block_residual_low = None
         ##
 
         # Step 8: Denoising loop with dual-stage processing
@@ -733,38 +733,41 @@ class QEffWanPipeline:
 
                 # Run conditional prediction with caching context
                 with current_model.cache_context("cond"):
-                    
                     # QAIC inference for conditional prediction
                     # Apply patch embedding and reshape for transformer processing
                     hidden_states = current_model.patch_embedding(latents)
                     hidden_states = hidden_states.flatten(2).transpose(1, 2)  # (B, H*W, C)
-                    
-                    if model_type.shape[0]== torch.tensor(1):
+
+                    if model_type.shape[0] == torch.tensor(1):
                         print(f"Running high-noise model at step {i}, timestep {t}")
-                        new_first_block_output_high = current_model.blocks[0](hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+                        new_first_block_output_high = current_model.blocks[0](
+                            hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
+                        )
                         new_first_block_residual_high = new_first_block_output_high - hidden_states
-                        use_cache=self.check_cache_conditions(
-                                                              new_first_block_residual_high,
-                                                              prev_first_block_residual_high,
-                                                              cache_threshold,
-                                                              cache_warmup_steps,
-                                                              i
-                                                              )
-                        inputs_aic['hidden_states'] = new_first_block_output_high.detach().numpy()
+                        use_cache = self.check_cache_conditions(
+                            new_first_block_residual_high,
+                            prev_first_block_residual_high,
+                            cache_threshold,
+                            cache_warmup_steps,
+                            i,
+                        )
+                        inputs_aic["hidden_states"] = new_first_block_output_high.detach().numpy()
                         inputs_aic["use_cache"] = np.array([use_cache], dtype=np.int64)
                         prev_first_block_residual_high = new_first_block_residual_high.detach()
                     else:
                         print(f"Running low-noise model at step {i}, timestep {t}")
-                        new_first_block_output_low = current_model.blocks[0](hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+                        new_first_block_output_low = current_model.blocks[0](
+                            hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
+                        )
                         new_first_block_residual_low = new_first_block_output_low - hidden_states
-                        use_cache=self.check_cache_conditions(
-                                                              new_first_block_residual_low,
-                                                              prev_first_block_residual_low,
-                                                              cache_threshold,
-                                                              cache_warmup_steps,
-                                                              i
-                                                              )
-                        inputs_aic['hidden_states'] = new_first_block_output_low.detach().numpy()
+                        use_cache = self.check_cache_conditions(
+                            new_first_block_residual_low,
+                            prev_first_block_residual_low,
+                            cache_threshold,
+                            cache_warmup_steps,
+                            i,
+                        )
+                        inputs_aic["hidden_states"] = new_first_block_output_low.detach().numpy()
                         inputs_aic["use_cache"] = np.array([use_cache], dtype=np.int64)
                         prev_first_block_residual_low = new_first_block_residual_low.detach()
                     # import ipdb; ipdb.set_trace()

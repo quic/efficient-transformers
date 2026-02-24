@@ -26,7 +26,7 @@ from diffusers.models.transformers.transformer_wan import (
     WanTransformerBlock,
     _get_qkv_projections,
 )
-from QEfficient.customop.ctx_scatter_gather import CtxGatherFunc3D,CtxScatterFunc3D
+from QEfficient.customop.ctx_scatter_gather import CtxGatherFunc3D, CtxScatterFunc3D
 from diffusers.utils import set_weights_and_activate_adapters
 
 from QEfficient.diffusers.models.modeling_utils import (
@@ -230,10 +230,8 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         rotary_emb: torch.Tensor,
         temb: torch.Tensor,
         timestep_proj: torch.Tensor,
-        encoder_hidden_states_image: Optional[torch.Tensor] = None,
-        # Cache inputs (only used when enable_first_cache=True)
-        prev_remaining_blocks_residual: Optional[torch.Tensor] = None,
-        use_cache: Optional[torch.Tensor] = None,
+        frc=None,
+        lrc=None,
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -267,15 +265,14 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
                 When cache is enabled, includes first_block_residual and remaining_blocks_residual.
         """
         # Check if cache should be used
-        cache_enabled = getattr(self, 'enable_first_cache', False)
-    
+        cache_enabled = getattr(self, "enable_first_cache", False)
 
         # Prepare rotary embeddings by splitting along batch dimension
         rotary_emb = torch.split(rotary_emb, 1, dim=0)
 
         # # Apply patch embedding and reshape for transformer processing
-        # hidden_states = self.patch_embedding(hidden_states)
-        # hidden_states = hidden_states.flatten(2).transpose(1, 2)  # (B, H*W, C)
+        hidden_states = self.patch_embedding(hidden_states)
+        hidden_states = hidden_states.flatten(2).transpose(1, 2)  # (B, H*W, C)
 
         # # Concatenate image and text encoder states if image conditioning is present
         # if encoder_hidden_states_image is not None:
@@ -283,13 +280,14 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
 
         # Execute transformer blocks (with or without cache)
         if cache_enabled:
-            hidden_states, remaining_residual = self._forward_blocks_with_cache(
+            hidden_states, frc, lrc = self._forward_blocks_with_cache(
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 timestep_proj=timestep_proj,
                 rotary_emb=rotary_emb,
-                prev_remaining_blocks_residual=prev_remaining_blocks_residual,
-                use_cache=use_cache,
+                frc=frc,
+                lrc=lrc,
+                use_cache=cache_enabled,
             )
         else:
             # Standard forward pass
@@ -325,11 +323,11 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         # Note: When cache is enabled, we always return tuple format
         # because Transformer2DModelOutput doesn't support custom fields
         if cache_enabled:
-            return (output, remaining_residual)
-        
+            return (output, frc, lrc)
+
         if not return_dict:
             return (output,)
-        
+
         return Transformer2DModelOutput(sample=output)
 
     def _forward_blocks_with_cache(
@@ -338,8 +336,9 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         encoder_hidden_states: torch.Tensor,
         timestep_proj: torch.Tensor,
         rotary_emb: torch.Tensor,
-        prev_remaining_blocks_residual: torch.Tensor,
-        use_cache: torch.Tensor,
+        frc: torch.Tensor,
+        lrc: torch.Tensor,
+        step_number,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Core cache logic - AOT compilable.
@@ -354,38 +353,34 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
             (equivalent to: torch.where(use_cache, hs+prev_res, remaining_output))
         """
         # Step 1: Always execute first block
-        # original_hidden_states = hidden_states
-        # hidden_states = self.blocks[0](hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
-        # first_block_residual = hidden_states - original_hidden_states
-
-        # # condition
-        # similarty = self._check_similarity(
-        #     first_block_residual, prev_first_block_residual
-        # )
-        
-        
-        # if use_cache false
         original_hidden_states = hidden_states
-        for block in self.blocks[1:]:
-            hidden_states = block(
-                hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
-            )
-        new_remaining_blocks_residual= hidden_states - original_hidden_states
-        
-        # If use_cache true
-        # Final_remaining_residuals
-        final_remaining_residual =torch.where(
-            use_cache.bool(),
-            prev_remaining_blocks_residual,
-            new_remaining_blocks_residual)  # Placeholder, will be replaced by new_remaining_blocks_re
-        final_output = original_hidden_states + final_remaining_residual
-        
-        return final_output, final_remaining_residual
+        hidden_states = self.blocks[0](hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+        first_block_residual = hidden_states - original_hidden_states
+        similarty, frc = self._check_similarity(frc, first_block_residual)
+        num_warmup_steps = 4
+        similarity_threshold = 0.08
+
+        considered_similarity = torch.where(
+            step_number < num_warmup_steps, torch.tensor(1.0).to(torch.float32), similarty
+        )
+
+        skip_compute_out = self.skip_compute(lrc, hidden_states)
+        full_compute_out, lrc = self._compute_remaining_blocks(
+            hidden_states, encoder_hidden_states, timestep_proj, rotary_emb, lrc
+        )
+
+        final_output = torch.where(considered_similarity < similarity_threshold, skip_compute_out, full_compute_out)
+
+        return final_output, frc, lrc
+
+    def skip_compute(self, lrc, hidden_states):
+        lrc = CtxGatherFunc3D.apply(lrc, torch.arange(lrc.shape[1]))
+        return lrc + hidden_states
 
     def _check_similarity(
         self,
         first_block_residual: torch.Tensor,
-        prev_first_block_residual: torch.Tensor,
+        frc: torch.Tensor,
     ) -> torch.Tensor:
         """
         Compute cache decision (returns boolean tensor).
@@ -397,22 +392,13 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         """
         # Compute similarity (L1 distance normalized by magnitude)
         # This must be computed BEFORE any conditional logic
-        diff = (first_block_residual - prev_first_block_residual).abs().mean()
+        frc = CtxGatherFunc3D.apply(frc, torch.arange(frc.shape[1]))
+        diff = (first_block_residual - frc).abs().mean()
         norm = first_block_residual.abs().mean()
-        
+        frc = CtxScatterFunc3D.apply(frc, torch.arange(frc.shape[1]), first_block_residual)
         similarity = diff / (norm + 1e-8)
-        
 
-        # is_similar = similarity < cache_threshold  # scalar bool tensor
-
-
-        # use_cache = torch.where(
-        #     current_step < cache_warmup_steps,
-        #     torch.zeros_like(is_similar),  # During warmup: always False (same dtype as is_similar)
-        #     is_similar,                    # If not warmup: use is_similar
-        # )
-
-        return   similarity
+        return similarity, frc
 
     def _compute_remaining_blocks(
         self,
@@ -420,6 +406,7 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         encoder_hidden_states: torch.Tensor,
         timestep_proj: torch.Tensor,
         rotary_emb: torch.Tensor,
+        lrc,
     ) -> torch.Tensor:
         """
         Execute transformer blocks 1 to N and return the residual for caching.
@@ -432,12 +419,12 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
 
         # Execute remaining blocks (blocks[1:])
         for block in self.blocks[1:]:
-            hidden_states = block(
-                hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
-            )
+            hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+
+        lrc = CtxScatterFunc3D.apply(lrc, torch.arange(lrc.shape[1]), hidden_states - original_hidden_states)
 
         # Return only the residual; output = original_hidden_states + residual
-        return hidden_states - original_hidden_states
+        return hidden_states, lrc
 
 
 class QEffWanUnifiedWrapper(nn.Module):
@@ -481,15 +468,11 @@ class QEffWanUnifiedWrapper(nn.Module):
         temb,
         timestep_proj,
         tsp,
-        # Separate cache inputs for high and low noise transformers
-        # prev_first_block_residual_high: Optional[torch.Tensor] = None,
-        prev_remaining_blocks_residual_high: Optional[torch.Tensor] = None,
-        # prev_first_block_residual_low: Optional[torch.Tensor] = None,
-        prev_remaining_blocks_residual_low: Optional[torch.Tensor] = None,
-        # current_step: Optional[torch.Tensor] = None,
-        # cache_threshold: Optional[torch.Tensor] = None,
-        # warmup_steps: Optional[torch.Tensor] = None,
-        use_cache: Optional[torch.Tensor] = None,
+        hfrc=None,  # First Layer Residual Cache for high noise
+        hlrc=None,  # Lasat layer Residual Cache for high noise
+        lfrc=None,
+        llrc=None,
+        step_number=None,
         attention_kwargs=None,
         return_dict=False,
     ):
@@ -512,7 +495,7 @@ class QEffWanUnifiedWrapper(nn.Module):
             return_dict: Whether to return dictionary or tuple
 
         Returns:
-            If cache enabled: (noise_pred, first_residual_high, remaining_residual_high, 
+            If cache enabled: (noise_pred, first_residual_high, remaining_residual_high,
                               first_residual_low, remaining_residual_low)
             Otherwise: noise_pred
         """
@@ -520,77 +503,67 @@ class QEffWanUnifiedWrapper(nn.Module):
         is_high_noise = tsp.shape[0] == torch.tensor(1)
 
         # Check if cache is enabled (both transformers should have same setting)
-        cache_enabled = getattr(self.transformer_high, 'enable_first_cache', False)
+        cache_enabled = getattr(self.transformer_high, "enable_first_cache", False)
         high_hs = hidden_states.detach()
-        ehs = encoder_hidden_states.detach() 
+        ehs = encoder_hidden_states.detach()
         rhs = rotary_emb.detach()
         ths = temb.detach()
         projhs = timestep_proj.detach()
-
         # Execute high noise transformer with its cache
         if cache_enabled:
             # When cache is enabled, transformer returns tuple: (output, first_residual, remaining_residual)
+            high_output, hfrc, hlrc = self.transformer_high(
+                hidden_states=high_hs,
+                encoder_hidden_states=ehs,
+                rotary_emb=rhs,
+                temb=ths,
+                timestep_proj=projhs,
+                frc=hfrc,
+                lrc=hlrc,
+                step_number=step_number,
+                attention_kwargs=attention_kwargs,
+                return_dict=False,  # Must be False when cache is enabled
+            )
+        else:
             high_output = self.transformer_high(
                 hidden_states=high_hs,
                 encoder_hidden_states=ehs,
                 rotary_emb=rhs,
                 temb=ths,
                 timestep_proj=projhs,
-                prev_remaining_blocks_residual=prev_remaining_blocks_residual_high,
-                use_cache=use_cache,
-                attention_kwargs=attention_kwargs,
-                return_dict=False,  # Must be False when cache is enabled
-            )
-            noise_pred_high, remaining_residual_high = high_output
-        else:
-            noise_pred_high = self.transformer_high(
-                hidden_states=high_hs,
-                encoder_hidden_states=ehs,
-                rotary_emb=rhs,
-                temb=ths,
-                timestep_proj=projhs,
                 attention_kwargs=attention_kwargs,
                 return_dict=return_dict,
             )[0]
-            remaining_residual_high = None
 
         # Execute low noise transformer with its cache
         if cache_enabled:
             # When cache is enabled, transformer returns tuple: (output, first_residual, remaining_residual)
+            low_output, lfrc, llrc = self.transformer_low(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                rotary_emb=rotary_emb,
+                temb=temb,
+                timestep_proj=timestep_proj,
+                frc=lfrc,
+                lrc=llrc,
+                step_number=step_number,
+                attention_kwargs=attention_kwargs,
+                return_dict=False,  # Must be False when cache is enabled
+            )
+        else:
             low_output = self.transformer_low(
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 rotary_emb=rotary_emb,
                 temb=temb,
                 timestep_proj=timestep_proj,
-                prev_remaining_blocks_residual=prev_remaining_blocks_residual_low,
-                use_cache=use_cache,
-                attention_kwargs=attention_kwargs,
-                return_dict=False,  # Must be False when cache is enabled
-            )
-            noise_pred_low, remaining_residual_low = low_output
-        else:
-            noise_pred_low = self.transformer_low(
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                rotary_emb=rotary_emb,
-                temb=temb,
-                timestep_proj=timestep_proj,
                 attention_kwargs=attention_kwargs,
                 return_dict=return_dict,
             )[0]
-            remaining_residual_low = None
 
-        # Select output based on timestep condition
-        noise_pred = torch.where(is_high_noise, noise_pred_high, noise_pred_low)
-        new_remaining_residual_high = torch.where(is_high_noise, remaining_residual_high, prev_remaining_blocks_residual_high ) 
-        new_remaining_residual_low = torch.where(is_high_noise, prev_remaining_blocks_residual_low, remaining_residual_low) 
+        final_output = torch.where(is_high_noise, high_output, low_output)
 
         # Return with cache outputs if enabled
         if cache_enabled:
-            return (
-                noise_pred,
-                new_remaining_residual_high,
-                new_remaining_residual_low,
-            )
-        return noise_pred
+            return (final_output, hfrc, hlrc, lfrc, llrc)
+        return final_output
