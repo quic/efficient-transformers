@@ -237,9 +237,9 @@ class QEffDeepseekV3Attention(nn.Module):
         fusedqk = torch.bmm(per_head_q_up, per_head_k_up)
         # self.register_buffer("fusedqk", fusedqk.detach().clone(), persistent=False)
         self.fusedqk = torch.nn.Parameter(fusedqk.detach().clone())
-
-        # self.kv_a_proj_with_mqa_ckv = nn.Linear(self.hidden_size, self.config.kv_lora_rank, bias=self.config.attention_bias)
-        # self.kv_a_proj_with_mqa_k_pe = nn.Linear(self.hidden_size, self.config.qk_rope_head_dim, bias=self.config.attention_bias)
+        kv_a_proj_with_mqa_ckv, kv_a_proj_with_mqa_k_pe = self.kv_a_proj_with_mqa.weight.T.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        self.kv_a_proj_with_mqa_ckv = torch.nn.Parameter(kv_a_proj_with_mqa_ckv.detach().clone())
+        self.kv_a_proj_with_mqa_k_pe = torch.nn.Parameter(kv_a_proj_with_mqa_k_pe.detach().clone())
 
     def fused_forward(
         self,
@@ -258,10 +258,8 @@ class QEffDeepseekV3Attention(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
-        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
-        # compressed_kv = self.kv_a_proj_with_mqa_ckv(hidden_states)
-        # k_pe = self.kv_a_proj_with_mqa_k_pe(hidden_states)
-        compressed_kv, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        compressed_kv = torch.matmul(hidden_states, self.kv_a_proj_with_mqa_ckv)
+        k_pe = torch.matmul(hidden_states, self.kv_a_proj_with_mqa_k_pe)
         k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
 
         q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
