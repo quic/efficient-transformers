@@ -334,7 +334,7 @@ def build_transformer_blocking_config(
     }
 
     num_heads = _require_value(
-        _get_attr_or_key(model_config, ("num_attention_heads", "num_heads", "attention_heads", "n_heads")),
+        _get_attr_or_key(model_config, ("num_key_value_heads", "num_attention_heads", "num_heads", "attention_heads", "n_heads")),
         "num attention heads",
     )
     head_dim = _infer_head_dim(model_config, int(num_heads))

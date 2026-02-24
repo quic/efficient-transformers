@@ -31,7 +31,7 @@ from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
 from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
-from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
+from QEfficient.transformers.blocked_attention_utils import _normalize_int, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -762,6 +762,7 @@ def eager_attention_forward_blockedKV(
     past_seen_tokens = cache_kwargs.get("past_seen_tokens")
     position_ids = cache_kwargs.get("position_ids")
     block_size = -(-past_seen_tokens // num_kv_blocks)
+    kv_block_positions = [(i * past_seen_tokens) // num_kv_blocks for i in range(num_kv_blocks)]
     
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
     sinks = module.sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
@@ -769,8 +770,12 @@ def eager_attention_forward_blockedKV(
     current_position = position_ids.max(dim=-1).values
     
     for j in range(num_kv_blocks):
-        start_index = j * block_size
-        end_index = (j + 1) * block_size
+        start_index = kv_block_positions[j]
+        if j == num_kv_blocks - 1:
+            kv_len_block = past_seen_tokens - start_index
+        else:
+            kv_len_block = kv_block_positions[j + 1] - start_index
+        end_index = start_index + kv_len_block
         
         # Skip Condition: Future blocks
         skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
@@ -778,7 +783,7 @@ def eager_attention_forward_blockedKV(
         # Eager mode Only
         if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
             if skip_future.item():
-                continue
+                break
         # breakpoint()
         K_block, V_block = past_key_value.read_only_blockedKV(
             start_index, end_index, layer_idx, cache_kwargs
@@ -891,6 +896,8 @@ def eager_attention_forward_blockedHeadKV(
     position_ids = cache_kwargs.get("position_ids")
     block_size = -(-past_seen_tokens // num_kv_blocks)
 
+    kv_block_positions = [(i * past_seen_tokens) // num_kv_blocks for i in range(num_kv_blocks)]
+
     if head_block_size <= 0:
         head_block_size = num_heads
     num_head_blocks = math.ceil(num_heads / head_block_size)
@@ -922,8 +929,12 @@ def eager_attention_forward_blockedHeadKV(
         output_blocks = torch.zeros((batch_size, h_end - h_start, seq_len, head_dim), device=query.device, dtype=query.dtype)
 
         for j in range(num_kv_blocks):
-            start_index = j * block_size
-            end_index = (j + 1) * block_size
+            start_index = kv_block_positions[j]
+            if j == num_kv_blocks - 1:
+                kv_len_block = past_seen_tokens - start_index
+            else:
+                kv_len_block = kv_block_positions[j + 1] - start_index
+            end_index = start_index + kv_len_block
             
             # Skip Condition: Future blocks
             skip_future = torch.tensor(start_index, device=query.device) > current_position
@@ -1059,6 +1070,8 @@ def eager_attention_forward_blockedQKV(
     q_block_positions = [(i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
     q_output_blocks = []
 
+    kv_block_positions = [(i * past_seen_tokens) // num_kv_blocks for i in range(num_kv_blocks)]
+
     block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks > 0 else past_seen_tokens
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
 
@@ -1079,11 +1092,15 @@ def eager_attention_forward_blockedQKV(
             device=query.device,
         )
         current_denominator = torch.zeros(batch_size, num_heads, q_len_block, device=query.device)
-        output_blocks = torch.zeros((batch_size, num_heads, q_len_block, DH), device=query.device, dtype=query.dtype)
+        output_blocks = torch.zeros((batch_size, num_heads, q_len_block, head_dim), device=query.device, dtype=query.dtype)
 
         for j in range(num_kv_blocks):
-            start_index = j * block_size
-            end_index = (j + 1) * block_size
+            start_index = kv_block_positions[j]
+            if j == num_kv_blocks - 1:
+                kv_len_block = past_seen_tokens - start_index
+            else:
+                kv_len_block = kv_block_positions[j + 1] - start_index
+            end_index = start_index + kv_len_block
             
             # Skip Condition: Future blocks
             skip_future = torch.tensor(start_index, device=query.device) > current_position
@@ -1220,6 +1237,7 @@ def eager_attention_forward_blockedHQKV(
     num_q_blocks = max(1, _normalize_int(num_q_blocks))
     
     q_block_positions = [(i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
+    kv_block_positions = [(i * past_seen_tokens) // num_kv_blocks for i in range(num_kv_blocks)]
     
     h_output_blocks = []
     h_attn_blocks = []
@@ -1258,8 +1276,12 @@ def eager_attention_forward_blockedHQKV(
             output_blocks = torch.zeros((batch_size, h_end - h_start, q_len_block, DH), device=query.device, dtype=query.dtype)
 
             for j in range(num_kv_blocks):
-                start_index = j * block_size
-                end_index = (j + 1) * block_size
+                start_index = kv_block_positions[j]
+                if j == num_kv_blocks - 1:
+                    kv_len_block = past_seen_tokens - start_index
+                else:
+                    kv_len_block = kv_block_positions[j + 1] - start_index
+                end_index = start_index + kv_len_block
                 
                 # Skip Condition: Future blocks
                 skip_future = torch.tensor(start_index, device=query.device) > current_position
