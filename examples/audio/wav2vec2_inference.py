@@ -34,7 +34,7 @@ def main():
     # Using a standard english dataset
     print("Loading audio sample from dataset...")
     ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
-    data=[ds[i]["audio"]["array"] for i in range(args.batch_size)]
+    data = [ds[i]["audio"]["array"] for i in range(args.batch_size)]
 
     # Load processor
     processor = AutoProcessor.from_pretrained(args.model_name)
@@ -43,10 +43,9 @@ def main():
     model = QEFFAutoModelForCTC.from_pretrained(args.model_name)
 
     ## STEP 3 -- Compile the model
-    model.compile(batch_size=args.batch_size,
-                  num_devices=args.num_devices,
-                  seq_len=args.seq_len,
-                  num_cores=args.num_cores)
+    model.compile(
+        batch_size=args.batch_size, num_devices=args.num_devices, seq_len=args.seq_len, num_cores=args.num_cores
+    )
 
     ## STEP 4 -- Run the model and generate the output
     model_output = model.generate(processor, inputs=data)
