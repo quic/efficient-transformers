@@ -55,13 +55,13 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
     _hf_auto_class = QwenImagePipeline
 
-    def __init__(self, model, **kwargs):
+    def __init__(self, model, enable_first_cache: bool = False, **kwargs):
         "#TODO : update docs"
         self.model = model
         self.kwargs = kwargs
 
         self.text_encoder = model.text_encoder  # TODO: Text encoder on QAIC
-        self.transformer = QEffQwenImageTransformer2DModel(model.transformer)
+        self.transformer = QEffQwenImageTransformer2DModel(model.transformer, enable_first_cache=enable_first_cache)
         self.vae_decoder = QEffVAE(model.vae, "decoder")  # TODO make as vae_decoder
 
         # Store all modules in a dictionary for easy iteration during export/compile
@@ -100,13 +100,21 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         return self._guidance_scale > 1.0 and (self._guidance_scale_2 is None or self._guidance_scale_2 > 1.0)
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
+        enable_first_cache: bool = False,
+        **kwargs,
+    ):
         """
         Instantiate a QEFFQwenImagePipeline from pretrained Diffusers models.
 
         Args:
             pretrained_model_name_or_path (`str` or `os.PathLike`, *optional*):
                 The path to the pretrained model or its name.
+            enable_first_cache (bool): Whether to enable first block cache optimization.
+                When True, blocks[0] is run on CPU and remaining blocks use cached residuals
+                for faster inference with minimal quality loss.
             **kwargs (additional keyword arguments):
                 Additional arguments that can be passed to the underlying `QwenImagePipeline.from_pretrained`
                 method.
@@ -120,6 +128,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         return cls(
             model=model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
+            enable_first_cache=enable_first_cache,
             **kwargs,
         )
 
@@ -275,6 +284,46 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         else:
             compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
 
+    def check_cache_conditions(
+        self,
+        new_first_block_residual: torch.Tensor,
+        prev_first_block_residual: torch.Tensor,
+        cache_threshold: float,
+        cache_warmup_steps: int,
+        current_step: int,
+    ) -> bool:
+        """
+        Compute cache decision based on similarity of first block residuals.
+
+        Cache is used when:
+        1. Not in warmup period (current_step >= cache_warmup_steps)
+        2. Previous residual exists (not first step)
+        3. L1 similarity is below threshold (outputs are similar enough)
+
+        Args:
+            new_first_block_residual: Current step's first block residual (image stream)
+            prev_first_block_residual: Previous step's first block residual (image stream)
+            cache_threshold: Similarity threshold (lower = more aggressive caching)
+            cache_warmup_steps: Number of initial steps to always compute without cache
+            current_step: Current denoising step index
+
+        Returns:
+            bool: True if cache should be used, False otherwise
+        """
+        if current_step < cache_warmup_steps or prev_first_block_residual is None:
+            return False
+
+        diff = (new_first_block_residual - prev_first_block_residual).abs().mean()
+        norm = new_first_block_residual.abs().mean()
+        similarity = diff / (norm + 1e-8)
+
+        is_similar = similarity < cache_threshold
+        print("similarity is", similarity)
+        if is_similar:
+            print(f"Residual similarity {similarity:.4f} is below threshold {cache_threshold}. Using cache.")
+
+        return bool(is_similar)
+
     def __call__(
         self,
         prompt: Union[str, List[str]] = None,
@@ -301,6 +350,8 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         custom_config_path: Optional[str] = None,
         parallel_compile: bool = False,
         use_onnx_subfunctions: bool = False,
+        cache_threshold: Optional[float] = None,
+        cache_warmup_steps: Optional[int] = None,
     ):
         """
         # TODO update docs
@@ -461,6 +512,20 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(str(self.transformer.qpc_path))
 
+        # When first cache is enabled, skip retained state buffers (QAIC manages them internally)
+        cache_enabled = getattr(self.transformer.model, 'enable_first_cache', False)
+        if cache_enabled:
+            self.transformer.qpc_session.skip_buffers(
+                [
+                    x
+                    for x in self.transformer.qpc_session.input_names + self.transformer.qpc_session.output_names
+                    if x.startswith("prev_") or x.endswith("_RetainedState")
+                ]
+            )
+            for x in self.transformer.qpc_session.input_names + self.transformer.qpc_session.output_names:
+                if x.startswith("prev_") or x.endswith("_RetainedState"):
+                    print(f"Skipping buffer {x} for first cache retained state")
+
         # 6. Denoising loop
         self.scheduler.set_begin_index(0)
         transformer_perf = []
@@ -473,41 +538,149 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         img_rotary_emb = torch.cat([qaic_img_freqs_cos, qaic_img_freqs_sin], dim=-1)  # [6032, 128]
         txt_rotary_emb = torch.cat([qaic_txt_freqs_cos, qaic_txt_freqs_sin], dim=-1)  # [126, 128]
 
+        # First cache state tracking (CPU-side)
+        prev_first_block_hidden_residual = None
+
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
 
-                timestep = (t.expand(latents.shape[0]) / 1000).detach().numpy().astype(np.float32)
+                timestep = t.expand(latents.shape[0]).to(latents.dtype)
+                timestep = (timestep/ 1000)
 
-                # Conditional pass
-                transformer_inputs = {
-                    "hidden_states": latents.detach().numpy().astype(np.float32),
-                    "encoder_hidden_states": prompt_embeds.detach().numpy().astype(np.float32),
-                    "img_rotary_emb": img_rotary_emb.detach().numpy().astype(np.float32),
-                    "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
-                    "timestep": timestep,
-                }
-                if guidance is not None:
-                    transformer_inputs["guidance"] = guidance.numpy().astype(np.float32)
+                if cache_enabled:
+                    # ----------------------------------------------------------------
+                    # First cache: run preprocessing + blocks[0] on CPU
+                    # ----------------------------------------------------------------
+                    # Step 1: Run preprocessing on CPU (img_in, txt_norm, txt_in, time_text_embed)
+                    import  ipdb
+                    ipdb.set_trace()
+                    hs_processed = self.transformer.model.img_in(latents)
+                    timestep_for_temb = timestep.to(hs_processed.dtype)
+                    enc_hs_processed = self.transformer.model.txt_norm(prompt_embeds)
+                    enc_hs_processed = self.transformer.model.txt_in(enc_hs_processed)
+
+                    if guidance is not None:
+                        guidance_for_temb = guidance.to(hs_processed.dtype) * 1000
+                        temb_cpu = self.transformer.model.time_text_embed(
+                            timestep_for_temb, guidance_for_temb, hs_processed
+                        )
+                    else:
+                        temb_cpu = self.transformer.model.time_text_embed(timestep_for_temb, hs_processed)
+
+                    # Step 2: Run first transformer block on CPU
+                    # sf_value for block 0 (index < 59) is 32
+                    import QEfficient.diffusers.models.transformers.transformer_qwenimage as _qwen_mod
+                    _qwen_mod.sf_value = 32
+                    
+                    from diffusers import DiffusionPipeline
+                    model_name = "Qwen/Qwen-Image"
+                    pipe = DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch.float32)
+
+                    import ipdb
+                    ipdb.set_trace()
+                    image_rotary_emb = pipe.transformer.pos_embed(img_shapes, txt_seq_lens=[126], )
+                    new_enc_hs, new_hs = pipe.transformer.transformer_blocks[0](
+                        hidden_states=hs_processed,
+                        encoder_hidden_states=enc_hs_processed,
+                        encoder_hidden_states_mask=None,
+                        temb=temb_cpu,
+                        image_rotary_emb=image_rotary_emb,
+                    )
+                    
+                    
+                    new_enc_hs, new_hs = self.transformer.model.transformer_blocks[0](
+                        hidden_states=hs_processed,
+                        encoder_hidden_states=enc_hs_processed,
+                        encoder_hidden_states_mask=prompt_embeds_mask,
+                        temb=temb_cpu,
+                        img_rotary_emb=img_rotary_emb,
+                        txt_rotary_emb=txt_rotary_emb,
+                    )
+
+                    # Step 3: Compute first block residual for cache decision
+                    new_first_block_hidden_residual = new_hs - hs_processed
+
+                    # Step 4: Check cache conditions
+                    use_cache_flag = self.check_cache_conditions(
+                        new_first_block_hidden_residual,
+                        prev_first_block_hidden_residual,
+                        cache_threshold,
+                        cache_warmup_steps,
+                        i,
+                    )
+                    prev_first_block_hidden_residual = new_first_block_hidden_residual.detach()
+
+                    print(f"Step {i}, timestep {t:.1f}: use_cache={use_cache_flag}")
+
+                    # Step 5: Build QAIC inputs with first block outputs
+                    transformer_inputs = {
+                        "hidden_states": new_hs.detach().numpy().astype(np.float32),
+                        "encoder_hidden_states": new_enc_hs.detach().numpy().astype(np.float32),
+                        "encoder_hidden_states_mask": prompt_embeds_mask.detach().numpy().astype(np.int64)
+                        if prompt_embeds_mask is not None
+                        else np.ones((batch_size, prompt_embeds.shape[1]), dtype=np.int64),
+                        "temb": temb_cpu.detach().numpy().astype(np.float32),
+                        "img_rotary_emb": img_rotary_emb.detach().numpy().astype(np.float32),
+                        "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
+                        "use_cache": np.array([use_cache_flag], dtype=np.int64),
+                    }
+                else:
+                    # Standard (no cache): original input preparation
+                    transformer_inputs = {
+                        "hidden_states": latents.detach().numpy().astype(np.float32),
+                        "encoder_hidden_states": prompt_embeds.detach().numpy().astype(np.float32),
+                        "img_rotary_emb": img_rotary_emb.detach().numpy().astype(np.float32),
+                        "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
+                        "timestep": timestep,
+                    }
+                    if guidance is not None:
+                        transformer_inputs["guidance"] = guidance.numpy().astype(np.float32)
 
                 # Run transformer inference and measure time
                 start_transformer_step_time = time.perf_counter()
                 noise_pred = self.transformer.qpc_session.run(transformer_inputs)
                 end_transformer_step_time = time.perf_counter()
                 transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                print(f"DIT step {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
 
                 noise_pred = torch.tensor(noise_pred["output"])
 
                 if do_true_cfg:
                     # Unconditional pass
-                    transformer_inputs_uncond = {
-                        "hidden_states": latents.detach().numpy().astype(np.float32),
-                        "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
-                        "timestep": timestep,
-                    }
-                    if guidance is not None:
-                        transformer_inputs_uncond["guidance"] = guidance.numpy().astype(np.float32)
+                    if cache_enabled:
+                        # For CFG uncond pass with cache: run preprocessing + blocks[0] on CPU
+                        enc_hs_neg_processed = self.transformer.model.txt_norm(negative_prompt_embeds)
+                        enc_hs_neg_processed = self.transformer.model.txt_in(enc_hs_neg_processed)
+                        _qwen_mod.sf_value = 32
+                        new_enc_hs_neg, new_hs_neg = self.transformer.model.transformer_blocks[0](
+                            hidden_states=hs_processed,
+                            encoder_hidden_states=enc_hs_neg_processed,
+                            encoder_hidden_states_mask=negative_prompt_embeds_mask,
+                            temb=temb_cpu,
+                            img_rotary_emb=img_rotary_emb,
+                            txt_rotary_emb=txt_rotary_emb,
+                        )
+                        transformer_inputs_uncond = {
+                            "hidden_states": new_hs_neg.detach().numpy().astype(np.float32),
+                            "encoder_hidden_states": new_enc_hs_neg.detach().numpy().astype(np.float32),
+                            "encoder_hidden_states_mask": negative_prompt_embeds_mask.detach().numpy().astype(np.int64)
+                            if negative_prompt_embeds_mask is not None
+                            else np.ones((batch_size, negative_prompt_embeds.shape[1]), dtype=np.int64),
+                            "temb": temb_cpu.detach().numpy().astype(np.float32),
+                            "img_rotary_emb": img_rotary_emb.detach().numpy().astype(np.float32),
+                            "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
+                            "use_cache": np.array([use_cache_flag], dtype=np.int64),
+                        }
+                    else:
+                        transformer_inputs_uncond = {
+                            "hidden_states": latents.detach().numpy().astype(np.float32),
+                            "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
+                            "timestep": timestep,
+                        }
+                        if guidance is not None:
+                            transformer_inputs_uncond["guidance"] = guidance.numpy().astype(np.float32)
 
                     start_cfg_step_time = time.perf_counter()
                     neg_noise_pred = self.transformer.qpc_session.run(transformer_inputs_uncond)

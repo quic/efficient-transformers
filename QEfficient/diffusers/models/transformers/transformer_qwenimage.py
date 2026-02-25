@@ -204,69 +204,190 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
         height: torch.Tensor = None,
         width: torch.Tensor = None,
         txt_seq_lens: torch.Tensor = None,
+        temb: Optional[torch.Tensor] = None,
         img_shapes: Optional[List[Tuple[int, int, int]]] = None,
         img_rotary_emb: torch.Tensor = None,
         txt_rotary_emb: torch.Tensor = None,
         guidance: torch.Tensor = None,  # TODO: this should probably be removed
         attention_kwargs: Optional[Dict[str, Any]] = None,
+        # First block cache inputs (only used when enable_first_cache=True)
+        prev_remaining_hidden_residual: Optional[torch.Tensor] = None,
+        prev_remaining_encoder_residual: Optional[torch.Tensor] = None,
+        use_cache: Optional[torch.Tensor] = None,
         return_dict: bool = True,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         """
         The [`QwenTransformer2DModel`] forward method.
 
+        When enable_first_cache=True:
+            - hidden_states is already the output of img_in + blocks[0] (computed on CPU)
+            - encoder_hidden_states is already the output of txt_norm + txt_in + blocks[0] (computed on CPU)
+            - temb is pre-computed on CPU and passed in
+            - Runs blocks[1:] with cache logic
+
+        When enable_first_cache=False (standard):
+            - Standard forward pass with all preprocessing inside
+
         Args:
-            hidden_states (`torch.Tensor` of shape `(batch_size, image_sequence_length, in_channels)`):
-                Input `hidden_states`.
-            encoder_hidden_states (`torch.Tensor` of shape `(batch_size, text_sequence_length, joint_attention_dim)`):
-                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
-            encoder_hidden_states_mask (`torch.Tensor` of shape `(batch_size, text_sequence_length)`):
-                Mask of the input conditions.
-            timestep ( `torch.LongTensor`):
-                Used to indicate denoising step.
-            attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
-                tuple.
+            hidden_states: Input hidden states (raw latents when cache disabled,
+                           output of img_in+blocks[0] when cache enabled)
+            encoder_hidden_states: Text embeddings (raw when cache disabled,
+                                   output of txt_norm+txt_in+blocks[0] when cache enabled)
+            encoder_hidden_states_mask: Mask for text embeddings
+            timestep: Denoising timestep
+            frame, height, width: Video/image dimensions
+            txt_seq_lens: Text sequence lengths
+            img_shapes: Image shapes for RoPE computation
+            img_rotary_emb: Image rotary embeddings
+            txt_rotary_emb: Text rotary embeddings
+            guidance: Guidance scale tensor
+            attention_kwargs: Additional attention arguments
+            return_dict: Whether to return dict or tuple
+            prev_remaining_hidden_residual: Cached image-stream residual from previous step
+            prev_remaining_encoder_residual: Cached text-stream residual from previous step
+            use_cache: Flag (0 or 1) to use cached residuals
+            temb: Pre-computed time embedding (passed from CPU when cache enabled)
+        """
+        global sf_value
+        cache_enabled = getattr(self, 'enable_first_cache', False)
+
+        if cache_enabled:
+            # When cache is enabled:
+            # - hidden_states is already output of img_in + blocks[0] (from CPU)
+            # - encoder_hidden_states is already output of txt_norm + txt_in + blocks[0] (from CPU)
+            # - temb is pre-computed on CPU and passed in
+            # Run blocks[1:] with cache logic
+            hidden_states, encoder_hidden_states, remaining_hidden_residual, remaining_encoder_residual = (
+                self._forward_blocks_with_cache(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states_mask=encoder_hidden_states_mask,
+                    temb=temb,
+                    img_rotary_emb=img_rotary_emb,
+                    txt_rotary_emb=txt_rotary_emb,
+                    prev_remaining_hidden_residual=prev_remaining_hidden_residual,
+                    prev_remaining_encoder_residual=prev_remaining_encoder_residual,
+                    use_cache=use_cache,
+                    attention_kwargs=attention_kwargs,
+                )
+            )
+        else:
+            # Standard forward pass (no cache)
+            # Convert scalar tensors to Python integers and create img_shapes list
+            # Standard forward pass (no cache)
+            # Convert scalar tensors to Python integers and create img_shapes list
+            
+            import ipdb
+            ipdb.set_trace()
+            
+            if isinstance(frame, torch.Tensor):
+                frame = frame.item() if frame.numel() == 1 else int(frame[0])
+            if isinstance(height, torch.Tensor):
+                height = height.item() if height.numel() == 1 else int(height[0])
+            if isinstance(width, torch.Tensor):
+                width = width.item() if width.numel() == 1 else int(width[0])
+
+            if not img_shapes:
+                img_shapes = [(frame, height, width)]
+
+            # Convert txt_seq_lens to list if it's a tensor
+            if isinstance(txt_seq_lens, torch.Tensor):
+                txt_seq_lens = txt_seq_lens.tolist()
+
+            hidden_states = self.img_in(hidden_states)
+
+            timestep = timestep.to(hidden_states.dtype)
+            encoder_hidden_states = self.txt_norm(encoder_hidden_states)
+            encoder_hidden_states = self.txt_in(encoder_hidden_states)
+
+            if guidance is not None:
+                guidance = guidance.to(hidden_states.dtype) * 1000
+            temb = (
+                self.time_text_embed(timestep, hidden_states)
+                if guidance is None
+                else self.time_text_embed(timestep, guidance, hidden_states)
+            )
+
+            for index_block, block in enumerate(self.transformer_blocks):
+                if index_block < 59:
+                    sf_value = 32
+                else:
+                    sf_value = 256
+
+                encoder_hidden_states, hidden_states = block(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states_mask=encoder_hidden_states_mask,
+                    temb=temb,
+                    img_rotary_emb=img_rotary_emb,
+                    txt_rotary_emb=txt_rotary_emb,
+                    joint_attention_kwargs=attention_kwargs,
+                )
+
+        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)
+        hidden_states = hidden_states / (sf_value * sf_value * 4)
+
+        # Use only the image part (hidden_states) from the dual-stream blocks
+        hidden_states = self.norm_out(hidden_states, temb)
+        output = self.proj_out(hidden_states)
+
+        if cache_enabled:
+            # Return output + residuals for retained state
+            return (output, remaining_hidden_residual, remaining_encoder_residual)
+
+        if not return_dict:
+            return (output,)
+
+        return Transformer2DModelOutput(sample=output)
+
+    def _forward_blocks_with_cache(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        encoder_hidden_states_mask: torch.Tensor,
+        temb: torch.Tensor,
+        img_rotary_emb: torch.Tensor,
+        txt_rotary_emb: torch.Tensor,
+        prev_remaining_hidden_residual: torch.Tensor,
+        prev_remaining_encoder_residual: torch.Tensor,
+        use_cache: torch.Tensor,
+        attention_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Core first-block cache logic — AOT compilable.
+
+        Executes transformer blocks[1:] (block[0] was already run on CPU).
+        Conditionally uses cached residuals based on use_cache flag.
+
+        Single torch.where pattern (matches WAN implementation):
+          - True  branch (cache hit):  prev_remaining_*_residual  — cheap, always available
+          - False branch (cache miss): new_remaining_*_residual   — expensive, compiler skips when use_cache=True
+          - final_output = original + final_residual
+
+        Args:
+            hidden_states: Output of blocks[0] image stream (from CPU)
+            encoder_hidden_states: Output of blocks[0] text stream (from CPU)
+            encoder_hidden_states_mask: Attention mask for text
+            temb: Pre-computed time embedding
+            img_rotary_emb: Image rotary embeddings
+            txt_rotary_emb: Text rotary embeddings
+            prev_remaining_hidden_residual: Cached image-stream residual from previous step
+            prev_remaining_encoder_residual: Cached text-stream residual from previous step
+            use_cache: Scalar tensor (0 or 1) — whether to use cached residuals
+            attention_kwargs: Additional attention arguments
 
         Returns:
-            If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
-            `tuple` where the first element is the sample tensor.
+            Tuple of (final_hidden, final_encoder, final_hidden_residual, final_encoder_residual)
         """
-        # Convert scalar tensors to Python integers and create img_shapes list
         global sf_value
-        if isinstance(frame, torch.Tensor):
-            frame = frame.item() if frame.numel() == 1 else int(frame[0])
-        if isinstance(height, torch.Tensor):
-            height = height.item() if height.numel() == 1 else int(height[0])
-        if isinstance(width, torch.Tensor):
-            width = width.item() if width.numel() == 1 else int(width[0])
+        original_hidden_states = hidden_states
+        original_encoder_hidden_states = encoder_hidden_states
 
-        if not img_shapes:
-            img_shapes = [(frame, height, width)]
-
-        # Convert txt_seq_lens to list if it's a tensor
-        if isinstance(txt_seq_lens, torch.Tensor):
-            txt_seq_lens = txt_seq_lens.tolist()
-
-        hidden_states = self.img_in(hidden_states)
-
-        timestep = timestep.to(hidden_states.dtype)
-        encoder_hidden_states = self.txt_norm(encoder_hidden_states)
-        encoder_hidden_states = self.txt_in(encoder_hidden_states)
-
-        if guidance is not None:
-            guidance = guidance.to(hidden_states.dtype) * 1000
-        temb = (
-            self.time_text_embed(timestep, hidden_states)
-            if guidance is None
-            else self.time_text_embed(timestep, guidance, hidden_states)
-        )
-
-        for index_block, block in enumerate(self.transformer_blocks):
-            if index_block < 59:
+        # Run blocks[1:] (block[0] was already run on CPU in the pipeline)
+        # Note: block index in the full model starts at 1, so sf_value threshold adjusts accordingly
+        for index_block, block in enumerate(self.transformer_blocks[1:]):
+            # Adjust sf_value: block 0 is skipped, so actual model block index = index_block + 1
+            if (index_block + 1) < 59:
                 sf_value = 32
             else:
                 sf_value = 256
@@ -281,22 +402,29 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
                 joint_attention_kwargs=attention_kwargs,
             )
 
-        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)
-        hidden_states = hidden_states / (sf_value * sf_value * 4)
+        # Compute new residuals for both streams
+        new_hidden_residual = hidden_states - original_hidden_states
+        new_encoder_residual = encoder_hidden_states - original_encoder_hidden_states
 
-        # if encoder_hidden_states.dtype == torch.float16:
-        #     encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
-        # if hidden_states.dtype == torch.float16:
-        #     hidden_states = hidden_states.clip(-65504, 65504)
+        # AOT-compilable cache selection via torch.where
+        # When use_cache=True: use prev (cheap, cached)
+        # When use_cache=False: use new (expensive, freshly computed)
+        final_hidden_residual = torch.where(
+            use_cache.bool(),
+            prev_remaining_hidden_residual,
+            new_hidden_residual,
+        )
+        final_encoder_residual = torch.where(
+            use_cache.bool(),
+            prev_remaining_encoder_residual,
+            new_encoder_residual,
+        )
 
-        # Use only the image part (hidden_states) from the dual-stream blocks
-        hidden_states = self.norm_out(hidden_states, temb)
-        output = self.proj_out(hidden_states)
+        # Reconstruct final outputs from residuals
+        final_hidden = original_hidden_states + final_hidden_residual
+        final_encoder = original_encoder_hidden_states + final_encoder_residual
 
-        if not return_dict:
-            return (output,)
-
-        return Transformer2DModelOutput(sample=output)
+        return final_hidden, final_encoder, final_hidden_residual, final_encoder_residual
 
 
 class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):

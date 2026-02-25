@@ -688,13 +688,43 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
     This class extends QEFFBaseModel to handle QwenImage Transformer2D models with specific transformations and optimizations
     for efficient inference on Qualcomm AI hardware. It is designed for the QwenImage architecture that uses
     transformer-based diffusion models with unique latent packing and attention mechanisms.
+
+    When enable_first_cache=True, the first transformer block is run on CPU (in the pipeline) and the
+    remaining blocks are run on QAIC with cached residuals for both image and text streams.
     """
 
-    def __init__(self, model: nn.modules):
+    def __init__(self, model: nn.modules, enable_first_cache: bool = False):
+        """
+        Initialize the QwenImage transformer wrapper.
+
+        Args:
+            model (nn.Module): The QwenImage transformer model to wrap
+            enable_first_cache (bool): Whether to enable first block cache optimization.
+                When True, blocks[0] is run on CPU and remaining blocks use cached residuals.
+        """
         super().__init__(model)
         self.model = model
+        # Set enable_first_cache on the underlying model so forward() can check it
+        self.model.enable_first_cache = enable_first_cache
 
     def get_onnx_params(self):
+        """
+        Generate ONNX export configuration for the QwenImage transformer.
+
+        When enable_first_cache=True:
+            - hidden_states input is the output of img_in + blocks[0] (pre-processed on CPU)
+            - encoder_hidden_states input is the output of txt_norm + txt_in + blocks[0] (pre-processed on CPU)
+            - temb is pre-computed on CPU and passed as input
+            - Cache tensors (prev_remaining_hidden_residual, prev_remaining_encoder_residual) are added
+            - use_cache flag is added
+            - Output names include _RetainedState suffix for cache tensors
+
+        Returns:
+            Tuple containing:
+                - example_inputs (Dict): Sample inputs for ONNX export
+                - dynamic_axes (Dict): Specification of dynamic dimensions
+                - output_names (List[str]): Names of model outputs
+        """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
 
         # For testing purpose I have set this to constant values from the original models
@@ -703,28 +733,87 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         hidden_dim = 64
         encoder_hidden_dim = 3584
         rot_dim = 128
-        example_inputs = {
-            "hidden_states": torch.randn(bs, latent_seq_len, hidden_dim, dtype=torch.float32),
-            "encoder_hidden_states": torch.randn(bs, text_seq_len, encoder_hidden_dim, dtype=torch.float32),
-            "encoder_hidden_states_mask": torch.ones(bs, text_seq_len, dtype=torch.int64),
-            "timestep": torch.tensor([1000.0], dtype=torch.float32),
-            "frame": torch.tensor([1], dtype=torch.int64),
-            "height": torch.tensor([58], dtype=torch.int64),
-            "width": torch.tensor([104], dtype=torch.int64),
-            "txt_seq_lens": torch.tensor([126], dtype=torch.int64),
-            "img_rotary_emb": torch.randn(latent_seq_len, rot_dim, dtype=torch.float32),
-            "txt_rotary_emb": torch.randn(text_seq_len, rot_dim, dtype=torch.float32),
-        }
+        # Hidden dimension of transformer blocks (after img_in projection).
+        # Derived from img_norm1's normalized_shape, which is the actual hidden dim used in blocks.
+        # Note: config.hidden_size may differ (e.g. 3584 for text encoder) from the transformer block dim (3072).
+        transformer_hidden_dim = self.model.transformer_blocks[0].img_norm1.normalized_shape[0]
 
-        output_names = ["output"]
+        # temb dimension is the input size of img_mod's linear layer (index 1, after SiLU at index 0),
+        # which is different from the transformer hidden_size
+        temb_dim = self.model.transformer_blocks[0].img_mod[1].weight.shape[1]
 
-        dynamic_axes = {
-            "hidden_states": {0: "batch_size", 1: "latent_seq_len"},
-            "encoder_hidden_states": {0: "batch_size", 1: "text_seq_len"},
-            "encoder_hidden_states_mask": {0: "batch_size", 1: "text_seq_len"},
-            "img_rotary_emb": {0: "latent_seq_len"},
-            "txt_rotary_emb": {0: "text_seq_len"},
-        }
+        cache_enabled = getattr(self.model, 'enable_first_cache', False)
+
+        if cache_enabled:
+            # When cache is enabled, hidden_states is already processed by img_in + blocks[0]
+            # So its shape is [bs, latent_seq_len, transformer_hidden_dim]
+            # encoder_hidden_states is already processed by txt_norm + txt_in + blocks[0]
+            # So its shape is [bs, text_seq_len, transformer_hidden_dim]
+            # temb is pre-computed on CPU and passed as input
+            example_inputs = {
+                # Output of img_in + blocks[0] image stream (from CPU)
+                "hidden_states": torch.randn(bs, latent_seq_len, transformer_hidden_dim, dtype=torch.float32),
+                # Output of txt_norm + txt_in + blocks[0] text stream (from CPU)
+                "encoder_hidden_states": torch.randn(bs, text_seq_len, transformer_hidden_dim, dtype=torch.float32),
+                "encoder_hidden_states_mask": torch.ones(bs, text_seq_len, dtype=torch.int64),
+                # Pre-computed time embedding (from CPU)
+                "temb": torch.randn(bs, temb_dim, dtype=torch.float32),
+                "img_rotary_emb": torch.randn(latent_seq_len, rot_dim, dtype=torch.float32),
+                "txt_rotary_emb": torch.randn(text_seq_len, rot_dim, dtype=torch.float32),
+                # Cache inputs: residuals from previous denoising step
+                "prev_remaining_hidden_residual": torch.randn(
+                    bs, latent_seq_len, transformer_hidden_dim, dtype=torch.float32
+                ),
+                "prev_remaining_encoder_residual": torch.randn(
+                    bs, text_seq_len, transformer_hidden_dim, dtype=torch.float32
+                ),
+                # Flag: False = compute new residuals, True = use cached residuals
+                # Must be Bool so use_cache.bool() in forward() is a no-op,
+                # preventing ONNX tracing from creating an extra Bool input node
+                # that would misalign input_names with the graph inputs.
+                "use_cache": torch.tensor(1, dtype=torch.int64),
+            }
+
+            # Output names: main output + retained state for both cache tensors
+            output_names = [
+                "output",
+                "prev_remaining_hidden_residual_RetainedState",
+                "prev_remaining_encoder_residual_RetainedState",
+            ]
+
+            dynamic_axes = {
+                "hidden_states": {0: "batch_size", 1: "latent_seq_len"},
+                "encoder_hidden_states": {0: "batch_size", 1: "text_seq_len"},
+                "encoder_hidden_states_mask": {0: "batch_size", 1: "text_seq_len"},
+                "img_rotary_emb": {0: "latent_seq_len"},
+                "txt_rotary_emb": {0: "text_seq_len"},
+                "prev_remaining_hidden_residual": {0: "batch_size", 1: "latent_seq_len"},
+                "prev_remaining_encoder_residual": {0: "batch_size", 1: "text_seq_len"},
+            }
+        else:
+            # Standard (no cache): original input signature
+            example_inputs = {
+                "hidden_states": torch.randn(bs, latent_seq_len, hidden_dim, dtype=torch.float32),
+                "encoder_hidden_states": torch.randn(bs, text_seq_len, encoder_hidden_dim, dtype=torch.float32),
+                "encoder_hidden_states_mask": torch.ones(bs, text_seq_len, dtype=torch.int64),
+                "timestep": torch.tensor([1000.0], dtype=torch.float32),
+                "frame": torch.tensor([1], dtype=torch.int64),
+                "height": torch.tensor([58], dtype=torch.int64),
+                "width": torch.tensor([104], dtype=torch.int64),
+                "txt_seq_lens": torch.tensor([126], dtype=torch.int64),
+                "img_rotary_emb": torch.randn(latent_seq_len, rot_dim, dtype=torch.float32),
+                "txt_rotary_emb": torch.randn(text_seq_len, rot_dim, dtype=torch.float32),
+            }
+
+            output_names = ["output"]
+
+            dynamic_axes = {
+                "hidden_states": {0: "batch_size", 1: "latent_seq_len"},
+                "encoder_hidden_states": {0: "batch_size", 1: "text_seq_len"},
+                "encoder_hidden_states_mask": {0: "batch_size", 1: "text_seq_len"},
+                "img_rotary_emb": {0: "latent_seq_len"},
+                "txt_rotary_emb": {0: "text_seq_len"},
+            }
 
         return example_inputs, dynamic_axes, output_names
 
@@ -758,11 +847,32 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         """
         Compile the ONNX model for Qualcomm AI hardware.
 
+        When enable_first_cache=True, adds custom_io for cache tensors (float16)
+        and enables retained_state for persistent cache across inference calls.
+
         Args:
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
-        self._compile(specializations=specializations, **compiler_options)
+        cache_enabled = getattr(self.model, 'enable_first_cache', False)
+
+        if cache_enabled:
+            # Define custom IO for cache tensors to ensure correct dtype handling during compilation
+            kv_cache_dtype = "float16"
+            custom_io = {
+                "prev_remaining_hidden_residual": kv_cache_dtype,
+                "prev_remaining_encoder_residual": kv_cache_dtype,
+                "prev_remaining_hidden_residual_RetainedState": kv_cache_dtype,
+                "prev_remaining_encoder_residual_RetainedState": kv_cache_dtype,
+            }
+            self._compile(
+                specializations=specializations,
+                custom_io=custom_io,
+                retained_state=True,
+                **compiler_options,
+            )
+        else:
+            self._compile(specializations=specializations, **compiler_options)
 
     @property
     def get_model_config(self) -> Dict:

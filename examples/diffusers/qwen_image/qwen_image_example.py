@@ -16,7 +16,7 @@ import torch
 from QEfficient import QEFFQwenImagePipeline
 
 # Initialize the Qwen Image pipeline from pretrained weights
-pipe = QEFFQwenImagePipeline.from_pretrained("Qwen/Qwen-Image")
+pipe = QEFFQwenImagePipeline.from_pretrained("Qwen/Qwen-Image", enable_first_cache= True)
 
 positive_magic = {
     "en": ", Ultra HD, 4K, cinematic composition.",  # for english prompt
@@ -55,6 +55,8 @@ output = pipe(
     true_cfg_scale=4.0,
     generator=torch.Generator(device="cpu").manual_seed(42),
     parallel_compile=True,
+    cache_threshold=0.1,
+    cache_warmup_steps=2,
 )
 
 # Extract the generated image from the output
