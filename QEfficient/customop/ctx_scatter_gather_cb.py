@@ -126,6 +126,7 @@ class CtxGatherFuncCB(torch.autograd.Function):
     def forward(data: torch.Tensor, batch_index: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: int):
         batch_indices = batch_index.view(-1, 1, 1)
         head_indices = torch.arange(data.shape[1]).view(1, -1, 1)
+        ctx_indices = torch.where(ctx_indices >= data.shape[2], 0, ctx_indices)
         return data[batch_indices, head_indices, ctx_indices]
 
     @staticmethod

@@ -17,6 +17,9 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.deberta_v2.modeling_deberta_v2 import (
+    DisentangledSelfAttention,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconDecoderLayer,
@@ -197,6 +200,10 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
+from transformers.models.t5.modeling_t5 import (
+    T5Attention,
+    T5LayerNorm,
+)
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
     WhisperDecoder,
@@ -215,6 +222,9 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
+    QEffDisentangledSelfAttention,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -238,6 +248,7 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3Attention,
     QEffGemma3CustomRMSNormAIC,
     QEffGemma3DecoderLayer,
+    QEffGemma3DecoderWrapper,
     QEffGemma3ForCausalLMModel,
     QEffGemma3ForConditionalGeneration,
     QEffGemma3TextModel,
@@ -261,6 +272,11 @@ from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssForCausalLM,
     QEffGptOssMLP,
     QEffGptOssModel,
+    QEffPrefillOnlyChunkedGptOssAttention,
+    QEffPrefillOnlyChunkedGptOssMLP,
+    QEffPrefillOnlyGptOssAttention,
+    QEffPrefillOnlyGptOssMLP,
+    QEffPrefillOnlyGptOssModel,
 )
 from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJAttention,
@@ -292,6 +308,7 @@ from QEfficient.transformers.models.grok_1.modeling_grok1 import (
     QEffGrok1MultiHeadAttention,
 )
 from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternDecoderWrapper,
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
 )
@@ -303,6 +320,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaRotaryEmbedding,
 )
 from QEfficient.transformers.models.llama4.modeling_llama4 import (
+    QEffLlama4DecoderWrapper,
     QEffLlama4ForCausalLM,
     QEffLlama4ForConditionalGeneration,
     QEffLlama4Router,
@@ -315,9 +333,11 @@ from QEfficient.transformers.models.llama4.modeling_llama4 import (
     QEffLlama4VisionModel,
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
+    QEFFLlavaDecoderWrapper,
     QEffLlavaForConditionalGeneration,
 )
 from QEfficient.transformers.models.llava_next.modeling_llava_next import (
+    QEffLlavaNextDecoderWrapper,
     QEffLlavaNextForConditionalGeneration,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
@@ -395,6 +415,7 @@ from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     QEffQwen2_5_VLModel,
     QEffQwen2_5_VLTextModel,
     QEffQwen2_5_VLVisionAttention,
+    QEffQwen_2_5_vl_DecoderWrapper,
     QEffQwen_2_5_vl_ForConditionalGeneration,
 )
 from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
@@ -416,6 +437,10 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
+)
+from QEfficient.transformers.models.t5.modeling_t5 import (
+    QEffT5Attention,
+    QEffT5LayerNorm,
 )
 from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperAttention,
@@ -634,6 +659,39 @@ class KVCacheTransform(ModuleMappingTransform):
         return model, transformed
 
 
+class PrefillOnlyTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
+        QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+    }
+
+
+class PrefillOnlyChunkedTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+    }
+
+
+class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
+    _module_mapping = {
+        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+        QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+        QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
+        QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+    }
+
+
+class RevertPrefillOnlyTransform(ModuleMappingTransform):
+    _module_mapping = {
+        **{v: k for k, v in PrefillOnlyTransform._module_mapping.items()},
+        **{v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()},
+    }
+
+
 class SpDTransform:
     """
     Apply generic QEffForCausalLM forward pass to extract `num_speculative_tokens+1` hidden states before computing logits during decode phase and extract last predicted token during prefill.
@@ -707,14 +765,20 @@ class SamplerTransform:
     _module_mapping = {
         QEffFalconForCausalLM,
         QEffGemmaForCausalLM,
+        QEffGemma3DecoderWrapper,
         QEffGPT2LMHeadModel,
         QEffGPTJForCausalLM,
         QEffGraniteForCausalLM,
         QEffGraniteMoeForCausalLM,
+        QEffInternDecoderWrapper,
         QEffLlamaForCausalLM,
+        QEffLlama4DecoderWrapper,
+        QEFFLlavaDecoderWrapper,
+        QEffLlavaNextDecoderWrapper,
         QEffMptForCausalLM,
         QEffPhi3ForCausalLM,
         QEffQwen2ForCausalLM,
+        QEffQwen_2_5_vl_DecoderWrapper,
     }
 
     @classmethod
@@ -808,6 +872,22 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
 
 
+class T5ModelTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        T5Attention: QEffT5Attention,
+        T5LayerNorm: QEffT5LayerNorm,
+    }
+
+
+class TextClassificationTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        # DebertaV2
+        DisentangledSelfAttention: QEffDisentangledSelfAttention,
+    }
+
+
 class PoolingTransform:
     """
     Apply a pooling transformation to the model. This transformation appends a pooling layer to the model, allowing for the reduction of spatial dimensions in the output.
@@ -825,32 +905,6 @@ class PoolingTransform:
         model = PooledModel(model, pooling_method)
         warnings.warn("Pooling is applied to the model.")
         return model, transformed
-
-
-def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
-    """
-    Dynamically determine which DecoderLayer classes should be exported as functions
-    based on the model's architecture using the existing KVCacheTransform mapping.
-    """
-    # Define patterns that identify decoder layer classes
-    DECODER_LAYER_PATTERNS = ["DecoderLayer", "Block", "Layer"]
-
-    # Get all QEff classes that are decoder layers from the existing mapping
-    decoder_layer_classes = set()
-
-    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
-        # Check if the QEff class name contains decoder layer patterns
-        qeff_class_name = qeff_class.__name__
-        if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
-            decoder_layer_classes.add(qeff_class)
-
-    # Filter to only include classes that are actually used in the current model
-    model_decoder_classes = set()
-    for module in model.modules():
-        if module.__class__ in decoder_layer_classes:
-            model_decoder_classes.add(module.__class__)
-
-    return model_decoder_classes
 
 
 class BlockedKVAttentionTransform:

@@ -21,6 +21,7 @@ def main(args, **kwargs):
     include_sampler = None
     return_pdfs = None
     max_top_k_ids = None
+    include_guided_decoding = None
     sampling_params = None
     bs = args.full_batch_size if args.full_batch_size is not None else args.batch_size
     if args.override_qaic_config is not None:
@@ -28,6 +29,8 @@ def main(args, **kwargs):
         if include_sampler is not None:
             return_pdfs = args.override_qaic_config.get("aic_return_pdfs", None) == "true"
             max_top_k_ids = int(args.override_qaic_config.get("max_top_k_ids", 512))
+            np.random.seed(int(args.random_number))
+            include_guided_decoding = args.override_qaic_config.get("aic_include_guided_decoding", None) == "true"
             sampling_params = {
                 "repetition_penalties": np.array(args.repetition_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
                 "presence_penalties": np.array(args.presence_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
@@ -36,7 +39,9 @@ def main(args, **kwargs):
                 "top_ks": np.array(args.top_k, dtype=np.int32).repeat(bs).reshape(-1, 1),
                 "top_ps": np.array(args.top_p, dtype=np.float32).repeat(bs).reshape(-1, 1),
                 "min_ps": np.array(args.min_p, dtype=np.float32).repeat(bs).reshape(-1, 1),
-                "random_numbers": np.array(args.random_number, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                "random_numbers": np.tile(np.random.uniform(low=0.0, high=1.0, size=max_top_k_ids), (bs, 1)).astype(
+                    np.float32
+                ),
             }
     qaic_config = {
         k: v
@@ -44,13 +49,12 @@ def main(args, **kwargs):
             "include_sampler": include_sampler,
             "return_pdfs": return_pdfs,
             "max_top_k_ids": max_top_k_ids,
+            "include_guided_decoding": include_guided_decoding,
         }.items()
         if v is not None
     }
     print("qaic_config:")
     pprint(qaic_config)
-    print("sampling_params:")
-    pprint(sampling_params)
 
     # Load model with On Device Sampler enabled
     qeff_model = AutoModelForCausalLM.from_pretrained(
@@ -59,6 +63,19 @@ def main(args, **kwargs):
         qaic_config=qaic_config,
     )
     print(f"{args.model_name} optimized for AI 100 \n", qeff_model)
+
+    if include_guided_decoding:
+        # Ideally this should come from a logits processor like xgrammar, but for the sake of the
+        # example, we generate a random bitmask
+        sampling_params.update(
+            {
+                "token_bitmasks": np.tile(
+                    np.random.choice([True, False], size=(qeff_model.model.config.vocab_size,)), (bs, 1)
+                )
+            }
+        )
+    print("sampling_params:")
+    pprint(sampling_params)
 
     # Compile the model for inference
     generated_qpc_path = qeff_model.compile(
@@ -88,6 +105,7 @@ def main(args, **kwargs):
         generation_len=args.generation_len,
         include_sampler=include_sampler,
         return_pdfs=return_pdfs,
+        include_guided_decoding=include_guided_decoding,
         sampling_params=sampling_params,
     )
 
@@ -106,14 +124,14 @@ if __name__ == "__main__":
             --num-cores 16 \
             --mxint8-kv-cache \
             --mxfp6-matmul \
-            --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512" \
+            --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512 aic_include_guided_decoding:false" \
             --repetition-penalty 1.9 \
             --presence-penalty 0.8 \
             --temperature 0.67 \
-            --top-k 54720 \
+            --top-k 54 \
             --top-p 0.89 \
             --min-p 0.6 \
-            --random-number 0.26
+            --random-number 26
 
     2. For non-continuous batching:
         python3.10 examples/on_device_sampling.py \
@@ -126,14 +144,34 @@ if __name__ == "__main__":
             --num-cores 16 \
             --mxint8-kv-cache \
             --mxfp6-matmul \
-            --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512" \
+            --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512 aic_include_guided_decoding:false" \
             --repetition-penalty 1.9 \
             --presence-penalty 0.8 \
             --temperature 0.67 \
-            --top-k 54720 \
+            --top-k 54 \
             --top-p 0.89 \
             --min-p 0.6 \
-            --random-number 0.26
+            --random-number 26
+
+    3. With guided decoding:
+        python3.10 examples/on_device_sampling.py \
+            --model-name 'meta-llama/Llama-3.1-8B' \
+            --prompt-len 128 \
+            --ctx-len 256 \
+            --generation-len 20 \
+            --full-batch-size 2 \
+            --device-group [0,1,2,3] \
+            --num-cores 16 \
+            --mxint8-kv-cache \
+            --mxfp6-matmul \
+            --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512 aic_include_guided_decoding:true" \
+            --repetition-penalty 1.9 \
+            --presence-penalty 0.8 \
+            --temperature 0.67 \
+            --top-k 54 \
+            --top-p 0.89 \
+            --min-p 0.6 \
+            --random-number 26
     """
 
     parser = argparse.ArgumentParser(description="Run QEfficient model with On Device Sampling")

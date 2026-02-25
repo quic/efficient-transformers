@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 
-from typing import List, Optional
+from typing import List, Optional, Type
 
 import numpy as np
 import torch
@@ -29,6 +29,15 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.model.vision_model = self.model.vision_tower
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
 
     def forward(self, pixel_values, image_sizes):
         if pixel_values.dim() == constants.GRANITEVISION_PIXEL_VALUE_DIM:
@@ -127,6 +136,15 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
         self.config = self.model.config
         self.language_model = self.model.language_model
         self.lm_head = self.model.lm_head
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.language_model.layers[0].__class__}
 
     def forward(
         self,
@@ -241,7 +259,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, constants.GRANITEVISION_CTX_LEN - 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(BS).view(BS, 1)

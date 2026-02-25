@@ -24,6 +24,15 @@ ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
 
+NPI_MAPPING = {
+    "google/gemma-3-4b-it": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
+    ),
+    "google/gemma-3-27b-it": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_27b.yaml"
+    ),
+}
+
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
@@ -88,7 +97,7 @@ FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
 SIZE_THRESHOLD_DEFAULT = 1024
 
 
-COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw"]
+COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 DEFAULT_AIC_HW_VERSION = "ai100"
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
@@ -144,6 +153,43 @@ MISTRAL3_IMAGE_WIDTH = 1540
 # Molmo Constants
 MOLMO_IMAGE_HEIGHT = 536
 MOLMO_IMAGE_WIDTH = 354
+# Flux Transformer Constants
+FLUX_ONNX_EXPORT_SEQ_LENGTH = 256
+FLUX_ONNX_EXPORT_COMPRESSED_LATENT_DIM = 4096
+FLUX_ADALN_HIDDEN_DIM = 3072
+FLUX_ADALN_DUAL_BLOCK_CHUNKS = 12  # 6 chunks for norm1 + 6 chunks for norm1_context
+FLUX_ADALN_SINGLE_BLOCK_CHUNKS = 3
+FLUX_ADALN_OUTPUT_DIM = 6144  # 2 * FLUX_ADALN_HIDDEN_DIM
+
+# Wan Transformer Constants
+WAN_TEXT_EMBED_DIM = 5120
+WAN_PROJECTION_DIM = 6
+WAN_ONNX_EXPORT_BATCH_SIZE = 1
+WAN_ONNX_EXPORT_FRAMES = 81
+WAN_ONNX_EXPORT_LATENT_FRAMES = 21
+WAN_ONNX_EXPORT_SEQ_LEN = 512
+WAN_ONNX_EXPORT_ROTARY_DIM = 128
+WAN_DIT_OUT_CHANNELS = 64
+# Wan dims for 180p
+WAN_ONNX_EXPORT_CL_180P = 5040
+WAN_ONNX_EXPORT_LATENT_HEIGHT_180P = 24
+WAN_ONNX_EXPORT_LATENT_WIDTH_180P = 40
+WAN_ONNX_EXPORT_HEIGHT_180P = 192
+WAN_ONNX_EXPORT_WIDTH_180P = 320
+
+# For the purpose of automatic CCL lists generation, to limit the number of elements in CCL list, the starting point will be calculated based on context length
+CCL_START_MAP = {
+    32768: (4096, 4000),
+    65536: (8192, 8000),
+    float("inf"): (16384, 16000),
+}
+# Limitation in the maximum number of elements in comp_ctx_lengths_decode and comp_ctx_lengths_prefill lists during automatic lists generation process.
+CCL_MAX_ELEMENTS_LISTS = 5
+CCL_START_CTX_LEN = 4096
+CCL_MIN_CTX_LEN = 1024
+
+# used for gpt-oss prefill-only model Q-blocking
+GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256
 
 
 class Constants:

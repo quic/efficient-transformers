@@ -15,13 +15,23 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 model_id = "allenai/Molmo-7B-D-0924"
 config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-
+# For Testing Purpose Only
 # config.num_hidden_layers = 2
+
+## Activate Compute-Context-Length (CCL) feature by setting ccl_enabled=True when loading the model with from_pretrained().
+## Use the optional comp_ctx_lengths_prefill and comp_ctx_lengths_decode to provide two lists of context lengths for the prefilling and decoding processes. If both are None, the lists will be generated automatically based on the context length.
+##   - The first list, comp_ctx_lengths_prefill, defines the compute-context-length values for the prefilling process.
+##           -- The process starts with the first value in the list and gradually increases the context length based on the position_id of the current prompt chunk.
+##   - The second list, comp_ctx_lengths_decode, defines the compute-context-length values for the decoding process.
+##           -- During decoding, the model selects an appropriate context length from the list based on the input prompt length and cache index.
+##           -- It starts from the correct value in the list and increases the context length dynamically when the generated token's cache index exceeds the current CCL value.
 
 # load the model
 ctx_len = 8192
-comp_ctx_lengths_prefill = [3072]
-comp_ctx_lengths_decode = [4096, 8192]
+ccl_enabled = True
+# Two optional lists, comp_ctx_lengths_prefill and comp_ctx_lengths_decode, define CCL values for prefilling and decoding.
+comp_ctx_lengths_prefill = [3072]  # None #
+comp_ctx_lengths_decode = [4096, 8192]  # None #
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_id,
@@ -29,9 +39,7 @@ qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     trust_remote_code=True,
     config=config,
     qaic_config={
-        "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
-        "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
-        "ctx_len": ctx_len,
+        "ccl_enabled": ccl_enabled,
     },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
@@ -51,6 +59,8 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     inputs = processor.process(text="Tell me about yourself")
@@ -74,6 +84,8 @@ else:
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     ### IMAGE + TEXT ###

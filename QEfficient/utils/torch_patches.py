@@ -37,9 +37,12 @@ def _setup_trace_module_map_patched(
             if hasattr(module, attr_name):
                 onnx_attrs = getattr(module, attr_name)
                 delattr(module, attr_name)
-            # FIX: use empty dict to avoid type mismatch
-            onnx_attrs = {}
-            _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
+            try:
+                onnx_attrs = {}  # HACK: to reduce export time # TODO: study behaviour across models
+                _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
+            except Exception:
+                # Silently skip: scope-attribute tracking is best-effort and not required for export.
+                pass
 
         for m in model.modules():
             m.register_forward_hook(_track_module_attributes_forward_hook)

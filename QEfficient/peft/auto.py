@@ -253,7 +253,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)
         return obj
 
-    def export(self, export_dir: Optional[str] = None, use_onnx_subfunctions: bool = False) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model with the active adapter to ONNX format.
 
@@ -289,12 +289,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         return self._export(
             example_inputs,
-            output_names,
-            dynamic_axes,
-            export_kwargs={"do_constant_folding": False},  # To avoid merging adapter weights with base weights
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            do_constant_folding=False,  # To avoid merging adapter weights with base weights
             onnx_transform_kwargs={"adapter_name": self.model.active_adapter},
             export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            **kwargs,
         )
 
     def compile(
@@ -330,7 +330,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             mxint8_kv_cache (bool, optional): Use MXINT8 compression for KV cache. Default is False.
             **compiler_options: Additional compiler options for QAIC.
 
-                **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+                **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
 
                 - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
                 - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.

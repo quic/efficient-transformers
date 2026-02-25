@@ -30,6 +30,7 @@ def run_model(
     kv_offload=True,
     prefill_seq_len=32,
     ctx_len=8192,
+    ccl_enabled=False,
     comp_ctx_lengths_prefill=None,
     comp_ctx_lengths_decode=None,
     generation_len=128,
@@ -57,10 +58,6 @@ def run_model(
     """
     print(f"Loading model: {model_name}")
     print(f"KV offload (Dual QPC mode): {kv_offload}")
-    print("CCL Configuration:")
-    print(f"  - Prefill context lengths: {comp_ctx_lengths_prefill}")
-    print(f"  - Decode context lengths: {comp_ctx_lengths_decode}")
-    print(f"  - Max context length: {ctx_len}")
 
     ## STEP 1: Load the Processor and Model
 
@@ -77,9 +74,7 @@ def run_model(
         attn_implementation="eager",
         kv_offload=kv_offload,
         qaic_config={
-            "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
-            "ctx_len": ctx_len,
+            "ccl_enabled": ccl_enabled,
         },
     )
 
@@ -93,6 +88,8 @@ def run_model(
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
+        comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
     print(f"Model compiled successfully to: {qpc_path}")
 
@@ -178,15 +175,20 @@ def main():
         help="Maximum context length",
     )
     parser.add_argument(
+        "--ccl-enabled",
+        action="store_true",
+        help="Enable compute-context-length (CCL) feature",
+    )
+    parser.add_argument(
         "--comp-ctx-lengths-prefill",
         type=lambda x: [int(i) for i in x.split(",")],
-        default="4096",
+        default=None,
         help="Comma-separated list of context lengths for prefill phase (e.g., '4096')",
     )
     parser.add_argument(
         "--comp-ctx-lengths-decode",
         type=lambda x: [int(i) for i in x.split(",")],
-        default="6144,8192",
+        default=None,
         help="Comma-separated list of context lengths for decode phase (e.g., '6144,8192')",
     )
     parser.add_argument(
@@ -198,7 +200,7 @@ def main():
     parser.add_argument(
         "--img-size",
         type=int,
-        default=336,
+        default=560,
         help="Image size for processing",
     )
     parser.add_argument(
@@ -223,6 +225,7 @@ def main():
         kv_offload=args.kv_offload,
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
+        ccl_enabled=args.ccl_enabled,
         comp_ctx_lengths_prefill=args.comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=args.comp_ctx_lengths_decode,
         generation_len=args.generation_len,

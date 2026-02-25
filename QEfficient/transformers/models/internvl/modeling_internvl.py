@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional
+from typing import List, Optional, Type
 
 import torch
 import torch.nn as nn
@@ -21,6 +21,15 @@ class QEffInternEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_model.encoder.layers[0].__class__}
+
     def forward(self, pixel_values):
         vision_embeds = self.model.extract_feature(pixel_values)
         # Reshape from [num_patches, 256, hidden_dim] -> [1, num_patches*256, head_dim]
@@ -35,6 +44,15 @@ class QEffInternDecoderWrapper(nn.Module):
         self.model = model
         self.config = self.model.language_model.config
         self.language_model = self.model.language_model
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of  class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.language_model.model.layers[0].__class__}
 
     def forward(
         self,
@@ -321,7 +339,7 @@ class QEffInternVLModel(nn.Module):
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 

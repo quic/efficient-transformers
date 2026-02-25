@@ -40,6 +40,26 @@
 ```
 
 ---
+(QEFFAutoModelForSequenceClassification)=
+## `QEFFAutoModelForSequenceClassification`
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
+
+### High-Level API
+
+```{eval-rst}
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.from_pretrained
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.export
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.compile
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.generate
+```
+
+---
 (QEffAutoPeftModelForCausalLM)=
 ## `QEffAutoPeftModelForCausalLM`
 
@@ -114,4 +134,24 @@
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile
 .. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate
+```
+
+(QEFFAutoModelForCTC)=
+## `QEFFAutoModelForCTC`
+
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
+
+### High-Level API
+
+```{eval-rst}
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.from_pretrained
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.export
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.compile
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.generate
 ```

@@ -11,7 +11,7 @@ from typing import Optional
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from QEfficient import QEFFAutoModelForCausalLM, export
+from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers, undo_transformers_quantizers
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
@@ -51,6 +51,10 @@ def duplicate_weights_for_linear_layer(
             repeat,
             1,
         ).view(hidden_size // layer.group_size, new_kv_heads * head_dim)
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(
+                new_kv_heads * head_dim
+            )
         layer.out_features = layer.out_features * repeat
 
     elif isinstance(layer, FP8DeQuantLinear):
@@ -60,6 +64,10 @@ def duplicate_weights_for_linear_layer(
         layer.weight_scale.data = torch.repeat_interleave(
             layer.weight_scale.data.view(orig_kv_heads, head_dim), repeat, 0
         ).view(new_kv_heads * head_dim, -1)
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(
+                new_kv_heads * head_dim
+            )
 
     else:
         layer.weight.data = torch.repeat_interleave(
@@ -160,11 +168,8 @@ def replicate_kv_heads(
 
     # Export the modified model
     q_model = QEFFAutoModelForCausalLM(model, continuous_batching=(True if full_batch_size else False))
-    export(
-        model_name,
-        q_model,
-        tokenizer=tokenizer,
-        onnx_dir_path=f"{model_base_name}-{new_kv_heads}kvheads",
+    q_model.export(
+        export_dir=f"{model_base_name}-{new_kv_heads}kvheads",
         full_batch_size=(full_batch_size if full_batch_size else None),
     )
 

@@ -47,15 +47,20 @@ def main():
         help="Maximum context length",
     )
     parser.add_argument(
+        "--ccl-enabled",
+        action="store_true",
+        help="Enable compute-context-length (CCL) feature",
+    )
+    parser.add_argument(
         "--comp-ctx-lengths-prefill",
         type=lambda x: [int(i) for i in x.split(",")],
-        default="256,500",
+        default=None,
         help="Comma-separated list of context lengths for prefill phase (e.g., '256,500')",
     )
     parser.add_argument(
         "--comp-ctx-lengths-decode",
         type=lambda x: [int(i) for i in x.split(",")],
-        default="512,1024",
+        default=None,
         help="Comma-separated list of context lengths for decode phase (e.g., '512,1024')",
     )
     parser.add_argument(
@@ -102,20 +107,14 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading model: {args.model_name}")
-    print("CCL Configuration:")
-    print(f"  - Prefill context lengths: {args.comp_ctx_lengths_prefill}")
-    print(f"  - Decode context lengths: {args.comp_ctx_lengths_decode}")
-    print(f"  - Max context length: {args.ctx_len}")
-    print(f"  - Continuous batching: {args.continuous_batching}")
+    print(f"Continuous batching: {args.continuous_batching}")
 
     # Load model with CCL configuration
     model = QEFFAutoModelForCausalLM.from_pretrained(
         args.model_name,
         continuous_batching=args.continuous_batching,
         qaic_config={
-            "comp_ctx_lengths_prefill": args.comp_ctx_lengths_prefill,
-            "comp_ctx_lengths_decode": args.comp_ctx_lengths_decode,
-            "ctx_len": args.ctx_len,  # Required for CCL validation
+            "ccl_enabled": args.ccl_enabled,
         },
     )
 
@@ -132,6 +131,9 @@ def main():
 
     if args.continuous_batching:
         compile_kwargs["full_batch_size"] = args.full_batch_size
+    if args.ccl_enabled:
+        compile_kwargs["comp_ctx_lengths_prefill"] = args.comp_ctx_lengths_prefill
+        compile_kwargs["comp_ctx_lengths_decode"] = args.comp_ctx_lengths_decode
 
     qpc_path = model.compile(**compile_kwargs)
     print(f"Model compiled successfully to: {qpc_path}")
