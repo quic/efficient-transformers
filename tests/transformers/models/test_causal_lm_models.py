@@ -506,6 +506,7 @@ def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
 
+
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
@@ -533,7 +534,11 @@ def test_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
 
     # head qkv blocking
-    qaic_config = dict(head_block_size=Constants.HEAD_BLOCK_SIZE, num_kv_blocks=Constants.NUM_KV_BLOCKS, num_q_blocks=Constants.NUM_Q_BLOCKS)
+    qaic_config = dict(
+        head_block_size=Constants.HEAD_BLOCK_SIZE,
+        num_kv_blocks=Constants.NUM_KV_BLOCKS,
+        num_q_blocks=Constants.NUM_Q_BLOCKS,
+    )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
 
 
