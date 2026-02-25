@@ -1628,6 +1628,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         AssertionError
             If `generation_len` is not greater than zero.
         """
+        # breakpoint()
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
