@@ -18,7 +18,7 @@ from QEfficient.utils.hash_utils import hash_dict_params
 
 configs = [
     # name, max_source_positions, num_hidden_layers, num_attention_heads, hidden_size, encoder_ffn_dim, vocab_size, additional_params
-    ("whisper", 1500, 4, 6, 384, 1536, 51865, {}),
+    ("whisper", 1500, 2, 2, 32, 64, 51865, {}),
 ]
 
 configs = [
@@ -26,9 +26,13 @@ configs = [
         model_name,
         max_source_positions=max_source_positions,
         num_hidden_layers=num_hidden_layers,
-        num_attention_heads=num_attention_heads,
+        decoder_layers=num_hidden_layers,
+        encoder_layers=num_hidden_layers,
+        decoder_attention_heads=num_attention_heads,
+        encoder_attention_heads=num_attention_heads,
         hidden_size=hidden_size,
         encoder_ffn_dim=encoder_ffn_dim,
+        decoder_ffn_dim=encoder_ffn_dim,
         vocab_size=vocab_size,
         **additional_params,
     )
@@ -43,6 +47,7 @@ configs = [
         additional_params,
     ) in configs
 ]
+
 config_ids = [x.model_type for x in configs]
 
 model_kwargs = {"attn_implementation": "eager"}
