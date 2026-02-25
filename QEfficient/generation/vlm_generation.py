@@ -149,6 +149,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self.is_qwen2_5_vl = (
             hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl"
         )
+        self.is_qwen3_vl = (
+            hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen3_vl"
+        )
         self.qeff_model = qeff_model
         self.processor = processor
         self.tokenizer = tokenizer
@@ -259,10 +262,33 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
             if self.is_qwen2_5_vl:
                 _ = self.update_decode_inputs_qwen2_5_vl(outputs, position_ids, generation_len, decode_batch_id)
+            if self.is_qwen3_vl:
+                _ = self.update_decode_inputs_qwen3_vl(outputs, position_ids, generation_len, decode_batch_id)
             else:
                 _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
     def update_decode_inputs_qwen2_5_vl(self, outputs, position_ids, generation_len, decode_batch_id=None):
+        """
+        Updates the decode input with the generated values.
+        Args:
+            outputs (dict): The outputs of the model.
+            position_ids (array): The position IDs.
+            generation_len (int): The generation length.
+            decode_batch_id (int, optional): The decode batch ID. If None, all values are updated. Defaults to None.
+
+        Returns:
+            next_token_id (array): The next token ID.
+        """
+        next_token_id = self._fetch_next_token_id(outputs)
+
+        # Store the generated values.
+        self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
+        self.decode_pos_ids[:, decode_batch_id] = position_ids.squeeze(1)
+        self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
+        self.generation_len[decode_batch_id or slice(None)] = generation_len
+        return next_token_id
+
+    def update_decode_inputs_qwen3_vl(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
         Updates the decode input with the generated values.
         Args:
@@ -583,7 +609,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self.initialize_decode_inputs(num_prompts, execution_batch_size, max_gen_length)
         if self.is_qwen2_5_vl:
             self.decode_pos_ids = np.zeros((4, execution_batch_size, 1), np.int64)
-
+        if self.is_qwen3_vl:
+            self.decode_pos_ids = np.zeros((4, execution_batch_size, 1), np.int64)
         # Create prompt queue
         prompt_queue = deque(vision_prompts)
 
@@ -694,6 +721,10 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 # Update decode inputs
                 if self.is_qwen2_5_vl:
                     self.update_decode_inputs_qwen2_5_vl(
+                        outputs, position_ids_decode, generation_len_final, decode_batch_id
+                    )
+                elif self.is_qwen3_vl:
+                    self.update_decode_inputs_qwen3_vl(
                         outputs, position_ids_decode, generation_len_final, decode_batch_id
                     )
                 else:

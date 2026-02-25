@@ -181,6 +181,16 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
 )
+from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLModel,
+    Qwen3VLTextAttention,
+    Qwen3VLTextDecoderLayer,
+    Qwen3VLTextModel,
+    Qwen3VLTextRMSNorm,
+    Qwen3VLVisionAttention,
+    Qwen3VLVisionModel,
+)
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -402,6 +412,15 @@ from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     QEffQwen3VLMoeVisionAttention,
     QEffQwen3VLMoeVisionModel,
 )
+from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
+    QEffQwen3VLForConditionalGeneration,
+    QEffQwen3VLModel,
+    QEffQwen3VLTextAttention,
+    QEffQwen3VLTextDecoderLayer,
+    QEffQwen3VLTextModel,
+    QEffQwen3VLVisionAttention,
+    QEffQwen3VLVisionModel,
+)
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
@@ -447,7 +466,8 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         # Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
-        # Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
+        Qwen3VLTextRMSNorm: CustomRMSNormAIC,
+        Olmo2RMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -595,17 +615,15 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
         Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
-        # Qwen3vlmoe
-        Qwen3VLMoeForConditionalGeneration: QEffQwen3VLMoeForConditionalGeneration,
-        Qwen3VLMoeModel: QEffQwen3VLMoeModel,
-        Qwen3VLMoeTextAttention: QEffQwen3VLMoeTextAttention,
-        Qwen3VLMoeTextDecoderLayer: QEffQwen3VLMoeTextDecoderLayer,
-        Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
-        Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
-        Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
-        # Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
-        # Grok1
-        # Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
+        Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
+        # Qwen3 VL
+        Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
+        Qwen3VLModel: QEffQwen3VLModel,
+        Qwen3VLTextAttention: QEffQwen3VLTextAttention,
+        Qwen3VLTextDecoderLayer: QEffQwen3VLTextDecoderLayer,
+        Qwen3VLVisionAttention: QEffQwen3VLVisionAttention,
+        Qwen3VLVisionModel: QEffQwen3VLVisionModel,
+        Qwen3VLTextModel: QEffQwen3VLTextModel,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
