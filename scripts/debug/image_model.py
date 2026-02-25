@@ -28,11 +28,9 @@ from transformers import (
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.test_utils import InternProcessor
 
-# Configuration
 img_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
 query = "Describe this image."
 
-# Load image
 print("Loading image...")
 img = requests.get(img_url, stream=True)
 image = Image.open(BytesIO(img.content)).convert("RGB")
@@ -70,7 +68,6 @@ for model_config in models:
     print(f"TYPE: {model_type}")
     print("=" * 70)
 
-    # Load config
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, padding=not is_molmo_model)
     config._attn_implementation = "eager" if (is_intern_model or is_molmo_model) else None
 
@@ -169,7 +166,6 @@ for model_config in models:
             enable_proxy=True,
         )
 
-    # Compile model
     print("Compiling model...")
     qeff_model.compile(num_devices=1, prefill_seq_len=128, ctx_len=2048, **compile_kwargs)
 

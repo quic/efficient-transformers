@@ -15,7 +15,6 @@ from transformers import AutoProcessor
 
 from QEfficient import QEFFAutoModelForCTC, QEFFAutoModelForSpeechSeq2Seq
 
-# Load audio sample
 print("Loading audio sample...")
 dataset = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
 audio_data = dataset[0]["audio"]["array"]
@@ -36,10 +35,8 @@ processor_seq2seq = AutoProcessor.from_pretrained(model_name_seq2seq)
 model_seq2seq = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_name_seq2seq, enable_proxy=True)
 print(model_seq2seq)
 
-# Compile model
 model_seq2seq.compile(num_cores=16)
 
-# Process audio and generate
 inputs = processor_seq2seq(audio_data, sampling_rate=sample_rate, return_tensors="pt")
 result = model_seq2seq.generate(inputs=inputs, generation_len=25, write_io=True)
 transcription = processor_seq2seq.batch_decode(result.generated_ids)[0]
@@ -60,7 +57,7 @@ processor_ctc = AutoProcessor.from_pretrained(model_name_ctc)
 # Load proxy model
 model_ctc = QEFFAutoModelForCTC.from_pretrained(model_name_ctc, enable_proxy=True)
 print(model_ctc)
-# Compile model
+
 model_ctc.compile(num_cores=16)
 
 # Generate with IO files
