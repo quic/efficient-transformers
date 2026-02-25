@@ -962,9 +962,7 @@ class KVBlockingAttentionTransform:
 
 
 class QBlockingAttentionTransform:
-    _skip_classes = {
-        QEffGptOssAttention,
-    }
+    _skip_classes = {}
 
     @classmethod
     def apply(cls, model: nn.Module, num_q_blocks) -> Tuple[nn.Module, bool]:
@@ -992,9 +990,7 @@ class QBlockingAttentionTransform:
 
 
 class HeadBlockingAttentionTransform:
-    _skip_classes = {
-        QEffGptOssAttention,
-    }
+    _skip_classes = {}
 
     @classmethod
     def apply(cls, model: nn.Module, head_block_size) -> Tuple[nn.Module, bool]:
