@@ -40,6 +40,26 @@
 ```
 
 ---
+(QEFFAutoModelForSequenceClassification)=
+## `QEFFAutoModelForSequenceClassification`
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification
+   :noindex:
+   :no-members:
+   :no-show-inheritance:
+```
+
+### High-Level API
+
+```{eval-rst}
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.from_pretrained
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.export
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.compile
+.. automethod:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.generate
+```
+
+---
 (QEffAutoPeftModelForCausalLM)=
 ## `QEffAutoPeftModelForCausalLM`
 

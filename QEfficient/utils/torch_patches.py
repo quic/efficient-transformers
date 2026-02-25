@@ -45,7 +45,8 @@ def _setup_trace_module_map_patched(
                 onnx_attrs = {}  # HACK: to reduce export time # TODO: study behaviour across models
                 _C._jit_pass_onnx_track_scope_attributes(graph, onnx_attrs)
             except Exception:
-                logger.warning("Failed to track ONNX scope attributes, Skipping this step.")
+                # Silently skip: scope-attribute tracking is best-effort and not required for export.
+                pass
 
         for m in model.modules():
             m.register_forward_hook(_track_module_attributes_forward_hook)

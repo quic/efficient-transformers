@@ -24,6 +24,7 @@ from QEfficient.base import (
     QEFFAutoModelForCausalLM,
     QEFFAutoModelForCTC,
     QEFFAutoModelForImageTextToText,
+    QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
     QEFFCommonLoader,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "QEFFAutoModelForCTC",
     "QEffAutoPeftModelForCausalLM",
     "QEFFAutoModelForImageTextToText",
+    "QEFFAutoModelForSequenceClassification",
     "QEFFAutoModelForSpeechSeq2Seq",
     "QEFFCommonLoader",
     "QEffFluxPipeline",
