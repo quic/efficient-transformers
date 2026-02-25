@@ -62,6 +62,8 @@ from QEfficient.transformers.models.pytorch_transforms import (
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
+    FP8BlockWiseDequantLinearToLinearTransform,
+    FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
     Mxfp4GptOssExpertDequantizeTransform,
@@ -964,6 +966,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
+        FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
+        FP8BlockWiseDequantLinearToLinearTransform,
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
@@ -1691,6 +1695,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         AssertionError
             If `generation_len` is not greater than zero.
         """
+        # breakpoint()
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
@@ -1820,7 +1825,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
         if not_mllama:
             lang_session.skip_buffers(vision_outputs.keys())
-
+        # breakpoint()
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
         lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
@@ -2949,7 +2954,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
-        if self.comp_ctx_lengths_prefill is not None:
+        if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
@@ -3286,6 +3291,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # For supporting VLLM and Disaggregated with CCL
         elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            self.ccl_enabled = True
             if isinstance(comp_ctx_lengths_prefill, str):
                 import ast
 
@@ -3322,16 +3328,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         specializations = []
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
             # TODO: we are handling decode-only case inside prefill call which is utterly mis-leading
-            if self.comp_ctx_lengths_prefill is not None:
+            if self.comp_ctx_lengths_prefill is not None or self.comp_ctx_lengths_decode is not None:
+                ccl_lengths = self.comp_ctx_lengths_decode if prefill_seq_len == 1 else self.comp_ctx_lengths_prefill
                 # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
-                for i in range(0, len(self.comp_ctx_lengths_prefill)):
+                for i in range(0, len(ccl_lengths)):
                     if prefill_only or enable_chunking:
                         raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
                     specializations.append(
                         self.build_prefill_specialization(
                             prefill_seq_len=prefill_seq_len,
                             ctx_len=ctx_len,
-                            comp_ctx_lengths=self.comp_ctx_lengths_prefill[i],
+                            comp_ctx_lengths=ccl_lengths[i],
                             batch_size=batch_size,
                             kv_cache_batch_size=kv_cache_batch_size,
                             full_batch_size=full_batch_size,
