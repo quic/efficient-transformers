@@ -367,6 +367,7 @@ class QEFFBaseModel(ABC):
         num_devices: int = 1,
         disable_blocking: Optional[bool] = False,
         blocking_mode: Optional[str] = "hqkv",
+        vtcm_ratio: Optional[float] = 0.75,
         **compiler_options,
     ):  
         # # Apply the transformations
@@ -390,7 +391,13 @@ class QEFFBaseModel(ABC):
         
         if getattr(self.model, "qaic_config", None) is None and not disable_blocking:
             if hasattr(self.model, "config"):
-                blocking_config = build_transformer_blocking_config(self.model.config, blocking_mode=blocking_mode, ctx_len=ctx_len, seq_len=seq_len, bs=bs, compile_config={"mdp_ts_num_devices": num_devices, "aic_num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)})
+                blocking_config = build_transformer_blocking_config(self.model.config, 
+                                                                    blocking_mode=blocking_mode, 
+                                                                    ctx_len=ctx_len, 
+                                                                    seq_len=seq_len, 
+                                                                    bs=bs, 
+                                                                    vtcm_ratio=vtcm_ratio, 
+                                                                    compile_config={"mdp_ts_num_devices": num_devices, **compiler_options})
             else:
                 # without a model config, this is not a model that is possible to block
                 blocking_config = None
@@ -412,7 +419,13 @@ class QEFFBaseModel(ABC):
             
             # check if qaic config did not provide any blocking details
             if blocking_config["effective_blocking_mode"] == "" and not disable_blocking:
-                blocking_config = build_transformer_blocking_config(self.model.config, blocking_mode=blocking_mode, ctx_len=ctx_len, seq_len=seq_len, bs=bs, compile_config={"mdp_ts_num_devices": num_devices, "aic_num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)})
+                blocking_config = build_transformer_blocking_config(self.model.config, 
+                                                                    blocking_mode=blocking_mode, 
+                                                                    ctx_len=ctx_len, 
+                                                                    seq_len=seq_len, 
+                                                                    bs=bs, 
+                                                                    vtcm_ratio=vtcm_ratio, 
+                                                                    compile_config={"mdp_ts_num_devices": num_devices, **compiler_options})
 
         if blocking_config is not None and "kv" in blocking_config["effective_blocking_mode"]:
             self.model, _ = KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=blocking_config["attention"]["num_kv_blocks"])
@@ -467,6 +480,7 @@ class QEFFBaseModel(ABC):
         retain_full_kv: Optional[bool] = None,
         disable_blocking: Optional[bool] = False,
         blocking_mode: Optional[str] = "hqkv",
+        vtcm_ratio: Optional[float] = 0.75,
         **compiler_options,
     ) -> str:
         """
@@ -496,7 +510,7 @@ class QEFFBaseModel(ABC):
         bs = _require_value(_get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
         seq_len = _get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
         ctx_len = _get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
-        self.transform(ctx_len=ctx_len, seq_len=seq_len, bs=bs, num_devices=mdp_ts_num_devices, disable_blocking=disable_blocking, blocking_mode=blocking_mode, **compiler_options)
+        self.transform(ctx_len=ctx_len, seq_len=seq_len, bs=bs, num_devices=mdp_ts_num_devices, disable_blocking=disable_blocking, blocking_mode=blocking_mode, vtcm_ratio=vtcm_ratio, **compiler_options)
 
         onnx_path = Path(
             onnx_path

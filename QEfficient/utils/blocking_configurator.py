@@ -17,7 +17,8 @@ import json
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.75
+VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.4
+VTCM_SIZE_MAX = 8 * 1024 * 1024
 
 
 def _get_attr_or_key(obj: Any, names: Tuple[str, ...], default: Any = None) -> Any:
@@ -126,6 +127,7 @@ def attention_configurator(
     num_nsps: int,
     data_bytes: int,
     blocking_mode: Optional[str] = None,
+    vtcm_ratio: Optional[float] = 0.75,
 ) -> Dict[str, Any]:
     """
     Suggest attention blocking configuration based on model and device constraints.
@@ -138,6 +140,8 @@ def attention_configurator(
     head_block_size = num_socs if "h" in mode else num_heads
     num_head_blocks = math.ceil(num_heads / head_block_size)
     num_heads_per_iter = math.ceil(head_block_size / num_socs)
+
+    VTCM_SIZE_THRESHOLD = VTCM_SIZE_MAX * vtcm_ratio
 
     best_config = {
         "head_block_size": head_block_size,
@@ -191,6 +195,7 @@ def ffn_configurator(
     num_socs: int,
     num_nsps: int,
     data_bytes: int,
+    vtcm_ratio: Optional[float] = 0.75,
 ) -> Dict[str, Any]:
     class FFN:
         def __init__(self, seq_len: float, d_model: float, intermediate: float, data_bytes: int):
@@ -258,6 +263,8 @@ def ffn_configurator(
         "vtcm_footprint": None,
     }
 
+    VTCM_SIZE_THRESHOLD = VTCM_SIZE_MAX * vtcm_ratio
+
     for num_token_blocks in num_token_blocks_list:
         for num_weights_blocks in num_weights_blocks_list:
             ffn = FFN(seq_len / num_token_blocks, d_model, intermediate / num_weights_blocks, data_bytes)
@@ -314,6 +321,7 @@ def build_transformer_blocking_config(
     ctx_len: Optional[int] = None,
     seq_len: Optional[int] = None,
     bs: Optional[int] = 1,
+    vtcm_ratio: Optional[float] = 0.75,
     compile_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -334,7 +342,7 @@ def build_transformer_blocking_config(
     }
 
     num_heads = _require_value(
-        _get_attr_or_key(model_config, ("num_key_value_heads", "num_attention_heads", "num_heads", "attention_heads", "n_heads")),
+        _get_attr_or_key(model_config, ("num_attention_heads", "num_heads", "attention_heads", "n_heads")),
         "num attention heads",
     )
     head_dim = _infer_head_dim(model_config, int(num_heads))
@@ -359,6 +367,7 @@ def build_transformer_blocking_config(
         int(num_nsps),
         int(data_bytes),
         blocking_mode=blocking_mode,
+        vtcm_ratio=vtcm_ratio,
     )
 
     ffn_cfg = ffn_configurator(
@@ -369,6 +378,7 @@ def build_transformer_blocking_config(
         int(num_socs),
         int(num_nsps),
         int(data_bytes),
+        vtcm_ratio=vtcm_ratio,
     )
 
     resolved_mode = _normalize_attention_mode(blocking_mode or "hqkv")
