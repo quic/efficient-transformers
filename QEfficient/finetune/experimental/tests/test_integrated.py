@@ -32,6 +32,7 @@ from QEfficient.finetune.experimental.core.config_manager import (
     TrainingConfig,
 )
 from QEfficient.finetune.experimental.core.dataset import SFTDataset
+from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.utils.constants import (
     HF_DATASET_ALPACA,
     HF_DATASET_GSM8K,
@@ -56,14 +57,15 @@ from QEfficient.finetune.experimental.core.utils.constants import (
     TEST_SEED,
     TEST_WARMUP_STEPS,
     TEST_WEIGHT_DECAY,
+    TEST_LOSS_THRESHOLD,
     AutoClassName,
     DatasetType,
     TaskType,
 )
 from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
 from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
-from QEfficient.utils.logging_utils import logger
 
+logger = Logger(__name__)
 # ============================================================================
 # Test Configuration Dataclasses
 # ============================================================================
@@ -249,9 +251,6 @@ def load_and_prepare_dataset(
         tuple of (train dataset, eval dataset)
     """
     train_dataset, eval_dataset = pipeline._create_datasets()
-    # subset_indices = list(range(0, TEST_DATASET_SUBSET_SIZE))
-    # eval_dataset = Subset(eval_dataset, subset_indices)
-    # train_dataset = Subset(train_dataset, subset_indices)
     return train_dataset, eval_dataset
 
 
@@ -364,7 +363,7 @@ def verify_training_results(train_result, eval_result):
     assert "eval_loss" in eval_result
     logger.warning(f"Training loss: {train_result.training_loss:.4f}")
     logger.warning(f"Evaluation loss: {eval_result['eval_loss']:.4f}")
-    assert abs(train_result.training_loss - eval_result["eval_loss"]) < 1.0
+    assert abs(train_result.training_loss - eval_result["eval_loss"]) < TEST_LOSS_THRESHOLD
 
 
 def run_inference_causal_lm(model, tokenizer):

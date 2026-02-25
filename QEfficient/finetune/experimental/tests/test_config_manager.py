@@ -8,7 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from QEfficient.finetune.experimental.core.config_manager import ConfigManager
+from QEfficient.finetune.experimental.core.config_manager import (
+    ConfigManager,
+    DatasetConfig,
+    MasterConfig,
+    ModelConfig,
+    OptimizerConfig,
+    PeftConfig,
+    SchedulerConfig,
+    TrainingConfig,
+)
 
 
 @pytest.fixture
@@ -17,10 +26,98 @@ def config_path() -> Path:
     return (here / "test_config.yaml").resolve()
 
 
+def create_master_config(
+    output_dir: str,
+) -> MasterConfig:
+    """
+    Args:
+        model_config: Test model configuration
+        dataset_config: Test dataset configuration
+        output_dir: Output directory for training results
+
+    Returns:
+        MasterConfig instance
+    """
+
+    return MasterConfig(
+        model=ModelConfig(
+            model_name="HuggingFaceTB/SmolLM-135M",
+            model_type="hf",
+            auto_class_name="AutoModelForCausalLM",
+            use_peft=True,
+            use_cache=False,
+            device_map=None,
+            peft_config=PeftConfig(
+                lora_r=8,
+                lora_alpha=16,
+                lora_dropout=0.05,
+                target_modules=["q_proj", "v_proj"],
+                bias="none",
+                task_type="CAUSAL_LM",
+                peft_type="LORA",
+            ),
+        ),
+        dataset=DatasetConfig(
+            tokenizer_name="HuggingFaceTB/SmolLM-135M",
+            dataset_type="sft_dataset",
+            dataset_name="openai/gsm8k",
+            max_seq_length=512,
+            train_batch_size=1,
+            prompt_template="Question: {question}\nAnswer: ",
+            completion_template="{answer}",
+            config_name="main",
+        ),
+        optimizers=OptimizerConfig(
+            optimizer_name="AdamW",
+        ),
+        scheduler=SchedulerConfig(
+            scheduler_name="cosine",
+            warmup_steps=1,
+        ),
+        training=TrainingConfig(
+            type="sft",  # Using the "type" field from TrainingConfig
+            output_dir=output_dir,
+            num_train_epochs=1,
+            per_device_train_batch_size=1,
+            per_device_eval_batch_size=1,
+        ),
+    )
+
+
 def test_default_config():
     config_manager = ConfigManager()
     assert config_manager is not None
     assert config_manager.config is not None
+
+
+def test_config_values(config_path):
+    config_manager = ConfigManager(config_path=config_path)
+    assert config_manager.config is not None
+    assert config_manager.config.model["model_name"] == "HuggingFaceTB/SmolLM-135M"
+    assert config_manager.config.model["peft_config"]["lora_dropout"] == 0.1
+    assert config_manager.config.model["peft_config"]["lora_r"] == 16
+    assert config_manager.config.dataset["dataset_name"] == "knkarthick/samsum"
+    assert config_manager.config.training["output_dir"] == "./training_results"
+    assert config_manager.config.training["per_device_train_batch_size"] == 1
+    assert config_manager.config.training["num_train_epochs"] == 1
+    assert not config_manager.config.training["gradient_checkpointing_kwargs"]["use_reenrant"]
+
+
+def test_config_missing_file():
+    with pytest.raises(FileNotFoundError):
+        ConfigManager(config_path="non_existent_file.yaml")
+
+
+def test_config_created_from_obj():
+    master_config = create_master_config(output_dir="./test_output")
+    config_manager = ConfigManager(master_config)
+    config = config_manager.config
+    assert config is not None
+    assert config.model is not None
+    assert config.dataset is not None
+    assert config.training is not None
+    assert config.optimizers is not None
+    assert config.scheduler is not None
 
 
 def test_config(config_path):

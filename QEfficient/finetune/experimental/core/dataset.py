@@ -21,6 +21,7 @@ from torch.utils.data import Dataset
 from QEfficient.finetune.experimental.core.component_registry import registry
 from QEfficient.finetune.experimental.core.utils.dataset_utils import (
     apply_train_test_split,
+    validate_json_structure,
 )
 
 
@@ -113,7 +114,8 @@ class SFTDataset(BaseDataset):
         """
         if self.json_file_path:
             # Load dataset from JSON file
-            self.dataset = load_dataset("json", data_files=self.json_file_path, split=self.split)
+            validate_json_structure(self.json_file_path)
+            self.dataset = load_dataset("json", data_files=self.json_file_path, split="train")
             # Apply train/test split if needed
             if self.split in ["train", "test"]:
                 self.dataset = apply_train_test_split(self.dataset, self.split_ratio, self.split, self.seed)

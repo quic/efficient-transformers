@@ -173,6 +173,10 @@ class DatasetConfig:
         default=1,
         metadata={"help": "Number of workers for the DataLoader."},
     )
+    remove_samples_with_empty_columns: bool = field(
+        default=True,
+        metadata={"help": "Whether to remove samples with empty columns."},
+    )
     config_name: str = field(
         default="default",
         metadata={"help": "Name of the hf configuration file."},
