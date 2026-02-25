@@ -157,6 +157,7 @@ class QEffDynamicLayer(DynamicLayer):
             self.keys = key_states
             self.values = value_states
         else:
+            # breakpoint()
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
@@ -191,8 +192,9 @@ class QEffDynamicLayer(DynamicLayer):
         Return:
             A tuple containing the updated key and value states.
         """
-
+        # breakpoint()
         # Update the cache
+        # if not self.is_initialized:
 
         if self.keys is None:
             self.keys = key_states
@@ -435,6 +437,18 @@ class QEffDynamicCache(DynamicCache):
         """
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].update3D(key_states, value_states, cache_kwargs)
+
+    # def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
+    #     """Returns the sequence length of the cached states. A layer index can be optionally passed."""
+    #     # TODO: deprecate this function in favor of `cache_position`
+    #     breakpoint()
+    #     is_empty_layer = (
+    #         len(self.key_cache) == 0  # no cache in any layer
+    #         or len(self.key_cache) <= layer_idx  # skipped `layer_idx` and hasn't run a layer with cache after it
+    #         or len(self.key_cache[layer_idx]) == 0  # the layer has no cache
+    #     )
+    #     layer_seq_length = self.key_cache[layer_idx].shape[-2] if not is_empty_layer else 0
+    #     return layer_seq_length
 
 
 class QEffEncoderDecoderCache(EncoderDecoderCache):
