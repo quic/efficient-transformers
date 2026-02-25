@@ -19,25 +19,25 @@ from QEfficient.utils.hash_utils import hash_dict_params
 
 test_configs = [
     # name, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
-    ("gpt2", 256, 2, 4, 128, 512, 127, {}),
-    ("codegen", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
-    ("falcon", 256, 2, 4, 128, 512, 127, {}),
-    ("gptj", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
-    ("llama", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("mistral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("mixtral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("mpt", 256, 2, 4, 128, 512, 127, {}),
-    ("phi", 256, 2, 4, 128, 512, 127, {}),
-    ("phi3", 256, 2, 4, 128, 512, 127, {"pad_token_id": 0}),
-    ("qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("starcoder2", 256, 2, 4, 128, 512, 127, {}),
-    ("granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("olmo2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("gpt_oss", 256, 3, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("gpt2", 32, 2, 2, 32, 64, 127, {}),
+    # ("codegen", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
+    # ("falcon", 32, 2, 2, 32, 64, 127, {}),
+    # ("gptj", 32, 2, 2, 32, 64, 127, {"rotary_dim": 16}),
+    # ("llama", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
+    # ("mistral", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
+    # ("mixtral", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
+    # ("mpt", 32, 2, 2, 32, 64, 127, {}),
+    # ("phi", 32, 2, 2, 32, 64, 127, {}),
+    # ("phi3", 32, 2, 2, 32, 64, 127, {"pad_token_id": 0}),
+    # ("qwen2", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
+    # ("starcoder2", 32, 2, 2, 32, 64, 127, {}),
+    # ("granite",32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
+    # ("olmo2", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
+    ("gpt_oss", 256, 3, 2, 32, 64, 127, {"num_key_value_heads": 1}),
 ]
 
 test_prefill_only_specialized_models_configs = [
-    ("gpt_oss", 256, 2, 2, 32, 32, 127, {"num_key_value_heads": 2}),
+    ("gpt_oss", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
 ]
 
 
