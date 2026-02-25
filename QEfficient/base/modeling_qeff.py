@@ -25,15 +25,13 @@ from QEfficient.base.onnx_transforms import (
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
+from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     HeadBlockingAttentionTransform,
     KVBlockingAttentionTransform,
-    SamplerTransform,
-    SpDTransform,
     QBlockingAttentionTransform,
 )
-from QEfficient.compile.qnn_compiler import compile as qnn_compile
-from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import (
     constants,
     create_json,
@@ -46,7 +44,6 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.blocking_configurator import _get_attr_or_key, _require_value, build_transformer_blocking_config
 from QEfficient.utils.export_utils import export_wrapper
-
 
 logger = logging.getLogger(__name__)
 
@@ -366,39 +363,23 @@ class QEFFBaseModel(ABC):
         seq_len: Optional[int] = None,
         bs: Optional[int] = 1,
         num_devices: int = 1,
-        disable_blocking: Optional[bool] = False,
+        disable_blocking: Optional[bool] = True,
         blocking_mode: Optional[str] = "hqkv",
         vtcm_ratio: Optional[float] = 0.75,
         **compiler_options,
-    ):  
-        # # Apply the transformations
-        # any_transformed = False
-
-        # # check whether default transforms have already been applied
-        # if not self.is_transformed:
-        #     for transform in self._pytorch_transforms:
-        #         self.model, transformed = transform.apply(self.model)
-        #         any_transformed = any_transformed or transformed
-            
-        #     # transforms that need qaic_config
-        #     self.model, transformed_spd = SpDTransform.apply(self.model, self.model.qaic_config, pretrained_model_name_or_path=self.model.pretrained_path)
-        #     self.is_tlm = transformed_spd
-        #     self.model, _ = SamplerTransform.apply(self.model, self.model.qaic_config)
-
-        #     if self.is_tlm:
-        #         self.model.qaic_config["return_pdfs"] = True
-
-        # blocking transforms reapplied based on num_kv_blocks
-        
+    ):
+        # Apply the transformations that are dependent on compilation parameters
         if getattr(self.model, "qaic_config", None) is None and not disable_blocking:
             if hasattr(self.model, "config"):
-                blocking_config = build_transformer_blocking_config(self.model.config, 
-                                                                    blocking_mode=blocking_mode, 
-                                                                    ctx_len=ctx_len, 
-                                                                    seq_len=seq_len, 
-                                                                    bs=bs, 
-                                                                    vtcm_ratio=vtcm_ratio, 
-                                                                    compile_config={"mdp_ts_num_devices": num_devices, **compiler_options})
+                blocking_config = build_transformer_blocking_config(
+                    self.model.config,
+                    blocking_mode=blocking_mode,
+                    ctx_len=ctx_len,
+                    seq_len=seq_len,
+                    bs=bs,
+                    vtcm_ratio=vtcm_ratio,
+                    compile_config={"mdp_ts_num_devices": num_devices, **compiler_options},
+                )
             else:
                 # without a model config, this is not a model that is possible to block
                 blocking_config = None
@@ -417,33 +398,41 @@ class QEFFBaseModel(ABC):
             if self.model.qaic_config.get("head_block_size", False) and not disable_blocking and "h" in blocking_mode:
                 blocking_config["effective_blocking_mode"] = "h" + blocking_config["effective_blocking_mode"]
                 blocking_config["attention"]["head_block_size"] = self.model.qaic_config.get("head_block_size")
-            
+
             # check if qaic config did not provide any blocking details
             if blocking_config["effective_blocking_mode"] == "" and not disable_blocking:
-                blocking_config = build_transformer_blocking_config(self.model.config, 
-                                                                    blocking_mode=blocking_mode, 
-                                                                    ctx_len=ctx_len, 
-                                                                    seq_len=seq_len, 
-                                                                    bs=bs, 
-                                                                    vtcm_ratio=vtcm_ratio, 
-                                                                    compile_config={"mdp_ts_num_devices": num_devices, **compiler_options})
+                blocking_config = build_transformer_blocking_config(
+                    self.model.config,
+                    blocking_mode=blocking_mode,
+                    ctx_len=ctx_len,
+                    seq_len=seq_len,
+                    bs=bs,
+                    vtcm_ratio=vtcm_ratio,
+                    compile_config={"mdp_ts_num_devices": num_devices, **compiler_options},
+                )
 
         if blocking_config is not None and "kv" in blocking_config["effective_blocking_mode"]:
-            self.model, _ = KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=blocking_config["attention"]["num_kv_blocks"])
+            self.model, _ = KVBlockingAttentionTransform.apply(
+                self.model, num_kv_blocks=blocking_config["attention"]["num_kv_blocks"]
+            )
             if not self.hash_params.get("blocking_kwargs", None):
-                self.hash_params["blocking_kwargs"] = {} 
+                self.hash_params["blocking_kwargs"] = {}
             self.hash_params["blocking_kwargs"]["num_kv_blocks"] = blocking_config["attention"]["num_kv_blocks"]
         if blocking_config is not None and "q" in blocking_config["effective_blocking_mode"]:
-            self.model, _ = QBlockingAttentionTransform.apply(self.model, num_q_blocks=blocking_config["attention"]["num_q_blocks"])
+            self.model, _ = QBlockingAttentionTransform.apply(
+                self.model, num_q_blocks=blocking_config["attention"]["num_q_blocks"]
+            )
             if not self.hash_params.get("blocking_kwargs", None):
-                self.hash_params["blocking_kwargs"] = {} 
+                self.hash_params["blocking_kwargs"] = {}
             self.hash_params["blocking_kwargs"]["num_q_blocks"] = blocking_config["attention"]["num_q_blocks"]
         if blocking_config is not None and "h" in blocking_config["effective_blocking_mode"]:
-            self.model, _ = HeadBlockingAttentionTransform.apply(self.model, head_block_size=blocking_config["attention"]["head_block_size"]) 
+            self.model, _ = HeadBlockingAttentionTransform.apply(
+                self.model, head_block_size=blocking_config["attention"]["head_block_size"]
+            )
             if not self.hash_params.get("blocking_kwargs", None):
-                self.hash_params["blocking_kwargs"] = {} 
+                self.hash_params["blocking_kwargs"] = {}
             self.hash_params["blocking_kwargs"]["head_block_size"] = blocking_config["attention"]["head_block_size"]
-        
+
         if self.hash_params.get("blocking_kwargs", None):
             invalid_blocking = False
             if len(self.hash_params["blocking_kwargs"]) == 0:
@@ -451,15 +440,9 @@ class QEFFBaseModel(ABC):
             for num_blocks in self.hash_params["blocking_kwargs"].values():
                 invalid_blocking = invalid_blocking or (num_blocks < 1)
             if invalid_blocking:
-                raise ValueError(f"Invalid number of blocks computed or passed in qaic_config")
-
-        # if self.is_transformed:
-        #     logger.info(f"Pytorch transforms previously applied to model: {self.model_name}")
-        # elif not any_transformed:
-        #     warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
-        # else:
-        #     logger.info(f"Pytorch transforms applied to model: {self.model_name}")
-        #     self.is_transformed = True
+                raise ValueError(
+                    f"Invalid number of blocks computed or passed in qaic_config: {self.hash_params['blocking_kwargs']}"
+                )
 
     @dump_qconfig
     def _compile(
@@ -479,7 +462,7 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        disable_blocking: Optional[bool] = False,
+        disable_blocking: Optional[bool] = True,
         blocking_mode: Optional[str] = "hqkv",
         vtcm_ratio: Optional[float] = 0.75,
         **compiler_options,
@@ -511,7 +494,16 @@ class QEFFBaseModel(ABC):
         bs = _require_value(_get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
         seq_len = _get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
         ctx_len = _get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
-        self.transform(ctx_len=ctx_len, seq_len=seq_len, bs=bs, num_devices=mdp_ts_num_devices, disable_blocking=disable_blocking, blocking_mode=blocking_mode, vtcm_ratio=vtcm_ratio, **compiler_options)
+        self.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            num_devices=mdp_ts_num_devices,
+            disable_blocking=disable_blocking,
+            blocking_mode=blocking_mode,
+            vtcm_ratio=vtcm_ratio,
+            **compiler_options,
+        )
 
         onnx_path = Path(
             onnx_path
