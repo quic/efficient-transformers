@@ -40,7 +40,6 @@ from QEfficient.generation.text_generation_inference import (
     write_io_files,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
-from QEfficient.transformers.attention_blocking_policy import derive_blocking_config
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
@@ -54,7 +53,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PoolingTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
-    QBlockingAttentionTransform,
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyTransform,
     SamplerTransform,
@@ -1034,12 +1032,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-<<<<<<< HEAD
-=======
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
             KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
->>>>>>> 5a1b7e7 (nit: rename BlockedKVAttentionTransform to KVBlockingAttentionTransform)
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
         """
         Exports the language decoder component to ONNX format.
@@ -2752,14 +2747,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         # self.is_tlm = transformed
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> c7ce124 (Fixing formatting)
         self.is_tlm = (
             (qaic_config is not None)
             and (qaic_config.get("speculative_model_type") is not None)
             and (model.__class__ in SpDTransform._module_mapping)
         )
+<<<<<<< HEAD
 =======
         self.is_tlm = (not qaic_config is None) and (not qaic_config.get("speculative_model_type") is None) and (model.__class__ in SpDTransform._module_mapping)
 >>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
+=======
+>>>>>>> c7ce124 (Fixing formatting)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = False
@@ -2978,6 +2979,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
         # increase seq_len if using a larger number of blocks
         if self.hash_params.get("blocking_kwargs", None):
             max_blocks = -1

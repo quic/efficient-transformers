@@ -14,12 +14,13 @@ import torch
 from transformers.cache_utils import Cache
 
 from QEfficient.transformers.blocked_attention_utils import (
-    blocked_kv_attention_forward, 
     blocked_hqkv_attention_forward,
+    blocked_kv_attention_forward,
     blocked_qkv_attention_forward,
     h_blocked_attention_forward,
     q_blocked_attention_forward,
 )
+
 
 @dataclass
 class AttentionBlockingConfig:
@@ -133,6 +134,7 @@ class HeadBlockingStrategy(BlockingStrategy):
             head_block_size=config.head_block_size or query.shape[1],
         )
 
+
 class QKVBlockingStrategy(BlockingStrategy):
     def apply(
         self,
@@ -162,6 +164,7 @@ class QKVBlockingStrategy(BlockingStrategy):
             past_key_value=past_key_value,
             **kwargs,
         )
+
 
 class HeadQKVBlockingStrategy(BlockingStrategy):
     def apply(
@@ -193,6 +196,7 @@ class HeadQKVBlockingStrategy(BlockingStrategy):
             past_key_value=past_key_value,
             **kwargs,
         )
+
 
 _STRATEGIES: Dict[str, BlockingStrategy] = {
     "none": NoOpBlockingStrategy(),

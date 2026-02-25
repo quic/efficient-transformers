@@ -986,7 +986,9 @@ class HeadBlockingAttentionTransform:
                     module.attn_blocking_config.head_block_size = int(head_block_size)
                     module.attn_blocking_config.mode = "h" + module.attn_blocking_config.mode
                 else:
-                    module.attn_blocking_config = AttentionBlockingConfig(mode="head", head_block_size=int(head_block_size))
+                    module.attn_blocking_config = AttentionBlockingConfig(
+                        mode="head", head_block_size=int(head_block_size)
+                    )
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Head blocking is not yet supported for {type(module)}.")

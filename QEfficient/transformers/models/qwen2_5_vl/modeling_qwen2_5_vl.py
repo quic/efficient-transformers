@@ -6,7 +6,8 @@
 # -----------------------------------------------------------------------------
 
 import math
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+import os
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -535,8 +536,8 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         num_q_blocks = num_q_blocks if num_q_blocks is not None else getattr(self, "num_q_blocks", None)
         head_block_size = head_block_size if head_block_size is not None else getattr(self, "head_block_size", None)
         blocking_config = getattr(self, "attn_blocking_config", None)
-        
-        if blocking_config is None: 
+
+        if blocking_config is None:
             blocking_config = AttentionBlockingConfig(mode="")
             if num_kv_blocks is not None:
                 blocking_config.mode = "kv" + blocking_config.mode
