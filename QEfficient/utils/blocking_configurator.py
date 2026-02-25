@@ -327,19 +327,17 @@ def build_transformer_blocking_config(
     """
     Build blocking configuration based on model config + pipeline compile config.
     """
-    pipeline_config_dict = _infer_pipeline_config(pipeline_config)
-
     if ctx_len is None:
         ctx_len = seq_len
-    
+
     if seq_len is None and ctx_len is None:
         return {
-        "blocking_mode": blocking_mode,
-        "effective_blocking_mode": "",
-        "attention": {},
-        "ffn": {},
-        "compile_flags": {},
-    }
+            "blocking_mode": blocking_mode,
+            "effective_blocking_mode": "",
+            "attention": {},
+            "ffn": {},
+            "compile_flags": {},
+        }
 
     num_heads = _require_value(
         _get_attr_or_key(model_config, ("num_attention_heads", "num_heads", "attention_heads", "n_heads")),
