@@ -280,6 +280,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # )
 
     streamer = TextStreamer(processor.tokenizer)
+    LOAD_DTYPE = torch.float16
 
     # ========== Export and Compile Model ==========
     if is_intern_model or is_molmo_model:
@@ -287,12 +288,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name,
             kv_offload=kv_offload,
             config=config,
+            torch_dtype=LOAD_DTYPE,
         )
     else:
         qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
             model_name,
             kv_offload=kv_offload,
             config=config,
+            torch_dtype=LOAD_DTYPE,
         )
 
     qeff_model.export()
@@ -326,7 +329,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
             )
         if "pixel_values" in inputs:
-            inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+            inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
