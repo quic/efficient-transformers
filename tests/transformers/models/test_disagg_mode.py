@@ -5,7 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import time
+from typing import Optional
 
 import numpy as np
 import pytest
@@ -31,7 +33,6 @@ As Alex flipped through the pages, he discovered a map that led to a hidden trea
 The path to the treasure was not an easy one. Alex had to navigate through dense forests, cross rickety bridges, and solve riddles that guarded the treasure's location.
 """
 prompt1 = "Once upon a time"
-
 prompts = [prompt1, prompt2]
 
 
@@ -48,9 +49,6 @@ def test_disagg_mode_prefill(model_id, prompt):
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
-
-    replace_transformers_quantizers()
-    model = AutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
     config = model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
     inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -62,7 +60,7 @@ def test_disagg_mode_prefill(model_id, prompt):
 
     undo_transformers_quantizers()
 
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+    qeff_model = QEFFAutoModelForCausalLM(model)
     qeff_model.prefill(True)
     config = qeff_model.model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
@@ -108,7 +106,6 @@ def test_disagg_mode_prefill(model_id, prompt):
     del prefill_session
     # Check QAIC output isclose with QEFF pytorch output
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
-
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
