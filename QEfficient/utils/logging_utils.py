@@ -327,9 +327,9 @@ class QEFFLogger:
 
         # Resolve chain
         t2 = times.get("LOAD_DONE", t_start)  # end of loading
-        t3 = times.get("ONNX_SAVED") or t2    # export end
+        t3 = times.get("ONNX_SAVED") or t2  # export end
         t4 = times.get("COMPILE_DONE") or t3  # compile end
-        t5 = (times.get("TEXT_DONE") or times.get("TEXT_READY") or t4)  # text gen end
+        t5 = times.get("TEXT_DONE") or times.get("TEXT_READY") or t4  # text gen end
 
         def offset_seconds(t: datetime) -> float:
             return (t - t_start).total_seconds()
@@ -341,11 +341,11 @@ class QEFFLogger:
         o5 = offset_seconds(t5)
 
         timing_data: List[List[Any]] = [
-            ["Model Loading",     max(0.0, o2 - o1)],
-            ["Model Exporting",   max(0.0, o3 - o2)],
+            ["Model Loading", max(0.0, o2 - o1)],
+            ["Model Exporting", max(0.0, o3 - o2)],
             ["Model Compilation", max(0.0, o4 - o3)],
-            ["Text Generation",   max(0.0, o5 - o4)],
-            ["Total Time",        max(0.0, o5 - o1)],
+            ["Text Generation", max(0.0, o5 - o4)],
+            ["Total Time", max(0.0, o5 - o1)],
         ]
 
         print(tabulate(timing_data, headers=["Step", "Time (s)"], tablefmt="github", floatfmt=".3f"))
