@@ -29,6 +29,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
+from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
@@ -258,6 +259,7 @@ class QEffGemma3Attention(Gemma3Attention):
                 "is_sliding": self.is_sliding,
                 "sliding_window_pattern": self.config.sliding_window_pattern,
                 "sliding_window": past_key_value.sliding_window_len,
+                "past_seen_tokens": past_seen_tokens,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]

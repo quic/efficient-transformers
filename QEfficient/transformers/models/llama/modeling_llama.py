@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -150,26 +150,11 @@ class QEffLlamaAttention(LlamaAttention):
         )
 
         num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
-        num_q_blocks = num_q_blocks if num_q_blocks is not None else getattr(self, "num_q_blocks", None)
-        head_block_size = head_block_size if head_block_size is not None else getattr(self, "head_block_size", None)
         blocking_config = getattr(self, "attn_blocking_config", None)
-
-        if blocking_config is None:
-            blocking_config = AttentionBlockingConfig(mode="")
-            if num_kv_blocks is not None:
-                blocking_config.mode = "kv" + blocking_config.mode
-                blocking_config.num_kv_blocks = int(num_q_blocks)
-            if num_q_blocks is not None:
-                blocking_config.mode = "q" + blocking_config.mode
-                blocking_config.num_q_blocks = int(num_q_blocks)
-            if head_block_size is not None:
-                blocking_config.mode = "h" + blocking_config.mode
-                blocking_config.head_block_size = int(head_block_size)
-            if blocking_config.mode == "":
-                blocking_config = None
-
+        if blocking_config is None and num_kv_blocks is not None:
+            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
         use_kv_blocked = (
-            blocking_config is not None and "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
+            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
         )
         use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
         if past_key_value is not None:
