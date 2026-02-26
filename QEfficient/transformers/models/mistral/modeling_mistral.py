@@ -7,7 +7,7 @@
 
 """PyTorch Mistral model."""
 
-from typing import Callable, List, Optional, Tuple, Type, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.utils.checkpoint
