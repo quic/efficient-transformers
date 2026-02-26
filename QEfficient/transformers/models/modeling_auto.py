@@ -1720,7 +1720,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         AssertionError
             If `generation_len` is not greater than zero.
         """
-        # breakpoint()
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
@@ -1752,10 +1751,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [x[lang_session.binding_index_map["input_ids"]][1][1] for x in lang_session.allowed_shapes]
             + [lang_session.bindings[lang_session.binding_index_map["input_ids"]].dims[1]]
         )
-<<<<<<< HEAD
-=======
-        # breakpoint()
->>>>>>> 657a757 (Add fp8 support (#802))
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
         input_ids_length = inputs["input_ids"].shape[1]
         num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
@@ -1826,10 +1821,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
         lang_start = perf_counter()
-<<<<<<< HEAD
-=======
-        # breakpoint()
->>>>>>> 657a757 (Add fp8 support (#802))
         # Run prefill
         chunk_inputs = lang_inputs.copy()
         for i in range(num_chunks):
@@ -1861,10 +1852,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
         if not_mllama:
             lang_session.skip_buffers(vision_outputs.keys())
-<<<<<<< HEAD
-=======
-        # breakpoint()
->>>>>>> 657a757 (Add fp8 support (#802))
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
         lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1

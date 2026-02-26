@@ -197,10 +197,13 @@ class QEffDynamicLayer(CacheLayerMixin):
             self._mark_initialized(self.keys)
         else:
 <<<<<<< HEAD
+<<<<<<< HEAD
             self._mark_initialized(self.keys)
 =======
             # breakpoint()
 >>>>>>> 657a757 (Add fp8 support (#802))
+=======
+>>>>>>> 1f269b4 (Support for Qwen3VL MOE Disagg mode (#808))
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
@@ -235,7 +238,6 @@ class QEffDynamicLayer(CacheLayerMixin):
         Return:
             A tuple containing the updated key and value states.
         """
-        # breakpoint()
         # Update the cache
 
         if self.keys is None:
@@ -460,7 +462,6 @@ class QEffDynamicCache(Cache):
         Return:
             A tuple containing the updated key and value states.
         """
-        # breakpoint()
         return self.layers[layer_idx].read_only(cache_kwargs)
 
     def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
