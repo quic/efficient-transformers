@@ -37,7 +37,9 @@ def run_intern_on_aic(
     # To maintain compatibility, we load this model using `QEFFAutoModelForCausalLM`.
 
     LOAD_DTYPE = torch.float16
-    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, trust_remote_code=True, torch_dtype=LOAD_DTYPE)
+    model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_name, kv_offload=kv_offload, trust_remote_code=True, torch_dtype=LOAD_DTYPE
+    )
 
     ## STEP 2 -- EXPORT & COMPILE THE MODEL
 
