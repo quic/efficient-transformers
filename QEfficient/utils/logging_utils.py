@@ -242,19 +242,26 @@ class QEFFLogger:
     def print_table(cls) -> None:
         """
         Parse the line-delimited JSON log in cls._logfile and print timing table with t1 as baseline (0.0s):
-          - Model Loading      : t2 - t1
-          - Model Exporting    : t3 - t2
-          - Model Compilation  : t4 - t3
-          - Text Generation    : t5 - t4
-          - Total Time         : t5 - t1
+          - Model Loading     : t2 - t1
+          - Model Exporting   : t3 - t2
+          - Model Compilation : t4 - t3
+          - Text Generation   : t5 - t4
+          - Total Time        : t5 - t1
 
-        Milestones (matched to your log sample):
-          t1: first log line timestamp (baseline)
-          t2: "PyTorch export successful"
-          t3: "Transformed ONNX saved"
-          t4: "Model compilation is finished and saved"
-          t5: "Text Generated finised"
-             If t5 is missing, we fall back to "specialization_file_path" as readiness marker.
+        Milestones (case-insensitive):
+          START_LOAD : "Initiating the model weight loading."      -> t1 (baseline)
+          LOAD_DONE  : "Pytorch transforms applied to model"       -> t2 (end of loading)
+          ONNX_SAVED : "Transformed ONNX saved"                    -> t3
+          COMPILE_DONE: "Model compilation is finished and saved"  -> t4
+          TEXT_DONE  : "Text Generated finised"                    -> t5 candidate
+          TEXT_READY : "specialization_file_path"                  -> t5 fallback
+
+        Notes:
+          - t2 is always LOAD_DONE (no conditional fallback). If missing, falls back to t1.
+          - t3 falls back to t2 if ONNX_SAVED is absent.
+          - t4 falls back to t3 if COMPILE_DONE is absent.
+          - t5 prefers TEXT_DONE; else TEXT_READY; else t4.
+          - Timestamps are enforced to be strictly increasing by +1 ms when equal/non-monotonic.
         """
         path = cls._logfile
         if not path:
@@ -262,16 +269,33 @@ class QEFFLogger:
         if not os.path.exists(path):
             raise FileNotFoundError(f"Log file does not exist: {path}")
 
-        t_start: Optional[datetime] = None
-        t_export_done: Optional[datetime] = None
-        t_onnx_saved: Optional[datetime] = None
-        t_compile_done: Optional[datetime] = None
-        t_text_done: Optional[datetime] = None
-        t_text_ready: Optional[datetime] = None
+        # Milestone map (case-insensitive)
+        SUBSTR_TO_KEY: Dict[str, str] = {
+            "initiating the model weight loading.": "START_LOAD",
+            "pytorch transforms applied to model": "LOAD_DONE",
+            "transformed onnx saved": "ONNX_SAVED",
+            "model compilation is finished and saved": "COMPILE_DONE",
+            "text generated finised": "TEXT_DONE",
+            "specialization_file_path": "TEXT_READY",
+        }
 
+        def classify(msg: str) -> Optional[str]:
+            m = msg.lower()
+            for needle, key in SUBSTR_TO_KEY.items():
+                if needle in m:
+                    return key
+            return None
+
+        from datetime import timedelta
+
+        t_start: Optional[datetime] = None
+        last_ts: Optional[datetime] = None
+        times: Dict[str, datetime] = {}
+
+        # Scan the log; enforce strictly increasing timestamps
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+            for raw in f:
+                line = raw.strip()
                 if not line:
                     continue
                 try:
@@ -287,50 +311,41 @@ class QEFFLogger:
 
                 ts = cls._parse_dt(date_str, time_str)
 
-                if t_start is None:
-                    t_start = ts
+                if last_ts is not None and ts <= last_ts:
+                    ts = last_ts + timedelta(milliseconds=1)
 
-                if ("PyTorch export successful" in msg) and (t_export_done is None):
-                    t_export_done = ts
+                key = classify(msg)
+                if key and key not in times:
+                    times[key] = ts
+                    if key == "START_LOAD" and t_start is None:
+                        t_start = ts
 
-                if ("Transformed ONNX saved" in msg) and (t_onnx_saved is None):
-                    t_onnx_saved = ts
-
-                if ("Model compilation is finished and saved" in msg) and (t_compile_done is None):
-                    t_compile_done = ts
-
-                if ("Text Generated finised" in msg) and (t_text_done is None):
-                    t_text_done = ts
-
-                if ("specialization_file_path" in msg) and (t_text_ready is None):
-                    t_text_ready = ts
+                last_ts = ts
 
         if t_start is None:
-            raise ValueError("Could not determine start time (no valid log lines with date/time).")
+            raise ValueError("Missing required milestone: 'Initiating the model weight loading.'")
 
-        if t_text_done is None:
-            t_text_done = t_text_ready
+        # Resolve chain
+        t2 = times.get("LOAD_DONE", t_start)  # end of loading
+        t3 = times.get("ONNX_SAVED") or t2    # export end
+        t4 = times.get("COMPILE_DONE") or t3  # compile end
+        t5 = (times.get("TEXT_DONE") or times.get("TEXT_READY") or t4)  # text gen end
 
-        t_export_done = t_export_done or t_start
-        t_onnx_saved = t_onnx_saved or t_export_done
-        t_compile_done = t_compile_done or t_onnx_saved
-        t_text_done = t_text_done or t_compile_done
-
-        def to_offset_seconds(t: datetime) -> float:
+        def offset_seconds(t: datetime) -> float:
             return (t - t_start).total_seconds()
 
         o1 = 0.0
-        o2 = to_offset_seconds(t_export_done)
-        o3 = to_offset_seconds(t_onnx_saved)
-        o4 = to_offset_seconds(t_compile_done)
-        o5 = to_offset_seconds(t_text_done)
+        o2 = offset_seconds(t2)
+        o3 = offset_seconds(t3)
+        o4 = offset_seconds(t4)
+        o5 = offset_seconds(t5)
 
         timing_data: List[List[Any]] = [
-            ["Model Loading", max(0.0, o2 - o1)],
-            ["Model Exporting", max(0.0, o3 - o2)],
+            ["Model Loading",     max(0.0, o2 - o1)],
+            ["Model Exporting",   max(0.0, o3 - o2)],
             ["Model Compilation", max(0.0, o4 - o3)],
-            ["Text Generation", max(0.0, o5 - o4)],
-            ["Total Time", max(0.0, o5 - o1)],
+            ["Text Generation",   max(0.0, o5 - o4)],
+            ["Total Time",        max(0.0, o5 - o1)],
         ]
 
         print(tabulate(timing_data, headers=["Step", "Time (s)"], tablefmt="github", floatfmt=".3f"))
