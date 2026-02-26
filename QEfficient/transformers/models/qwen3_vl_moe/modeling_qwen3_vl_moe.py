@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 import math
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -659,6 +659,15 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.visual
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.visual.blocks[0].__class__}
+
     def forward(self, pixel_values, image_grid_thw):
         image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)[0]
         bs = image_grid_thw.shape[0]
@@ -671,7 +680,16 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.language_model = self.model.model
+        self.language_model = self.model.model.language_model
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffQwen3VLDecoderWrapper}
 
     def forward(
         self,
@@ -714,7 +732,7 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         x = hidden_states.view(T, H)
 
         router_logits = self.gate(x)
-        prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
+        prob = F.softmax(router_logits, dim=-1, dtype=hidden_states.dtype)
         top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
         top_w = top_w / top_w.sum(dim=1, keepdim=True)
         top_w = top_w.to(x.dtype)
@@ -734,6 +752,40 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         experts_out = experts_out.sum(dim=1).view(B, S, H)
 
         return experts_out, router_logits
+
+
+class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, H = hidden_states.shape
+        T = B * S
+        x = hidden_states.view(T, H)
+        act = getattr(self.experts, "act_fn", F.silu)
+
+        router_logits = self.gate(x)  # [T, E]
+        prob = F.softmax(router_logits, dim=-1, dtype=hidden_states.dtype)
+        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)  # [T, k], [T, k]
+        top_w = top_w / top_w.sum(dim=-1, keepdim=True)
+        top_w = top_w.to(hidden_states.dtype)
+
+        # gate_up_proj: [E, H, 2I], down_proj: [E, I, H]
+        W_up = self.experts.gate_up_proj
+        W_dn = self.experts.down_proj
+        E, H_w, twoI = W_up.shape
+        I2 = twoI // 2
+        routing_weights = torch.zeros_like(prob, dtype=hidden_states.dtype)  # [T, E]
+        routing_weights.scatter_(1, top_i, top_w)
+        expert_out = x.new_zeros((T, H))
+        for e in range(E):
+            rw = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+            # Split fused [H, 2I] -> [H, I] + [H, I]
+            W_gate_e = W_up[e, :, :I2]
+            W_up_e = W_up[e, :, I2:]
+            W_dn_e = W_dn[e, :, :]
+            gate = x @ W_gate_e
+            up = x @ W_up_e
+            down = (up * act(gate)) @ W_dn_e
+            expert_out.add_(down * rw)
+        return expert_out.view(B, S, H), router_logits
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):

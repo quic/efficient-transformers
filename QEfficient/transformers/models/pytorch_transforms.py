@@ -403,6 +403,7 @@ from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeSparseMoeBlock,
 )
 from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+    QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
     QEffQwen3VLMoeForConditionalGeneration,
     QEffQwen3VLMoeModel,
     QEffQwen3VLMoeTextAttention,
@@ -658,6 +659,8 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
         # Qwen3Moe
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+        # Qwen3 VL Moe
+        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
     }
 
 

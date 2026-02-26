@@ -231,7 +231,6 @@ class QEffDynamicLayer(CacheLayerMixin):
         Return:
             A tuple containing the updated key and value states.
         """
-        # breakpoint()
         # Update the cache
         # if not self.is_initialized:
 
@@ -417,7 +416,6 @@ class QEffDynamicCache(Cache):
         Return:
             A tuple containing the updated key and value states.
         """
-        # breakpoint()
         return self.layers[layer_idx].read_only(cache_kwargs)
 
     def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
