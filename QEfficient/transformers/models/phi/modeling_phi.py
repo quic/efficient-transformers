@@ -7,7 +7,7 @@
 
 """PyTorch Phi model."""
 
-from typing import Callable, List, Optional, Tuple, Type, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
