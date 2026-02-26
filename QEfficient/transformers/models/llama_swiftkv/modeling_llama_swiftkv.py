@@ -82,8 +82,6 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         )
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
-        self.rotary_emb = QEffLlamaRotaryEmbedding(config=config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -92,6 +90,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: torch.Tensor = None,
         batch_index: Optional[torch.LongTensor] = None,
+        rotary_emb: Optional[object] = None,
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
         q_len = 1  # as we always run this for single token
@@ -113,7 +112,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
             kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
         key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
         position_ids = position_ids[torch.arange(bsz), position_ids.to(torch.int32).argmax(1)].unsqueeze(1)
         query_states, _ = qeff_apply_rotary_pos_emb(
             query_states, torch.empty_like(query_states), cos, sin, position_ids
@@ -162,6 +161,7 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         comp_ctx_lengths,
         causal_mask,
         batch_index: Optional[torch.LongTensor] = None,
+        rotary_emb=None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Self Attention
         residual = hidden_states
@@ -174,6 +174,7 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
             comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=causal_mask,
             batch_index=batch_index,
+            rotary_emb=rotary_emb,
         )
 
         hidden_states = residual + hidden_states
@@ -335,6 +336,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
         hidden_states = inputs_embeds
 
         next_decoder_cache = None
+        rotary_emb = QEffLlamaRotaryEmbedding(config=config)
 
         for layer_idx in range(self.config.num_key_value_layers):
             layer = self.layers[layer_idx]
@@ -347,6 +349,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
                 batch_index=batch_index,
                 output_attentions=False,
                 use_cache=True,
+                rotary_emb=rotary_emb,
             )
 
         bsz, q_len, _ = hidden_states.size()

@@ -128,9 +128,6 @@ def eager_attention_forward(
 class QEffMixtralAttention(MixtralAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffMixtralRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -139,6 +136,7 @@ class QEffMixtralAttention(MixtralAttention):
         past_key_value: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        rotary_emb: Optional[object] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -156,7 +154,7 @@ class QEffMixtralAttention(MixtralAttention):
                     "with a layer index."
                 )
             kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -265,6 +263,7 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        rotary_emb=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -301,6 +300,7 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
+            rotary_emb=rotary_emb,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -381,6 +381,8 @@ class QEffMixtralModel(MixtralModel):
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
+        
+        rotary_emb = QEffMixtralRotaryEmbedding(config=self.config)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
@@ -397,6 +399,7 @@ class QEffMixtralModel(MixtralModel):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
+                rotary_emb=rotary_emb,
                 **kwargs,
             )
 

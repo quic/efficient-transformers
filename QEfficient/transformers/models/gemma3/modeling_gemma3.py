@@ -188,12 +188,12 @@ class QEffGemma3Attention(Gemma3Attention):
         self.__qeff_init__()
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffGemma3RotaryEmbedding(
-            self.head_dim,
-            self.config,
-            max_position_embeddings=self.config.max_position_embeddings,
-            base=self.config.rope_theta,
-        )
+        # self.rotary_emb = QEffGemma3RotaryEmbedding(
+        #     self.head_dim,
+        #     self.config,
+        #     max_position_embeddings=self.config.max_position_embeddings,
+        #     base=self.config.rope_theta,
+        # )
 
         config = copy.deepcopy(self.config)
         config.rope_theta = config.rope_local_base_freq
@@ -201,12 +201,12 @@ class QEffGemma3Attention(Gemma3Attention):
         self.is_local = _is_local(self.layer_idx, self.config.sliding_window_pattern)
         self.window = self.config.sliding_window if self.is_local else None
 
-        self.rotary_emb_local = QEffGemma3RotaryEmbedding(
-            self.head_dim,
-            config,
-            max_position_embeddings=config.max_position_embeddings,
-            base=config.rope_theta,
-        )
+        # self.rotary_emb_local = QEffGemma3RotaryEmbedding(
+        #     self.head_dim,
+        #     config,
+        #     max_position_embeddings=config.max_position_embeddings,
+        #     base=config.rope_theta,
+        # )
 
     def forward(
         self,
@@ -218,6 +218,7 @@ class QEffGemma3Attention(Gemma3Attention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb: Optional[object] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -240,9 +241,9 @@ class QEffGemma3Attention(Gemma3Attention):
                     "with a layer index."
                 )
         if self.is_sliding:
-            cos, sin = self.rotary_emb_local(value_states, seq_len=self.config.max_position_embeddings)
+            cos, sin = rotary_emb_local(value_states, seq_len=self.config.max_position_embeddings)
         else:
-            cos, sin = self.rotary_emb(value_states, seq_len=self.config.max_position_embeddings)
+            cos, sin = rotary_emb(value_states, seq_len=self.config.max_position_embeddings)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         if past_key_value is not None:
@@ -308,6 +309,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         last_cache_position: int = 0,
+        rotary_emb=None,
         **kwargs,
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -336,6 +338,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
+            rotary_emb=rotary_emb,
             **kwargs,
         )
 
@@ -432,6 +435,13 @@ class QEffGemma3TextModel(Gemma3TextModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
+
+        rotary_emb = QEffGemma3RotaryEmbedding(
+            self.head_dim,
+            self.config,
+            max_position_embeddings=self.config.max_position_embeddings,
+            base=self.config.rope_theta,
+        )
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -447,6 +457,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 last_cache_position=last_cache_position,
+                rotary_emb=rotary_emb,
                 **flash_attn_kwargs,
             )
 

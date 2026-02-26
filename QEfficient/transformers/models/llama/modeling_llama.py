@@ -198,9 +198,6 @@ def eager_attention_forward_blockedKV(
 class QEffLlamaAttention(LlamaAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -212,6 +209,7 @@ class QEffLlamaAttention(LlamaAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         num_kv_blocks: Optional[torch.Tensor] = None,
+        rotary_emb: Optional[object] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -228,7 +226,7 @@ class QEffLlamaAttention(LlamaAttention):
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -287,6 +285,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -303,6 +302,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
+            rotary_emb=rotary_emb,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -367,6 +367,8 @@ class QEffLlamaModel(LlamaModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
 
+        rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
+
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -380,6 +382,7 @@ class QEffLlamaModel(LlamaModel):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                rotary_emb=rotary_emb,
                 **kwargs,
             )
 

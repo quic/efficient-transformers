@@ -329,6 +329,7 @@ class QEffGPT2Model(GPT2Model):
         # Fix position_ids to not use -1
         position_embeds = self.wpe(torch.where(position_ids == -1, 0, position_ids))
         hidden_states = inputs_embeds + position_embeds
+        
 
         if token_type_ids is not None:
             token_type_embeds = self.wte(token_type_ids)

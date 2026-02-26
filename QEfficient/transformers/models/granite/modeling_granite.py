@@ -121,8 +121,6 @@ def eager_attention_forward(
 
 
 class QEffGraniteAttention(GraniteAttention):
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGraniteRotaryEmbedding(config=self.config)
 
     def forward(
         self,
@@ -133,6 +131,7 @@ class QEffGraniteAttention(GraniteAttention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb: Optional[object] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -143,7 +142,7 @@ class QEffGraniteAttention(GraniteAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -192,6 +191,7 @@ class QEffGraniteDecoderLayer(GraniteDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+        rotary_emb=None,
         **kwargs,
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -230,6 +230,7 @@ class QEffGraniteDecoderLayer(GraniteDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            rotary_emb=rotary_emb,
             **kwargs,
         )
         hidden_states = residual + hidden_states * self.residual_multiplier
@@ -301,6 +302,8 @@ class QEffGraniteModel(GraniteModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
+        
+        rotary_emb = QEffGraniteRotaryEmbedding(config=self.config)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
@@ -316,6 +319,7 @@ class QEffGraniteModel(GraniteModel):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                rotary_emb=rotary_emb,
                 **kwargs,
             )
 

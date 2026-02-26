@@ -737,8 +737,6 @@ def opt_eager_attention_forward_blocked(
 class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
 
     def forward(
         self,
@@ -750,6 +748,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         sliding_mask=None,
+        rotary_emb: Optional[object] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -760,7 +759,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
             max_seq_len_cached = 32 * 1024
-        cos, sin = self.rotary_emb(value_states, seq_len=max_seq_len_cached)
+        cos, sin = rotary_emb(value_states, seq_len=max_seq_len_cached)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -819,9 +818,6 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
 class QEffPrefillOnlyGptOssAttention(GptOssAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -832,6 +828,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         sliding_mask=None,
+        rotary_emb: Optional[object] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -842,7 +839,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
             max_seq_len_cached = 32 * 1024
-        cos, sin = self.rotary_emb(value_states, seq_len=max_seq_len_cached)
+        cos, sin = rotary_emb(value_states, seq_len=max_seq_len_cached)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -900,9 +897,6 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
 class QEffGptOssAttention(GptOssAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -914,6 +908,7 @@ class QEffGptOssAttention(GptOssAttention):
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         sliding_mask=None,
+        rotary_emb: Optional[object] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -924,7 +919,7 @@ class QEffGptOssAttention(GptOssAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
             max_seq_len_cached = 32 * 1024
-        cos, sin = self.rotary_emb(value_states, seq_len=max_seq_len_cached)
+        cos, sin = rotary_emb(value_states, seq_len=max_seq_len_cached)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -981,6 +976,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         sliding_mask=None,
+        rotary_emb=None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor]:
         residual = hidden_states
@@ -997,6 +993,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
             cache_position=cache_position,
             position_embeddings=position_embeddings,
             sliding_mask=sliding_mask,
+            rotary_emb=rotary_emb,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -1166,7 +1163,8 @@ class QEffGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-
+        
+        rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -1182,6 +1180,7 @@ class QEffGptOssModel(GptOssModel):
                 output_attentions=output_attentions,
                 cache_position=cache_position,
                 sliding_mask=sliding_mask,
+                rotary_emb=rotary_emb,
                 **kwargs,
             )
             hidden_states = layer_outputs[0]
