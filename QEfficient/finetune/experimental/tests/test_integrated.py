@@ -57,7 +57,7 @@ from QEfficient.finetune.experimental.core.utils.constants import (
     TEST_SEED,
     TEST_WARMUP_STEPS,
     TEST_WEIGHT_DECAY,
-    TEST_LOSS_THRESHOLD,
+    TRAIN_EVAL_EPOCH_LOSS_DIFF_THRESHOLD,
     AutoClassName,
     DatasetType,
     TaskType,
@@ -363,7 +363,7 @@ def verify_training_results(train_result, eval_result):
     assert "eval_loss" in eval_result
     logger.warning(f"Training loss: {train_result.training_loss:.4f}")
     logger.warning(f"Evaluation loss: {eval_result['eval_loss']:.4f}")
-    assert abs(train_result.training_loss - eval_result["eval_loss"]) < TEST_LOSS_THRESHOLD
+    assert abs(train_result.training_loss - eval_result["eval_loss"]) < TRAIN_EVAL_EPOCH_LOSS_DIFF_THRESHOLD
 
 
 def run_inference_causal_lm(model, tokenizer):

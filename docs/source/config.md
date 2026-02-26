@@ -137,7 +137,7 @@ dataset:
   tokenizer_name: "meta-llama/Llama-3.2-1B"
   dataset_type: "sft_dataset"
   dataset_name: "openai/gsm8k"
-  config_name: "main"
+  config_name: "main"  # available config_name for gsm8k dataset: ["main", "socratic"]
   train_split: "train"
   test_split: "test"
   prompt_template: "Solve the following math problem step by step:\n\n{'question'}\n\nAnswer:\n"
