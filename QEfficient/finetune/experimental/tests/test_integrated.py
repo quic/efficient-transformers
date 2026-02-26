@@ -49,7 +49,6 @@ from QEfficient.finetune.experimental.core.utils.constants import (
     TEST_LORA_TARGET_MODULES_LLAMA,
     TEST_MAX_SEQ_LENGTH_CAUSAL,
     TEST_MAX_SEQ_LENGTH_SEQ_CLS,
-    TEST_MAX_STEPS,
     TEST_MODEL_LLAMA,
     TEST_NUM_HIDDEN_LAYERS,
     TEST_NUM_TRAIN_EPOCHS,
@@ -233,7 +232,6 @@ def create_master_config(
             save_strategy="no",
             eval_strategy="no",
             seed=TEST_SEED,
-            max_steps=TEST_MAX_STEPS,
         ),
     )
 
