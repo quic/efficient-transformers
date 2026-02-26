@@ -327,11 +327,9 @@ class QEffDynamicCache(DynamicCache):
         **kwargs,
     ):
         # Remove layer_classes if present to avoid duplicate argument
-        # breakpoint()
         kwargs.pop("layers", None)
         from transformers.cache_utils import Cache  # Import here to avoid circular import
 
-        # breakpoint()
         layers = []
         # If a config is passed, use it to infer the layer types and initialize accordingly
         if len(layers) == 0:
