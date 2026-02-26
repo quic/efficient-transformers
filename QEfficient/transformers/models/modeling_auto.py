@@ -1180,9 +1180,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.model = model
         self.config = model.config
 
-        # Normalize torch_dtype across all config levels
-        self._normalize_torch_dtype()
-
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
         self.continuous_batching = continuous_batching
@@ -1196,32 +1193,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
         self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
-
-    def _normalize_torch_dtype(self):
-        """
-        Normalizes torch_dtype across all nested configs to match the top-level config.
-
-        This method ensures consistency by propagating the top-level torch_dtype
-        to all nested configs (llm_config, vision_config, etc.) that may exist in
-        multimodal models.
-        """
-        top_level_dtype = getattr(self.config, "torch_dtype", torch.float32)
-
-        # Normalize llm_config if it exists
-        if hasattr(self.config, "llm_config"):
-            self.config.llm_config.torch_dtype = top_level_dtype
-            self.config.llm_config.use_bfloat16 = top_level_dtype == torch.bfloat16
-
-        # Normalize vision_config if it exists
-        if hasattr(self.config, "vision_config"):
-            self.config.vision_config.torch_dtype = top_level_dtype
-            self.config.vision_config.use_bfloat16 = top_level_dtype == torch.bfloat16
-
-        # Normalize text_config if it exists (for models like Qwen2.5-VL)
-        if hasattr(self.config, "text_config"):
-            self.config.text_config.torch_dtype = top_level_dtype
-
-        logger.info(f"Normalized all config torch_dtype to: {top_level_dtype}")
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
@@ -2176,18 +2147,21 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
         custom_io = {}
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        needed_dtype = self.model.config.torch_dtype
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else DTYPE_TO_STRING_MAP[needed_dtype]
         # inputs
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
                 custom_io[input_name[: -len("_RetainedState")]] = (
-                    "float16" if "pixel_values" in input_name else kv_cache_dtype
+                    DTYPE_TO_STRING_MAP[needed_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
 
         # outputs
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
+                custom_io[output_name] = (
+                    DTYPE_TO_STRING_MAP[needed_dtype] if "pixel_values" in output_name else kv_cache_dtype
+                )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
@@ -2199,7 +2173,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,

@@ -59,6 +59,7 @@ class QEFFBaseModel(ABC):
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
+        self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
@@ -76,10 +77,38 @@ class QEFFBaseModel(ABC):
             self.model, transformed = transform.apply(self.model)
             any_transformed = any_transformed or transformed
 
+        self._normalize_torch_dtype()
+
         if not any_transformed:
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+
+    def _normalize_torch_dtype(self):
+        """
+        Normalizes torch_dtype across all nested configs to match the top-level config.
+
+        This method ensures consistency by propagating the top-level torch_dtype
+        to all nested configs (llm_config, vision_config, etc.) that may exist in
+        multimodal models.
+        """
+        top_level_dtype = getattr(self.config, "torch_dtype", torch.float32)
+
+        # Normalize llm_config if it exists
+        if hasattr(self.config, "llm_config"):
+            self.config.llm_config.torch_dtype = top_level_dtype
+            self.config.llm_config.use_bfloat16 = top_level_dtype == torch.bfloat16
+
+        # Normalize vision_config if it exists
+        if hasattr(self.config, "vision_config"):
+            self.config.vision_config.torch_dtype = top_level_dtype
+            self.config.vision_config.use_bfloat16 = top_level_dtype == torch.bfloat16
+
+        # Normalize text_config if it exists (for models like Qwen2.5-VL)
+        if hasattr(self.config, "text_config"):
+            self.config.text_config.torch_dtype = top_level_dtype
+
+        logger.info(f"Normalized all config torch_dtype to: {top_level_dtype}")
 
     def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
