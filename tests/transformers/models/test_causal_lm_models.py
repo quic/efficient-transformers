@@ -405,15 +405,6 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     model, _ = load_causal_lm_model(model_name, n_layer=1)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
-    specialization = qeff_model.build_specialization(
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        batch_size=batch_size,
-        kv_cache_batch_size=batch_size,
-        num_speculative_tokens=num_speculative_tokens,
-        prefill_only=prefill_only,
-    )
-    qeff_model.transform(specialization, num_devices=1)
     new_api_onnx_model_path = qeff_model.export()
 
     # Again loading model since the export moves model to meta device
