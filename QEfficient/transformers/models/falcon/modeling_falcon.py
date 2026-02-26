@@ -304,7 +304,7 @@ class QEffFalconModel(FalconModel):
 
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
-        
+
         rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
 
         for i, block in enumerate(self.h):
@@ -340,7 +340,6 @@ class QEffFalconModel(FalconModel):
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
-
 
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,

@@ -187,27 +187,6 @@ class QEffGemma3Attention(Gemma3Attention):
         # Set the init in the module mapping pytorch transforms
         self.__qeff_init__()
 
-    def __qeff_init__(self):
-        # self.rotary_emb = QEffGemma3RotaryEmbedding(
-        #     self.head_dim,
-        #     self.config,
-        #     max_position_embeddings=self.config.max_position_embeddings,
-        #     base=self.config.rope_theta,
-        # )
-
-        config = copy.deepcopy(self.config)
-        config.rope_theta = config.rope_local_base_freq
-        config.rope_scaling = {"rope_type": "default", "factor": 1.0}
-        self.is_local = _is_local(self.layer_idx, self.config.sliding_window_pattern)
-        self.window = self.config.sliding_window if self.is_local else None
-
-        # self.rotary_emb_local = QEffGemma3RotaryEmbedding(
-        #     self.head_dim,
-        #     config,
-        #     max_position_embeddings=config.max_position_embeddings,
-        #     base=config.rope_theta,
-        # )
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -219,6 +198,7 @@ class QEffGemma3Attention(Gemma3Attention):
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         rotary_emb: Optional[object] = None,
+        rotary_emb_local: Optional[object] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -310,6 +290,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
         cache_position: Optional[torch.LongTensor] = None,
         last_cache_position: int = 0,
         rotary_emb=None,
+        rotary_emb_local=None,
         **kwargs,
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -339,6 +320,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             rotary_emb=rotary_emb,
+            rotary_emb_local=rotary_emb_local,
             **kwargs,
         )
 
@@ -442,6 +424,20 @@ class QEffGemma3TextModel(Gemma3TextModel):
             max_position_embeddings=self.config.max_position_embeddings,
             base=self.config.rope_theta,
         )
+
+        config = copy.deepcopy(self.config)
+        config.rope_theta = config.rope_local_base_freq
+        config.rope_scaling = {"rope_type": "default", "factor": 1.0}
+        self.is_local = _is_local(self.layer_idx, self.config.sliding_window_pattern)
+        self.window = self.config.sliding_window if self.is_local else None
+
+        rotary_emb_local = QEffGemma3RotaryEmbedding(
+            self.head_dim,
+            config,
+            max_position_embeddings=config.max_position_embeddings,
+            base=config.rope_theta,
+        )
+
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -458,6 +454,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
                 cache_position=cache_position,
                 last_cache_position=last_cache_position,
                 rotary_emb=rotary_emb,
+                rotary_emb_local=rotary_emb_local,
                 **flash_attn_kwargs,
             )
 

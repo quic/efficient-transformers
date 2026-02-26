@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
-from collections import Counter
 
 import onnx
 import pytest
@@ -70,6 +69,7 @@ def get_function(onnx_path):
     function_names = [f.name for f in model.functions]
     return function_names
 
+
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("config", configs, ids=config_ids)
@@ -84,10 +84,8 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     # Verify that the model with subfunctions has QEffGPT2Block function definition
     functions_names = get_function(with_sub_func_onnx)
     if len(functions_names) != 12:
-        raise AssertionError(
-            f"function definition, but found {len(functions_names)} functions: {functions_names}"
-        )
-    
+        raise AssertionError(f"function definition, but found {len(functions_names)} functions: {functions_names}")
+
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}

@@ -313,7 +313,7 @@ class QEffMistralModel(MistralModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        
+
         rotary_emb = QEffMistralRotaryEmbedding(config=self.config)
         for decoder_layer in self.layers:
             if output_hidden_states:

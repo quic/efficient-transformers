@@ -121,7 +121,6 @@ def eager_attention_forward(
 
 
 class QEffGraniteAttention(GraniteAttention):
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -302,7 +301,7 @@ class QEffGraniteModel(GraniteModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        
+
         rotary_emb = QEffGraniteRotaryEmbedding(config=self.config)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:

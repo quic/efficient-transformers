@@ -192,7 +192,6 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
 
 
 class QEffQwen3MoeAttention(Qwen3MoeAttention):
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -283,7 +282,7 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
-            rotary_emb=rotary_emb,                                                                                          
+            rotary_emb=rotary_emb,
         )
         hidden_states = residual + hidden_states
 

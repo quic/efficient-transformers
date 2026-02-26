@@ -340,7 +340,7 @@ class QEffGraniteMoeModel(GraniteMoeModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        
+
         rotary_emb = QEffGraniteMoeRotaryEmbedding(config=self.config)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:

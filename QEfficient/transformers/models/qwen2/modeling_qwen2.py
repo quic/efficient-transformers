@@ -310,7 +310,7 @@ class QEffQwen2Model(Qwen2Model):
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
-        
+
         rotary_emb = QEffQwen2RotaryEmbedding(config=self.config)
 
         for decoder_layer in self.layers:

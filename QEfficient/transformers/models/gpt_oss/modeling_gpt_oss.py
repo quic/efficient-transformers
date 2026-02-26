@@ -737,7 +737,6 @@ def opt_eager_attention_forward_blocked(
 class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1168,7 +1167,7 @@ class QEffGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        
+
         rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
         for decoder_layer in self.layers:
             if output_hidden_states:

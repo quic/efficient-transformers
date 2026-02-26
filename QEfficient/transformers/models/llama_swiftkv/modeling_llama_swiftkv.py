@@ -336,7 +336,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
         hidden_states = inputs_embeds
 
         next_decoder_cache = None
-        rotary_emb = QEffLlamaRotaryEmbedding(config=config)
+        rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
 
         for layer_idx in range(self.config.num_key_value_layers):
             layer = self.layers[layer_idx]
