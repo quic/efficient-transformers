@@ -711,23 +711,29 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
-        hidden_states = hidden_states.view(T, H)
-        router_logits = self.gate(hidden_states)  # [T, E]
-        prob = F.softmax(router_logits, -1, dtype=torch.float)
-        top_w, top_i = torch.topk(prob, self.top_k, -1)
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-        gate_proj_up_w = self.experts.gate_up_proj.requires_grad_(False)[top_i.flatten()]
-        down_proj_w = self.experts.down_proj.requires_grad_(False)[top_i.flatten()]
+        x = hidden_states.view(T, H)
 
-        expert_in = hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
-        gate_up = torch.bmm(expert_in, gate_proj_up_w)
-        gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+        router_logits = self.gate(x)
+        prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
+        top_w = top_w / top_w.sum(dim=1, keepdim=True)
+        top_w = top_w.to(x.dtype)
+        idx = top_i.reshape(-1)
+        w_up = self.experts.gate_up_proj.index_select(0, idx)
+        w_dn = self.experts.down_proj.index_select(0, idx)
+
+        xk = x.unsqueeze(1).expand(-1, self.top_k, -1).contiguous()
+        xk = xk.view(-1, 1, H)
+        gate_up = torch.bmm(xk, w_up)
+        I2 = gate_up.size(-1)
+        half = I2 // 2
+        gate, up = gate_up[..., :half], gate_up[..., half:]
         intermediate = up * self.experts.act_fn(gate)
-        experts_out = torch.bmm(intermediate, down_proj_w)
-        experts_out = experts_out.view(B * S, self.top_k, H)
-        experts_out = experts_out * top_w.unsqueeze(-1)
-        experts_out = experts_out.sum(dim=1)
-        return experts_out.view(B, S, H), router_logits
+        experts_out = torch.bmm(intermediate, w_dn)
+        experts_out = experts_out.view(T, self.top_k, H) * top_w.unsqueeze(-1)
+        experts_out = experts_out.sum(dim=1).view(B, S, H)
+
+        return experts_out, router_logits
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):
@@ -736,44 +742,6 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
     def get_qeff_language_decoder(self):
         return QEffQwen3VLDecoderWrapper(self)
-
-    # def forward(
-    #     self,
-    #     input_ids,
-    #     position_ids,
-    #     past_key_values,
-    #     pixel_values:Optional[torch.FloatTensor] = None,
-    #     image_idx:Optional[torch.LongTensor] = None,
-    #     comp_ctx_lengths: Optional[List[int]] = None,
-    #     batch_index: Optional[torch.LongTensor] = None,
-    #     image_grid_thw=None,
-    # ):
-    #     image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)[0]
-    #     bs = image_grid_thw.shape[0]
-    #     split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
-
-    #     inputs_embeds = self.model.get_input_embeddings()(input_ids)
-    #     B, N, C = inputs_embeds.shape
-    #     selected = input_ids == self.model.config.image_token_id
-    #     indices1 = selected.to(torch.int64).cumsum(1) - 1
-    #     indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-    #     indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-    #     image_features_expanded = image_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
-    #     image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-    #     inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-    #     outputs = self.language_model(
-    #         inputs_embeds=inputs_embeds,
-    #         position_ids=position_ids,
-    #         past_key_values=past_key_values,
-    #         comp_ctx_lengths=comp_ctx_lengths,
-    #         batch_index=batch_index,
-    #         use_cache=True,
-    #     )
-    #     logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-    #     hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-    #     logits = self.lm_head(hidden_states)
-    #     image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-    #     return logits, image_embeds, image_idx, outputs.past_key_values
 
     def get_dummy_inputs(
         self,
@@ -1036,7 +1004,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {1: "batch_size", 2: "seq_len"},
-            "vision_embeds": {0: "batch_size", 1: "vision_size"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
         }
 
         for i in range(num_layers):
@@ -1102,6 +1070,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         inputs["position_ids"] = F.pad(
             inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
         )
+        inputs.pop("image_grid_thw", None)
         return inputs
 
     def get_inputs_info(self):

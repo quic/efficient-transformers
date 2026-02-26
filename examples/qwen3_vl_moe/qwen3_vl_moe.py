@@ -6,26 +6,31 @@
 # -----------------------------------------------------------------------------
 
 import requests
+import transformers
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-model_id = "Qwen/Qwen3-VL-32B-Instruct"
+model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
+
+# For Testing Purpose Only
+config.vision_config.depth = 1
+config.text_config.num_hidden_layers = 1
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
 )
+
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
-### use skip_vision=Ture, if want to run only text, else false ###
+### use skip_vision=Ture, if want to run only text, ow false ###
 skip_vision = False
 
 if skip_vision:
     ## Only Text ##
-
     ## Set Batch_Size ##
     batch_size = 1
     qeff_model.compile(
@@ -64,7 +69,7 @@ if skip_vision:
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
-    print(processor.tokenizer.batch_decode(output.generated_ids))
+    print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 
 else:
@@ -78,8 +83,6 @@ else:
         num_devices=4,
         height=354,
         width=536,
-        # height=1024,
-        # width=1024,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
@@ -88,9 +91,6 @@ else:
 
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
-    # image_url = (
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    # )
 
     image = Image.open(requests.get(image_url, stream=True).raw)
 
@@ -99,7 +99,7 @@ else:
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": "Descibe the image in details."},
+                {"type": "text", "text": "Descibe all the colors seen in the image."},
             ],
         },
     ]
@@ -130,5 +130,5 @@ else:
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
-    print(processor.tokenizer.batch_decode(output.generated_ids))
+    print(tokenizer.batch_decode(output.generated_ids))
     print(output)
