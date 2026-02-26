@@ -79,6 +79,7 @@ DTYPE_TO_STRING_MAP = {
     torch.bfloat16: "bfloat16",
 }
 
+
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Base class for QEfficient wrappers around HuggingFace transformer models.
@@ -1170,12 +1171,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Normalize llm_config if it exists
         if hasattr(self.config, "llm_config"):
             self.config.llm_config.torch_dtype = top_level_dtype
-            self.config.llm_config.use_bfloat16 = (top_level_dtype == torch.bfloat16)
+            self.config.llm_config.use_bfloat16 = top_level_dtype == torch.bfloat16
 
         # Normalize vision_config if it exists
         if hasattr(self.config, "vision_config"):
             self.config.vision_config.torch_dtype = top_level_dtype
-            self.config.vision_config.use_bfloat16 = (top_level_dtype == torch.bfloat16)
+            self.config.vision_config.use_bfloat16 = top_level_dtype == torch.bfloat16
 
         # Normalize text_config if it exists (for models like Qwen2.5-VL)
         if hasattr(self.config, "text_config"):
@@ -1509,7 +1510,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             # outputs
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name] = DTYPE_TO_STRING_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
+                    custom_io_lang[output_name] = (
+                        DTYPE_TO_STRING_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
+                    )
             self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
