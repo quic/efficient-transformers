@@ -7,7 +7,7 @@
 
 """PyTorch Phi-3 model."""
 
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.utils.checkpoint
