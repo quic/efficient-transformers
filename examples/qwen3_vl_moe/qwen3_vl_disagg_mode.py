@@ -23,8 +23,8 @@ config = AutoConfig.from_pretrained(model_id)
 
 # TODO clean up this script
 # For Testing Purpose Only
-config.vision_config.depth = 1
-config.text_config.num_hidden_layers = 1
+# config.vision_config.depth = 1
+# config.text_config.num_hidden_layers = 1
 num_devices = 4
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -215,6 +215,7 @@ for i in range(num_chunks):
 
     chunk_inputs["image_idx"] = outputs["image_idx_output"]
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
+print(f"Prefill time  :{prefill_time:.2f} secs")
 
 
 all_outputs.append(np.argmax(outputs["logits"]))
