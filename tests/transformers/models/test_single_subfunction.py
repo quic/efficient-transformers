@@ -83,7 +83,6 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     print(f"{config.model_type} is going on...")
     # Verify that the model with subfunctions has QEffGPT2Block function definition
     functions_names = get_function(with_sub_func_onnx)
-    import pdb; pdb.set_trace()
     if len(functions_names) != 12:
         raise AssertionError(
             f"function definition, but found {len(functions_names)} functions: {functions_names}"
