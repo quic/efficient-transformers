@@ -591,7 +591,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         key_states = key_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
+        # kv_seq_len = key_states.shape[-2]
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
 
