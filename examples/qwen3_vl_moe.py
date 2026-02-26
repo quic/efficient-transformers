@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import requests
-import transformers
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from transformers import AutoConfig, AutoProcessor, TextStreamer
@@ -24,7 +23,6 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
 )
 
-tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 ### use skip_vision=Ture, if want to run only text, ow false ###
 skip_vision = False
@@ -66,10 +64,10 @@ if skip_vision:
         return_tensors="pt",
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    streamer = TextStreamer(tokenizer)
+    streamer = TextStreamer(processor.tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
-    print(tokenizer.batch_decode(output.generated_ids))
+    print(processor.tokenizer.batch_decode(output.generated_ids))
     print(output)
 
 else:
@@ -127,8 +125,8 @@ else:
         return_tensors="pt",
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    streamer = TextStreamer(tokenizer)
+    streamer = TextStreamer(processor.tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
-    print(tokenizer.batch_decode(output.generated_ids))
+    print(processor.tokenizer.batch_decode(output.generated_ids))
     print(output)
