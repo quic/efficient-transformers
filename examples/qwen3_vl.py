@@ -6,28 +6,20 @@
 # -----------------------------------------------------------------------------
 
 import requests
-import transformers
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-# model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
-
-# For Testing Purpose Only
-config.vision_config.depth = 1
-config.text_config.num_hidden_layers = 1
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
 )
-# breakpoint()
-tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
-### use skip_vision=Ture, if want to run only text, ow false ###
+### use skip_vision=Ture, if want to run only text, else false ###
 skip_vision = False
 
 if skip_vision:
@@ -41,8 +33,8 @@ if skip_vision:
         ctx_len=4096,
         num_cores=16,
         num_devices=4,
-        height=1024,
-        width=1024,
+        height=354,
+        width=536,
         mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=True,
@@ -67,13 +59,11 @@ if skip_vision:
         return_dict=True,
         return_tensors="pt",
     )
-    # breakpoint()
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    # breakpoint()
-    streamer = TextStreamer(tokenizer)
+    streamer = TextStreamer(processor.tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
-    print(tokenizer.batch_decode(output.generated_ids))
+    print(processor.tokenizer.batch_decode(output.generated_ids))
     print(output)
 
 else:
@@ -85,10 +75,8 @@ else:
         ctx_len=4096,
         num_cores=16,
         num_devices=4,
-        # height=354,
-        # width=536,
-        height=1024,
-        width=1024,
+        height=354,
+        width=536,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
@@ -96,10 +84,8 @@ else:
     )
 
     ### IMAGE + TEXT ###
-    # image_url = "https://picsum.photos/id/237/536/354"
-    image_url = (
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    )
+    image_url = "https://picsum.photos/id/237/536/354"
+    # image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
 
     image = Image.open(requests.get(image_url, stream=True).raw)
 
@@ -136,9 +122,8 @@ else:
         return_tensors="pt",
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    # breakpoint()
-    streamer = TextStreamer(tokenizer)
+    streamer = TextStreamer(processor.tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
-    print(tokenizer.batch_decode(output.generated_ids))
+    print(processor.tokenizer.batch_decode(output.generated_ids))
     print(output)
