@@ -268,6 +268,14 @@ class VisionHandler:
                     inputs=inputs, prefill_seq_len=prefill_seq_len, batch_size=inputs["input_ids"].shape[0]
                 )
 
+            if (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "qwen3_vl"
+            ):
+                inputs = self._qeff_model.model.prepare_inputs_for_generation(
+                    inputs=inputs, prefill_seq_len=prefill_seq_len, batch_size=inputs["input_ids"].shape[0]
+                )
+
             # Convert to float32 if needed
             if "pixel_values" in inputs:
                 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
@@ -418,7 +426,7 @@ class VisionHandler:
             buffers = {}
             for output_name, shape in shapes.items():
                 # Create placeholder with appropriate dtype
-                if "vision_embeds" in output_name:
+                if "vision_embeds" or "deepstack_features" in output_name:
                     buffers[output_name] = np.zeros(shape, dtype=np.float16)
                 else:
                     buffers[output_name] = np.zeros(shape, dtype=np.float32)

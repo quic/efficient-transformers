@@ -23,9 +23,9 @@ config = AutoConfig.from_pretrained(model_id)
 
 # TODO clean up this script
 # For Testing Purpose Only
-# config.vision_config.depth = 1
-# config.text_config.num_hidden_layers = 1
-num_devices = 4
+config.vision_config.depth = 1
+config.text_config.num_hidden_layers = 1
+num_devices = 1
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -212,11 +212,10 @@ for i in range(num_chunks):
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
 print(f"Prefill time  :{prefill_time:.2f} secs")
 
-
 all_outputs.append(np.argmax(outputs["logits"]))
 decode_inputs = {
     "input_ids": np.argmax(outputs["logits"]).reshape(1, 1),
-    "position_ids": np.max(lang_inputs["position_ids"]).reshape(1, 1) + 1,
+    "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
 }
 
 for i in range(config.text_config.num_hidden_layers):
@@ -230,7 +229,7 @@ decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
 
 all_outputs.append(np.argmax(decode_out["logits"]))
-pos_id = np.max(decode_inputs["position_ids"]).reshape(1, 1) + 1
+pos_id = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
 loop_decode_inputs = {
     "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
     "position_ids": pos_id,
