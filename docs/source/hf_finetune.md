@@ -10,7 +10,7 @@ The **QEfficient Fine-Tune Module** is a component of the QEfficient project foc
 *   **Typed Config Manager**: centralized YAML with validation, overrides, and profile inheritance.
 *   **Component Registry**: plug-and-play registries for models, tokenizers, datasets, trainers, optimizers, and callbacks.
 *   **Dataset support**: JSON/JSONL, CSV, and HF Hub datasets; supports instruction–response and multi-turn chat schemas.
-*   **Parallelism**: `accelerate`, **DeepSpeed**, and **FSDP** for multi-GPU and sharded training.
+*   **Parallelism**: `accelerate`, **Pipeline Parallelism (PP)** for multi-device and sharded training.
 *   **Reproducibility**: experiment tracking hooks, seed control, and deterministic data loaders (where supported).
 
 ***
@@ -206,7 +206,63 @@ The training script supports multiple parallelism strategies:
   fsdp_config: "./configs/accelerate/fsdp_config.yaml"
   fsdp_config: "./configs/accelerate/fsdp_tp_parallelism_config.yaml"
 ```
-- **Pipeline Parallelism**: Split model layers across devices.
+- **Pipeline Parallelism (PP)**: Split model layers across devices.
 - **Tensor Parallelism**: Split tensors across devices.
+
+***
+
+## Pipeline Parallelism (PP)
+
+Pipeline Parallelism splits a model's layers across multiple devices so that a model too large to fit on a single device can still be trained. 
+
+### How it works
+
+PP is controlled by a single parameter: **`pp_degree`**.
+
+| `pp_degree` value | Behaviour |
+|---|---|
+| `1` (default) | PP disabled — standard single-device training |
+| `> 1` | Model is split into `pp_degree` stages, one per device |
+
+When `pp_degree > 1` the framework:
+1. Reads the model's layer count and architecture from its HuggingFace config.
+2. Distributes transformer layers as evenly as possible across stages (surplus layers go to the first stages).
+3. Pins the embedding (`model.embed_tokens`) to the first stage and the final norm (`model.norm`) to the last stage.
+4. When `pp_degree == num_available_devices`, uses HuggingFace's `device_map="auto"` for automatic placement. Otherwise a custom per-layer dict is built.
+
+### Configuration parameter
+
+Add `pp_degree` under the `training` section of your YAML config or pass it as a CLI flag.
+
+```yaml
+# training section of your config YAML
+training:
+  device: "qaic"       # or "cuda"
+  pp_degree: 2         # split model into 2 pipeline stages
+```
+
+> **Note:** `pp_degree` must be ≤ the number of locally available devices. The total devices consumed per node is `pp_degree` (for PP-only) or `LOCAL_WORLD_SIZE × pp_degree` (for PP + DDP).
+
+### Launch commands
+
+**PP only — single process, 2 stages (via YAML)**
+```bash
+python -m QEfficient.cloud.finetune_experimental configs/sample_pp_config.yaml
+```
+where `sample_pp_config.yaml` contains `pp_degree: 2` under `training:`.
+
+**PP only — single process, 2 stages (via CLI flags)**
+```bash
+python -m QEfficient.cloud.finetune_experimental \
+    --model_name meta-llama/Llama-3.2-1B \
+    --device qaic \
+    --pp_degree 2
+```
+
+
+
+### Notes
+
+- PP is currently verified primarily for **Llama-family** models. Other architectures with different layer naming conventions may need adjustments in `device_map_utils.py`.
 
 ***
