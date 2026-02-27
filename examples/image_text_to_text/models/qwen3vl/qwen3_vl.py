@@ -15,9 +15,11 @@ from QEfficient import QEFFAutoModelForImageTextToText
 
 model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
+
 config.vision_config.depth = 9
 config.text_config.num_hidden_layers = 1
 config.vision_config.deepstack_visual_indexes = [8]
+
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
 )
@@ -78,7 +80,7 @@ else:
         prefill_seq_len=128,
         ctx_len=4096,
         num_cores=16,
-        num_devices=2,
+        num_devices=4,
         height=354,
         width=536,
         # height=1024,
