@@ -578,8 +578,10 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             # hidden_states = [ bs, in_channels, frames, latent_height, latent_width]
             "hidden_states": torch.randn(
                 batch_size,
-                cl,
-                constants.WAN_TEXT_EMBED_DIM,
+                self.model.config.in_channels,
+                constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
+                constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_180P,
+                constants.WAN_ONNX_EXPORT_LATENT_WIDTH_180P,
                 dtype=torch.float32,
             ),
             # encoder_hidden_states = [BS, seq len , text dim]
@@ -612,15 +614,18 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
                 {
                     # High noise transformer cache
                     # "prev_first_block_residual_high": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
-                    "prev_remaining_blocks_residual_high": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
+                    "hfrc": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
+                    "hlrc": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
+                    "lfrc": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
+                    "llrc": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
                     # Low noise transformer cache
                     # "prev_first_block_residual_low": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
-                    "prev_remaining_blocks_residual_low": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
+                    # "prev_remaining_blocks_residual_low": torch.randn(batch_size, cl, hidden_dim, dtype=torch.float32),
                     # Current denoising step number
                     # "current_step": torch.tensor(1, dtype=torch.int64),
                     # "cache_threshold": torch.tensor(0.5, dtype=torch.float32),  # Example threshold for cache decision
                     # "warmup_steps": torch.tensor(2, dtype=torch.int64),  # Example
-                    "use_cache": torch.tensor(
+                    "step_number": torch.tensor(
                         1, dtype=torch.int64
                     ),  # Flag to enable/disable cache usage during inference
                 }
@@ -630,8 +635,10 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         if cache_enabled:
             output_names = [
                 "output",
-                "prev_remaining_blocks_residual_high_RetainedState",
-                "prev_remaining_blocks_residual_low_RetainedState",
+                "hfrc_RetainedState",
+                "hlrc_RetainedState",
+                "lfrc_RetainedState",
+                "llrc_RetainedState",
             ]
         else:
             output_names = ["output"]
@@ -640,7 +647,10 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         dynamic_axes = {
             "hidden_states": {
                 0: "batch_size",
-                1: "cl",
+                1: "num_channels",
+                2: "latent_frames",
+                3: "latent_height",
+                4: "latent_width",
             },
             "encoder_hidden_states": {0: "batch_size", 1: "sequence_length"},
             "rotary_emb": {1: "cl"},
@@ -650,8 +660,10 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         # Add dynamic axes for cache tensors if enabled
         if cache_enabled:
             cache_dynamic_axes = {
-                "prev_remaining_blocks_residual_high": {0: "batch_size", 1: "cl"},
-                "prev_remaining_blocks_residual_low": {0: "batch_size", 1: "cl"},
+                "hfrc": {0: "batch_size", 1: "cl"},
+                "hlrc": {0: "batch_size", 1: "cl"},
+                "lfrc": {0: "batch_size", 1: "cl"},
+                "llrc": {0: "batch_size", 1: "cl"},
             }
             dynamic_axes.update(cache_dynamic_axes)
 
@@ -702,10 +714,14 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         if getattr(self.model.transformer_high, "enable_first_cache", False):
             # Define custom IO for cache tensors to ensure correct handling during compilation
             custom_io = {
-                "prev_remaining_blocks_residual_high": kv_cache_dtype,
-                "prev_remaining_blocks_residual_low": kv_cache_dtype,
-                "prev_remaining_blocks_residual_high_RetainedState": kv_cache_dtype,
-                "prev_remaining_blocks_residual_low_RetainedState": kv_cache_dtype,
+                "hfrc": kv_cache_dtype,
+                "hlrc": kv_cache_dtype,
+                "lfrc": kv_cache_dtype,
+                "llrc": kv_cache_dtype,
+                "hfrc_RetainedState": kv_cache_dtype,
+                "hlrc_RetainedState": kv_cache_dtype,
+                "lfrc_RetainedState": kv_cache_dtype,
+                "llrc_RetainedState": kv_cache_dtype,
             }
 
         self._compile(specializations=specializations, custom_io=custom_io, retained_state=True, **compiler_options)

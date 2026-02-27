@@ -232,9 +232,6 @@ class QEffWanPipeline:
         for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration with video dimensions
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
-            import ipdb
-
-            ipdb.set_trace()
             # Prepare export parameters
             export_params = {
                 "inputs": example_inputs,

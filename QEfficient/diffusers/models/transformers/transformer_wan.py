@@ -232,6 +232,7 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         timestep_proj: torch.Tensor,
         frc=None,
         lrc=None,
+        step_number=None,
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -285,9 +286,9 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
                 encoder_hidden_states=encoder_hidden_states,
                 timestep_proj=timestep_proj,
                 rotary_emb=rotary_emb,
+                step_number=step_number,
                 frc=frc,
                 lrc=lrc,
-                use_cache=cache_enabled,
             )
         else:
             # Standard forward pass
