@@ -51,8 +51,7 @@ prefill_qpc_path = qeff_model.compile(
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     retain_full_kv=True,
-    split_retained_state_io=True,
-    retained_state=True,
+    # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=True,
@@ -73,8 +72,7 @@ decode_qpc_path = qeff_model.compile(
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     retain_full_kv=True,
-    split_retained_state_io=True,
-    retained_state=True,
+    # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=True,
@@ -103,7 +101,6 @@ else:
         width=536,
         num_cores=16,
         num_devices=num_devices,
-        retained_state=True,
         mos=1,
         aic_enable_depth_first=True,
         # prefill_only=True,
@@ -129,8 +126,6 @@ else:
         },
     ]
 
-
-########################### example for inference
 
 messages = [messages] * BS
 
