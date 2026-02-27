@@ -23,6 +23,7 @@ from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.model import HFModel  # noqa: F401
 from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
 from QEfficient.finetune.experimental.core.trainer import sft_trainer  # noqa: F401
+from QEfficient.finetune.experimental.core.utils.device_map_utils import get_device_map
 from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
 from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
 
@@ -111,6 +112,22 @@ class FineTuningPipeline:
         model_type = model_config.pop("model_type")
         model_name = model_config.pop("model_name")
 
+        # Get training config for PP settings
+        training_config = self.config.training
+        pp_degree = training_config.get("pp_degree", 1)
+        device = training_config.get("device", "qaic")
+
+        # Generate device_map for pipeline parallelism if pp_degree > 1
+        if pp_degree > 1:
+            device_map = get_device_map(
+                model_name=model_name,
+                device=device,
+                pp_degree=pp_degree,
+            )
+            # Pass device_map via model_config kwargs for model loading
+            model_config["device_map"] = device_map
+            logger.log_rank_zero(f"Pipeline Parallelism enabled: Using device_map for {pp_degree} stages")
+
         # Filter out PEFT-related fields, these shouldn't be passed to model creation
         excluded_keys = {"use_peft", "peft_config"}
         model_config_kwargs = {k: v for k, v in model_config.items() if k not in excluded_keys}
@@ -194,6 +211,8 @@ class FineTuningPipeline:
         # Note: torch_dtype was already converted to fp16/bf16 flag in prepare_training_config
         training_config.pop("deepspeed_config", None)
         training_config.pop("torch_dtype", None)
+        # Remove PP-specific fields as they're handled via device_map in model loading
+        training_config.pop("pp_degree", None)
 
         # Create trainer arguments instance
         args = args_cls(**training_config)
