@@ -29,7 +29,7 @@ class OptimizerConfig:
     """Configuration for optimizers."""
 
     optimizer_name: str = field(
-        default="adamw",
+        default="AdamW",
         metadata={"help": "The name of the optimizer to use."},
     )
     lr: float = field(
@@ -455,6 +455,10 @@ class TrainingConfig:
         default=False,
         metadata={"help": "Whether to compute loss only on completion tokens."},
     )
+    pp_degree: int = field(
+        default=1,
+        metadata={"help": "Pipeline parallelism degree (number of pipeline stages). Set > 1 to enable PP."},
+    )
 
 
 @dataclass
@@ -743,6 +747,14 @@ class ConfigManager:
         # Logging / saving configs
         self._push(errors, training.get("logging_steps", 0) < 0, "training.logging_steps must be >= 0.")
         self._push(errors, training.get("save_total_limit", 0) < 0, "training.save_total_limit must be >= 0.")
+
+        # Pipeline Parallelism (PP) config
+        pp_degree = training.get("pp_degree", 1)
+        self._push(
+            errors,
+            not isinstance(pp_degree, int) or pp_degree < 1,
+            "training.pp_degree must be a positive integer (default 1 = no PP; > 1 enables PP).",
+        )
 
         # DDP config
         ddp = training.get("ddp_config", {})
