@@ -497,7 +497,6 @@ class QEFFBaseModel(ABC):
 
         # Write the generated MDP partition config file (not if user provided it)
 
-
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
