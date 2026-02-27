@@ -1,0 +1,109 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+#
+# Sample configuration for Pipeline Parallelism (PP) without DDP
+# This config demonstrates how to enable PP support on a single node without distributed training
+#
+# To run with PP only (no DDP):
+# python -m QEfficient.cloud.finetune_experimental configs/sample_pp_config.yaml
+#
+
+# To Do: Since config is not getting updated properly thorugh yaml, it gets over written (fix for this is added in #795). 
+# Once #795 is merged, redudant params (params fow which value matches value in config_manager) can be removed from here. 
+# Dataset can also be kept in sync with
+
+# Model configuration
+model:
+  model_type: "hf"  # Hugging Face model
+  auto_class_name: "AutoModelForCausalLM"
+  model_name: "meta-llama/Llama-3.2-1B"  # Pretrained model name
+  use_cache: False
+  attn_implementation: "sdpa"
+  use_peft: True
+  peft_config:
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.1
+    target_modules: ["q_proj", "v_proj"]
+    task_type: "CAUSAL_LM"
+    peft_type: "LORA"
+    bias: "none"  # Options: "none", "all", "lora_only"
+
+# Dataset configuration
+dataset:
+  tokenizer_name: "meta-llama/Llama-3.2-1B"
+  dataset_type: "sft_dataset"
+  dataset_name: "openai/gsm8k"
+  prompt_template: "Solve the following math problem step by step.\n\n### Question:\n{question}\n\n### Answer:\n"  
+  config_name: "main"
+  train_split: "train"
+  test_split: "test"
+  max_seq_length: 512
+  completion_template: "{answer}"
+  dataloader_num_workers: 1
+  dataloader_pin_memory: True
+  dataloader_persistent_workers: False
+  group_by_length: True
+# Training configuration
+training:
+  type: "sft"
+  output_dir: "./training_results_pp"
+  overwrite_output_dir: false
+  seed: 42
+  device: "qaic"  # Use 'cuda' for NVIDIA GPUs, 'qaic' for Qualcomm Cloud AI
+  do_eval: True
+  torch_dtype: "fp16"
+  eval_strategy: "epoch"
+  eval_steps: 100
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 4
+  num_train_epochs: 5
+  max_steps: -1
+  log_level: "info"
+  log_on_each_node: True
+  logging_strategy: "steps"
+  logging_steps: 10
+  save_strategy: "epoch"
+  save_steps: 100
+  save_total_limit: 5
+  metric_for_best_model: "eval_loss"
+  completion_only_loss: True
+
+  # Pipeline Parallelism Configuration (PP without DDP)
+  enable_pp: True
+  num_pp_stages: 2  # Split the model into 2 pipeline stages
+  
+  # Gradient Checkpointing (optional, saves memory)
+  gradient_checkpointing: False
+  gradient_checkpointing_kwargs:
+    preserve_rng_state: True
+    use_reentrant: False
+
+  torch_compile: false
+  include_num_input_tokens_seen: True
+  average_tokens_across_devices: True
+
+# Optimizer configuration
+optimizers:
+  optimizer_name: "AdamW"
+  lr: 5e-5
+  weight_decay: 0.01
+
+# Scheduler configuration
+scheduler:
+  scheduler_name: "cosine"
+  warmup_steps: 100
+
+# Callbacks
+callbacks:
+  early_stopping:
+    early_stopping_patience: 3
+    early_stopping_threshold: 0.001
+  tensorboard: {}
+
+
