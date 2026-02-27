@@ -1548,6 +1548,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                         if ("vision_embeds" in output_name or "deepstack_features" in output_name)
                         else kv_cache_dtype
                     )
+<<<<<<< deepstack
+=======
 
             if prefill_only:
                 if prefill_seq_len > 1:
@@ -1557,6 +1559,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             else:
                 specializations = specializations["lang"]
 
+>>>>>>> qwen3_vl_mainline
             self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
@@ -1701,6 +1704,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         AssertionError
             If `generation_len` is not greater than zero.
         """
+        # breakpoint()
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 

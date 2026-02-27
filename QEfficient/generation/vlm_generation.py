@@ -149,7 +149,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self.is_qwen2_5_vl = (
             hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl"
         )
+<<<<<<< deepstack
+        self.is_qwen3_vl_moe=(
+=======
         self.is_qwen3_vl_moe = (
+>>>>>>> qwen3_vl_mainline
             hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen3_vl_moe"
         )
         self.qeff_model = qeff_model
@@ -262,7 +266,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             if self.is_qwen2_5_vl:
                 _ = self.update_decode_inputs_qwen2_5_vl(outputs, position_ids, generation_len, decode_batch_id)
             elif self.is_qwen3_vl_moe:
+<<<<<<< deepstack
+                _ = self.update_decode_inputs_qwen3_vl_moe(outputs,position_ids,generation_len,decode_batch_id)
+=======
                 _ = self.update_decode_inputs_qwen3_vl_moe(outputs, position_ids, generation_len, decode_batch_id)
+>>>>>>> qwen3_vl_mainline
             else:
                 _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
