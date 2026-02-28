@@ -1074,7 +1074,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-
+        
+        rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -1089,6 +1090,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
                 output_attentions=output_attentions,
                 cache_position=cache_position,
                 sliding_mask=sliding_mask,
+                rotary_emb=rotary_emb,
                 **kwargs,
             )
             hidden_states = layer_outputs[0]
