@@ -797,31 +797,26 @@ class QEffFluxPipeline:
                     })
                 
                # Call PyTorch model with same inputs for comparison
-                with torch.no_grad():
-                    noise_pred_torch = self.transformer.model(
-                        hidden_states=torch.from_numpy(inputs_aic["hidden_states"]),
-                        encoder_hidden_states=torch.from_numpy(inputs_aic["encoder_hidden_states"]),
-                        pooled_projections=torch.from_numpy(inputs_aic["pooled_projections"]),
-                        timestep=torch.from_numpy(inputs_aic["timestep"]),
-                        img_ids=torch.from_numpy(inputs_aic["img_ids"]),
-                        txt_ids=torch.from_numpy(inputs_aic["txt_ids"]),
-                        adaln_emb=torch.from_numpy(inputs_aic["adaln_emb"]),
-                        adaln_single_emb=torch.from_numpy(inputs_aic["adaln_single_emb"]),
-                        adaln_out=torch.from_numpy(inputs_aic["adaln_out"]),
-                        prev_first_block_residuals=torch.from_numpy(inputs_aic["prev_first_block_residuals"]),
-                        prev_remain_block_residuals=torch.from_numpy(inputs_aic["prev_remain_block_residuals"]),
-                        prev_remain_encoder_residuals=torch.from_numpy(inputs_aic["prev_remain_encoder_residuals"]),
-                        cache_threshold=torch.tensor(inputs_aic["cache_threshold"])
-                    )
+                # with torch.no_grad():
+                #     noise_pred_torch = self.transformer.model(
+                #         hidden_states=torch.from_numpy(inputs_aic["hidden_states"]),
+                #         encoder_hidden_states=torch.from_numpy(inputs_aic["encoder_hidden_states"]),
+                #         pooled_projections=torch.from_numpy(inputs_aic["pooled_projections"]),
+                #         timestep=torch.from_numpy(inputs_aic["timestep"]),
+                #         img_ids=torch.from_numpy(inputs_aic["img_ids"]),
+                #         txt_ids=torch.from_numpy(inputs_aic["txt_ids"]),
+                #         adaln_emb=torch.from_numpy(inputs_aic["adaln_emb"]),
+                #         adaln_single_emb=torch.from_numpy(inputs_aic["adaln_single_emb"]),
+                #         adaln_out=torch.from_numpy(inputs_aic["adaln_out"]),
+                #         cache_threshold=torch.tensor(inputs_aic["cache_threshold"])
+                #     )
                 
 
                 # Run transformer inference and measure time
-                # start_transformer_step_time = time.perf_counter()
-                # outputs = self.transformer.qpc_session.run(inputs_aic)
-                # end_transformer_step_time = time.perf_counter()
-                
-                outputs=noise_pred_torch
-                
+                start_transformer_step_time = time.perf_counter()
+                outputs = self.transformer.qpc_session.run(inputs_aic)
+                end_transformer_step_time = time.perf_counter()
+                                
                 # import ipdb
                 # ipdb.set_trace()
                 
@@ -829,16 +824,41 @@ class QEffFluxPipeline:
                     prev_first_block_residuals=outputs['prev_first_block_residuals_RetainedState']
                     prev_remain_block_residuals=outputs['prev_remain_block_residuals_RetainedState']
                     prev_remain_encoder_residuals=outputs['prev_remain_encoder_residual_RetainedState']
+
+                    # # Save residual values to text file for debugging/comparison across steps
+                    # debug_file = "debug_residuals.txt"
+                    # with open(debug_file, "a") as dbf:
+                    #     dbf.write(f"\n{'='*80}\n")
+                    #     dbf.write(f"STEP {i}  (timestep={t.item():.6f})\n")
+                    #     dbf.write(f"{'='*80}\n")
+
+                    #     for arr_name, arr in [
+                    #         ("prev_first_block_residuals",   prev_first_block_residuals[0][0][:10]),
+ 
+                    #     ]:
+                    #         dbf.write(f"\n--- {arr_name} ---\n")
+                    #         dbf.write(f"  shape : {arr.shape}\n")
+                    #         dbf.write(f"  dtype : {arr.dtype}\n")
+                    #         dbf.write(f"  min   : {arr.min():.8f}\n")
+                    #         dbf.write(f"  max   : {arr.max():.8f}\n")
+                    #         dbf.write(f"  mean  : {arr.mean():.8f}\n")
+                    #         dbf.write(f"  std   : {arr.std():.8f}\n")
+                    #         dbf.write(f"  values (flattened):\n")
+                    #         np.savetxt(dbf, arr.reshape(1, -1), fmt="%.8f", delimiter=", ")
+
+                    # prev_first_block_residuals=noise_pred_torch[1]
+                    # prev_remain_block_residuals=noise_pred_torch[2]
+                [[]]    # prev_remain_encoder_residuals=noise_pred_torch[3]
                 
-                # transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-                # print(f"At step-> {i} time taken {end_transformer_step_time - start_transformer_step_time}")
-                # noise_pred = torch.from_numpy(outputs["output"])
+                transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                print(f"At step-> {i} time taken {end_transformer_step_time - start_transformer_step_time}")
+                noise_pred = torch.from_numpy(outputs["output"])
 
                 # Update latents using scheduler (x_t -> x_t-1)
                 latents_dtype = latents.dtype
                 # import ipdb
                 # ipdb.set_trace()
-                latents = self.scheduler.step(noise_pred_torch[0][0], t, latents, return_dict=False)[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 # Handle dtype mismatch (workaround for MPS backend bug)
                 if latents.dtype != latents_dtype:

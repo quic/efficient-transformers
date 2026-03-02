@@ -28,7 +28,7 @@ from QEfficient import QEffFluxPipeline
 # ============================================================================
 
 # Option 1: Basic initialization with default parameters
-pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+pipeline = QEffFluxPipeline.from_pretrained("")
 # Option 2: Advanced initialization with custom modules
 # Uncomment and modify to use your own custom components:
 #
@@ -58,10 +58,10 @@ pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 #
 # original_blocks = pipeline.transformer.model.transformer_blocks
 # org_single_blocks = pipeline.transformer.model.single_transformer_blocks
-# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList(original_blocks[:1])
-# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList(org_single_blocks[:1])
-# pipeline.transformer.model.config['num_layers'] = 2
-# pipeline.transformer.model.config['num_single_layers'] = 2
+# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0]])
+# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_single_blocks[0]])
+# pipeline.transformer.model.config['num_layers'] = 1
+# pipeline.transformer.model.config['num_single_layers'] =1
 
 # ============================================================================
 # OPTIONAL: COMPILE WITH CUSTOM CONFIGURATION
@@ -96,19 +96,17 @@ pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
 output = pipeline(
     prompt="A laughing girl",
-    custom_config_path="/home/amitraj/project/first_cache/efficient-transformers/examples/diffusers/flux/flux_config.json",
-    height=256,
-    width=256,
+    height=512,
+    width=512,
     guidance_scale=0.0,
     num_inference_steps=40,
     max_sequence_length=256,
-    generator=torch.manual_seed(42),
+    generator=torch.Generator().manual_seed(42),
     parallel_compile=True,
     use_onnx_subfunctions=False,
-    cache_threshold=0.04,
 )
 
 image = output.images[0]
 # Save the generated image to disk
-image.save("laughing_girl_cpu.png")
+image.save("1024_image.png")
 print(output)
