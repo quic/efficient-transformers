@@ -115,6 +115,8 @@ This example:
 - Demonstrates MoE model inference
 - Uses sparse expert activation for efficiency
 - Works with Qwen, Mixtral, and other MoE models
+- For `qwen3_moe`, `QEfficient.cloud.infer` auto-enables ONNX subfunctions to reduce export RAM usage
+  (override with `--no-use-onnx-subfunctions` if needed)
 
 
 ## CLI Workflow
@@ -216,6 +218,8 @@ This uses the pre-compiled QPC for fast inference. You can run this multiple tim
 | `--device_group` | Device IDs to use | `[0]` | `[0]` or `[0,1,2,3]` |
 | `--mxfp6` | Enable MXFP6 quantization | False | Add flag to enable |
 | `--mxint8_kv_cache` | Enable MXINT8 KV cache | False | Add flag to enable |
+| `--use-onnx-subfunctions` | Enable ONNX subfunctions for export/compile | Auto for `qwen3_moe`, else False | Add flag to force enable |
+| `--no-use-onnx-subfunctions` | Disable ONNX subfunctions for export/compile | N/A | Add flag to force disable |
 | `--mos` | Memory optimization strategy | 1 | `1` or `2` |
 | `--aic_enable_depth_first` | Enable depth-first execution | False | Add flag to enable |
 
@@ -312,4 +316,3 @@ This script demonstrates:
 By default, exported models and QPC files are stored in `~/.cache/qeff_cache`. Customize this with:
 - `QEFF_HOME`: Primary cache directory
 - `XDG_CACHE_HOME`: Alternative cache location
-

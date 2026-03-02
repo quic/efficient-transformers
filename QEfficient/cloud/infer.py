@@ -19,6 +19,8 @@ from QEfficient.base.common import QEFFCommonLoader
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_processor, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
+_AUTO_SUBFUNCTION_MODEL_TYPES = {"qwen3_moe"}
+
 
 # TODO: Remove after adding support for VLM's compile and execute
 def execute_vlm_model(
@@ -116,6 +118,27 @@ def execute_vlm_model(
     return output
 
 
+def _resolve_use_onnx_subfunctions(model_config, use_onnx_subfunctions: Optional[bool]) -> bool:
+    """
+    Resolve ONNX subfunction usage for compile/export.
+
+    If not explicitly set by user, enable subfunctions for known memory-heavy model types
+    to reduce host RAM usage during ONNX export.
+    """
+    if use_onnx_subfunctions is not None:
+        return use_onnx_subfunctions
+
+    model_type = getattr(model_config, "model_type", None)
+    if model_type in _AUTO_SUBFUNCTION_MODEL_TYPES:
+        logger.info(
+            "Auto-enabling ONNX subfunctions for model_type=%s to reduce export memory usage. "
+            "Use --no-use-onnx-subfunctions to disable.",
+            model_type,
+        )
+        return True
+    return False
+
+
 def main(
     model_name: str,
     num_cores: int,
@@ -139,6 +162,7 @@ def main(
     qnn_config: Optional[str] = None,
     trust_remote_code: Optional[bool] = False,
     ccl_enabled: Optional[bool] = False,
+    use_onnx_subfunctions: Optional[bool] = None,
     **kwargs,
 ) -> None:
     """
@@ -205,6 +229,9 @@ def main(
         Path of the QNN Config parameters file. Default is None.
     trust_remote_code : bool, optional
         If True, trusts remote code when loading models from HuggingFace. Default is False.
+    use_onnx_subfunctions : bool, optional
+        Enables ONNX subfunctions during export and compile. If not provided, this is auto-enabled
+        for memory-heavy model types (currently: ``qwen3_moe``).
     **kwargs :
         Additional compiler options passed directly to `qaic-compile`. Any flag supported by
         `qaic-compile` can be passed. Parameters are converted to flags as follows:
@@ -231,12 +258,10 @@ def main(
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
-    if "--mxfp6" in sys.argv:
-        if args.mxfp6:
-            logger.warning("mxfp6 is going to be deprecated in a future release, use -mxfp6_matmul instead.")
-    if "--mxint8" in sys.argv:
-        if args.mxint8:
-            logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
+    if "--mxfp6" in sys.argv and mxfp6:
+        logger.warning("mxfp6 is going to be deprecated in a future release, use -mxfp6_matmul instead.")
+    if "--mxint8" in sys.argv and mxint8:
+        logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
 
     qaic_config = {"ccl_enabled": True} if ccl_enabled else None
 
@@ -257,6 +282,7 @@ def main(
 
     config = qeff_model.model.config
     architecture = config.architectures[0] if config.architectures else None
+    use_onnx_subfunctions = _resolve_use_onnx_subfunctions(config, use_onnx_subfunctions)
 
     if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values() and (
         kwargs.pop("img_size", None) or image_path or image_url
@@ -280,6 +306,7 @@ def main(
         allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        use_onnx_subfunctions=use_onnx_subfunctions,
         **kwargs,
     )
 
@@ -381,6 +408,21 @@ if __name__ == "__main__":
         "--mxint8-kv-cache",
         action="store_true",
         help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
+    )
+    parser.add_argument(
+        "--use-onnx-subfunctions",
+        "--use_onnx_subfunctions",
+        dest="use_onnx_subfunctions",
+        action="store_true",
+        default=None,
+        help="Enable ONNX subfunctions during export/compile. If not set, auto-enabled for memory-heavy models (e.g. qwen3_moe).",
+    )
+    parser.add_argument(
+        "--no-use-onnx-subfunctions",
+        "--no_use_onnx_subfunctions",
+        dest="use_onnx_subfunctions",
+        action="store_false",
+        help="Disable ONNX subfunctions during export/compile.",
     )
     parser.add_argument(
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
