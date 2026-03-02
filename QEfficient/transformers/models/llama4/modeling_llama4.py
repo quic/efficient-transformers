@@ -1244,7 +1244,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(past_key_values[0][0].shape, dtype=self.config.torch_dtype))
+                lang_inputs["past_key_values"][i].append(
+                    torch.zeros(past_key_values[0][0].shape, dtype=self.config.torch_dtype)
+                )
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
