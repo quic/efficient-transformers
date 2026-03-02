@@ -1023,7 +1023,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         export_dir=None,
         offload_pt_weights=True,
         prefill_seq_len: Optional[int] = None,
-        prefill_only: bool = False,
+        prefill_only: Optional[bool] = None,
         enable_chunking: bool = False,
         **kwargs,
     ):
@@ -1050,7 +1050,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the generated ONNX graph file for the language decoder.
         """
-        if prefill_only:
+        if prefill_only is not None:
             if prefill_seq_len > 1:
                 if not enable_chunking and self.continuous_batching:
                     raise NotImplementedError(
@@ -1267,7 +1267,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         prefill_seq_len: Optional[int] = None,
-        prefill_only: bool = False,
+        prefill_only: Optional[bool] = None,
         enable_chunking: bool = False,
         **kwargs,
     ) -> str:
@@ -1372,7 +1372,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         use_onnx_subfunctions: bool = False,
-        prefill_only=False,
+        prefill_only=None,
         enable_chunking=False,
         **compiler_options,
     ) -> str:
@@ -1496,6 +1496,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             (self.vision_model.onnx_path is None and vision_onnx_path is None)
             or (self.lang_model.onnx_path is None and lang_onnx_path is None)
             or prefill_only
+            or prefill_seq_len == 1  # to export for prefill and decode
         ):
             self.export(
                 use_onnx_subfunctions=use_onnx_subfunctions,
@@ -1548,8 +1549,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                         if ("vision_embeds" in output_name or "deepstack_features" in output_name)
                         else kv_cache_dtype
                     )
-
-            if prefill_only:
+            if prefill_only is not None:
                 if prefill_seq_len > 1:
                     specializations = specializations["lang"][:1]  # prefill
                 else:
@@ -1571,7 +1571,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
-            if skip_vision and prefill_only:  # for disagg serving
+            if skip_vision and (prefill_only or prefill_seq_len == 1):  # for disagg serving
                 return self.lang_model.qpc_path
         return self.qpc_path
 
@@ -2896,7 +2896,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     def export(
         self,
         export_dir: Optional[str] = None,
-        prefill_only: Optional[bool] = False,
+        prefill_only: Optional[bool] = None,
         prefill_seq_len: Optional[int] = None,
         **kwargs,
     ) -> str:

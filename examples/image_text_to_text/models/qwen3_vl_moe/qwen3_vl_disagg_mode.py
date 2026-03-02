@@ -21,11 +21,10 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
-# TODO clean up this script
 # For Testing Purpose Only
-config.vision_config.depth = 1
-config.text_config.num_hidden_layers = 1
-num_devices = 1
+# config.vision_config.depth = 1
+# config.text_config.num_hidden_layers = 1
+num_devices = 4
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -51,7 +50,7 @@ prefill_qpc_path = qeff_model.compile(
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     retain_full_kv=True,
-    # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
+    split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=True,
@@ -72,11 +71,10 @@ decode_qpc_path = qeff_model.compile(
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     retain_full_kv=True,
-    # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
+    split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     aic_enable_depth_first=True,
-    prefill_only=True,
-    enable_chunking=True,
+    prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=False,
 )
