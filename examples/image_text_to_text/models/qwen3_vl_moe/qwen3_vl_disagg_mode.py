@@ -56,7 +56,7 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
-    use_onnx_subfunctions=False,
+    use_onnx_subfunctions=True,
 )
 
 
@@ -76,7 +76,7 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
-    use_onnx_subfunctions=False,
+    use_onnx_subfunctions=True,
 )
 
 if skip_vision:  # for only LLM with DA
@@ -105,7 +105,7 @@ else:
         # enable_chunking=True,
         skip_vision=skip_vision,
         skip_lang=True,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
     )
     vision_session = QAICInferenceSession(vision_qpc_path)
     lang_prefill_session = QAICInferenceSession(prefill_qpc_path)
