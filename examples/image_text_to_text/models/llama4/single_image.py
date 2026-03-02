@@ -28,13 +28,17 @@ config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
-# To change the model weights to required dtype (bf16/fp16/fp32) 
+# To change the model weights to required dtype (bf16/fp16/fp32)
 LOAD_DTYPE = torch.float32
 
 ## STEP 2: Initialize the Model
 # Set kv_offload=True for Dual QPC mode (vision encoder + language model separately)
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config, torch_dtype=LOAD_DTYPE,
+    model_id,
+    attn_implementation="eager",
+    kv_offload=True,
+    config=config,
+    torch_dtype=LOAD_DTYPE,
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
