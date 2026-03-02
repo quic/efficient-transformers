@@ -247,14 +247,14 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                         num_key_value_heads,
                         constants.GRANITEVISION_CTX_LEN,
                         head_dim,
-                        dtype=self.config.torch_dtype
+                        dtype=self.config.torch_dtype,
                     ),
                     torch.zeros(
                         FBS if continuous_batching else BS,
                         num_key_value_heads,
                         constants.GRANITEVISION_CTX_LEN,
                         head_dim,
-                        dtype=self.config.torch_dtype
+                        dtype=self.config.torch_dtype,
                     ),
                 )
             )
@@ -493,6 +493,10 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=self.config.torch_dtype, shape=("batch_size", 10, 3, "img_size", "img_size")),
+            IOInfo(
+                name="pixel_values",
+                datatype=self.config.torch_dtype,
+                shape=("batch_size", 10, 3, "img_size", "img_size"),
+            ),
             IOInfo(name="image_sizes", datatype=torch.int64, shape=(1109, 1610)),
         ]
