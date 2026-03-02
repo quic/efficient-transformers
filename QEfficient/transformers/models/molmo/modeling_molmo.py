@@ -53,11 +53,10 @@ def eager_attention_forward(
         v = v.reshape(B, num_q_heads, S, D)
 
     attn_weights = torch.matmul(q, k.transpose(2, 3)) * scale_factor
-
     if attention_mask is not None:
-        attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+        attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=k.dtype), attn_weights)
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=k.dtype).to(q.dtype)
     attn_output = torch.matmul(attn_weights, v)
 
     return attn_output, attn_weights
@@ -151,6 +150,8 @@ class QEffMolmoRotaryEmbedding(nn.Module):
     def __init__(self, config, device=None):
         super().__init__()
         dim = config.d_model // config.n_heads
+
+        # TODO: Config does not have torch_dtype or dtype (fp32 Only in encoder)
         self.inv_freq = 1.0 / (config.rope_theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
         self.original_max_seq_len = config.max_position_embeddings or config.max_sequence_length
         self._set_cos_sin_cache(
@@ -205,7 +206,7 @@ class QEffMultiHeadDotProductAttention(nn.Module):
 
         if self.config.attention_type == "direct":
             attn_weights = torch.einsum("...qhd,...khd->...hqk", xq / math.sqrt(xq.size(-1)), xk)
-            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(xq.dtype)
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=self.config.torch_dtype).to(xq.dtype)
             if self.attention_dropout is not None:
                 attn_weights = self.attention_dropout(attn_weights)
             attn_output = torch.einsum("...hqk,...khd->...qhd", attn_weights.to(xv.dtype), xv)
@@ -959,14 +960,14 @@ class QEffMolmoModel(nn.Module):
         # Define inputs
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
-        vision_inputs["image_masks"] = torch.zeros((inputs_shapes["image_masks"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=self.config.torch_dtype)
+        vision_inputs["image_masks"] = torch.zeros((inputs_shapes["image_masks"]), dtype=self.config.torch_dtype)
         vision_inputs["image_input_idx"] = torch.zeros((inputs_shapes["image_input_idx"]), dtype=torch.int32)
 
         vision_inputs["valid_idx"] = torch.zeros((inputs_shapes["valid_idx"]), dtype=torch.int64)
 
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=self.config.torch_dtype)
         lang_inputs["position_ids"] = (
             torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -987,7 +988,7 @@ class QEffMolmoModel(nn.Module):
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.n_layers)]
         for i in range(self.model.config.n_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=self.config.torch_dtype))
 
         if comp_ctx_lengths is not None:
             lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
@@ -1010,12 +1011,12 @@ class QEffMolmoModel(nn.Module):
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(
                 name="pixel_values",
-                datatype=torch.float32,
+                datatype=self.config.torch_dtype,
                 shape=("batch_size", "num_images", "img_tile", "img_size"),
             ),
             IOInfo(
                 name="image_masks",
-                datatype=torch.float32,
+                datatype=self.config.torch_dtype,
                 shape=("batch_size", "num_images", "img_tile"),
             ),
             IOInfo(

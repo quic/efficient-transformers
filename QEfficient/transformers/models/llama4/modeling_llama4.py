@@ -401,6 +401,7 @@ def eager_attention_forward(
 
 class QEffLlama4TextExperts(Llama4TextExperts):
     def __qeff_init__(self):
+        # TODO: Update qeff_init with config to get the custom dtype
         self.gate_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
         self.up_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
 
