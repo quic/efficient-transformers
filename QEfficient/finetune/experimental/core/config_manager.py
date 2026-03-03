@@ -20,6 +20,7 @@ import yaml
 from transformers.hf_argparser import HfArgumentParser
 
 from QEfficient.finetune.experimental.core.logger import Logger
+from QEfficient.finetune.experimental.core.utils.dist_utils import is_main_process
 from QEfficient.utils.device_utils import is_nsp_free
 
 logger = Logger(__name__)
@@ -706,7 +707,8 @@ class ConfigManager:
                 import torch_qaic  # noqa: F401
 
                 logger.log_rank_zero("torch_qaic package found. Using QAIC devices.")
-                is_nsp_free()
+                if is_main_process():
+                    is_nsp_free()
 
             except ImportError as e:
                 logger.log_rank_zero(

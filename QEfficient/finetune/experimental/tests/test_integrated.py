@@ -14,11 +14,10 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional
 
 import pytest
 import torch
-from peft import LoraConfig
 
 from QEfficient.cloud.finetune_experimental import FineTuningPipeline
 from QEfficient.finetune.experimental.core.config_manager import (
@@ -31,9 +30,8 @@ from QEfficient.finetune.experimental.core.config_manager import (
     SchedulerConfig,
     TrainingConfig,
 )
-from QEfficient.finetune.experimental.core.dataset import SFTDataset
 from QEfficient.finetune.experimental.core.logger import Logger
-from QEfficient.finetune.experimental.core.utils.constants import (
+from QEfficient.finetune.experimental.tests.constants import (
     HF_DATASET_ALPACA,
     HF_DATASET_GSM8K,
     HF_DATASET_GSM8K_CONFIG,
@@ -61,8 +59,6 @@ from QEfficient.finetune.experimental.core.utils.constants import (
     DatasetType,
     TaskType,
 )
-from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
-from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
 
 logger = Logger(__name__)
 # ============================================================================
@@ -236,97 +232,6 @@ def create_master_config(
     )
 
 
-def load_and_prepare_dataset(
-    pipeline: FineTuningPipeline,
-) -> tuple[SFTDataset, SFTDataset]:
-    """
-    Load and prepare a dataset for training.
-
-    Args:
-        pipeline: FineTuningPipeline instance to use for dataset creation
-
-    Returns:
-        tuple of (train dataset, eval dataset)
-    """
-    train_dataset, eval_dataset = pipeline._create_datasets()
-    return train_dataset, eval_dataset
-
-
-def create_model_and_tokenizer(
-    pipeline: FineTuningPipeline,
-) -> tuple[torch.nn.Module, Any]:
-    """
-    Create model and tokenizer instances.
-
-    Args:
-        pipeline: FineTuningPipeline instance to use for dataset creation
-
-    Returns:
-        Tuple of (model, tokenizer)
-    """
-    # Create HFModel instance
-    hf_model = pipeline._create_model()
-
-    # Load model and tokenizer
-    model = hf_model.load_model()
-    tokenizer = hf_model.load_tokenizer()
-
-    return model, tokenizer
-
-
-def create_peft_config(peft_config: Optional[PeftConfig]) -> Optional[LoraConfig]:
-    """
-    Create PEFT configuration from config dataclass.
-
-    Args:
-        peft_config: PEFT configuration dataclass
-
-    Returns:
-        LoraConfig instance or None
-    """
-    if peft_config is None:
-        return None
-
-    convert_peft_config_to_lora_config(peft_config)
-
-
-def create_sft_trainer(
-    model: torch.nn.Module,
-    tokenizer: Any,
-    train_dataset: Any,
-    eval_dataset: Any,
-    optimizer_cls_and_kwargs: Tuple[Any, Dict[str, Any]],
-    training_args: TrainingConfig,
-    callbacks: List[Any],
-    pipeline: FineTuningPipeline,
-):
-    """
-    Create SFT trainer using ComponentRegistry.
-
-    Args:
-        model: Model instance
-        tokenizer: Tokenizer instance
-        train_dataset: Train dataset instance
-        eval_dataset: Evaluation dataset instance
-        optimizer_cls_and_kwargs: Optimizer class and kwargs
-        training_args: Training arguments
-        callbacks: List of callback instances
-        pipeline: FineTuningPipeline instance
-    Returns:
-        Trainer instance
-    """
-    trainer = pipeline._create_trainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        optimizer_cls_and_kwargs=optimizer_cls_and_kwargs,
-        callbacks=callbacks,
-        training_config=training_args,
-    )
-    return trainer
-
-
 def run_training(trainer, config_name: str):
     """
     Run training and return results.
@@ -438,37 +343,21 @@ class TestCausalLMIntegration:
             output_dir=self.test_output_dir,
         )
         config_manager = ConfigManager(master_config)
-        pipeline = FineTuningPipeline(config_manager)
-        # Load model and tokenizer
-        model_config = pipeline.config_manager.get_model_config()
-        model_name = model_config["model_name"]
+        model_config = config_manager.get_model_config()
         # for fast testing
         model_config["num_hidden_layers"] = TEST_NUM_HIDDEN_LAYERS
-        model, tokenizer = create_model_and_tokenizer(pipeline)
-        logger.warning(f"Model loaded: {model_name}")
-
-        callbacks = []
-        optimizer = pipeline._create_optimizer()
-        logger.warning(f"Optimizer created: {type(optimizer[0]).__name__}")
-        # Create trainer using ComponentRegistry
-        training_config = prepare_training_config(pipeline.config_manager)
-        # Load and prepare dataset
-        train_dataset, eval_dataset = load_and_prepare_dataset(
-            pipeline=pipeline,
-        )
-        logger.warning(f"Dataset loaded: {len(train_dataset)} samples")
-        trainer = create_sft_trainer(
-            model=model,
-            tokenizer=tokenizer,
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
-            optimizer_cls_and_kwargs=optimizer,
-            callbacks=callbacks,
-            training_args=training_config,
-            pipeline=pipeline,
-        )
-        logger.warning("Trainer instantiated")
-
+        pipeline = FineTuningPipeline(config_manager)
+        model, tokenizer = pipeline.get_model_and_tokenizer()
+        trainer = pipeline.get_trainer()
+        # Verify model and tokenizer are loaded correctly
+        assert model is not None, "Model should be loaded"
+        assert tokenizer is not None, "Tokenizer should be loaded"
+        assert hasattr(model, "generate"), "Model should have generate method"
+        assert hasattr(tokenizer, "decode"), "Tokenizer should have decode method"
+        logger.info(f"Model and tokenizer loaded successfully for {config_name}")
+        # Verify model parameters
+        total_params = sum(p.numel() for p in model.parameters())
+        logger.info(f"Total parameters: {total_params:,}")
         # Run training
         train_result, eval_result = run_training(trainer, config_name)
 
