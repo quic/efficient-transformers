@@ -169,6 +169,36 @@ class ModelConfig:
         "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
     }
 
+    STANDARD_VLM_MODELS = {
+        "llava-hf/llava-1.5-7b-hf",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "google/gemma-3-4b-it",
+        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    }
+
+    INTERNVL_MODELS = {
+        "OpenGVLab/InternVL2_5-1B",
+        "OpenGVLab/InternVL3_5-1B",
+    }
+
+    MOLMO_MODELS = {
+        "allenai/Molmo-7B-D-0924",
+    }
+
+    SKIPPED_MODELS = {
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "allenai/Molmo-7B-D-0924",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    }
+
+    DUAL_QPC_MODELS = {
+        "OpenGVLab/InternVL2_5-1B",
+        "OpenGVLab/InternVL3_5-1B",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+    }
+
     EXTERNAL_MODELS = {
         "hpcai-tech/grok-1": {
             "pytorch_hf_tokens_custom_case": [
