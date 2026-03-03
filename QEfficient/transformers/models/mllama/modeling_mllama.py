@@ -944,7 +944,8 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         # vision inputs
         vision_inputs = {
             "pixel_values": torch.zeros(
-                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size), dtype=self.config.torch_dtype,
+                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size),
+                dtype=self.config.torch_dtype,
             ),
             "aspect_ratio_ids": torch.ones((BS, MAX_NUM_IMG), dtype=torch.int64),
             "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
@@ -972,14 +973,26 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
                 lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim, dtype=self.config.torch_dtype,
+                    1,
+                    num_key_value_heads,
+                    image_tokens_len,
+                    head_dim,
+                    dtype=self.config.torch_dtype,
                 )
                 lang_inputs["past_key_values"].layers[i].values = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim, dtype=self.config.torch_dtype,
+                    1,
+                    num_key_value_heads,
+                    image_tokens_len,
+                    head_dim,
+                    dtype=self.config.torch_dtype,
                 )
             else:
-                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim, dtype=self.config.torch_dtype)
-                lang_inputs["past_key_values"].layers[i].values = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim, dtype=self.config.torch_dtype)
+                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
+                    1, num_key_value_heads, CTX_LEN, head_dim, dtype=self.config.torch_dtype
+                )
+                lang_inputs["past_key_values"].layers[i].values = torch.zeros(
+                    1, num_key_value_heads, CTX_LEN, head_dim, dtype=self.config.torch_dtype
+                )
 
         lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
