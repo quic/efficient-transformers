@@ -557,7 +557,7 @@ def test_guided_decoding(
     Test QPCs compiled with and without guided decoding.
     """
     # Export and compile QEfficient models
-    num_hidden_layers = 2
+    num_hidden_layers = 1
     additional_configs, additional_params, prompts, spec_length, qeff_class = prepare_model_setup(
         model, is_vlm, num_hidden_layers, prompts, spec_length
     )
