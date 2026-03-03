@@ -19,7 +19,29 @@
             "What are the objects in the image?"
         ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {
+        "text_config": {
+          "head_dim": 128,
+          "hidden_size": 4096,
+          "intermediate_size": 11008,
+          "max_position_embeddings": 4096,
+          "model_type": "llama",
+          "num_attention_heads": 32,
+          "num_hidden_layers": 1,
+          "num_key_value_heads": 32,
+          "vocab_size": 32064
+        },
+      "vision_config": {
+        "hidden_size": 1024,
+        "image_size": 336,
+        "intermediate_size": 4096,
+        "model_type": "clip_vision_model",
+        "num_attention_heads": 4,
+        "num_hidden_layers": 1,
+        "patch_size": 14,
+        "vocab_size": 32000
+      }
+      }
     },
     {
       "model_name": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
@@ -61,7 +83,28 @@
           "Can you describe the image in detail?"
         ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {
+        "text_config": {
+        "sliding_window_pattern": 2,
+        "hidden_size": 2560,
+        "intermediate_size": 10240,
+        "num_hidden_layers": 2,
+        "rope_scaling": {
+          "factor": 8.0,
+          "rope_type": "linear"
+        },
+        "sliding_window": 32
+        },
+        "vision_config": {
+        "hidden_size": 1152,
+        "image_size": 896,
+        "intermediate_size": 4304,
+        "num_attention_heads": 4,
+        "num_hidden_layers": 2,
+        "patch_size": 14,
+        "vision_use_head": false
+        }
+      }
     },
     {
       "model_name": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
@@ -82,7 +125,30 @@
             "What are the objects in the image?"
         ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {
+        "text_config": {
+          "head_dim": 128,
+          "hidden_size": 256,
+          "intermediate_size": 512,
+          "model_type": "mistral",
+          "num_attention_heads": 4,
+          "num_hidden_layers": 1,
+          "num_key_value_heads": 2,
+          "vocab_size": 131072
+        },
+
+      "vision_config": {
+        "head_dim": 64,
+        "hidden_size": 128,
+        "image_size": 1540,
+        "intermediate_size": 256,
+        "model_type": "pixtral",
+        "num_attention_heads": 4,
+        "num_hidden_layers": 1,
+        "patch_size": 14,
+        "vocab_size": 32000
+      }
+    }
     },
     {
       "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
@@ -103,7 +169,63 @@
             "What are the objects in the image?"
         ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {
+        "attention_dropout": 0.0,
+        "bos_token_id": 151643,
+        "eos_token_id": 151645,
+        "vision_start_token_id": 151652,
+        "vision_end_token_id": 151653,
+        "vision_token_id": 151654,
+        "image_token_id": 151655,
+        "video_token_id": 151656,
+        "hidden_act": "silu",
+        "hidden_size": 2048,
+        "initializer_range": 0.02,
+        "intermediate_size": 11008,
+        "max_position_embeddings": 128000,
+        "max_window_layers": 70,
+        "num_attention_heads": 16,
+        "num_hidden_layers": 1,
+        "num_key_value_heads": 2,
+        "rms_norm_eps": 1e-06,
+        "rope_theta": 1000000.0,
+        "sliding_window": 32768,
+        "tie_word_embeddings": true,
+        "torch_dtype": "bfloat16",
+        "transformers_version": "4.41.2",
+        "use_cache": true,
+        "use_sliding_window": false,
+        "vision_config": {
+          "depth": 1,
+          "hidden_act": "silu",
+          "hidden_size": 1280,
+          "intermediate_size": 3420,
+          "num_heads": 16,
+          "in_chans": 3,
+          "out_hidden_size": 2048,
+          "patch_size": 14,
+          "spatial_merge_size": 2,
+          "spatial_patch_size": 14,
+          "window_size": 112,
+          "fullatt_block_indexes": [
+            7,
+            15,
+            23,
+            31
+          ],
+          "tokens_per_second": 2,
+          "temporal_patch_size": 2
+        },
+        "rope_scaling": {
+          "type": "mrope",
+          "mrope_section": [
+            16,
+            24,
+            24
+          ]
+        },
+        "vocab_size": 151936
+    }
     },
     {
       "model_name": "allenai/Molmo-7B-D-0924",
@@ -145,7 +267,42 @@
             "What are the objects in the image?"
         ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {
+        "force_image_size": 448,
+        "llm_config": {
+          "_name_or_path": "Qwen/Qwen2.5-0.5B-Instruct",
+          "architectures": [
+            "Qwen2ForCausalLM"
+          ],
+          "hidden_size": 896,
+          "intermediate_size": 4864,
+          "max_position_embeddings": 32768,
+          "max_window_layers": 21,
+          "num_attention_heads": 14,
+          "num_hidden_layers": 2,
+          "num_key_value_heads": 2,
+          "torch_dtype": "bfloat16",
+          "use_bfloat16": true,
+          "vocab_size": 151674
+        },
+        "vision_config": {
+          "architectures": [
+            "InternVisionModel"
+          ],
+          "hidden_size": 1024,
+          "image_size": 448,
+          "intermediate_size": 4096,
+          "num_attention_heads": 16,
+          "num_channels": 3,
+          "num_hidden_layers": 2,
+          "norm_type": "layer_norm",
+          "qk_normalization": false,
+          "qkv_bias": true,
+          "torch_dtype": "bfloat16",
+          "use_bfloat16": true,
+          "patch_size": 14
+        }
+      }
     },
     {
       "model_name": "OpenGVLab/InternVL3_5-1B",
@@ -166,7 +323,42 @@
             "What are the objects in the image?"
         ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {
+        "force_image_size": 448,
+        "llm_config": {
+          "_name_or_path": "/root/codespace/checkpoints/Qwen3-0.6B",
+          "architectures": [
+            "Qwen3ForCausalLM"
+          ],
+          "hidden_size": 1024,
+          "intermediate_size": 3072,
+          "max_position_embeddings": 40960,
+          "max_window_layers": 28,
+          "num_attention_heads": 16,
+          "num_hidden_layers": 2,
+          "num_key_value_heads": 8,
+          "torch_dtype": "bfloat16",
+          "vocab_size": 151936
+        },
+        "vision_config": {
+          "architectures": [
+            "InternVisionModel"
+          ],
+          "hidden_size": 1024,
+          "image_size": 448,
+          "intermediate_size": 4096,
+          "num_attention_heads": 16,
+          "num_channels": 3,
+          "num_hidden_layers": 2,
+          "norm_type": "layer_norm",
+          "qk_normalization": false,
+          "qkv_bias": true,
+          "torch_dtype": "bfloat16",
+          "use_fa3": false,
+          "use_flash_attn": true,
+          "patch_size": 14
+        }
+      }
     },
     {
       "model_name": "meta-llama/Llama-3.2-11B-Vision-Instruct",
@@ -206,3 +398,13 @@
     }
   ]
 }
+
+
+
+
+
+
+
+
+
+
