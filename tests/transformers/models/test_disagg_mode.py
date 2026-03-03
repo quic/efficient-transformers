@@ -16,19 +16,12 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
-<<<<<<< qwen3moe_dissagg_mode
-model_names_blocking = [
-    "openai/gpt-oss-20b",
-]  # weights are not required to convert to fp32
-
-model_names_chunking = [
-    "Qwen/Qwen3-30B-A3B-Instruct-2507",
+model_id_blocking = [
     "openai/gpt-oss-20b",
 ]
-=======
-model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
->>>>>>> main
-
+model_id_chunking = [
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
+]
 prompt2 = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
 
@@ -43,7 +36,7 @@ prompts = [prompt1, prompt2]
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill(model_id, prompt):
     # Run prefill
@@ -78,7 +71,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     past_key_values = []
     for i in range(config.num_hidden_layers):
         cache_len = 128 if i % 2 == 0 else PREFILL_SEQ_LEN
-        pad_shape = (1, config.num_key_value_heads, cache_len, config.head_dim)
+        pad_shape = (1, 8, cache_len, 64)
         past_key = torch.zeros((pad_shape), dtype=torch.float32)
         past_value = torch.zeros((pad_shape), dtype=torch.float32)
         pkv = (past_key, past_value)
@@ -86,6 +79,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     inputs["past_key_values"] = past_key_values
 
     qeff_out = qeff_model.model(**inputs)
+
     # Check our pytorch implementation
     assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
@@ -117,7 +111,7 @@ def test_disagg_mode_prefill(model_id, prompt):
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", model_id_chunking)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill_chunked(model_id, prompt):
     # Run prefill
@@ -168,7 +162,6 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
         inputs["past_key_values"] = qeff_out["past_key_values"]
 
     # Check our pytorch implementation
-
     assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
     prefill_qpc_path = qeff_model.compile(
@@ -205,7 +198,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     # Run prefill for original pytorch model
@@ -310,7 +303,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     )
 
     prefill_session = QAICInferenceSession(prefill_qpc_path)
-    logits_out_placeholder = np.zeros((1, 1, 201088), dtype=np.float32)
+    logits_out_placeholder = np.zeros((1, 1, config.vocab_size), dtype=np.float32)
     prefill_session.set_buffers({"logits": logits_out_placeholder})
     inputs.pop("past_key_values")
     inputs = {k: v.detach().numpy() for k, v in inputs.items()}
@@ -376,7 +369,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefix_caching(model_id, prompt):
     PREFILL_SEQ_LEN = 128
@@ -455,7 +448,7 @@ def prefix_caching_inference(model_id, prefill_qpc_path, decode_qpc_path, prompt
     inputs["batch_index"] = np.array([[decode_batch_id]], dtype=np.int64)
 
     prefill_session = QAICInferenceSession(prefill_qpc_path)
-    logits_out_placeholder = np.zeros((1, 1, 201088), dtype=np.float32)
+    logits_out_placeholder = np.zeros((1, 1, config.vocab_size), dtype=np.float32)
     prefill_session.set_buffers({"logits": logits_out_placeholder})
     for i in range(num_chunks):
         chunk_inputs = inputs.copy()
