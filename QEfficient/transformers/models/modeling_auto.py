@@ -10,6 +10,8 @@ import warnings
 from pathlib import Path
 from time import perf_counter
 from typing import List, Optional, Union
+from transformers import __version__
+
 
 import numpy as np
 import torch
@@ -20,7 +22,6 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForCTC,
     AutoModelForImageTextToText,
-    AutoModelForSequenceClassification,
     AutoModelForSpeechSeq2Seq,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -37,13 +38,11 @@ from QEfficient.generation.text_generation_inference import (
     PerfMetrics,
     calculate_latency,
     get_compilation_dims,
-    write_io_files,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
-from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
-    SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
+    SPECIALIZED_PREFILL_ONLY_MODEL_ARCH,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -57,7 +56,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     RevertPrefillOnlyTransform,
     SamplerTransform,
     SpDTransform,
-    TextClassificationTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
 )
@@ -76,6 +74,24 @@ from QEfficient.utils.check_ccl_specializations import process_ccl_specializatio
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
+from transformers.utils import (
+    ModelOutput,
+    is_torchdynamo_compiling,
+    logging,
+)
+import numpy as np
+
+import torch
+import torch.distributions as dists
+from torch.nn import functional as F
+import copy
+from transformers.generation.configuration_utils import (
+    GenerationConfig
+)
+from typing import Any, Dict, Optional, Tuple, Union
+
+
+
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -89,10 +105,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         if (
             hasattr(model, "config")
             and hasattr(model.config, "quantization_config")
@@ -130,8 +142,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         QEFFTransformersBase
             An instance of the specific QEFFAutoModel subclass, initialized with the pretrained weights.
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
-
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -141,10 +151,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-
-        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
-
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
+        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path)
 
 
 class MultimodalUtilityMixin:
@@ -204,7 +211,119 @@ class MultimodalUtilityMixin:
             raise RuntimeError(err_str)
 
         return {k: v for k, v in inputs.items() if k in [iinfo.name for iinfo in inputs_info]}
+    
+def top_p_logits(logits, top_p=None):
+    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+    sorted_indices_to_remove = cumulative_probs > top_p
+    # Shift the indices to the right to keep the first token above the threshold
+    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+    sorted_indices_to_remove[..., 0] = 0
 
+    mask = torch.zeros_like(logits, dtype=torch.bool, device=logits.device)
+    mask = mask.scatter_(-1, sorted_indices, sorted_indices_to_remove)
+    logits = logits.masked_fill(mask, torch.finfo(logits.dtype).min)
+    return logits
+
+def top_k_logits(logits, top_k=None):
+    top_k = min(top_k, logits.size(-1))  # Safety check
+    # Remove all tokens with a probability less than the last token of the top-k
+    indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+    logits = logits.masked_fill(indices_to_remove, torch.finfo(logits.dtype).min)
+    return logits
+
+class DreamGenerationConfig(GenerationConfig):
+    def __init__(self, **kwargs):
+        self.temperature: float = kwargs.pop("temperature", 0.0)
+        self.top_p: Optional[float] = kwargs.pop("top_p", None)
+        self.top_k: Optional[int] = kwargs.pop("top_k", None)
+        self.max_length = kwargs.pop("max_length", 20)
+        self.max_new_tokens = kwargs.pop("max_new_tokens", None)
+        # diffusion specific params
+        self.eps: float = kwargs.pop("eps", 1e-3)
+        self.steps: int = kwargs.pop("steps", 512)
+        self.alg: str = kwargs.pop("alg", 'origin')
+        self.alg_temp: Optional[float] = kwargs.pop("alg_temp", None)
+
+        #qpc specific params
+        self.compile_length: int = kwargs.pop("compile_length", 1000)
+        self.qpc_path: str = kwargs.pop("qpc_path", None)
+        self.device_ids: list[int] = kwargs.pop("device_ids", None)
+        
+        # Parameters that define the output variables of `generate`
+        self.num_return_sequences: int = kwargs.pop("num_return_sequences", 1)
+        self.return_dict_in_generate: bool = kwargs.pop("return_dict_in_generate", False)
+        self.output_history: bool = kwargs.pop("output_history", False)
+
+        # Special tokens that can be used at generation time
+        self.mask_token_id = kwargs.pop("mask_token_id", None)
+        self.pad_token_id = kwargs.pop("pad_token_id", None)
+        self.bos_token_id = kwargs.pop("bos_token_id", None)
+        self.eos_token_id = kwargs.pop("eos_token_id", None)
+
+        # Wild card
+        self.generation_kwargs = kwargs.pop("generation_kwargs", {})
+
+        # The remaining attributes do not parametrize `.generate()`, but are informative and/or used by the hub
+        # interface.
+        self._from_model_config = kwargs.pop("_from_model_config", False)
+        self._commit_hash = kwargs.pop("_commit_hash", None)
+        self.transformers_version = kwargs.pop("transformers_version", __version__)
+
+        # Additional attributes without default values
+        if not self._from_model_config:
+            # we don't want to copy values from the model config if we're initializing a `GenerationConfig` from a
+            # model's default configuration file
+            for key, value in kwargs.items():
+                try:
+                    setattr(self, key, value)
+                except AttributeError as err:
+                    logger.error(f"Can't set {key} with value {value} for {self}")
+                    raise err
+
+        # Validate the values of the attributes
+        self.validate(is_init=True)
+
+    def validate(self, is_init=False):
+        pass
+
+class DreamModelOutput(ModelOutput):
+    sequences: torch.LongTensor = None
+    history: Optional[Tuple[torch.FloatTensor]] = None
+
+def sample_tokens(logits, temperature=0.0, top_p=None, top_k=None, margin_confidence=False, neg_entropy=False):
+
+    if temperature > 0:
+        logits = logits / temperature
+    if top_p is not None and top_p < 1:
+        logits = top_p_logits(logits, top_p)
+    if top_k is not None:
+        logits = top_k_logits(logits, top_k)
+    probs = torch.softmax(logits, dim=-1)
+
+    if temperature > 0:
+        try:
+            x0 = dists.Categorical(probs=probs).sample()
+            confidence = torch.gather(probs, -1, x0.unsqueeze(-1)).squeeze(-1)
+        except:
+            confidence, x0 = probs.max(dim=-1)
+    else:
+        confidence, x0 = probs.max(dim=-1)
+    
+    if margin_confidence:
+        sorted_probs, _ = torch.sort(probs, dim=-1, descending=True)
+        # Extract top1 and top2 probabilities
+        top1_probs = sorted_probs[:, 0] 
+        top2_probs = sorted_probs[:, 1] 
+        # Calculate confidence as top1 - top2
+        confidence = top1_probs - top2_probs 
+    
+    if neg_entropy:
+        epsilon = 1e-10
+        log_probs = torch.log(probs + epsilon)
+        confidence = torch.sum(probs * log_probs, dim=-1)
+    
+    return confidence, x0
 
 class QEFFAutoModel(QEFFTransformersBase):
     """
@@ -230,7 +349,17 @@ class QEFFAutoModel(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
+    # _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        FP8DeQuantLinearToLinearTransform,
+        Mxfp4GptOssExpertDequantizeTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+        SplitGateUpWeightsTransform,
+        KVCacheExternalModuleMapperTransform,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
@@ -248,15 +377,12 @@ class QEFFAutoModel(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling
         if pooling:
             self.model, _ = PoolingTransform.apply(self.model, pooling)
+        self.config = model.config
 
         self.model.base_model.config.use_cache = True
 
@@ -296,8 +422,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         QEFFAutoModel
             An instance initialized with the pretrained weights.
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
-
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -310,9 +434,6 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
-
-        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
-
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model, kv_offload=kv_offload, **kwargs
@@ -360,14 +481,14 @@ class QEFFAutoModel(QEFFTransformersBase):
             "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
         }
 
-        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
+        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}, "logits": {0: "batch_size", 1: "seq_len"}}
 
-        output_names = ["output"]
+        output_names = ["logits"]
 
         return self._export(
             example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            output_names,
+            dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
@@ -377,7 +498,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
-        seq_len: Union[int, List[int]] = 32,
+        seq_len: Union[int, List[int]] = 24,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
@@ -389,7 +510,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-compile`
+        this method will handle the export process. Additional arguments for the `qaic-exec`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -415,7 +536,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             Additional compiler options for QAIC or QNN compilers. These are passed directly
             to the underlying compilation command.
 
-            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -463,7 +584,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         inputs: torch.Tensor,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
-        write_io: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output by executing the compiled QPC on Cloud AI 100 hardware or using PyTorch runtime.
@@ -487,8 +607,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         torch.Tensor or np.ndarray
             Output from the AI 100 or PyTorch runtime. The type depends on the runtime and model.
         """
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
         # AI_100 runtime
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
@@ -525,7 +643,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
 
         if self.qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids=[4,5,6])
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
         # Dynamic switching to closest seq_Len based on input_ids_len
@@ -567,10 +685,6 @@ class QEFFAutoModel(QEFFTransformersBase):
             }
             self.qpc_session.set_buffers(outputs)
             outputs = self.qpc_session.run(inputs)
-
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
-
         return outputs
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
@@ -591,260 +705,359 @@ class QEFFAutoModel(QEFFTransformersBase):
         List[torch.Tensor]
             List of output features generated by the model for each input.
         """
-        outputs = model(**inputs)
+        return model(**inputs)
+    @staticmethod
+    def _expand_inputs_for_generation(
+        expand_size: int = 1,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.LongTensor] = None
+    ) -> Tuple[torch.LongTensor, Dict[str, Any]]:
+        """Expands tensors from [batch_size, ...] to [batch_size * expand_size, ...]"""
+        # Do not call torch.repeat_interleave if expand_size is 1 because it clones
+        # the input tensor and thus requires more memory although no change is applied
+        if expand_size == 1:
+            return input_ids, attention_mask
+        if input_ids is not None:
+            input_ids = input_ids.repeat_interleave(expand_size, dim=0)
+        if attention_mask is not None:
+            attention_mask = attention_mask.repeat_interleave(expand_size, dim=0)
+        return input_ids, attention_mask
 
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
-        return outputs
+    def _validate_generated_length(self, generation_config, input_ids_length, has_default_max_length):
+        """Performs validation related to the resulting generated length"""
 
+        # Can't throw warnings/exceptions during compilation
+        if is_torchdynamo_compiling():
+            return
 
-class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
-    """
-    QEfficient class for sequence classification models from the HuggingFace hub (e.g., BERT, DebertaV2 for classification).
-
-    This class provides a unified interface for loading, exporting, compiling, and running
-    sequence classification models on Cloud AI 100 hardware.
-
-    Example
-    -------
-    .. code-block:: python
-
-        from QEfficient import QEFFAutoModelForSequenceClassification
-        from transformers import AutoTokenizer
-
-        model = QEFFAutoModelForSequenceClassification.from_pretrained("meta-llama/Llama-Prompt-Guard-2-22M")
-        model.compile(num_cores=16)
-        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-Prompt-Guard-2-22M")
-        inputs = tokenizer("Ignore your previous instructions.", return_tensors="pt")
-        output = model.generate(inputs)
-        predicted_class_id = output["logits"].argmax().item()
-        print(model.model.config.id2label[predicted_class_id])
-    """
-
-    _hf_auto_class = AutoModelForSequenceClassification
-    _pytorch_transforms = [CustomOpsTransform, TextClassificationTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-
-    def __init__(self, model: nn.Module, **kwargs):
-        """
-        Initializes a QEFFAutoModelForSequenceClassification instance.
-
-        Parameters
-        ----------
-        model : nn.Module
-            The underlying HuggingFace PyTorch sequence classification model.
-        **kwargs :
-            Additional keyword arguments passed to the base class constructor.
-        """
-        super().__init__(model, **kwargs)
-        self.model.config.use_cache = True
-        self.hash_params["qeff_auto_class"] = self.__class__.__name__
-
-    @classmethod
-    @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        """
-        Load a QEfficient sequence classification model from a pretrained HuggingFace model or local path.
-
-        This is the recommended way to initialize a QEfficient sequence classification model.
-        The interface is similar to ``transformers.AutoModelForSequenceClassification.from_pretrained``.
-
-        Parameters
-        ----------
-        pretrained_model_name_or_path : str
-            Model card name from HuggingFace or local path to model directory.
-        *args :
-            Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
-        **kwargs :
-            Additional keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
-
-            **Note:** `attn_implementation` and `low_cpu_mem_usage` are automatically
-            set to "eager" and False respectively to ensure compatibility.
-
-        Returns
-        -------
-        QEFFAutoModelForSequenceClassification
-            An instance initialized with the pretrained weights.
-        """
-        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
-            logger.warning('Updating attn_implementation="eager"')
-
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
-
-    @property
-    def get_model_config(self) -> dict:
-        """
-        Get the model configuration as a dictionary.
-
-        Returns
-        -------
-        dict
-            The configuration dictionary of the underlying HuggingFace model.
-        """
-        return self.model.config.__dict__
-
-    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
-        """
-        Export the model to ONNX format using ``torch.onnx.export``.
-
-        This method prepares example inputs and dynamic axes based on the model configuration,
-        then exports the model to an ONNX graph suitable for compilation and deployment on Cloud AI 100 hardware.
-
-        Parameters
-        ----------
-        export_dir : str, optional
-            Directory path where the exported ONNX graph will be saved. If not provided,
-            the default export directory is used.
-        use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-
-        Returns
-        -------
-        str
-            Path to the generated ONNX graph file.
-        """
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-
-        example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
-        }
-
-        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
-
-        output_names = ["logits"]
-
-        return self._export(
-            example_inputs,
-            output_names,
-            dynamic_axes,
-            export_dir=export_dir,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-        )
-
-    def compile(
-        self,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
-        *,
-        seq_len: Union[int, List[int]] = 32,
-        batch_size: int = 1,
-        num_devices: int = 1,
-        num_cores: int = 16,
-        mxfp6_matmul: bool = False,
-        use_onnx_subfunctions: bool = False,
-        **compiler_options,
-    ) -> str:
-        """
-        Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
-
-        This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process.
-
-        Parameters
-        ----------
-        onnx_path : str, optional
-            Path to a pre-exported ONNX model. If not provided, the model will be exported first.
-        compile_dir : str, optional
-            Directory to save the generated QPC package. If not provided, a default directory is used.
-        seq_len : int or list of int, optional
-            The length(s) of the input sequence(s) to compile for. Can be a single integer or a list of integers
-            to create multiple specializations. Default is 32.
-        batch_size : int, optional
-            Batch size. Default is 1.
-        num_devices : int, optional
-            Number of devices to compile for. Default is 1.
-        num_cores : int, optional
-            Number of cores to use for compilation.
-        mxfp6_matmul : bool, optional
-            Use MXFP6 compression for weights. Default is False.
-        use_onnx_subfunctions: bool, optional
-            whether to enable ONNX subfunctions during export. Defaults to False
-        **compiler_options : dict
-            Additional compiler options for QAIC or QNN compilers.
-
-        Returns
-        -------
-        str
-            Path to the compiled QPC package.
-        """
-        if isinstance(seq_len, list) and len(seq_len) >= 15:
-            warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
-
-        specializations = [
-            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
-        ]
-
-        return self._compile(
-            onnx_path=onnx_path,
-            compile_dir=compile_dir,
-            compile_only=True,
-            specializations=specializations,
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=num_devices,
-            aic_num_cores=num_cores,
-            use_onnx_subfunctions=use_onnx_subfunctions,
-            **compiler_options,
-        )
-
-    def generate(
-        self,
-        inputs: torch.Tensor,
-        device_ids: List[int] = None,
-    ) -> dict:
-        """
-        Generate classification output using the Cloud AI 100 hardware runtime.
-
-        Parameters
-        ----------
-        inputs : torch.Tensor or np.ndarray
-            Input tensors for classification. Must be a dictionary-like object
-            including `input_ids` and `attention_mask`.
-        device_ids : List[int], optional
-            List of device IDs to use for inference. Defaults to [0].
-
-        Returns
-        -------
-        dict
-            Dictionary containing the classification logits.
-        """
-        if self.qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
-            self.batch_size = self.qpc_session.bindings[0].dims[0]
-
-        # Dynamic switching to closest seq_len based on input_ids_len
-        input_ids_len = inputs["input_ids"].shape[1]
-
-        for allowed_shape in self.qpc_session.allowed_shapes:
-            seq_len_allowed = allowed_shape[1][1][1]
-            if seq_len_allowed >= input_ids_len:
-                self.seq_len = seq_len_allowed
-                break
-
-        # To handle single seq_len as we can't fetch allowed shapes for single seq_len
-        self.seq_len = self.qpc_session.bindings[0].dims[1] if not hasattr(self, "seq_len") else self.seq_len
-
-        input_ids = np.array(
-            torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - input_ids_len), "constant", 0)
-        )
-        attention_mask = np.array(
-            torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+        # 1. Max length warnings related to poor parameterization
+        if has_default_max_length and generation_config.max_new_tokens is None and generation_config.max_length == 20:
+            # 20 is the default max_length of the generation config
+            warnings.warn(
+                f"Using the model-agnostic default `max_length` (={generation_config.max_length}) to control the "
+                "generation length. We recommend setting `max_new_tokens` to control the maximum length of the "
+                "generation.",
+                UserWarning,
             )
+        if input_ids_length >= generation_config.max_length:
+            input_ids_string = "input_ids"
+            raise ValueError(
+                f"Input length of {input_ids_string} is {input_ids_length}, but `max_length` is set to"
+                f" {generation_config.max_length}. This can lead to unexpected behavior. You should consider"
+                " increasing `max_length` or, better yet, setting `max_new_tokens`."
+            )
+
+    def _prepare_generated_length(
+        self,
+        generation_config,
+        has_default_max_length,
+        input_ids_length,
+    ):
+        """Prepared max and min length in generation configs to avoid clashes between similar attributes"""
+
+        if generation_config.max_new_tokens is not None:
+            if not has_default_max_length and generation_config.max_length is not None:
+                logger.warning(
+                    f"Both `max_new_tokens` (={generation_config.max_new_tokens}) and `max_length`(="
+                    f"{generation_config.max_length}) seem to have been set. `max_new_tokens` will take precedence. "
+                    "Please refer to the documentation for more information. "
+                    "(https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)"
+                )
+            generation_config.max_length = generation_config.max_new_tokens + input_ids_length
+
+        elif has_default_max_length:
+            if generation_config.max_length == DreamGenerationConfig().max_length:
+                generation_config.max_length = generation_config.max_length + input_ids_length
+                max_position_embeddings = getattr(self.config, "max_position_embeddings", None)
+                if max_position_embeddings is not None:
+                    generation_config.max_length = min(generation_config.max_length, max_position_embeddings)
+
+        return generation_config
+
+    def _prepare_generation_config(
+        self, generation_config: Optional[DreamGenerationConfig], **kwargs: Dict
+    ) -> DreamGenerationConfig:
+        """
+        Prepares the base generation config, then applies any generation configuration options from kwargs. This
+        function handles retrocompatibility with respect to configuration files.
+        """
+        # priority: `generation_config` argument > `model.generation_config` (the default generation config)
+        using_model_generation_config = False
+        if generation_config is None:
+            generation_config = DreamGenerationConfig.from_model_config(self.config)
+            using_model_generation_config = True
+
+        # `torch.compile` can't compile `copy.deepcopy`, arguments in `kwargs` that are part of `generation_config`
+        # will mutate the object with `.update`. As such, passing these arguments through `kwargs` is disabled -- an
+        # exception will be raised in `_validate_model_kwargs`
+        if not is_torchdynamo_compiling():
+            generation_config = copy.deepcopy(generation_config)
+            _kwargs = generation_config.update(**kwargs)
+            # If `generation_config` is provided, let's fallback ALL special tokens to the default values for the model
+            if not using_model_generation_config:
+                if generation_config.bos_token_id is None:
+                    generation_config.bos_token_id = self.generation_config.bos_token_id
+                if generation_config.eos_token_id is None:
+                    generation_config.eos_token_id = self.generation_config.eos_token_id
+                if generation_config.pad_token_id is None:
+                    generation_config.pad_token_id = self.generation_config.pad_token_id
+                if generation_config.mask_token_id is None:
+                    generation_config.mask_token_id = self.generation_config.mask_token_id
+
+        return generation_config
+
+    def _prepare_special_tokens(
+        self,
+        generation_config: DreamGenerationConfig,
+        device: Optional[Union[torch.device, str]] = None,
+    ):
+        """
+        Prepares the special tokens for generation, overwriting the generation config with their processed versions
+        converted to tensor.
+
+        Note that `generation_config` is changed in place and stops being serializable after this method is called.
+        That is no problem if called within `generate` (`generation_config` is a local copy that doesn't leave the
+        function). However, if called outside `generate`, consider creating a copy of `generation_config` first.
+        """
+
+        # Convert special tokens to tensors
+        def _tensor_or_none(token, device=None):
+            if token is None:
+                return token
+
+            device = device if device is not None else self.device
+            if isinstance(token, torch.Tensor):
+                return token.to(device)
+            return torch.tensor(token, device=device, dtype=torch.long)
+
+        bos_token_tensor = _tensor_or_none(generation_config.bos_token_id, device=device)
+        eos_token_tensor = _tensor_or_none(generation_config.eos_token_id, device=device)
+        pad_token_tensor = _tensor_or_none(generation_config.pad_token_id, device=device)
+        mask_token_tensor = _tensor_or_none(generation_config.mask_token_id, device=device)
+
+        # We can have more than one eos token. Always treat it as a 1D tensor (when it exists).
+        if eos_token_tensor is not None and eos_token_tensor.ndim == 0:
+            eos_token_tensor = eos_token_tensor.unsqueeze(0)
+
+        # Set pad token if unset (and there are conditions to do so)
+        if pad_token_tensor is None and eos_token_tensor is not None:
+            pad_token_tensor = eos_token_tensor[0]
+            logger.warning(f"Setting `pad_token_id` to `eos_token_id`:{pad_token_tensor} for open-end generation.")
+
+        # Update generation config with the updated special tokens tensors
+        # NOTE: this must be written into a different attribute name than the one holding the original special tokens
+        # (in their non-tensor form), in order to enable end-to-end compilation. See
+        # https://pytorch.org/docs/stable/torch.compiler_cudagraph_trees.html#limitations
+        generation_config._bos_token_tensor = bos_token_tensor
+        generation_config._eos_token_tensor = eos_token_tensor
+        generation_config._pad_token_tensor = pad_token_tensor
+        generation_config._mask_token_tensor = mask_token_tensor
+
+    @torch.no_grad()
+    def diffusion_generate(
+        self,
+        inputs: Optional[torch.Tensor] = None,
+        generation_config: Optional[DreamGenerationConfig] = None,
+        **kwargs,
+    ) -> Union[DreamModelOutput, torch.LongTensor]:
+        # 1. Handle `generation_config` and kwargs that might update it, and validate the `.generate()` call
+        generation_config = self._prepare_generation_config(generation_config, **kwargs)
+        generation_tokens_hook_func = kwargs.pop("generation_tokens_hook_func", lambda step, x, logits: x)
+        generation_logits_hook_func = kwargs.pop("generation_logits_hook_func", lambda step, x, logits: logits)
+        import time
+        start_time = time.perf_counter()
+        # 2. Define model inputs
+        assert inputs is not None
+        input_ids = inputs
+        device = input_ids.device
+        attention_mask = kwargs.pop("attention_mask", None)
+        self._prepare_special_tokens(generation_config, device=device)
+
+        # 3. Prepare `max_length`.
+        input_ids_length = input_ids.shape[-1]
+        has_default_max_length = kwargs.get("max_length") is None and generation_config.max_length is not None
+        generation_config = self._prepare_generated_length(
+            generation_config=generation_config,
+            has_default_max_length=has_default_max_length,
+            input_ids_length=input_ids_length,
         )
 
-        inputs_np = dict(input_ids=input_ids, attention_mask=attention_mask)
-        outputs = self.qpc_session.run(inputs_np)
+        self._validate_generated_length(generation_config, input_ids_length, has_default_max_length)
+        
+        # 4. Check input_ids
+        if not is_torchdynamo_compiling(): #and self.device.type != input_ids.device.type:
+            warnings.warn(
+                "You are calling .generate() with the `input_ids` being on a device type different"
+                f" than your model's device. `input_ids` is on, whereas the model"
+                f" is on . You may experience unexpected behaviors or slower generation."
+                " Please make sure that you have put `input_ids` to the"
+                f" correct device by calling for example input_ids = input_ids.to('') before"
+                " running `.generate()`.",
+                UserWarning,
+            )
+        if (
+            hasattr(generation_config, "pad_token_id") and
+            torch.any(input_ids == generation_config.pad_token_id) and 
+            attention_mask is None
+        ):
+            warnings.warn(
+                "Padding was detected but no attention mask is passed here. For correct "
+                "generation results, please set `attention_mask` when batch-padding inputs.",
+                UserWarning,
+            )
 
-        return {"logits": torch.from_numpy(outputs["logits"])}
+        input_ids, attention_mask = self._expand_inputs_for_generation(
+            expand_size=generation_config.num_return_sequences,
+            input_ids=input_ids,
+            attention_mask=attention_mask 
+        )
+
+        result = self._sample(
+            input_ids,
+            attention_mask=attention_mask,
+            generation_config=generation_config,
+            generation_tokens_hook_func=generation_tokens_hook_func,
+            generation_logits_hook_func=generation_logits_hook_func
+        )
+        end_time = time.perf_counter()
+
+        total_time = end_time - start_time
+        average_time_per_iteration = total_time / generation_config.steps
+        return result, average_time_per_iteration
+
+    def _sample(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: Optional[torch.LongTensor],
+        generation_config: DreamGenerationConfig,
+        generation_tokens_hook_func,
+        generation_logits_hook_func
+    ) -> Union[DreamModelOutput, torch.LongTensor]:
+        # init values
+        output_history = generation_config.output_history
+        return_dict_in_generate = generation_config.return_dict_in_generate
+        max_length = generation_config.max_length
+        mask_token_id = generation_config.mask_token_id
+        steps = generation_config.steps
+        eps = generation_config.eps
+        alg = generation_config.alg
+        alg_temp = generation_config.alg_temp
+        temperature = generation_config.temperature
+        top_p = generation_config.top_p
+        top_k = generation_config.top_k
+        compile_length = generation_config.compile_length
+        qpc_path = generation_config.qpc_path
+        device_ids = generation_config.device_ids
+
+        histories = [] if (return_dict_in_generate and output_history) else None
+
+        # pad input_ids to max_length
+        # x = input_ids
+        x = F.pad(input_ids, (0, compile_length - input_ids.shape[1]), value=mask_token_id)
+
+        if attention_mask is not None and torch.any(attention_mask == 0.0):
+            # we do not mask the [MASK] tokens so value = 1.0
+            attention_mask = F.pad(attention_mask, (0, max_length - attention_mask.shape[1]), value=1.0)
+            tok_idx = attention_mask.long().cumsum(-1) - 1
+            tok_idx.masked_fill_(attention_mask == 0, 1)
+            # attention_mask is of shape [B, N]
+            # broadcast to [B, 1, N, N]
+            attention_mask = torch.logical_and(
+                attention_mask.unsqueeze(1).unsqueeze(-2),
+                attention_mask.unsqueeze(1).unsqueeze(-1),
+            )
+        else:
+            tok_idx = None
+            attention_mask = "full"
+
+        timesteps = torch.linspace(1, eps, steps + 1, device=x.device)
+
+        # this allows user-defined token control of the intermediate steps
+        x = generation_tokens_hook_func(None, x, None)
+        attention_mask = torch.ones_like(x)
+        x = x.numpy()
+        attention_mask = F.pad(attention_mask, (0, compile_length - attention_mask.shape[1]), value=0.0)
+        attention_mask = attention_mask.numpy()
+        qpc_session = QAICInferenceSession(str(qpc_path), device_ids=device_ids)
+        
+        for i in range(steps):
+            # x = x.numpy()
+            print(x.shape, attention_mask.shape, attention_mask.dtype, x.dtype)
+            x.tofile('input_id.raw')
+            attention_mask.tofile('attention_mask.raw')
+            exit()
+            inputs = dict(input_ids=x, attention_mask=attention_mask)
+            mask_index = (inputs['input_ids'] == mask_token_id)
+            
+            outputs = {
+                "logits": np.random.randn(*list(qpc_session.bindings[2].dims)).astype(np.float32),
+            }
+            outputs = {k: v.numpy() if isinstance(v, torch.Tensor) else v for k, v in outputs.items()}  
+            qpc_session.set_buffers(outputs)
+            # print(inputs)
+            logits = qpc_session.run(inputs)['logits']
+            logits = torch.tensor(logits)
+
+            # logits = self(x, attention_mask, tok_idx).logits
+            logits = torch.cat([logits[:,:1], logits[:, :-1]], dim=1)
+
+            # this allows user-defined logits control of the intermediate steps
+            logits = generation_logits_hook_func(i, x, logits)
+
+
+            mask_logits = logits[mask_index]
+            t = timesteps[i]
+            s = timesteps[i + 1]
+        
+            if alg == 'origin':
+                p_transfer = 1 - s / t if i < steps - 1 else 1
+                x0 = torch.zeros_like(x[mask_index], device=self.device, dtype=torch.long) + mask_token_id
+                transfer_index_t_s = torch.rand(*x0.shape, device=self.device) < p_transfer
+                _, x0[transfer_index_t_s]= sample_tokens(mask_logits[transfer_index_t_s], temperature=temperature, top_p=top_p, top_k=top_k)
+                x[mask_index] = x0.clone()
+            else:
+                if alg == 'maskgit_plus':
+                    confidence, x0 = sample_tokens(mask_logits, temperature=temperature, top_p=top_p, top_k=top_k)
+                elif alg == 'topk_margin':
+                    confidence, x0 = sample_tokens(mask_logits, temperature=temperature, top_p=top_p, top_k=top_k, margin_confidence=True)
+                elif alg == 'entropy':
+                    confidence, x0 = sample_tokens(mask_logits, temperature, top_p=top_p, top_k=top_k, neg_entropy=True)
+                else:
+                    raise RuntimeError(f"Unknown alg: {alg}")
+                num_mask_token = mask_index.sum() / mask_index.shape[0]
+                number_transfer_tokens = int(num_mask_token * (1 - s / t)) if i < steps - 1 else int(num_mask_token)
+                number_transfer_tokens = 2
+                print(i,number_transfer_tokens)
+                full_confidence = torch.full_like(torch.tensor(inputs['input_ids']), -torch.inf, dtype=logits.dtype)
+                full_confidence[mask_index] = confidence
+                if number_transfer_tokens > 0:
+                    if alg_temp is None or alg_temp == 0:
+                        _, transfer_index = torch.topk(full_confidence, number_transfer_tokens)
+                    else:
+                        full_confidence = full_confidence / alg_temp
+                        full_confidence = F.softmax(full_confidence, dim=-1)
+                        transfer_index = torch.multinomial(full_confidence, num_samples=number_transfer_tokens)
+                    x_ = torch.zeros_like(torch.tensor(inputs['input_ids']), dtype=torch.long) + mask_token_id
+                    x_[mask_index] = x0.clone()
+                    row_indices = torch.arange(torch.tensor(inputs['input_ids']).size(0)).unsqueeze(1).expand_as(transfer_index)
+                    x[row_indices,transfer_index] = x_[row_indices,transfer_index]
+
+            # this allows user-defined token control of the intermediate steps
+            x = generation_tokens_hook_func(i, x, logits)
+
+            if histories is not None:
+                histories.append(x.clone())
+        x = torch.tensor(x)
+
+        if return_dict_in_generate:
+            return {'sequences': x,
+                    'history': histories}
+            # return DreamModelOutput(
+            #     sequences=x,
+            #     history=histories,
+            # )
+        else:
+            return {'sequences': x}
 
 
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
@@ -875,10 +1088,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -909,8 +1118,8 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         """
         return self._export(
             inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            output_names,
+            dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
@@ -1020,11 +1229,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
-        super().__init__(model, **kwargs)
+        super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1058,8 +1263,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         """
         return self._export(
             inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            output_names,
+            dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
@@ -1208,8 +1413,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         _QEffAutoModelForImageTextToTextDualQPC
             An instance initialized with the pretrained weights.
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
-
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -1219,9 +1422,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-
-        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
-
         return cls(
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
@@ -1325,14 +1525,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             offload_pt_weights=False,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
-
-        offload_pt_weights = kwargs.get("offload_pt_weights", True)
         self.lang_model.export(
             inputs["lang"],
             output_names["lang"],
             dynamic_axes["lang"],
             export_dir=export_dir,
-            offload_pt_weights=offload_pt_weights,
+            offload_pt_weights=True,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
@@ -1488,6 +1686,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
+
         if not skip_vision:
             self.vision_model._compile(
                 compile_dir=compile_dir,
@@ -1503,10 +1702,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 **compiler_options,
             )
 
-        # Custom NPI file options
-        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
-            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
-
         if not skip_lang:
             custom_io_lang = {}
             # Inputs
@@ -1520,6 +1715,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
+
             self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
@@ -1593,9 +1789,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
-        write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path[1]), "io_dir") if write_io else None
-
         # Use VisionLanguageGeneration for image-prompt pairs
         if (processor and images) or (tokenizer and prompts):
             # Create VisionLanguageGeneration instance
@@ -1613,7 +1806,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
                 image_height=image_height,
                 image_width=image_width,
-                write_io_dir=self._write_io_dir,
                 **kwargs,
             )
 
@@ -1624,7 +1816,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 generation_len=generation_len,
                 stream=streamer is not None,
             )
-
+        # import pdb; pdb.set_trace()
         # Fallback to kv_offload_generate for direct inputs (backward compatibility)
         return self.kv_offload_generate(
             inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
@@ -1788,9 +1980,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
-            if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
@@ -1837,9 +2026,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
 
             outputs = lang_session.run(lang_inputs)
-            if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
 
             # Prepare inputs for next iteration
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
@@ -1916,11 +2102,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         if qaic_config is not None and qaic_config.pop("include_sampler", False):
             raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
-
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         super().__init__(model, **kwargs)
 
         self.model.qaic_config = qaic_config
@@ -1972,8 +2153,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         _QEFFAutoModelForImageTextToTextSingleQPC
             An instance initialized with the pretrained weights.
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
-
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -1988,8 +2167,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
-
-        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
         return cls(
             model,
@@ -2024,8 +2201,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
         return self._export(
             inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            output_names,
+            dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
@@ -2135,9 +2312,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **compiler_options,
         )
 
-        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
-            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
-
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         # inputs
@@ -2156,6 +2330,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
+
         self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -2191,7 +2366,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
         generation_len: Optional[int] = None,
-        write_io: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generates output by executing the compiled single QPC on Cloud AI 100 Hardware cards.
@@ -2224,8 +2398,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         """
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
-
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
 
         return self.cloud_ai_100_generate(
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
@@ -2349,10 +2521,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
-
-            if self._write_io_dir is not None:
-                write_io_files(chunk_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - prefill_start
@@ -2395,10 +2563,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                     inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
 
             outputs = qpc_session.run(inputs)
-            if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
             # Prepare inputs for next iteration
             inputs["input_ids"] = outputs["logits"].argmax(2)
             inputs["position_ids"] += 1
@@ -2573,8 +2737,6 @@ class QEFFAutoModelForImageTextToText:
         NotImplementedError
             If `continuous_batching` is provided as True.
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
-
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
             NotImplementedError("Continuous batching is not supported for kv_offload = False")
@@ -2587,9 +2749,6 @@ class QEFFAutoModelForImageTextToText:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-
-        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
-
         return cls(
             model,
             kv_offload=kv_offload,
@@ -2699,10 +2858,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
             raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
 
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -2802,7 +2957,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -2821,9 +2975,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
+        # import pdb; pdb.set_trace()
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
-        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
@@ -2864,18 +3018,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
         if num_q_blocks is None:
-            if (
-                prefill_seq_len is None
-                or prefill_seq_len % constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE != 0
-                or prefill_seq_len < constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE
-            ):
+            block_size = 128
+            if prefill_seq_len is None or prefill_seq_len % block_size != 0 or prefill_seq_len < 128:
                 raise ValueError(
-                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE}. "
+                    f"When prefill_only=True, 'prefill_seq_len' must be explicitly set and divisible by block_size={block_size}. "
                     f"Or set `NUM_Q_BLOCKS` ENV variable"
                     f"Received: prefill_seq_len={prefill_seq_len}"
                 )
 
-            num_q_blocks = prefill_seq_len // constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE
+            num_q_blocks = prefill_seq_len // block_size
             logger.warning(
                 f"Setting NUM_Q_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_Q_BLOCKS` to override"
             )
@@ -2933,28 +3084,31 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
-
-        # TODO: move this to a DA Serving utility class
-        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
-            if prefill_only:
-                if self.continuous_batching and not enable_chunking:
-                    raise NotImplementedError("Can't enable prefix-caching without chunking")
-                self.prefill(enable=True, enable_chunking=enable_chunking)
-                self.hash_params.pop("retain_full_kv", None)
-                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
+        if prefill_only:
+            if not enable_chunking and self.continuous_batching:
+                raise NotImplementedError(
+                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                )
+            self.prefill(enable=True, enable_chunking=enable_chunking)
+            self.hash_params.pop("retain_full_kv", None)
+            seq_len = (
+                self.get_seq_len_and_handle_specialized_prefill_model(
                     prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                 )
-                kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
-            else:
-                self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-                self.hash_params.pop("prefill_only", None)
-                self.hash_params.pop("NUM_Q_BLOCKS", None)
-                self.hash_params.pop("NUM_FFN_BLOCKS", None)
-                self.hash_params.pop("ENABLE_OPT_SWA", None)
-                self.hash_params.pop("chunking", None)
-                if kwargs.get("retain_full_kv", False):
-                    kv_cache_shape[2] = seq_len + self.model.config.sliding_window
-                    self.hash_params["retain_full_kv"] = True
+                if self.model.config.model_type in SPECIALIZED_PREFILL_ONLY_MODEL_ARCH
+                else seq_len
+            )
+            kv_cache_shape[2] = seq_len + self.model.config.sliding_window if enable_chunking else seq_len
+        else:
+            self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+            self.hash_params.pop("prefill_only", None)
+            self.hash_params.pop("NUM_Q_BLOCKS", None)
+            self.hash_params.pop("NUM_FFN_BLOCKS", None)
+            self.hash_params.pop("ENABLE_OPT_SWA", None)
+            self.hash_params.pop("chunking", None)
+            if kwargs.get("retain_full_kv", False):
+                kv_cache_shape[2] = seq_len + self.model.config.sliding_window
+                self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
@@ -2965,7 +3119,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
-        if self.ccl_enabled:
+        if self.comp_ctx_lengths_prefill is not None:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
@@ -3044,8 +3198,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         return self._export(
             example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            output_names,
+            dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
             offload_pt_weights=kwargs.get("offload_pt_weights", True),
@@ -3083,12 +3237,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Dict[str, Union[int, str]]
             A dictionary defining the prefill specialization.
         """
-        if not self.continuous_batching:
-            exec_batch_size = batch_size
-        elif prefill_seq_len == 1:
+        if prefill_seq_len == 1 and self.continuous_batching:
             exec_batch_size = full_batch_size
         else:
-            exec_batch_size = 1
+            exec_batch_size = 1 if self.continuous_batching else batch_size
 
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
@@ -3099,7 +3251,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )[0]
         else:
             spec = {
-                "batch_size": exec_batch_size,
+                "batch_size": 1 if self.continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
             }
@@ -3110,9 +3262,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
-        # TODO: remove this; not required
         if full_batch_size:
-            spec["full_batch_exec_size"] = exec_batch_size
+            spec["full_batch_exec_size"] = full_batch_size
         return {k: v for k, v in spec.items() if v is not None}
 
     def build_decode_specialization(
@@ -3150,6 +3301,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             A dictionary defining the decode specialization, or None if it would be a duplicate
             of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
         """
+        if prefill_seq_len == 1 and not self.continuous_batching:
+            return None  # Avoid duplication with prefill
+
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
                 batch_size=full_batch_size if self.continuous_batching else batch_size,
@@ -3201,7 +3355,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-compile`
+        this method will handle the export process. Additional arguments for the `qaic-exec`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -3241,7 +3395,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
-            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -3275,23 +3429,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
-            logger.warning(
-                "`kv_cache_batch_size` or `full_batch_size` is being passed"
-                "This will be ignored as `continuous_batching` is set to `False` in `from_pretrained`"
-            )
-
         if prefill_only is None or not prefill_only:
             if self.continuous_batching and full_batch_size is None:
                 raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
-        else:
-            if self.continuous_batching and kv_cache_batch_size is None and full_batch_size is None:
+            if kv_cache_batch_size and not full_batch_size:
                 raise ValueError(
-                    "Please pass valid integer for kv_cache_batch_size or full_batch_size, both have same meaning, as continuous_batching is enabled for prefill-only model"
+                    "KV caching requires continuous batching. Please set `full_batch_size` and "
+                    "enable `continuous_batching=True` in `from_pretrained`."
                 )
-
-        # Infer kv_cache_batch_size if not provided
-        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
+        else:
+            if self.continuous_batching:
+                if not isinstance(kv_cache_batch_size, int):
+                    raise ValueError(
+                        "Please pass valid integer for kv_cache_batch_size as continuous_batching is enabled for prefill-only model"
+                    )
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -3302,7 +3453,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # For supporting VLLM and Disaggregated with CCL
         elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
-            self.ccl_enabled = True
             if isinstance(comp_ctx_lengths_prefill, str):
                 import ast
 
@@ -3335,21 +3485,28 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         ):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
 
+        if kv_cache_batch_size and prefill_only is not None and prefill_only:
+            logger.warning(
+                "kv_cache_batch_size will be ignored as prefill_only is set to True unless this is GPTOSS model"
+            )
+
+        # Infer kv_cache_batch_size if not provided
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
+
         # --- Specializations ---
         specializations = []
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
             # TODO: we are handling decode-only case inside prefill call which is utterly mis-leading
-            if self.comp_ctx_lengths_prefill is not None or self.comp_ctx_lengths_decode is not None:
-                ccl_lengths = self.comp_ctx_lengths_decode if prefill_seq_len == 1 else self.comp_ctx_lengths_prefill
+            if self.comp_ctx_lengths_prefill is not None:
                 # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
-                for i in range(0, len(ccl_lengths)):
+                for i in range(0, len(self.comp_ctx_lengths_prefill)):
                     if prefill_only or enable_chunking:
                         raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
                     specializations.append(
                         self.build_prefill_specialization(
                             prefill_seq_len=prefill_seq_len,
                             ctx_len=ctx_len,
-                            comp_ctx_lengths=ccl_lengths[i],
+                            comp_ctx_lengths=self.comp_ctx_lengths_prefill[i],
                             batch_size=batch_size,
                             kv_cache_batch_size=kv_cache_batch_size,
                             full_batch_size=full_batch_size,
@@ -3369,7 +3526,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 )
 
-        if (prefill_only is None or not prefill_only) and prefill_seq_len != 1:
+        if prefill_only is None or not prefill_only:
             if self.comp_ctx_lengths_decode is not None:
                 # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
                 for i in range(0, len(self.comp_ctx_lengths_decode)):
@@ -3398,8 +3555,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if decode_spec:
                     specializations.append(decode_spec)
 
-        if kw_spec := compiler_options.pop("specializations", None):
-            specializations = kw_spec
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
@@ -3459,7 +3614,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments. Currently supports:
             - `generation_len (int, optional)`: The maximum number of tokens to generate.
-            - `write_io (bool, optional)`: Whether to save the io files.
 
         Returns
         -------
@@ -3473,10 +3627,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         NotImplementedError
             If `runtime_ai100` is False.
         """
-        write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+        # import pdb; pdb.set_trace()
 
         if runtime_ai100:
+            # import pdb; pdb.set_trace()
+
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
             generation_len = kwargs.pop("generation_len", None)
@@ -3491,7 +3646,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 automation=kwargs.pop("automation", False),
                 iteration=kwargs.pop("iteration", 1),
                 is_tlm=self.is_tlm,
-                write_io_dir=self._write_io_dir,
                 **kwargs,
             )
         else:
@@ -3602,11 +3756,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             If the model is not a supported speech-to-text model (i.e., not a `ForConditionalGeneration` model).
         """
         model_class_name = model.__class__.__name__
-
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
 
@@ -3652,8 +3801,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         output_names = self.model.get_output_names()
         return self._export(
             inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            output_names,
+            dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
@@ -3681,7 +3830,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
-        this method will handle the export process. Additional arguments for the `qaic-compile`
+        this method will handle the export process. Additional arguments for the `qaic-exec`
         compiler can be passed as keyword arguments.
 
         Parameters
@@ -3721,7 +3870,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         **compiler_options : dict
             Additional compiler options for QAIC.
 
-            **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
+            **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
 
             - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
             - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -3795,7 +3944,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         generation_len: int,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
-        write_io: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output until ``<|endoftext|>`` token or `generation_len` is reached,
@@ -3833,8 +3981,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
 
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
         inputs = self.auto_correct_inputs(inputs)
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
@@ -3864,9 +4010,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         start = perf_counter()
         outputs = self.qpc_session.run(inputs)
 
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
         # array to hold generated tokens
         generated_ids = np.full((self.batch_size, generation_len + 1), self.model.config.eos_token_id)
         generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
@@ -3882,10 +4025,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         loop_start = perf_counter()
         for num_tokens in range(generation_len):
             outputs = self.qpc_session.run(inputs)
-            if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
             logits = outputs["logits"]
             next_token = logits.argmax(-1)
             generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
@@ -3915,10 +4054,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     including Wav2Vec2 and other encoder-only speech models optimized for alignment-free transcription.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
 
-    Example
-    -------
-    .. code-block:: python
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model
 
+    .. code-block:: python
         import torchaudio
         from QEfficient import QEFFAutoModelForCTC
         from transformers import AutoProcessor
@@ -3949,10 +4088,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         super().__init__(model, **kwargs)
         self.model.base_model.config.use_cache = True
 
@@ -3994,7 +4129,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         # You can now execute the model
         out = model.generate(processor,inputs=input_audio)
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -4007,9 +4141,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
-
-        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
-
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model, kv_offload=kv_offload, **kwargs
@@ -4046,8 +4177,8 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         return self._export(
             example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            output_names,
+            dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
         )
@@ -4066,9 +4197,9 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         **compiler_options,
     ) -> str:
         """
-        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-compile`` and generates a ``qpc`` package.
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
         If the model has not been exported yet, this method will handle the export process.
-        You can pass any other arguments that the `qaic-compile` takes as extra kwargs.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
 
         ``Optional`` Args:
             :onnx_path (str, optional): Path to pre-exported onnx model.
@@ -4081,7 +4212,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
             :compiler_options (dict, optional): Additional compiler options.
 
-                For QAIC Compiler: Extra arguments for qaic-compile can be passed.
+                For QAIC Compiler: Extra arguments for qaic-exec can be passed.
                     :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
                     :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
 
@@ -4121,7 +4252,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         inputs: torch.Tensor,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
-        write_io: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -4134,8 +4264,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
         # AI_100 runtime
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
@@ -4185,10 +4313,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         )
         inputs = dict(input_values=input_values)
         outputs = self.qpc_session.run(inputs)
-
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
-
         logits = outputs["logits"]
         predicted_ids = np.argmax(logits, axis=-1)
         transcriptions = processor.batch_decode(torch.tensor(predicted_ids))
@@ -4207,12 +4331,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         input_values = processor(
             inputs[0], return_tensors="pt", max_length=self.seq_len, truncation=True, padding="max_length"
         ).input_values
-        outputs = model(input_values[0])
-
-        if self._write_io_dir is not None:
-            write_io_files(input_values[0], outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
-
-        logits = outputs.logits
+        logits = model(input_values[0]).logits
         logits = logits.detach().numpy()
         predicted_ids = np.argmax(logits, axis=-1)
         transcriptions = processor.batch_decode(predicted_ids)
