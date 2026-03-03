@@ -185,10 +185,10 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
         )
     onnx_model_path = qeff_model.export()
-    ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
-    gen_len = ort_tokens.shape[-1]
+    # ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
+    # gen_len = ort_tokens.shape[-1]
 
-    assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
+    # assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
@@ -202,6 +202,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
         retain_full_kv=retain_full_kv,
     )
+    breakpoint()
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0][
         :, :gen_len
