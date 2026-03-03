@@ -10,7 +10,7 @@ The **QEfficient Fine-Tune Module** is a component of the QEfficient project foc
 *   **Typed Config Manager**: centralized YAML with validation, overrides, and profile inheritance.
 *   **Component Registry**: plug-and-play registries for models, tokenizers, datasets, trainers, optimizers, and callbacks.
 *   **Dataset support**: JSON/JSONL, CSV, and HF Hub datasets; supports instruction–response and multi-turn chat schemas.
-*   **Parallelism**: `accelerate`, **DeepSpeed**, and **FSDP** for multi-GPU and sharded training.
+*   **Parallelism**: This stack currently supports `Data Parallelism (DDP)` and `Pipeline Parallelism (PP)`. 
 *   **Reproducibility**: experiment tracking hooks, seed control, and deterministic data loaders (where supported).
 
 ***
@@ -59,10 +59,10 @@ export QAIC_DEBUG=1              # Show CPU fallback ops, etc.
 
 **Single device using yaml file**
 ```bash
-python finetune_experimental.py configs/sample_config.yaml
+python finetune_experimental.py configs/sft_single_device_config.yaml
 
 #As Module
-python -m finetune_experimental configs/sample_config.yaml
+python -m finetune_experimental configs/sft_single_device_config.yaml
 ```
 
 **Single device using CLI flags**
@@ -71,17 +71,12 @@ python finetune_experimental.py --device qaic --lora_r 16 --target_modules q_pro
 ```
 **Distributed (TorchRun)**
 ```bash
-torchrun --nproc_per_node=4 finetune_experimental.py configs/distributed_config.yaml
+torchrun --nproc_per_node=4 finetune_experimental.py configs/sft_ddp_config.yaml
 ```
 
 **Distributed (Accelerate)**
 ```bash
-accelerate launch --num_processes 4 finetune_experimental.py configs/distributed_config.yaml
-```
-
-## Inference
-```bash
-python infer.py configs/inference.yaml 
+accelerate launch --num_processes 4 finetune_experimental.py configs/sft_ddp_config.yaml
 ```
 
 ***
