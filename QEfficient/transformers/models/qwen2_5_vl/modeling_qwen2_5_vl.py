@@ -384,7 +384,7 @@ def eager_attention_forward_blockedKV(
     past_seen_tokens = cache_kwargs.get("past_seen_tokens")
     position_ids = cache_kwargs.get("position_ids")
     block_size = -(-past_seen_tokens // num_kv_blocks)
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype)
 
     for j in range(num_kv_blocks):
         start_index = j * block_size
@@ -484,11 +484,11 @@ def eager_attention_forward_q_blocked(
         if attn_mask_block is not None:
             attn_weights = torch.where(
                 attn_mask_block,
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype, device=attn_weights.device),
+                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype, device=attn_weights.device),
                 attn_weights,
             )
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=self.config.torch_dtype).to(query.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=module.config.torch_dtype).to(query.dtype)
 
         # Compute output for this Q block
         output_block = torch.matmul(attn_weights, value_states)
