@@ -1,0 +1,96 @@
+{
+    "connections": [
+        {
+            "devices": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15
+            ],
+            "type": "p2p"
+        }
+    ],
+    "partitions": [
+        {
+            "name": "Partition0",
+            "devices": [
+                {
+                    "deviceId": 0,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 1,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 2,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 3,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 4,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 5,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 6,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 7,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 8,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 9,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 10,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 11,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 12,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 13,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 14,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 15,
+                    "numCores": 16
+                }
+            ]
+        }
+    ]
+}

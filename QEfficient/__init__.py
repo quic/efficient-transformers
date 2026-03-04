@@ -24,7 +24,7 @@ from QEfficient.base import (
     QEFFAutoModelForCausalLM,
     QEFFAutoModelForCTC,
     QEFFAutoModelForImageTextToText,
-    QEFFAutoModelForSequenceClassification,
+    # QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
     QEFFCommonLoader,
 )

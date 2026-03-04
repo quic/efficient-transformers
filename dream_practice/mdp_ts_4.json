@@ -1,0 +1,36 @@
+{
+    "connections": [
+        {
+            "devices": [
+                0,
+                1,
+                2,
+                3
+            ],
+            "type": "p2p"
+        }
+    ],
+    "partitions": [
+        {
+            "name": "Partition0",
+            "devices": [
+                {
+                    "deviceId": 0,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 1,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 2,
+                    "numCores": 16
+                },
+                {
+                    "deviceId": 3,
+                    "numCores": 16
+                }
+            ]
+        }
+    ]
+}
