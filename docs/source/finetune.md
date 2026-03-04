@@ -102,13 +102,13 @@ Steps to run Multi Node Finetuning:
 
 Run the following docker setup commands on both machines (server and client).
 
-# Expose QAIC accelerator devices
+#### Expose QAIC accelerator devices
 
 ```
 devices=(/dev/accel/*)
 ```
 
-# Start Docker container
+#### Start Docker container
 
 ```
 sudo docker run -it \
@@ -127,10 +127,11 @@ In distributed ML setups, all nodes must resolve each other’s hostnames. If DN
 
 2. Set QAIC Device Visibility
 
-``` export QAIC_VISIBLE_DEVICES=$(seq -s, 0 63)
+``` 
+export QAIC_VISIBLE_DEVICES=$(seq -s, 0 63)
 ```
 
-This exposes devices 0–63 to the training process.
+For example this sample command exposes devices 0–63 to the training process.
 
 3. Activate the TORCH_QAIC Environment Inside the Container
 
@@ -138,7 +139,11 @@ This exposes devices 0–63 to the training process.
 source /opt/torch-qaic-env/bin/activate
 ```
 
-4. Verify that the Qefficient Library is installed
+4. Verify that the Qefficient Library is installed:
+
+```
+pip install -e .
+```
 
 
 5. Use below command on host server
