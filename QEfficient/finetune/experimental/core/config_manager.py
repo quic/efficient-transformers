@@ -75,7 +75,7 @@ class DatasetConfig:
         metadata={"help": "The name or path of the tokenizer to use."},
     )
     dataset_type: str = field(
-        default="seq_completion",
+        default="sft_dataset",
         metadata={"help": "The type of dataset (e.g., 'seq_completion')."},
     )
     dataset_name: str = field(
@@ -460,6 +460,10 @@ class TrainingConfig:
     report_to: Optional[List[str]] = field(
         default=None,
         metadata={"help": "The list of integrations to report the results and logs to."},
+    )
+    run_name: Optional[str] = field(
+        default=None,
+        metadata={"help": "The name of the experiment (for logging purposes)."},
     )
     completion_only_loss: Optional[bool] = field(
         default=False,

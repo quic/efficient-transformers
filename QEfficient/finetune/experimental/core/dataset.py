@@ -19,10 +19,13 @@ from datasets import load_dataset, load_dataset_builder
 from torch.utils.data import Dataset
 
 from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.utils.dataset_utils import (
     apply_train_test_split,
     validate_json_structure,
 )
+
+logger = Logger(__name__)
 
 
 class BaseDataset(Dataset, ABC):
@@ -97,6 +100,14 @@ class SFTDataset(BaseDataset):
         if self.json_file_path not in (None, ""):
             if not os.path.isfile(self.json_file_path):
                 raise FileNotFoundError(f"JSON file not found or invalid: '{self.json_file_path}'")
+        if self.prompt_template and self.prompt_func_path:
+            logger.warning(
+                "Both prompt_template and prompt_func are provided. Using prompt_template for preprocessing."
+            )
+        if self.completion_template and self.completion_func_path:
+            logger.warning(
+                "Both completion_template and completion_func are provided. completion_template for preprocessing."
+            )
         if self.prompt_template is None and self.prompt_func_path is None:
             raise RuntimeError("Either provide prompt_template or prompt_func in the config.")
         if self.completion_template is None and self.completion_func_path is None:

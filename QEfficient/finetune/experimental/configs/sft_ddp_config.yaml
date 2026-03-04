@@ -11,11 +11,12 @@ model:
   model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
   use_peft: true # Enable PEFT (Parameter Efficient Fine-Tuning)
   peft_config:
-    lora_r: 8
+    lora_r: 16
     lora_alpha: 16
-    target_modules: ["q_proj", "v_proj"] # Target modules for LoRA
+    lora_dropout: 0
+    target_modules: ["k_proj","gate_proj","q_proj","up_proj","v_proj","down_proj","o_proj"] # Target modules for LoRA
     task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
-    peft_type: "LORA"  # Options: LORA, IA3, etc.
+    peft_type: "LORA"  # Options: LORA, IA3, etc..
 
 # Dataset configuration
 dataset:
@@ -28,8 +29,8 @@ dataset:
 # Training configuration
 training:
   type: "sft"
-  gradient_accumulation_steps: 1  # Number of steps to accumulate gradients
-  num_train_epochs: 1
+  gradient_accumulation_steps: 2  # Number of steps to accumulate gradients
+  per_device_train_batch_size: 2  # Batch size per device during training
   torch_compile: False # Whether to use torch.compile
   ddp_config: # DDP configuration
     ddp_backend: "qccl"
@@ -41,8 +42,8 @@ training:
 # Optimizer configuration
 optimizers:
   optimizer_name: "AdamW"
-  lr: 5e-5
-
+  lr: 2e-4
+  
 scheduler:
   scheduler_name: "cosine"
 
