@@ -181,6 +181,8 @@
           "architectures": [
             "Qwen2_5_VLForConditionalGeneration"
           ],
+          "bos_token_id": 151643,
+          "eos_token_id": 151645,
           "hidden_size": 2048,
           "intermediate_size": 11008,
           "max_position_embeddings": 128000,
@@ -199,8 +201,16 @@
             "rope_type": "default",
             "type": "default"
           },
+          "tie_word_embeddings": true,
+          "torch_dtype": "bfloat16",
+          "vision_end_token_id": 151653,
+          "vision_start_token_id": 151652,
+          "vision_token_id": 151654,
           "vocab_size": 151936
         },
+        "torch_dtype": "bfloat16",
+        "use_cache": true,
+        "use_sliding_window": false,
         "vision_config": {
           "depth": 1,
           "num_hidden_layers": 1,
@@ -223,7 +233,9 @@
           "tokens_per_second": 2,
           "temporal_patch_size": 2
         },
+        "vision_end_token_id": 151653,
         "vision_start_token_id": 151652,
+        "vision_token_id": 151654,
         "vocab_size": 151936
       }
     },
@@ -454,13 +466,3 @@
     }
   ]
 }
-
-
-
-
-
-
-
-
-
-
