@@ -18,7 +18,6 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
-
 CONFIG_PATH = "tests/configs/causal_model_configs.json"
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
@@ -244,7 +243,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", test_disaggregated_causal_models)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     # Run prefill for original pytorch model
@@ -415,7 +414,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", test_disaggregated_causal_models)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefix_caching(model_id, prompt):
     PREFILL_SEQ_LEN = 128
