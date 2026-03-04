@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import copy
 import json
 import os
 from io import BytesIO
@@ -16,8 +17,6 @@ import torch
 from PIL import Image
 from transformers import (
     AutoConfig,
-    AutoModelForCausalLM,
-    AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
     GenerationConfig,
@@ -28,7 +27,13 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
-from QEfficient.utils.test_utils import InternProcessor, ModelConfig
+from QEfficient.utils.test_utils import (
+    InternProcessor,
+    ModelConfig,
+    load_vlm_model,
+    load_vlm_model_from_config,
+    set_num_layers_vlm,
+)
 
 NEW_GENERATION_TOKENS = 10
 
@@ -39,64 +44,6 @@ with open(CONFIG_PATH, "r") as f:
     multimodal_models = config_data["image_text_models"]
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
-
-
-def load_image_text_to_text_model(model_config):
-    try:
-        model_hf = AutoModelForImageTextToText.from_pretrained(
-            model_config._name_or_path,
-            low_cpu_mem_usage=False,
-            config=model_config,
-        )
-    except ValueError:
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            model_config._name_or_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=model_config,
-        )
-    model_hf.eval()
-    return model_hf
-
-
-def load_image_text_to_text_model_from_config(model_name, config):
-    try:
-        model_hf = AutoModelForImageTextToText.from_config(
-            config,
-            attn_implementation="eager",
-            trust_remote_code=True,
-        )
-    except ValueError:
-        model_hf = AutoModelForCausalLM.from_config(
-            config,
-            attn_implementation="eager",
-            trust_remote_code=True,
-        )
-    torch_dtype = getattr(model_hf.config, "torch_dtype", None)
-    if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
-        model_hf = model_hf.to(torch.float32)
-    model_hf.eval()
-    return model_hf
-
-
-def set_num_layers(config, n_layer=1):
-    ## -1 indicates use all the layers of the model.
-    if n_layer == -1:
-        return config
-    elif hasattr(config, "model_type") and "mllama" in config.model_type:
-        config.text_config.num_hidden_layers = n_layer
-        config.text_config.cross_attention_layers = [
-            x for x in config.text_config.cross_attention_layers if x < n_layer
-        ]
-    elif hasattr(config, "text_config"):
-        config.text_config.num_hidden_layers = n_layer
-        config.vision_config.num_hidden_layers = n_layer
-    elif hasattr(config, "llm_config"):
-        config.llm_config.num_hidden_layers = n_layer
-        config.vision_config.num_hidden_layers = n_layer
-    else:
-        config.num_hidden_layers = n_layer
-    return config
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -135,36 +82,30 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         config: Pre-configured model config (optional)
         img_size: Image size for standard models (optional)
     """
-    # torch.manual_seed(42)
     if config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
-        config = set_num_layers(config, n_layer=n_layer)
+        config = set_num_layers_vlm(config, n_layer=n_layer)
         if model_name in ModelConfig.INTERNVL_MODELS or model_name in ModelConfig.MOLMO_MODELS:
             config._attn_implementation = "eager"
-            model_hf = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                low_cpu_mem_usage=False,
-                trust_remote_code=True,
-                config=config,
-            )
+            model_hf = load_vlm_model(config)
             qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
             )
         else:
-            model_hf = load_image_text_to_text_model(config)
+            model_hf = load_vlm_model(config)
             qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
             )
     else:
-        model_hf = load_image_text_to_text_model_from_config(model_name, config)
+        model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
-            model_hf,
+            copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=config,
         )
@@ -278,8 +219,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
-        compile_kwargs["img_size"] = img_size
-
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
             inputs = qeff_model.model.prepare_inputs_for_generation(
@@ -287,6 +226,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             )
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+        compile_kwargs["img_size"] = img_size
 
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
     # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
@@ -298,7 +238,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
 
     qeff_model.compile(**compile_kwargs)
-
     streamer = TextStreamer(processor.tokenizer)
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
@@ -317,6 +256,7 @@ def test_custom_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    torch.manual_seed(42)
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
@@ -357,6 +297,7 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    torch.manual_seed(42)
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:

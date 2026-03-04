@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
+import copy
 import json
 from io import BytesIO
 from typing import List, Optional
@@ -14,17 +15,20 @@ import torch
 from PIL import Image
 from transformers import (
     AutoConfig,
-    AutoModelForCausalLM,
-    AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
     GenerationConfig,
 )
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
-from QEfficient.utils import hf_download
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
-from QEfficient.utils.test_utils import InternProcessor, ModelConfig
+from QEfficient.utils.test_utils import (
+    InternProcessor,
+    ModelConfig,
+    load_vlm_model,
+    load_vlm_model_from_config,
+    set_num_layers_vlm,
+)
 
 NEW_GENERATION_TOKENS = 10
 
@@ -36,68 +40,6 @@ with open(CONFIG_PATH, "r") as f:
 
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
-
-
-def load_image_text_to_text_model(model_config):
-    model_path = hf_download(
-        repo_id=model_config._name_or_path,
-        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
-    )
-    try:
-        model_hf = AutoModelForImageTextToText.from_pretrained(
-            model_path,
-            low_cpu_mem_usage=False,
-            config=model_config,
-        )
-    except ValueError:
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=model_config,
-        )
-    model_hf.eval()
-    return model_hf
-
-
-def load_image_text_to_text_model_from_config(model_name, config):
-    try:
-        model_hf = AutoModelForImageTextToText.from_config(
-            config,
-            attn_implementation="eager",
-            trust_remote_code=True,
-        )
-    except ValueError:
-        model_hf = AutoModelForCausalLM.from_config(
-            config,
-            attn_implementation="eager",
-            trust_remote_code=True,
-        )
-    torch_dtype = getattr(model_hf.config, "torch_dtype", None)
-    if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
-        model_hf = model_hf.to(torch.float32)
-    model_hf.eval()
-    return model_hf
-
-
-def set_num_layers(config, n_layer=1):
-    ## -1 indicates use all the layers of the model.
-    if n_layer == -1:
-        return config
-    elif hasattr(config, "model_type") and "mllama" in config.model_type:
-        config.text_config.num_hidden_layers = n_layer
-        config.text_config.cross_attention_layers = [
-            x for x in config.text_config.cross_attention_layers if x < n_layer
-        ]
-    elif hasattr(config, "text_config"):
-        config.text_config.num_hidden_layers = n_layer
-        config.vision_config.num_hidden_layers = n_layer
-    elif hasattr(config, "llm_config"):
-        config.llm_config.num_hidden_layers = n_layer
-        config.vision_config.num_hidden_layers = n_layer
-    else:
-        config.num_hidden_layers = n_layer
-    return config
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
@@ -142,15 +84,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
-        config = set_num_layers(config, n_layer=n_layer)
+        config = set_num_layers_vlm(config, n_layer=n_layer)
         if model_name in ModelConfig.INTERNVL_MODELS or model_name in ModelConfig.MOLMO_MODELS:
             config._attn_implementation = "eager"
-            model_hf = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                low_cpu_mem_usage=False,
-                trust_remote_code=True,
-                config=config,
-            )
+            model_hf = load_vlm_model(config)
             qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
                 model_name,
                 kv_offload=kv_offload,
@@ -158,7 +95,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
                 continuous_batching=True,
             )
         else:
-            model_hf = load_image_text_to_text_model(config)
+            model_hf = load_vlm_model(config)
             qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
                 model_name,
                 kv_offload=kv_offload,
@@ -166,21 +103,21 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
                 continuous_batching=True,
             )
     else:
-        model_hf = load_image_text_to_text_model_from_config(model_name, config)
+        model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
-            model_hf,
+            copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=config,
             continuous_batching=True,
         )
-
     compile_kwargs = {
+        "num_cores": 16,
         "num_devices": num_devices,
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
-        "mxfp6": False,
-        "enable_qnn": enable_qnn,
-        "qnn_config": qnn_config,
+        "batch_size": batch_size,
+        "full_batch_size": full_batch_size,
+        "mxfp6_matmul": False,
     }
 
     images = []
@@ -282,9 +219,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         compile_kwargs["img_size"] = img_size
 
     qeff_model.export()
-
     qeff_model.compile(**compile_kwargs)
-
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,
@@ -298,13 +233,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
     print("QPC Outputs (QAIC) for Continuous Batching with same prompt:")
     print(exec_info.generated_texts)
-
     for i in range(full_batch_size):
         assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
             f"Tokens don't match for prompt {i} between HF and QPC output for same prompts"
         )
-
-    # For different prompts
     if model_name in ModelConfig.MOLMO_MODELS:
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
             model_hf, images, queries, generation_config=generation_config
@@ -322,16 +254,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height=image_height,
         image_width=image_width,
     )
-
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
     print("QPC Outputs (QAIC) for Continuous Batching with different prompt:")
     print(exec_info.generated_texts)
-
     for i in range(full_batch_size):
         assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
             f"Tokens don't match for prompt {i} between HF and QPC output for different prompts"
         )
-    return
 
 
 @pytest.mark.on_qaic
@@ -345,6 +274,7 @@ def test_custom_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_na
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    torch.manual_seed(42)
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
@@ -385,6 +315,7 @@ def test_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    torch.manual_seed(42)
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
