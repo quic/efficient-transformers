@@ -104,8 +104,8 @@ def test_infer_vlm(mocker):
 
 
 class _DummyQEFFModel:
-    def __init__(self, model_type, architecture):
-        self.model = SimpleNamespace(config=SimpleNamespace(model_type=model_type, architectures=[architecture]))
+    def __init__(self, architecture):
+        self.model = SimpleNamespace(config=SimpleNamespace(architectures=[architecture]))
         self.compile_kwargs = None
 
     def compile(self, **kwargs):
@@ -116,8 +116,8 @@ class _DummyQEFFModel:
         return {}
 
 
-def _run_infer_with_dummy_model(mocker, model_type, architecture, **infer_kwargs):
-    dummy_model = _DummyQEFFModel(model_type=model_type, architecture=architecture)
+def _run_infer_with_dummy_model(mocker, architecture, **infer_kwargs):
+    dummy_model = _DummyQEFFModel(architecture=architecture)
     mocker.patch.object(QEfficient.cloud.infer, "check_and_assign_cache_dir", return_value="/tmp/cache")
     mocker.patch.object(QEfficient.cloud.infer.QEFFCommonLoader, "from_pretrained", return_value=dummy_model)
     mocker.patch.object(QEfficient.cloud.infer, "load_hf_tokenizer", return_value=object())
@@ -132,23 +132,13 @@ def _run_infer_with_dummy_model(mocker, model_type, architecture, **infer_kwargs
     return dummy_model
 
 
-def test_infer_auto_enables_onnx_subfunctions_for_qwen3_moe(mocker):
+def test_infer_enables_onnx_subfunctions_when_explicitly_set(mocker):
     dummy_model = _run_infer_with_dummy_model(
-        mocker, model_type="qwen3_moe", architecture="Qwen3MoeForCausalLM"
+        mocker, architecture="Qwen3MoeForCausalLM", use_onnx_subfunctions=True
     )
     assert dummy_model.compile_kwargs["use_onnx_subfunctions"] is True
 
 
-def test_infer_respects_explicit_onnx_subfunctions_flag(mocker):
-    dummy_model = _run_infer_with_dummy_model(
-        mocker,
-        model_type="qwen3_moe",
-        architecture="Qwen3MoeForCausalLM",
-        use_onnx_subfunctions=False,
-    )
-    assert dummy_model.compile_kwargs["use_onnx_subfunctions"] is False
-
-
-def test_infer_keeps_default_off_for_non_qwen3_moe(mocker):
-    dummy_model = _run_infer_with_dummy_model(mocker, model_type="llama", architecture="LlamaForCausalLM")
+def test_infer_keeps_onnx_subfunctions_disabled_by_default(mocker):
+    dummy_model = _run_infer_with_dummy_model(mocker, architecture="LlamaForCausalLM")
     assert dummy_model.compile_kwargs["use_onnx_subfunctions"] is False

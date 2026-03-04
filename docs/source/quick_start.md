@@ -111,8 +111,7 @@ This is the single e2e CLI API, which takes `model_card` name as input along wit
 
 * HuggingFace model files Download → Optimize for Cloud AI 100 → Export to `ONNX` → Compile on Cloud AI 100 → [Execute](#execute_api)
 * It skips the export/compile stage based if `ONNX` or `qpc` files are found. If you use infer second time with different compilation arguments, it will automatically skip `ONNX` model creation and directly jump to compile stage.
-* ONNX subfunctions can be controlled explicitly using `--use-onnx-subfunctions` or `--no-use-onnx-subfunctions`.
-  For `qwen3_moe`, infer auto-enables ONNX subfunctions to reduce host RAM usage during export unless explicitly disabled.
+* ONNX subfunctions can be enabled explicitly using `--use-onnx-subfunctions`.
 
 
 ```bash
@@ -124,7 +123,6 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 ```bash
 # Optional: explicitly control ONNX subfunction usage
 python -m QEfficient.cloud.infer --model_name Qwen/Qwen3-30B-A3B-Instruct-2507 --batch_size 1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is" --use-onnx-subfunctions
-python -m QEfficient.cloud.infer --model_name Qwen/Qwen3-30B-A3B-Instruct-2507 --batch_size 1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is" --no-use-onnx-subfunctions
 ```
 If executing for batch size>1,
 You can pass input prompts in single string but separate with pipe (|) symbol". Example below
