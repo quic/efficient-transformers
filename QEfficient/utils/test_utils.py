@@ -9,6 +9,68 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
+from transformers import (
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+)
+
+
+def load_vlm_model(config):
+    try:
+        model_hf = AutoModelForImageTextToText.from_pretrained(
+            config._name_or_path,
+            low_cpu_mem_usage=False,
+            config=config,
+        )
+    except ValueError:
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            config._name_or_path,
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            config=config,
+        )
+    model_hf.eval()
+    return model_hf
+
+
+def load_vlm_model_from_config(config):
+    try:
+        model_hf = AutoModelForImageTextToText.from_config(
+            config,
+            attn_implementation="eager",
+            trust_remote_code=True,
+        )
+    except ValueError:
+        model_hf = AutoModelForCausalLM.from_config(
+            config,
+            attn_implementation="eager",
+            trust_remote_code=True,
+        )
+    torch_dtype = getattr(model_hf.config, "torch_dtype", None)
+    if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
+        model_hf = model_hf.to(torch.float32)
+    model_hf.eval()
+    return model_hf
+
+
+def set_num_layers_vlm(config, n_layer=1):
+    ## -1 indicates use all the layers of the model.
+    if n_layer == -1:
+        return config
+    elif hasattr(config, "model_type") and "mllama" in config.model_type:
+        config.text_config.num_hidden_layers = n_layer
+        config.text_config.cross_attention_layers = [
+            x for x in config.text_config.cross_attention_layers if x < n_layer
+        ]
+    elif hasattr(config, "text_config"):
+        config.text_config.num_hidden_layers = n_layer
+        config.vision_config.num_hidden_layers = n_layer
+    elif hasattr(config, "llm_config"):
+        config.llm_config.num_hidden_layers = n_layer
+        config.vision_config.num_hidden_layers = n_layer
+    else:
+        config.num_hidden_layers = n_layer
+    return config
 
 
 # Processor class for InternVL models
