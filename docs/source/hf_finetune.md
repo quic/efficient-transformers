@@ -9,8 +9,8 @@ The **QEfficient Fine-Tune Module** is a component of the QEfficient project foc
 *   **SFT-first design** using `trl.SFTTrainer` with PEFT (LoRA/QLoRA) and mixed precision.
 *   **Typed Config Manager**: centralized YAML with validation, overrides, and profile inheritance.
 *   **Component Registry**: plug-and-play registries for models, tokenizers, datasets, trainers, optimizers, and callbacks.
-*   **Dataset support**: JSON/JSONL, CSV, and HF Hub datasets; supports instruction–response and multi-turn chat schemas.
-*   **Parallelism**: `accelerate`, **Pipeline Parallelism (PP)** for multi-device and sharded training.
+*   **Dataset support**: JSON/JSONL, CSV, and HF Hub datasets; supports instruction–response based chat schemas.
+*   **Parallelism**: This stack currently supports `Data Parallelism (DDP)` for single and multi node devices and `Pipeline Parallelism (PP)`. 
 *   **Reproducibility**: experiment tracking hooks, seed control, and deterministic data loaders (where supported).
 
 ***
@@ -29,9 +29,10 @@ If QEfficient is already installed, install `torch_qaic`, `transformers` and (op
 # torch_qaic (example wheel path — adjust to your environment)
 pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
 
-# transformers 
-git clone https://github.com/quic-meetkuma/transformers/tree/qaic_support_transformer_20_12_2025
-cd transformers && pip install -e .
+# Install transformers with QAIC backend support
+git clone https://github.com/quic-swatia/transformers.git
+cd transformers 
+git checkout version-4.55.0 && pip install -e .
 
 # accelerate 
 pip install /opt/qti-aic/integrations/accelerate/py310/accelerate-1.10.0-py3-none-any.whl
@@ -48,9 +49,28 @@ export QAIC_DEVICE_LOG_LEVEL=0   # Device-level logs
 export QAIC_DEBUG=1              # Show CPU fallback ops, etc.
 ```
 
+### Step-by-Step Guide to run a fine-tuning job
+
+For Docker-based environments, use the provided `torch_qaic_env` environment.
+
+```bash
+source /opt/torch-qaic-env/bin/activate
+git clone https://github.com/quic/efficient-transformers.git
+cd efficient-transformers
+pip install -e .
+pip install   --index-url https://download.pytorch.org/whl/cpu   --extra-index-url     https://devpi.qualcomm.com/qcom/dev/+simple   --trusted-host devpi.qualcomm.com   "torch==2.9.1+cpu"   "torchvision==0.24.1+cpu"   "torchaudio==2.9.1+cpu"
+pip install trl==0.22.0`
+git clone https://github.com/quic-swatia/transformers.git
+cd transformers 
+git checkout version-4.55.0 && pip install -e .
+cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_config.yaml
+
+```
+
+
 
 > **Note**  
-> If you’re using the `torch_qaic_env` Docker environment, `torch_qaic`,`transformers` and `accelerate` may already be installed.
+> If you’re using the `torch_qaic_env` Docker environment, `torch_qaic` and `accelerate` may already be installed.
 
 ***
 ## Finetuning
@@ -59,10 +79,10 @@ export QAIC_DEBUG=1              # Show CPU fallback ops, etc.
 
 **Single device using yaml file**
 ```bash
-python finetune_experimental.py configs/sample_config.yaml
+python finetune_experimental.py configs/sft_single_device_config.yaml
 
 #As Module
-python -m finetune_experimental configs/sample_config.yaml
+python -m finetune_experimental configs/sft_single_device_config.yaml
 ```
 
 **Single device using CLI flags**
@@ -71,17 +91,12 @@ python finetune_experimental.py --device qaic --lora_r 16 --target_modules q_pro
 ```
 **Distributed (TorchRun)**
 ```bash
-torchrun --nproc_per_node=4 finetune_experimental.py configs/distributed_config.yaml
+torchrun --nproc_per_node=4 finetune_experimental.py configs/sft_ddp_config.yaml
 ```
 
 **Distributed (Accelerate)**
 ```bash
-accelerate launch --num_processes 4 finetune_experimental.py configs/distributed_config.yaml
-```
-
-## Inference
-```bash
-python infer.py configs/inference.yaml 
+accelerate launch --num_processes 4 finetune_experimental.py configs/sft_ddp_config.yaml
 ```
 
 ***
@@ -152,6 +167,7 @@ class MyCustomDataset(BaseDataset):
 ```yaml
 dataset:
   dataset_name: my_custom_dataset
+  dataset_type: my_custom_dataset
   split_train: train
   json_file_path: data/my_train.jsonl
   prompt_template: |
@@ -167,9 +183,9 @@ In your config, reference an HF dataset and a template function name:
 
 ```yaml
 dataset:
-  dataset_name: "tatsu-lab/alpaca"
+  dataset_name: "yahma/alpaca-cleaned"
   split_train: "train"
-  prompt_func: "preprocess.alpaca_func:format_alpaca"
+  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt"
 ```
 
 Define the function (e.g., in `preprocess/alpaca_func.py`):
@@ -191,7 +207,8 @@ Configure it in YAML (avoid Python f-strings inside YAML; use "{prompt}/{respons
 
 The training script supports multiple parallelism strategies:
 
-- **Data Parallelism**: Distribute batches across devices.Configure this via `ddp` in the config.
+## Data Parallelism
+Distribute batches across devices.Configure this via `ddp` in the config.
  ```bash
    ddp_config:
     ddp_backend: "qccl"
@@ -200,14 +217,36 @@ The training script supports multiple parallelism strategies:
     ddp_broadcast_buffers: null
     ddp_timeout: 1800
  ```
-- **FSDP**: Fully Sharded Data Parallelism (FSDP) is supported for model sharding.
+With the same sft_ddp_config.yaml, we can perform single node multi-device DDP and multimode DDP by changing the torchrun command
+ 
+**For DDP in a single server**:
 ```bash
-  fsdp: "full_shard"
-  fsdp_config: "./configs/accelerate/fsdp_config.yaml"
-  fsdp_config: "./configs/accelerate/fsdp_tp_parallelism_config.yaml"
-```
-- **Pipeline Parallelism (PP)**: Split model layers across devices.
-- **Tensor Parallelism**: Split tensors across devices.
+QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.finetune_experimental ./config/distributed_config.yaml 
+``` 
+where nproc-per-node is number of workers(QAIC devices) running locally.
+
+**For DDP across multiple servers**:
+
+*  On host server (i.e. the server which we are going to treat as the master and we’ll use the ip addr of this server as the master addr):
+
+    ```bash
+    QAIC_VISIBLE_DEVICES=0,1 GLOO_SOCKET_IFNAME=* torchrun --nnodes=2 --nproc-per-node=2 --node-rank=0 --master_addr=* --master_port=8888 -m QEfficient.cloud.finetune_experimental ./configs/distributed_config.yaml
+    ```
+
+*  On client server:
+
+    ```bash
+    QAIC_VISIBLE_DEVICES=0,1 GLOO_SOCKET_IFNAME=* torchrun --nnodes=2 --nproc-per-node=2 --node-rank=1 --master_addr=* --master_port=8888 -m QEfficient.cloud.finetune_experimental ./configs/distributed_config.yaml
+    ```
+
+*  Use servers with compatible/same network interface(eg:ethernet).
+*  PYTHONUNBUFFERED: make python prints unbuffered, especially useful to identify progress (or lack thereof) for distributed tasks.This is optional and not compulsory
+*  GLOO_SOCKET_IFNAME: specify which network interface gloo (and indirectly qccl) uses for inter-host communication (eg: eno1, eth0 etc)
+*  --nnodes: total number of hosts participating in the task
+*  --nproc-per-node: number of processes launched on this host, usually coincides with number of accelerators on this host
+*  --master_addr: ip of the host designated with node_rank=0 ($ ip addr) 
+*  --master_port: port on which host will be listening for other nodes to connect. (eg: 8888, 8000 etc).Use node-rank 0 on the host server and node-rank 1 on client server(for dual server setup).
+*  When running distributed training across multiple servers, the --node-rank parameter must be assigned a unique value for each server, starting from 0 and incrementing by 1 for each additional server. For a setup with N servers it range from 0 to N-1.
 
 ***
 
