@@ -212,11 +212,24 @@ This section defines core parameters for fine-tuning and evaluation.
      *   **ddp\_timeout**: `default = 1800` → Timeout (in seconds) for DDP operations. Increase for large models or slow networks.
  
 *   **torch\_compile**: `default = false` → Wraps your model with torch.compile() (PyTorch 2.0+) to fuse ops, reduce Python overhead, and generate optimized kernels—often yielding speed-ups without code changes.
-*   **report_to**: `default = None` → Logging frameworks to use (e.g., `["tensorboard", "wandb","trackio"]`).
-*   **run_name**: `default = None` → A descriptor for the run. Typically used for [trackio](https://github.com/gradio-app/trackio) logging. If not specified, will be the same as `output_dir`.
+*   **report_to**: `default = tensorboard` → Logging frameworks to use (e.g., `["tensorboard", "wandb","trackio"]`).
+
 *   **Optional distributed configs**: FSDP, DeepSpeed, or DDP for multi-QAIC or large-scale training.
 *    **resume_from_checkpoint**: Path to a checkpoint to resume training from.
 *    **disable_tqdm**: `default = false` → set to `true` to disable progress bar (if running in Notebook).
+*   **output_dir**: `default = "./training_results"` → Directory where training outputs (checkpoints, logs) will be saved.
+   Here is a **clean, structured, minimal Markdown** version of your directory layout:
+
+📁 **Output Directory Structure**
+
+    output_dir/
+    │
+    ├── checkpoints/              # Saved model checkpoints (checkpoint-*)
+    │
+    ├── runs/                     # TensorBoard logs
+    │   └── events.out.tfevents.* # Written when report_to includes "tensorboard"
+    │
+    ├── logs/                     # Logs from other backends
 
 
 ***

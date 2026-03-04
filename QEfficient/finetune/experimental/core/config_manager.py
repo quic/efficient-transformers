@@ -458,12 +458,8 @@ class TrainingConfig:
         metadata={"help": "Whether to restore callback states from checkpoint."},
     )
     report_to: Optional[List[str]] = field(
-        default=None,
+        default="tensorboard",
         metadata={"help": "The list of integrations to report the results and logs to."},
-    )
-    run_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "The name of the experiment (for logging purposes)."},
     )
     completion_only_loss: Optional[bool] = field(
         default=False,
