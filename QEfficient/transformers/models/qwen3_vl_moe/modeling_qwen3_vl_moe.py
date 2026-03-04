@@ -629,7 +629,7 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         router_logits = self.gate(x)  # [T, E]
         prob = F.softmax(router_logits, dim=-1, dtype=hidden_states.dtype)
         top_w, top_i = torch.topk(prob, self.top_k, dim=-1)  # [T, k], [T, k]
-        top_w = top_w / top_w.sum(dim=-1, keepdim=True)
+        top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(hidden_states.dtype)
 
         # gate_up_proj: [E, H, 2I], down_proj: [E, I, H]
@@ -808,7 +808,7 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         router_logits = self.gate(x)
         prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
         top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
-        top_w = top_w / top_w.sum(dim=1, keepdim=True)
+        top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(x.dtype)
         idx = top_i.reshape(-1)
         w_up = self.experts.gate_up_proj.index_select(0, idx)
@@ -823,9 +823,8 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         intermediate = up * self.experts.act_fn(gate)
         experts_out = torch.bmm(intermediate, w_dn)
         experts_out = experts_out.view(T, self.top_k, H) * top_w.unsqueeze(-1)
-        experts_out = experts_out.sum(dim=1).view(B, S, H)
-
-        return experts_out, router_logits
+        experts_out = torch.einsum("bnd->bd", experts_out)
+        return experts_out.view(B, S, H), router_logits
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):
