@@ -218,7 +218,6 @@ This section defines core parameters for fine-tuning and evaluation.
 *    **resume_from_checkpoint**: Path to a checkpoint to resume training from.
 *    **disable_tqdm**: `default = false` → set to `true` to disable progress bar (if running in Notebook).
 *   **output_dir**: `default = "./training_results"` → Directory where training outputs (checkpoints, logs) will be saved.
-   Here is a **clean, structured, minimal Markdown** version of your directory layout:
 
 📁 **Output Directory Structure**
 
