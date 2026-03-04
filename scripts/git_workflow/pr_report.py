@@ -5,19 +5,21 @@ Daily PR report generator.
 Outputs a Markdown table to stdout and writes
 scripts/git_workflow/recipients.txt with resolved email addresses.
 """
+
+import json
 import os
 import sys
-import json
 import time
-import urllib.request
 import urllib.error
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 
 API = "https://api.github.com"
 ACCEPT = "application/vnd.github+json"
 
 # ── GitHub API helpers ────────────────────────────────────────────────────────
+
 
 def gh_request(path, token, params=None):
     """
@@ -43,8 +45,7 @@ def gh_request(path, token, params=None):
             if e.code == 429 or (e.code == 403 and "rate limit" in body.lower()):
                 wait = 60 * (attempt + 1)
                 print(
-                    f"Rate limited on {path} (attempt {attempt + 1}/3), "
-                    f"waiting {wait}s …",
+                    f"Rate limited on {path} (attempt {attempt + 1}/3), waiting {wait}s …",
                     file=sys.stderr,
                 )
                 time.sleep(wait)
@@ -104,6 +105,7 @@ def paginate_check_runs(path, token, params=None):
 
 # ── Utility helpers ───────────────────────────────────────────────────────────
 
+
 def parse_iso(dt):
     return datetime.fromisoformat(dt.replace("Z", "+00:00"))
 
@@ -127,10 +129,10 @@ def summarize_reviews(reviews):
         state = r.get("state", "UNKNOWN")
         latest[user] = state
 
-    approvers  = sorted([u for u, s in latest.items() if s == "APPROVED"])
-    changers   = sorted([u for u, s in latest.items() if s == "CHANGES_REQUESTED"])
+    approvers = sorted([u for u, s in latest.items() if s == "APPROVED"])
+    changers = sorted([u for u, s in latest.items() if s == "CHANGES_REQUESTED"])
     commenters = sorted([u for u, s in latest.items() if s == "COMMENTED"])
-    dismissed  = sorted([u for u, s in latest.items() if s == "DISMISSED"])
+    dismissed = sorted([u for u, s in latest.items() if s == "DISMISSED"])
 
     return {
         "approvers": approvers,
@@ -151,8 +153,8 @@ def format_check_runs(check_runs):
 
     results = []
     for cr in sorted(check_runs, key=lambda x: x.get("name", "")):
-        name       = cr.get("name", "unknown")
-        status     = cr.get("status")
+        name = cr.get("name", "unknown")
+        status = cr.get("status")
         conclusion = cr.get("conclusion")
 
         if status != "completed" or conclusion is None:
@@ -170,6 +172,7 @@ def format_check_runs(check_runs):
 
 
 # ── Email list helper ─────────────────────────────────────────────────────────
+
 
 def load_email_list(path):
     """
@@ -190,6 +193,7 @@ def load_email_list(path):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -202,17 +206,17 @@ def main():
         sys.exit(1)
 
     owner, repo = repo_full.split("/", 1)
-    now      = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
     date_str = now.strftime("%B %d, %Y  %H:%M UTC")
 
     # Load recipient email list (path configurable via EMAIL_MAP_FILE env var)
-    script_dir     = os.path.dirname(os.path.abspath(__file__))
-    default_map    = os.path.join(script_dir, "email_map.json")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_map = os.path.join(script_dir, "email_map.json")
     email_map_path = os.environ.get("EMAIL_MAP_FILE", default_map)
-    recipients     = load_email_list(email_map_path)
+    recipients = load_email_list(email_map_path)
 
     # 1) Fetch all open PRs (correctly paginated via Link header)
-    pulls      = paginate(f"/repos/{owner}/{repo}/pulls", token, params={"state": "open"})
+    pulls = paginate(f"/repos/{owner}/{repo}/pulls", token, params={"state": "open"})
     total_open = len(pulls)
 
     # -- Header ---------------------------------------------------------------
@@ -225,32 +229,34 @@ def main():
     print()
 
     # -- Table ----------------------------------------------------------------
-    print("| PR | Author | Assignee | Age (days) | Draft | Labels | Pending With (requested reviewers) | Review Summary | CI Checks |")
+    print(
+        "| PR | Author | Assignee | Age (days) | Draft | Labels | Pending With (requested reviewers) | Review Summary | CI Checks |"
+    )
     print("|---|---|---|---:|:---:|---|---|---|---|")
 
     for pr in pulls:
-        number     = pr["number"]
-        title      = pr.get("title", "").replace("|", "\\|")
-        url        = pr.get("html_url", "")
-        author     = (pr.get("user") or {}).get("login", "unknown")
-        draft      = "Yes" if pr.get("draft") else "No"
+        number = pr["number"]
+        title = pr.get("title", "").replace("|", "\\|")
+        url = pr.get("html_url", "")
+        author = (pr.get("user") or {}).get("login", "unknown")
+        draft = "Yes" if pr.get("draft") else "No"
         created_at = parse_iso(pr["created_at"])
-        age_days   = (now - created_at).days
-        head_sha   = (pr.get("head") or {}).get("sha")
+        age_days = (now - created_at).days
+        head_sha = (pr.get("head") or {}).get("sha")
 
         # Assignees (already in PR payload — no extra API call)
-        assignees    = [u["login"] for u in pr.get("assignees") or [] if not is_bot(u["login"])]
+        assignees = [u["login"] for u in pr.get("assignees") or [] if not is_bot(u["login"])]
         assignee_str = ", ".join(assignees) if assignees else "—"
 
         # Labels (already in PR payload — no extra API call)
-        labels     = [lbl["name"].replace("|", "\\|") for lbl in pr.get("labels") or []]
+        labels = [lbl["name"].replace("|", "\\|") for lbl in pr.get("labels") or []]
         labels_str = ", ".join(labels) if labels else "—"
 
         # 2) Requested reviewers (who it's pending with)
         rr, _ = gh_request(f"/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", token)
         users = [u["login"] for u in rr.get("users", []) if not is_bot(u["login"])]
         teams = [t["name"] for t in rr.get("teams", [])]
-        pending_with     = users + [f"team:{t}" for t in teams]
+        pending_with = users + [f"team:{t}" for t in teams]
         pending_with_str = ", ".join(pending_with) if pending_with else "—"
 
         # 3) Reviews submitted (paginated, bots excluded)
@@ -280,7 +286,9 @@ def main():
             ci_str = format_check_runs(check_runs)
 
         pr_label = f"[#{number}]({url}) {title}"
-        print(f"| {pr_label} | {author} | {assignee_str} | {age_days} | {draft} | {labels_str} | {pending_with_str} | {review_summary} | {ci_str} |")
+        print(
+            f"| {pr_label} | {author} | {assignee_str} | {age_days} | {draft} | {labels_str} | {pending_with_str} | {review_summary} | {ci_str} |"
+        )
 
     # -- Write recipients.txt -------------------------------------------------
     recipients_path = os.path.join(script_dir, "recipients.txt")
