@@ -56,6 +56,45 @@ class FineTuningPipeline:
         self.output_dir = Path(self.config.training["output_dir"])
         self._setup_environment()
 
+        # Prepare training configuration
+        self.training_config = prepare_training_config(config_manager=self.config_manager)
+
+        # Create datasets
+        logger.log_rank_zero("Creating datasets...")
+        self.train_dataset, self.eval_dataset = self._create_datasets()
+
+        # Create model and tokenizer
+        logger.log_rank_zero("Loading model and tokenizer...")
+        model_instance = self._create_model()
+        self.model = model_instance.model
+        self.tokenizer = model_instance.tokenizer
+
+        # Create optimizer
+        logger.log_rank_zero("Preparing optimizer...")
+        self.optimizer_cls_and_kwargs = self._create_optimizer()
+
+        # Create callbacks
+        logger.log_rank_zero("Creating callbacks...")
+        self.callbacks = self._create_callbacks()
+
+        # Create trainer
+        logger.log_rank_zero("Initializing trainer...")
+        self.trainer = self._create_trainer(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            train_dataset=self.train_dataset,
+            eval_dataset=self.eval_dataset,
+            optimizer_cls_and_kwargs=self.optimizer_cls_and_kwargs,
+            callbacks=self.callbacks,
+            training_config=self.training_config,
+        )
+
+    def get_model_and_tokenizer(self):
+        return self.model, self.tokenizer
+
+    def get_trainer(self):
+        return self.trainer
+
     def _setup_environment(self) -> None:
         """Set up environment variables for output directories."""
         os.environ["OUTPUT_DIR"] = str(self.output_dir)
@@ -95,7 +134,6 @@ class FineTuningPipeline:
         # Create training and evaluation datasets using config values
         train_dataset = create_dataset_for_split(train_split)
         eval_dataset = create_dataset_for_split(test_split)
-
         return train_dataset, eval_dataset
 
     def _create_model(self) -> Any:
@@ -157,6 +195,8 @@ class FineTuningPipeline:
 
         # callback_config.callbacks is a dictionary of callback configurations
         for callback_name, callback_kwargs in callback_config["callbacks"].items():
+            if callback_kwargs is None:
+                callback_kwargs = {}
             try:
                 callback_instance = ComponentFactory.create_callback(callback_name, **callback_kwargs)
                 callbacks.append(callback_instance)
@@ -216,14 +256,26 @@ class FineTuningPipeline:
 
         # Create trainer arguments instance
         args = args_cls(**training_config)
-        # Initialize trainer
+        dataset_config_dict = self.config_manager.get_dataset_config()
+        split_ratio = dataset_config_dict.get("split_ratio", 0.8)
+        num_samples = dataset_config_dict.get("dataset_num_samples", -1)
+        train_dataset = train_dataset.dataset
+        eval_dataset = eval_dataset.dataset
+        if num_samples > 0:
+            # Truncating datasets to a smaller number of samples.
+            # If you want to use all data, set dataset_num_samples to -1 or remove it from config.
+            logger.warning("Using fewer samples may impact finetuning quality.")
+            subset_train_indices = list(range(0, int(num_samples * split_ratio)))
+            subset_eval_indices = list(range(0, int(num_samples - num_samples * split_ratio)))
+            eval_dataset = eval_dataset.select(subset_eval_indices)
+            train_dataset = train_dataset.select(subset_train_indices)
         trainer = trainer_cls(
             model=model,
             processing_class=tokenizer,
             args=args,
             compute_loss_func=None,
-            train_dataset=train_dataset.dataset,
-            eval_dataset=eval_dataset.dataset,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             optimizer_cls_and_kwargs=optimizer_cls_and_kwargs,
             callbacks=callbacks,
             **additional_kwargs,
@@ -234,48 +286,9 @@ class FineTuningPipeline:
         return trainer
 
     def run(self) -> None:
-        """
-        Execute the complete fine-tuning pipeline.
-        """
-        # Validate configuration
-        self.config_manager.validate_config()
-
-        # Prepare training configuration
-        training_config = prepare_training_config(config_manager=self.config_manager)
-
-        # Create datasets
-        logger.log_rank_zero("Creating datasets...")
-        train_dataset, eval_dataset = self._create_datasets()
-
-        # Create model and tokenizer
-        logger.log_rank_zero("Loading model and tokenizer...")
-        model_instance = self._create_model()
-        model = model_instance.model
-        tokenizer = model_instance.tokenizer
-
-        # Create optimizer
-        logger.log_rank_zero("Preparing optimizer...")
-        optimizer_cls_and_kwargs = self._create_optimizer()
-
-        # Create callbacks
-        logger.log_rank_zero("Creating callbacks...")
-        callbacks = self._create_callbacks()
-
-        # Create trainer
-        logger.log_rank_zero("Initializing trainer...")
-        trainer = self._create_trainer(
-            model=model,
-            tokenizer=tokenizer,
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
-            optimizer_cls_and_kwargs=optimizer_cls_and_kwargs,
-            callbacks=callbacks,
-            training_config=training_config,
-        )
-
         # Start training
         logger.log_rank_zero("Starting training...")
-        trainer.train()
+        self.trainer.train()
 
 
 def main():
