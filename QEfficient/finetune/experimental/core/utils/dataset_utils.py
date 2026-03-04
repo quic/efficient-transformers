@@ -4,6 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+import json
+
+
 def insert_pad_token(tokenizer):
     # Add pad token if it doesn't exist
     if tokenizer.pad_token is None:
@@ -17,6 +20,14 @@ def insert_pad_token(tokenizer):
         else:
             # Add a new pad token
             tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+
+
+def validate_json_structure(path):
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        raise ValueError(f"Invalid format. Expected a list of objects. Got : {type(data).__name__}")
 
 
 def apply_train_test_split(dataset, split_ratio, split, seed):
