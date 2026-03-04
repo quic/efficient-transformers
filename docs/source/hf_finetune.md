@@ -29,7 +29,7 @@ If QEfficient is already installed, install `torch_qaic`, `transformers` and (op
 # torch_qaic (example wheel path — adjust to your environment)
 pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
 
-# transformers 
+# Install transformers with QAIC backend support
 git clone https://github.com/quic-swatia/transformers.git
 cd transformers 
 git checkout version-4.55.0 && pip install -e .
@@ -48,6 +48,25 @@ export HF_DATASETS_TRUST_REMOTE_CODE=True
 export QAIC_DEVICE_LOG_LEVEL=0   # Device-level logs
 export QAIC_DEBUG=1              # Show CPU fallback ops, etc.
 ```
+
+### Step-by-Step Guide to run a fine-tuning job
+
+For Docker-based environments, use the provided `torch_qaic_env` environment.
+
+```bash
+source /opt/torch-qaic-env/bin/activate
+git clone https://github.com/quic/efficient-transformers.git
+cd efficient-transformers
+pip install -e .
+pip install   --index-url https://download.pytorch.org/whl/cpu   --extra-index-url     https://devpi.qualcomm.com/qcom/dev/+simple   --trusted-host devpi.qualcomm.com   "torch==2.9.1+cpu"   "torchvision==0.24.1+cpu"   "torchaudio==2.9.1+cpu"
+pip install trl==0.22.0`
+git clone https://github.com/quic-swatia/transformers.git
+cd transformers 
+git checkout version-4.55.0 && pip install -e .
+cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_config.yaml
+
+```
+
 
 
 > **Note**  
