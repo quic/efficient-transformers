@@ -75,6 +75,8 @@ This enables scaling training across multiple nodes.
 
 Use servers with compatible/same network interface(eg:ethernet).
 
+And supported only for linux servers now. Use servers connected to same switch for benefits in time while scaling.
+
 ```
 PYTHONUNBUFFERED: make python prints unbuffered, especially useful to identify progress (or lack thereof) for distributed tasks.This is optional and not compulsory
 ```
