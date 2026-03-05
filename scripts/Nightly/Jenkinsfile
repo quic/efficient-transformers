@@ -5,8 +5,6 @@ pipeline {
         }
     }
 
-    description 'QEfficient Nightly Test Pipeline - Runs comprehensive test suite on gb-blr-62 QAIC environments'
-
     options {
         disableConcurrentBuilds()
         timeout(time: 1, unit: 'DAYS')
@@ -32,7 +30,6 @@ pipeline {
 
     stages {
         stage('Prepare Environment') {
-            description 'Setup Docker container and install dependencies'
             steps {
                 script {
                     echo "Starting QEfficient Nightly Test Suite"
@@ -74,93 +71,88 @@ pipeline {
             }
         }
         stage('Unit & Integration Tests') {
-            description 'Run core model export, ONNX, and QAIC LLM tests'
             parallel {
                 stage('Model Export & ONNX Tests') {
-                    description 'Test model export and ONNX conversion'
                     steps {
                         timeout(time: 40, unit: 'MINUTES') {
                             sh '''
-                                sudo docker exec ${BUILD_TAG} bash -c "
-                                    set -e
-                                    cd /efficient-transformers
-                                    . ${VENV_PATH}/bin/activate
-                                    
-                                    mkdir -p $PWD/Non_cli_qaic
-                                    export QEFF_HOME=$PWD/Non_cli_qaic
-                                    
-                                    pytest tests \
-                                        -m '(not cli) and (not on_qaic) and (not finetune)' \
-                                        --ignore tests/vllm \
-                                        --ignore tests/transformers/models/image_text_to_text \
-                                        ${PYTEST_ARGS} -n 4\
-                                        --junitxml=tests/tests_log1.xml
-                                    
-                                    junitparser merge tests/tests_log1.xml tests/tests_log.xml
-                                    deactivate
-                                "
-                            '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                                set -e
+                                cd /efficient-transformers
+                                . ${VENV_PATH}/bin/activate
+                                
+                                mkdir -p $PWD/Non_cli_qaic
+                                export QEFF_HOME=$PWD/Non_cli_qaic
+                                
+                                pytest tests \
+                                    -m '(not cli) and (not on_qaic) and (not finetune)' \
+                                    --ignore tests/vllm \
+                                    --ignore tests/transformers/models/image_text_to_text \
+                                    ${PYTEST_ARGS} -n 4\
+                                    --junitxml=tests/tests_log1.xml
+                                
+                                junitparser merge tests/tests_log1.xml tests/tests_log.xml
+                                deactivate
+                            "
+                        '''
                         }
                     }
                 }
                 
                 stage('QAIC LLM Tests') {
-                    description 'Test QAIC-optimized large language models'
                     steps {
                         timeout(time: 120, unit: 'MINUTES') {
                             sh '''
-                                sudo docker exec ${BUILD_TAG} bash -c "
-                                    set -e
-                                    cd /efficient-transformers
-                                    . ${VENV_PATH}/bin/activate
-                                    
-                                    mkdir -p $PWD/Non_qaic_llm
-                                    export QEFF_HOME=$PWD/Non_qaic_llm
-                                    
-                                    pytest tests \
-                                        -m '(not cli) and (on_qaic) and (llm_model) and (not regular) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
-                                        --ignore tests/vllm \
-                                        ${PYTEST_ARGS} \
-                                        --junitxml=tests/tests_log2.xml
-                                    
-                                    junitparser merge tests/tests_log2.xml tests/tests_log.xml
-                                    deactivate
-                                "
-                            '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                                set -e
+                                cd /efficient-transformers
+                                . ${VENV_PATH}/bin/activate
+                                
+                                mkdir -p $PWD/Non_qaic_llm
+                                export QEFF_HOME=$PWD/Non_qaic_llm
+                                
+                                pytest tests \
+                                    -m '(not cli) and (on_qaic) and (llm_model) and (not regular) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
+                                    --ignore tests/vllm \
+                                    ${PYTEST_ARGS} \
+                                    --junitxml=tests/tests_log2.xml
+                                
+                                junitparser merge tests/tests_log2.xml tests/tests_log.xml
+                                deactivate
+                            "
+                        '''
                         }
                     }
                 }
                 
                 stage('QAIC Feature Tests') {
-                    description 'Test QAIC-specific features and optimizations'
                     steps {
                         timeout(time: 80, unit: 'MINUTES') {
                             sh '''
-                                sudo docker exec ${BUILD_TAG} bash -c "
-                                    set -e
-                                    cd /efficient-transformers
-                                    . ${VENV_PATH}/bin/activate
-                                    
-                                    mkdir -p $PWD/Non_qaic_feature
-                                    export QEFF_HOME=$PWD/Non_qaic_feature
-                                    
-                                    pytest tests \
-                                        -m '(not cli) and (on_qaic) and (feature) and (not regular) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
-                                        --ignore tests/vllm \
-                                        ${PYTEST_ARGS} \
-                                        --junitxml=tests/tests_log2_feature.xml
-                                    
-                                    junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml
-                                    deactivate
-                                "
-                            '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                                set -e
+                                cd /efficient-transformers
+                                . ${VENV_PATH}/bin/activate
+                                
+                                mkdir -p $PWD/Non_qaic_feature
+                                export QEFF_HOME=$PWD/Non_qaic_feature
+                                
+                                pytest tests \
+                                    -m '(not cli) and (on_qaic) and (feature) and (not regular) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
+                                    --ignore tests/vllm \
+                                    ${PYTEST_ARGS} \
+                                    --junitxml=tests/tests_log2_feature.xml
+                                
+                                junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml
+                                deactivate
+                            "
+                        '''
                         }
                     }
                 }
             }
         }
         stage('QAIC MultiModal Tests') {
-            description 'Test QAIC multimodal models (VLM, image-text)'
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
@@ -187,7 +179,6 @@ pipeline {
         }
 
         stage('QAIC Diffusion Models Tests') {
-            description 'Test QAIC diffusion and generative models'
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
@@ -215,7 +206,6 @@ pipeline {
         }
 
         stage('CLI Inference Tests') {
-            description 'Test command-line interface for inference'
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
@@ -241,7 +231,6 @@ pipeline {
             }
         }
         stage('Finetune CLI Tests') {
-            description 'Test fine-tuning capabilities via CLI'
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
