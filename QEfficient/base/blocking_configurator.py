@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 """
-Utility helpers to suggest attention/FFN blocking configs for diffusers transformers.
+Utility helpers to suggest attention/FFN blocking configs for diffusers transformers and transformers
 
 This module adapts the standalone configurator script into a clean, importable API
 that can be fed model config + pipeline compile config to derive blocking settings.
@@ -17,24 +17,10 @@ import json
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.75
+from QEfficient.utils import _get_attr_or_key, _require_value
 
-
-def _get_attr_or_key(obj: Any, names: Tuple[str, ...], default: Any = None) -> Any:
-    if obj is None:
-        return default
-    for name in names:
-        if isinstance(obj, dict) and name in obj:
-            return obj[name]
-        if hasattr(obj, name):
-            return getattr(obj, name)
-    return default
-
-
-def _require_value(value: Any, label: str) -> Any:
-    if value is None:
-        raise ValueError(f"Missing required {label} to compute blocking configuration.")
-    return value
+VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.4
+VTCM_SIZE_MAX = 8 * 1024 * 1024
 
 
 def _infer_head_dim(model_config: Any, num_heads: int) -> int:
@@ -58,7 +44,7 @@ def _infer_data_bytes(compile_config: Dict[str, Any]) -> int:
 
 def _infer_pipeline_config(pipeline_config: Any) -> Dict[str, Any]:
     if pipeline_config is None:
-        return {}
+        return {} 
     if isinstance(pipeline_config, dict):
         return pipeline_config
     if isinstance(pipeline_config, str):
@@ -126,18 +112,21 @@ def attention_configurator(
     num_nsps: int,
     data_bytes: int,
     blocking_mode: Optional[str] = None,
+    vtcm_ratio: Optional[float] = 0.75,
 ) -> Dict[str, Any]:
     """
     Suggest attention blocking configuration based on model and device constraints.
     """
     mode = (blocking_mode or "hqkv").lower()
 
-    num_kv_blocks_list = block_candidates_generator(seq_len) if "kv" in mode else [1]
-    num_q_blocks_list = block_candidates_generator(seq_len) if "q" in mode else [1]
+    num_kv_blocks_list = block_candidates_generator(ctx_len) if "kv" in mode else [1]
+    num_q_blocks_list = block_candidates_generator(ctx_len) if "q" in mode else [1]
 
     head_block_size = num_socs if "h" in mode else num_heads
     num_head_blocks = math.ceil(num_heads / head_block_size)
     num_heads_per_iter = math.ceil(head_block_size / num_socs)
+
+    VTCM_SIZE_THRESHOLD = VTCM_SIZE_MAX * vtcm_ratio
 
     best_config = {
         "head_block_size": head_block_size,
@@ -191,6 +180,7 @@ def ffn_configurator(
     num_socs: int,
     num_nsps: int,
     data_bytes: int,
+    vtcm_ratio: Optional[float] = 0.75,
 ) -> Dict[str, Any]:
     class FFN:
         def __init__(self, seq_len: float, d_model: float, intermediate: float, data_bytes: int):
@@ -258,6 +248,8 @@ def ffn_configurator(
         "vtcm_footprint": None,
     }
 
+    VTCM_SIZE_THRESHOLD = VTCM_SIZE_MAX * vtcm_ratio
+
     for num_token_blocks in num_token_blocks_list:
         for num_weights_blocks in num_weights_blocks_list:
             ffn = FFN(seq_len / num_token_blocks, d_model, intermediate / num_weights_blocks, data_bytes)
@@ -311,32 +303,26 @@ def build_transformer_blocking_config(
     pipeline_config: Optional[Any] = None,
     module_name: str = "transformer",
     blocking_mode: Optional[str] = None,
-    specializations: Optional[Dict[str, Any]] = None,
+    ctx_len: Optional[int] = None,
+    seq_len: Optional[int] = None,
+    bs: Optional[int] = 1,
+    vtcm_ratio: Optional[float] = 0.75,
     compile_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Build blocking configuration based on model config + pipeline compile config.
     """
-    pipeline_config_dict = _infer_pipeline_config(pipeline_config)
-
-    if specializations is None or compile_config is None:
-        spec, comp = _extract_module_configs(pipeline_config_dict, module_name)
-        specializations = specializations or spec
-        compile_config = compile_config or comp
-    if isinstance(specializations, list):
-        if not specializations:
-            raise ValueError("Missing specializations for blocking configuration.")
-        specializations = specializations[0]
-
-    bs = _require_value(_get_attr_or_key(specializations, ("batch_size", "batch")), "batch size")
-    seq_len = _get_attr_or_key(specializations, ("cl", "seq_len", "sequence_length"))
-    if seq_len is None:
-        raise ValueError("Missing sequence length (cl/seq_len/sequence_length) to compute blocking configuration.")
-    ctx_len = _get_attr_or_key(specializations, ("ctx_len", "context_length"))
-    if ctx_len is None:
-        ctx_len = _get_attr_or_key(model_config, ("context_length", "max_position_embeddings"))
     if ctx_len is None:
         ctx_len = seq_len
+
+    if seq_len is None and ctx_len is None:
+        return {
+            "blocking_mode": blocking_mode,
+            "effective_blocking_mode": "",
+            "attention": {},
+            "ffn": {},
+            "compile_flags": {},
+        }
 
     num_heads = _require_value(
         _get_attr_or_key(model_config, ("num_attention_heads", "num_heads", "attention_heads", "n_heads")),
@@ -364,6 +350,7 @@ def build_transformer_blocking_config(
         int(num_nsps),
         int(data_bytes),
         blocking_mode=blocking_mode,
+        vtcm_ratio=vtcm_ratio,
     )
 
     ffn_cfg = ffn_configurator(
@@ -374,6 +361,7 @@ def build_transformer_blocking_config(
         int(num_socs),
         int(num_nsps),
         int(data_bytes),
+        vtcm_ratio=vtcm_ratio,
     )
 
     resolved_mode = _normalize_attention_mode(blocking_mode or "hqkv")

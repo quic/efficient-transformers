@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
+from QEfficient.base.blocking_configurator import build_transformer_blocking_config
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
     FP16ClipTransform,
@@ -33,6 +34,8 @@ from QEfficient.transformers.models.pytorch_transforms import (
     QBlockingAttentionTransform,
 )
 from QEfficient.utils import (
+    _get_attr_or_key,
+    _require_value,
     constants,
     create_json,
     create_model_params,
@@ -44,7 +47,6 @@ from QEfficient.utils import (
     require_value,
     to_named_specializations,
 )
-from QEfficient.utils.blocking_configurator import _get_attr_or_key, _require_value, build_transformer_blocking_config
 from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
@@ -79,9 +81,6 @@ class QEFFBaseModel(ABC):
 
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
-
-        # Flag for checking if model has been transformed yet
-        self.is_transformed: bool = False
 
         # Apply the transformations
         any_transformed = False
@@ -368,10 +367,14 @@ class QEFFBaseModel(ABC):
         disable_blocking: Optional[bool] = True,
         blocking_mode: Optional[str] = "hqkv",
         vtcm_ratio: Optional[float] = 0.75,
+        qaic_config: Optional[dict] = None,
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
-        if getattr(self.model, "qaic_config", None) is None and not disable_blocking:
+
+        qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
+
+        if qaic_config is None and not disable_blocking:
             if hasattr(self.model, "config"):
                 blocking_config = build_transformer_blocking_config(
                     self.model.config,
@@ -391,15 +394,15 @@ class QEFFBaseModel(ABC):
             blocking_config = {}
             blocking_config["effective_blocking_mode"] = ""
             blocking_config["attention"] = {}
-            if self.model.qaic_config.get("num_kv_blocks", False) and not disable_blocking and "kv" in blocking_mode:
+            if qaic_config.get("num_kv_blocks", False) and not disable_blocking and "kv" in blocking_mode:
                 blocking_config["effective_blocking_mode"] = "kv" + blocking_config["effective_blocking_mode"]
-                blocking_config["attention"]["num_kv_blocks"] = self.model.qaic_config.get("num_kv_blocks")
-            if self.model.qaic_config.get("num_q_blocks", False) and not disable_blocking and "q" in blocking_mode:
+                blocking_config["attention"]["num_kv_blocks"] = qaic_config.get("num_kv_blocks")
+            if qaic_config.get("num_q_blocks", False) and not disable_blocking and "q" in blocking_mode:
                 blocking_config["effective_blocking_mode"] = "q" + blocking_config["effective_blocking_mode"]
-                blocking_config["attention"]["num_q_blocks"] = self.model.qaic_config.get("num_q_blocks")
-            if self.model.qaic_config.get("head_block_size", False) and not disable_blocking and "h" in blocking_mode:
+                blocking_config["attention"]["num_q_blocks"] = qaic_config.get("num_q_blocks")
+            if qaic_config.get("head_block_size", False) and not disable_blocking and "h" in blocking_mode:
                 blocking_config["effective_blocking_mode"] = "h" + blocking_config["effective_blocking_mode"]
-                blocking_config["attention"]["head_block_size"] = self.model.qaic_config.get("head_block_size")
+                blocking_config["attention"]["head_block_size"] = qaic_config.get("head_block_size")
 
             # check if qaic config did not provide any blocking details
             if blocking_config["effective_blocking_mode"] == "" and not disable_blocking:
@@ -467,6 +470,7 @@ class QEFFBaseModel(ABC):
         disable_blocking: Optional[bool] = True,
         blocking_mode: Optional[str] = "hqkv",
         vtcm_ratio: Optional[float] = 0.75,
+        qaic_config: Optional[dict] = None,
         **compiler_options,
     ) -> str:
         """
@@ -493,6 +497,7 @@ class QEFFBaseModel(ABC):
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
         # Transform before export
+        qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
         bs = _require_value(_get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
         seq_len = _get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
         ctx_len = _get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
@@ -504,6 +509,7 @@ class QEFFBaseModel(ABC):
             disable_blocking=disable_blocking,
             blocking_mode=blocking_mode,
             vtcm_ratio=vtcm_ratio,
+            qaic_config=qaic_config,
             **compiler_options,
         )
 
