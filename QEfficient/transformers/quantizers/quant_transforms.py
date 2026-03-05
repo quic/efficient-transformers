@@ -9,6 +9,8 @@ import torch
 from torch import nn
 from transformers.models.gpt_oss.modeling_gpt_oss import GptOssExperts
 
+from compressed_tensors.linear.compressed_linear import CompressedLinear
+
 from QEfficient.base.pytorch_transforms import ModuleMutatorTransform
 from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
@@ -146,3 +148,20 @@ class Mxfp4GptOssExpertDequantizeTransform(ModuleMutatorTransform):
         dequant_module.gate_up_proj_bias = original_module.gate_up_proj_bias
         dequant_module.down_proj_bias = original_module.down_proj_bias
         return dequant_module
+
+
+class PackQuantizedInt4ToMatMulNBitsTransform(ModuleMutatorTransform):
+    """
+    This transform is used to pack the quantized int4 weights into a format that can be used by the MatMulNBits kernel.
+    It is used for the ONNX export of the quantized model.
+    """
+
+    _match_class = CompressedLinear
+
+    @classmethod
+    def mutate(cls, original_module, parent_module):
+        # add compressor.decompress to get the decompressed weight
+        # and then package into matmulnbit
+        import ipdb; ipdb.set_trace()
+        
+        return original_module

@@ -382,6 +382,7 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
+        import ipdb; ipdb.set_trace()
         self.all_gate_proj = torch.nn.Parameter(
             torch.cat(
                 [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
@@ -456,19 +457,19 @@ class QEffDeepseekV3MoE(nn.Module):
 
 
 class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
-    def __qeff_init__(
-        self,
-    ):
-        self.all_gate_proj = torch.nn.Parameter(
-            torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.all_up_proj = torch.nn.Parameter(
-            torch.cat([exp.up_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.all_down_proj = torch.nn.Parameter(
-            torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.act_fn = self.experts[0].act_fn
+    # def __qeff_init__(
+    #     self,
+    # ):
+    #     self.all_gate_proj = torch.nn.Parameter(
+    #         torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+    #     )
+    #     self.all_up_proj = torch.nn.Parameter(
+    #         torch.cat([exp.up_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+    #     )
+    #     self.all_down_proj = torch.nn.Parameter(
+    #         torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
+    #     )
+    #     self.act_fn = self.experts[0].act_fn
 
     def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)

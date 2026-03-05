@@ -6,10 +6,12 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 prompt = "Once upon a time,"
 
-model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
-model = AutoModelForCausalLM.from_pretrained(
+# model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
+model_path = "moonshotai/Kimi-K2-Thinking"
+model = QEFFAutoModelForCausalLM.from_pretrained(
     model_path, torch_dtype=torch.float32, num_hidden_layers=2, trust_remote_code=True
 )
+
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
 
 
