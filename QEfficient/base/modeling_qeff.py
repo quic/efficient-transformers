@@ -97,12 +97,14 @@ class QEFFBaseModel(ABC):
         # Normalize llm_config if it exists
         if hasattr(self.config, "llm_config"):
             self.config.llm_config.torch_dtype = top_level_dtype
-            self.config.llm_config.use_bfloat16 = top_level_dtype == torch.bfloat16
+            if hasattr(self.config.llm_config, "use_bfloat16"):
+                self.config.llm_config.use_bfloat16 = top_level_dtype == torch.bfloat16
 
         # Normalize vision_config if it exists
         if hasattr(self.config, "vision_config"):
             self.config.vision_config.torch_dtype = top_level_dtype
-            self.config.vision_config.use_bfloat16 = top_level_dtype == torch.bfloat16
+            if hasattr(self.config.vision_config, "use_bfloat16"):
+                self.config.vision_config.use_bfloat16 = top_level_dtype == torch.bfloat16
 
         # Normalize text_config if it exists (for models like Qwen2.5-VL)
         if hasattr(self.config, "text_config"):

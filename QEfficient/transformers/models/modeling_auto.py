@@ -79,7 +79,7 @@ from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 DTYPE_TO_STRING_MAP = {
     torch.float16: "float16",
     torch.bfloat16: "bfloat16",
-    torch.float32: "float16",
+    torch.float32: "float16",  # Since compiler doesn't support fp32
 }
 
 
