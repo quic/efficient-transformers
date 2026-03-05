@@ -303,7 +303,7 @@ def test_trainer_receives_expected_arguments(mocker, mock_config_manager, model_
 
     # Assert: _create_trainer wiring
     mocked_trainer.assert_called_once_with(
-        mocker.ANY, 
+        mocker.ANY,
         model=model_bundle.model,
         tokenizer=model_bundle.tokenizer,
         train_dataset=train_ds,
