@@ -36,7 +36,7 @@ pipeline {
                     echo "Build Tag: ${BUILD_TAG}"
                 }
                 sh '''
-                    source ~/.bashrc
+                    . ~/.bashrc
                     # Launch privileged Docker container with necessary mounts
                     sudo docker run --privileged -dit \
                         --name ${BUILD_TAG} \
