@@ -514,7 +514,9 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
-        self._compile(specializations=specializations, **compiler_options)
+        self._compile(specializations=specializations,
+                    #   retained_state=True,
+                      **compiler_options)
 
 
 class QEffWanUnifiedTransformer(QEFFBaseModel):

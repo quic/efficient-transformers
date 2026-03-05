@@ -729,10 +729,19 @@ class QEffFluxPipeline:
                 str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
             )
 
-        # Allocate output buffer for transformer
+        # # Allocate output buffer for transformer
         output_buffer = {
-            "output": np.random.rand(batch_size, cl, self.transformer.model.config.in_channels).astype(np.float32),
+            "output": np.random.rand(batch_size, cl, self.transformer.model.config.in_channels).astype(np.float32),            
         }
+        
+        # self.transformer.qpc_session.skip_buffers(
+        #     [
+        #         x
+        #         for x in self.transformer.qpc_session.input_names + self.transformer.qpc_session.output_names
+        #         if x.startswith("prev_") or x.endswith("_RetainedState")
+        #     ]
+        # )
+        
         self.transformer.qpc_session.set_buffers(output_buffer)
 
         transformer_perf = []
@@ -848,7 +857,7 @@ class QEffFluxPipeline:
 
                     # prev_first_block_residuals=noise_pred_torch[1]
                     # prev_remain_block_residuals=noise_pred_torch[2]
-                [[]]    # prev_remain_encoder_residuals=noise_pred_torch[3]
+                #   # prev_remain_encoder_residuals=noise_pred_torch[3]
                 
                 transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
                 print(f"At step-> {i} time taken {end_transformer_step_time - start_transformer_step_time}")
