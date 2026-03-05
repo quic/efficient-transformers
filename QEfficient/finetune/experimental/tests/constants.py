@@ -106,4 +106,4 @@ OPT_SGD_MOMENTUM = 0.9
 # Loss Parameters
 # ============================================================================
 
-TRAIN_EVAL_EPOCH_LOSS_DIFF_THRESHOLD = 1.0
+TRAIN_EVAL_EPOCH_LOSS_DIFF_THRESHOLD = 2.0

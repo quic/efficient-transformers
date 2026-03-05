@@ -101,12 +101,12 @@ class SFTDataset(BaseDataset):
             if not os.path.isfile(self.json_file_path):
                 raise FileNotFoundError(f"JSON file not found or invalid: '{self.json_file_path}'")
         if self.prompt_template and self.prompt_func_path:
-            logger.warning(
+            logger.info(
                 "Both prompt_template and prompt_func are provided. Using prompt_template for preprocessing."
             )
         if self.completion_template and self.completion_func_path:
-            logger.warning(
-                "Both completion_template and completion_func are provided. completion_template for preprocessing."
+            logger.info(
+                "Both completion_template and completion_func are provided. Using completion_template for preprocessing."
             )
         if self.prompt_template is None and self.prompt_func_path is None:
             raise RuntimeError("Either provide prompt_template or prompt_func in the config.")
