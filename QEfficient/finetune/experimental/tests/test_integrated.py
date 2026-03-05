@@ -210,7 +210,7 @@ def create_master_config(
             dataset_num_samples=TEST_DATASET_SUBSET_SIZE,
         ),
         optimizers=OptimizerConfig(
-            optimizer_name="AdamW",
+            optimizer_name="adamw",
             lr=TEST_LEARNING_RATE,
             weight_decay=TEST_WEIGHT_DECAY,
         ),

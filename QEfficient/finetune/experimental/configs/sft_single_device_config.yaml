@@ -36,7 +36,7 @@ training:
 
 # Optimizer configuration
 optimizers:
-  optimizer_name: "AdamW"
+  optimizer_name: "adamw"
   lr: 2e-4
 
 scheduler:

@@ -68,7 +68,7 @@ def create_master_config(
             config_name="main",
         ),
         optimizers=OptimizerConfig(
-            optimizer_name="AdamW",
+            optimizer_name="adamw",
         ),
         scheduler=SchedulerConfig(
             scheduler_name="cosine",

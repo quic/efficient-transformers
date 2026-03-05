@@ -124,13 +124,13 @@ This module supports both custom dataset loaders and Hugging Face datasets. You 
 
 ### Registering Datasets
 
-Register your dataset using  `registry/datasets.py`:
+Register your dataset using  `Component Factory`:
 
 ```python
-# registry/datasets.py
+# QEfficient/finetune/experimental/core/datasets.py
 import json
 from torch.utils.data import Dataset
-from .base import register  # your registry base
+from QEfficient.finetune.experimental.core.component_registry import registry  
 
 @registry.dataset( "my_custom_dataset")
 class MyCustomDataset(BaseDataset):
