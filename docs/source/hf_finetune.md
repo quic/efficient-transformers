@@ -21,7 +21,7 @@ The **QEfficient Fine-Tune Module** is a component of the QEfficient project foc
 
 Install the same prerequisites as **QEfficient**, plus **QAIC PyTorch Eager mode** as needed.
 
-*   QEfficient Library: <https://github.com/quic/efficient-transformers/tree/ft_experimental#>
+*   QEfficient Library: <https://github.com/quic/efficient-transformers/>
 
 If QEfficient is already installed, install `torch_qaic`, `transformers` and (optionally) `accelerate` for QAIC:
 
@@ -30,6 +30,7 @@ If QEfficient is already installed, install `torch_qaic`, `transformers` and (op
 pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
 
 # Install transformers with QAIC backend support
+# TODO : Create transformer.whl
 git clone https://github.com/quic-swatia/transformers.git
 cd transformers 
 git checkout version-4.55.0 && pip install -e .
@@ -47,6 +48,9 @@ export HF_DATASETS_TRUST_REMOTE_CODE=True
 # QAIC debugging and device logs
 export QAIC_DEVICE_LOG_LEVEL=0   # Device-level logs
 export QAIC_DEBUG=1              # Show CPU fallback ops, etc.
+
+# Set temp directory
+export TMPDIR = $HOME/tmp
 ```
 
 ### Step-by-Step Guide to run a fine-tuning job
@@ -75,7 +79,7 @@ cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/ex
 ***
 ## Finetuning
 
-### Launch Commands
+### Sample Launch Commands
 
 **Single device using yaml file**
 ```bash
@@ -89,12 +93,12 @@ python -m finetune_experimental configs/sft_single_device_config.yaml
 ```bash
 python finetune_experimental.py --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True
 ```
-**Distributed (TorchRun)**
+**Distributed (Using TorchRun)**
 ```bash
 torchrun --nproc_per_node=4 finetune_experimental.py configs/sft_ddp_config.yaml
 ```
 
-**Distributed (Accelerate)**
+**Distributed (Using Accelerate)**
 ```bash
 accelerate launch --num_processes 4 finetune_experimental.py configs/sft_ddp_config.yaml
 ```
@@ -114,7 +118,7 @@ The configuration system uses YAML files with typed validation. It supports:
 *   **Profiles**: Inherit from base profiles and override specific settings.
 *   **Validation**: Ensures all required fields are present and types match.
 
-See `Experimental/core/config_manger.py` for more details on configuration management.
+See `experimental/core/config_manger.py` for more details on configuration management.
 Detailed configuration documentation is available in 
 [Training Configuration](#training-configuration).
 
@@ -225,7 +229,13 @@ QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.fin
 ``` 
 where nproc-per-node is number of workers(QAIC devices) running locally.
 
-**For DDP across multiple servers**:
+**For DDP across multiple servers(MULTINODE DDP for RACK LEVEL Finetuning)**:
+
+This enables scaling training across multiple nodes.
+
+Use servers with compatible/same network interface(eg:ethernet).
+
+And supported only for linux servers now. Use servers connected to same switch for benefits in time while scaling.
 
 *  On host server (i.e. the server which we are going to treat as the master and we’ll use the ip addr of this server as the master addr):
 
