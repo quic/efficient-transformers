@@ -21,11 +21,10 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
-# TODO clean up this script
-# For Testing Purpose Only
-config.vision_config.depth = 1
-config.text_config.num_hidden_layers = 1
-num_devices = 1
+# For faster execution user can run with lesser layers, For Testing Purpose Only
+# config.vision_config.depth = 9
+# config.text_config.num_hidden_layers = 1
+# config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -36,28 +35,40 @@ processor = AutoProcessor.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 4096
 BS = 1
-torch.manual_seed(0)
 
-skip_vision = True
+skip_vision = False
+if not skip_vision:
+    vision_qpc_path = qeff_model.compile(
+        batch_size=BS,
+        prefill_seq_len=PREFILL_SEQ_LEN,
+        ctx_len=CTX_LEN,
+        height=354,
+        width=536,
+        num_cores=16,
+        num_devices=1,
+        mos=1,
+        aic_enable_depth_first=True,
+        skip_vision=skip_vision,
+        skip_lang=True,
+        use_onnx_subfunctions=True,
+    )
 
 prefill_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
-    height=354,
-    width=536,
     num_cores=16,
-    num_devices=num_devices,
+    num_devices=1,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     retain_full_kv=True,
-    # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
+    split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
-    use_onnx_subfunctions=False,
+    use_onnx_subfunctions=True,
 )
 
 
@@ -65,25 +76,23 @@ decode_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
-    height=354,
-    width=536,
     num_cores=16,
-    num_devices=num_devices,
+    num_devices=1,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     retain_full_kv=True,
-    # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
+    split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     aic_enable_depth_first=True,
-    prefill_only=True,
-    enable_chunking=True,
+    prefill_only=False,
     skip_vision=True,
-    use_onnx_subfunctions=False,
+    use_onnx_subfunctions=True,
 )
 
-if skip_vision:  # for only LLM with DA
-    lang_prefill_session = QAICInferenceSession(prefill_qpc_path)
-    lang_decode_session = QAICInferenceSession(decode_qpc_path)
+lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
+lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
+
+if skip_vision:
     messages = [
         {
             "role": "user",
@@ -93,25 +102,6 @@ if skip_vision:  # for only LLM with DA
         },
     ]
 else:
-    vision_qpc_path = qeff_model.compile(
-        batch_size=BS,
-        prefill_seq_len=PREFILL_SEQ_LEN,
-        ctx_len=CTX_LEN,
-        height=354,
-        width=536,
-        num_cores=16,
-        num_devices=num_devices,
-        mos=1,
-        aic_enable_depth_first=True,
-        # prefill_only=True,
-        # enable_chunking=True,
-        skip_vision=skip_vision,
-        skip_lang=True,
-        use_onnx_subfunctions=False,
-    )
-    vision_session = QAICInferenceSession(vision_qpc_path)
-    lang_prefill_session = QAICInferenceSession(prefill_qpc_path)
-    lang_decode_session = QAICInferenceSession(decode_qpc_path)
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
     image = Image.open(requests.get(image_url, stream=True).raw)
@@ -173,15 +163,27 @@ vision_inputs = {
 vision_inputs_fp16 = {"pixel_values", "image_masks"}
 vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
 
+if not skip_vision:
+    vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
+
 vision_start = perf_counter()
 vision_outputs = {}
 if vision_inputs:
     vision_outputs = vision_session.run(vision_inputs)
 vision_end = perf_counter()
 
-# TODO : pass vision_embeds_RetainedState to prefill
-# vision_outputs["vision_embeds_RetainedState"]
-# *** KeyError: 'vision_embeds_RetainedState'
+if not skip_vision:
+    vision_session.deactivate()
+
+lang_prefill_session.activate()
+# Skip inputs/outputs
+lang_prefill_session.skip_buffers(
+    [
+        x
+        for x in lang_prefill_session.input_names + lang_prefill_session.output_names
+        if x.startswith("past_") or x.endswith("_RetainedState")
+    ]
+)
 
 lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 if "position_ids" in inputs:
@@ -197,32 +199,34 @@ lang_inputs["image_idx"] = np.array([[0]])
 
 # RUN prefill
 lang_start = perf_counter()
-
 all_outputs = []
+chunk_inputs = lang_inputs.copy()
 for i in range(num_chunks):
-    chunk_inputs = lang_inputs.copy()
     chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     outputs = lang_prefill_session.run(chunk_inputs)
-    for i in range(config.text_config.num_hidden_layers):
-        lang_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
-        lang_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
-
     chunk_inputs["image_idx"] = outputs["image_idx_output"]
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
-print(f"Prefill time  :{prefill_time:.2f} secs")
+print(f"Prefill time : {prefill_time:.2f} secs")
+
+lang_prefill_session.deactivate()
+lang_decode_session.activate()
+# Skip inputs/outputs
+lang_decode_session.skip_buffers(
+    [
+        x
+        for x in lang_decode_session.input_names + lang_decode_session.output_names
+        if x.startswith("past_") or x.endswith("_RetainedState")
+    ]
+)
+
+lang_decode_session.set_buffers(outputs)
 
 all_outputs.append(np.argmax(outputs["logits"]))
 decode_inputs = {
     "input_ids": np.argmax(outputs["logits"]).reshape(1, 1),
     "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
 }
-
-for i in range(config.text_config.num_hidden_layers):
-    decode_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
-    decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
-    decode_inputs["vision_embeds_RetainedState"] = outputs["vision_embeds_RetainedState"]
-    decode_inputs["image_idx_output"] = outputs["image_idx_output"]
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
@@ -235,25 +239,11 @@ loop_decode_inputs = {
     "position_ids": pos_id,
 }
 
-
-for i in range(config.text_config.num_hidden_layers):
-    loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
-    loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
-    loop_decode_inputs["vision_embeds_RetainedState"] = decode_out["vision_embeds_RetainedState"]
-    loop_decode_inputs["image_idx_output"] = decode_out["image_idx_output"]
-
-
 st = perf_counter()
 for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
     all_outputs.append(np.argmax(decode_out["logits"]))
     pos_id += 1
-    for j in range(config.text_config.num_hidden_layers):
-        loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
-        loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
-        loop_decode_inputs["vision_embeds_RetainedState"] = decode_out["vision_embeds_RetainedState"]
-        loop_decode_inputs["image_idx_output"] = decode_out["image_idx_output"]
-
     loop_decode_inputs.update(
         {
             "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),

@@ -1081,16 +1081,16 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Path to the generated ONNX graph file for the language decoder.
         """
         if prefill_only:
-            if prefill_seq_len > 1:
-                if not enable_chunking and self.continuous_batching:
-                    raise NotImplementedError(
-                        "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                    )
-                self.hash_params["prefill_only"] = True
-                self.prefill(enable=True, enable_chunking=enable_chunking)
-            else:
-                self.hash_params["prefill_only"] = False
-                self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+            assert prefill_seq_len > 1
+            if not enable_chunking and self.continuous_batching:
+                raise NotImplementedError(
+                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                )
+            self.hash_params["prefill_only"] = True
+            self.prefill(enable=True, enable_chunking=enable_chunking)
+        else:
+            self.hash_params["prefill_only"] = False
+            self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
         return self._export(
             inputs,
@@ -1277,24 +1277,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         return [self.vision_model.onnx_path, self.lang_model.onnx_path]
 
-    @property
-    def qpc_path(self):
-        """
-        Get the QPC paths for the vision and language model components.
-
-        Returns
-        -------
-        Union[List[str], str, None]
-            A list containing both QPC paths if both are compiled, or just one if only one is,
-            or None if neither is compiled.
-        """
-        if self.vision_model.qpc_path and self.lang_model.qpc_path:
-            return [self.vision_model.qpc_path, self.lang_model.qpc_path]
-        elif self.vision_model.qpc_path:
-            return self.vision_model.qpc_path
-        else:
-            return self.lang_model.qpc_path
-
     def export(
         self,
         export_dir: Optional[str] = None,
@@ -1407,7 +1389,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         use_onnx_subfunctions: bool = False,
-        prefill_only=False,
+        prefill_only=None,
         enable_chunking=False,
         **compiler_options,
     ) -> str:
@@ -1527,11 +1509,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if lang_onnx_path:
             self.lang_model.onnx_path = lang_onnx_path
 
-        if (
-            (self.vision_model.onnx_path is None and vision_onnx_path is None)
-            or (self.lang_model.onnx_path is None and lang_onnx_path is None)
-            or prefill_only
-        ):
+        if vision_onnx_path is None or lang_onnx_path is None:
             self.export(
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 skip_vision=skip_vision,
@@ -1545,8 +1523,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
+        self.qpc_paths = {}
         if not skip_vision:
-            self.vision_model._compile(
+            vision_qpc_path = self.vision_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
@@ -1559,6 +1538,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
+            self.qpc_paths["vision_qpc_path"] = vision_qpc_path
 
         # Custom NPI file options
         if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
@@ -1583,16 +1563,17 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                         if ("vision_embeds" in output_name or "deepstack_features" in output_name)
                         else kv_cache_dtype
                     )
-
             if prefill_only:
-                if prefill_seq_len > 1:
-                    specializations = specializations["lang"][:1]  # prefill
-                else:
-                    specializations = specializations["lang"][-1:]  # decoder
+                specializations = specializations["lang"][:1]
+                qpc_key = "lang_prefill_qpc_path"
+            elif prefill_seq_len == 1:
+                specializations = specializations["lang"][-1:]
+                qpc_key = "lang_decode_qpc_path"
             else:
                 specializations = specializations["lang"]
+                qpc_key = "lang_qpc_path"
 
-            self.lang_model._compile(
+            lang_qpc_path = self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
                 retained_state=True,
@@ -1606,9 +1587,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
-            if skip_vision and prefill_only:  # for disagg serving
-                return self.lang_model.qpc_path
-        return self.qpc_path
+            self.qpc_paths.update({qpc_key: lang_qpc_path})
+        return self.qpc_paths
 
     def generate(
         self,
