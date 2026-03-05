@@ -243,12 +243,12 @@ def run_training(trainer, config_name: str):
     Returns:
         Training result, Evaluation result
     """
-    logger.warning(f"Starting training for {config_name}...")
+    logger.info(f"Starting training for {config_name}...")
     train_result = trainer.train()
-    logger.warning(f"Training completed for {config_name}!")
-    logger.warning(f"Starting evaluation for {config_name}...")
+    logger.info(f"Training completed for {config_name}!")
+    logger.info(f"Starting evaluation for {config_name}...")
     eval_result = trainer.evaluate()
-    logger.warning(f"Evaluation completed for {config_name}!")
+    logger.info(f"Evaluation completed for {config_name}!")
 
     return train_result, eval_result
 
@@ -264,8 +264,8 @@ def verify_training_results(train_result, eval_result):
     assert train_result is not None
     assert hasattr(train_result, "training_loss")
     assert "eval_loss" in eval_result
-    logger.warning(f"Training loss: {train_result.training_loss:.4f}")
-    logger.warning(f"Evaluation loss: {eval_result['eval_loss']:.4f}")
+    logger.info(f"Training loss: {train_result.training_loss:.4f}")
+    logger.info(f"Evaluation loss: {eval_result['eval_loss']:.4f}")
     assert abs(train_result.training_loss - eval_result["eval_loss"]) < TRAIN_EVAL_EPOCH_LOSS_DIFF_THRESHOLD
 
 
@@ -288,7 +288,7 @@ def run_inference_causal_lm(model, tokenizer):
             do_sample=False,
         )
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    logger.warning(f"Generated text: {generated_text}")
+    logger.info(f"Generated text: {generated_text}")
 
 
 # ============================================================================
