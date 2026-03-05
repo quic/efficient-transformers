@@ -131,7 +131,7 @@ class DatasetConfig:
         metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     prompt_func: str = field(
-        default="QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt",
+        default=None,
         metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     completion_template: str = field(

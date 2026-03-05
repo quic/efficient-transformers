@@ -125,61 +125,7 @@ Detailed configuration documentation is available in
 ## Prepare Data
 
 This module supports both custom dataset loaders and Hugging Face datasets. You can also define prompt templates or formatting functions in your configuration. Examples of prompt function in [Prompt Function Examples](#example-prompt-functions).
-
-### Registering Datasets
-
-Register your dataset using  `registry/datasets.py`:
-
-```python
-# registry/datasets.py
-import json
-from torch.utils.data import Dataset
-from .base import register  # your registry base
-
-@registry.dataset( "my_custom_dataset")
-class MyCustomDataset(BaseDataset):
-    def __init__(self,
-        dataset_name: str,
-        split: str,
-        **kwargs):
-        self.json_file_path = kwargs.get("json_path", None)
-        self.dataset_name = dataset_name
-        self.split = split
-
-        if self.json_file_path:
-            # Load dataset from JSON file
-            self.dataset = load_dataset("json", data_files=self.json_file_path, split="train")
-        else:
-            self.dataset = load_dataset(self.dataset_name, split=self.split)       
-        self.template = kwargs.get(prompt_template,None) or 
-        "### Instruction:\n{prompt}\n### Response:\n{response}"
-
-    def __len__(self):
-        return self.dataset.num_rows
-    
-    def preprocess(self, example):
-        return self.template.format(**example)  # Safe string formatting with placeholders.
-
-    def __getitem__(self, idx):
-        example = self.dataset.select(indices=[int(idx)])[0]
-        # Apply preprocessing (templating) on the fly
-        processed_example = self.preprocess(example)
-        return processed_example
-```
-
-#### Using json_file with Prompt Function/ Prompt Template
-```yaml
-dataset:
-  dataset_name: my_custom_dataset
-  dataset_type: my_custom_dataset
-  split_train: train
-  json_file_path: data/my_train.jsonl
-  prompt_template: |
-    ### Instruction:
-    {prompt}
-    ### Response:
-    {response}
-```
+See `experimental/examples` for more details on how to register our own custom dataset
 
 #### Using a Hugging Face Dataset with a Prompt Function/ Prompt Template
 
@@ -190,6 +136,7 @@ dataset:
   dataset_name: "yahma/alpaca-cleaned"
   split_train: "train"
   prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt"
+  completion_template: "{output}" # Template for completion field in dataset
 ```
 
 Define the function (e.g., in `preprocess/alpaca_func.py`):
@@ -200,11 +147,23 @@ def format_alpaca(example):
     # Expect keys: 'instruction' and 'output'
     return f"### Instruction:\n{example['instruction']}\n### Response:\n{example['output']}"
 ```
+
+In your config, reference an HF dataset and a prompt template:
+
+```yaml
+dataset:
+  dataset_name: "openai/gsm8k"
+  config_name: "main"  # available config_name for gsm8k dataset: ["main", "socratic"]
+  train_split: "train"
+  prompt_template: "Solve the following math problem step by step:\n\n{'question'}\n\nAnswer:\n"
+  completion_template: "{answer}"
 ```
-Tips:
-Ensure your dataset's rows have keys that match the placeholders used in "prompt_template" or "prompt func".
-Configure it in YAML (avoid Python f-strings inside YAML; use "{prompt}/{response}" placeholders)
-```
+
+
+Notes: 
+*  The pipeline expects input data in JSON format. If your custom dataset is in JSONL or any other format, please convert it to JSON as a one‑time preprocessing step. After conversion, simply provide the JSON file path in your config.yaml.
+*  Ensure your dataset's rows have keys that match the placeholders used in "prompt_template" or "prompt func". Configure it in YAML (avoid Python f-strings inside YAML; use "{prompt}/{response}" placeholders)
+
 ***
 
 ## Parallelism
