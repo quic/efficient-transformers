@@ -44,7 +44,7 @@ def _infer_data_bytes(compile_config: Dict[str, Any]) -> int:
 
 def _infer_pipeline_config(pipeline_config: Any) -> Dict[str, Any]:
     if pipeline_config is None:
-        return {} 
+        return {}
     if isinstance(pipeline_config, dict):
         return pipeline_config
     if isinstance(pipeline_config, str):
