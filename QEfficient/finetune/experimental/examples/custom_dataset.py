@@ -6,9 +6,10 @@
 # -----------------------------------------------------------------------------
 
 
+import importlib
+import logging
 import os
 import re
-import importlib
 from typing import Any, Callable, Dict
 
 from datasets import load_dataset, load_dataset_builder
@@ -16,11 +17,10 @@ from datasets import load_dataset, load_dataset_builder
 from QEfficient.finetune.experimental.core.component_registry import registry
 from QEfficient.finetune.experimental.core.dataset import BaseDataset
 from QEfficient.finetune.experimental.core.utils.dataset_utils import (
-    validate_json_structure,
     apply_train_test_split,
+    validate_json_structure,
 )
 
-import logging
 logger = logging.getLogger(__name__)
 
 
@@ -76,9 +76,7 @@ class SeqCompletionDataset(BaseDataset):
 
         # Warn if both template and func are provided
         if self.input_template and self.input_func_path:
-            logger.warning(
-                "Both input_template and input_func are provided. Using input_template for preprocessing."
-            )
+            logger.warning("Both input_template and input_func are provided. Using input_template for preprocessing.")
 
         # Must have at least one way to build the input text
         if self.input_template is None and self.input_func_path is None:
@@ -164,9 +162,7 @@ class SeqCompletionDataset(BaseDataset):
 
         # Filter out samples with empty/None values in relevant columns
         if self.remove_samples_with_empty_columns:
-            dataset = dataset.filter(
-                lambda example: self._filter_empty_or_none_samples(example, input_variables)
-            )
+            dataset = dataset.filter(lambda example: self._filter_empty_or_none_samples(example, input_variables))
         return dataset
 
     def _add_text_field(self, dataset):
@@ -204,11 +200,7 @@ class SeqCompletionDataset(BaseDataset):
         Returns:
             Dict[str, str]: A dictionary containing the 'text' string.
         """
-        input_text = (
-            self.input_func(example)
-            if self.input_func is not None
-            else self.input_template.format(**example)
-        )
+        input_text = self.input_func(example) if self.input_func is not None else self.input_template.format(**example)
         return {"text": input_text}
 
     # ------------------------------------------------------------------
