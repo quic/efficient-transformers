@@ -107,20 +107,49 @@ jobs:
           print(f"report.html written ({{len(html):,}} bytes)")
           EOF
 
-      - name: Send email
+      - name: Send email via SMTP using Python
         # continue-on-error so a transient SMTP failure doesn't mark the whole
         # workflow run as failed — the report was still generated and logged.
         continue-on-error: true
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: ${{ secrets.SMTP_SERVER }}
-          server_port: ${{ secrets.SMTP_PORT }}
-          # Leave username/password empty for open relays (e.g. smtphost.qualcomm.com:25)
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          # Disable TLS for plain-SMTP port-25 open relays
-          secure: false
-          subject: "Open PR Dashboard — ${{ github.repository }} — ${{ github.run_number }}"
-          to: ${{ env.MAIL_RECIPIENTS }}
-          from: ${{ secrets.MAIL_FROM }}
-          html_body: file://report.html
+        env:
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAIL_TO: ${{ env.MAIL_RECIPIENTS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+        run: |
+          python - << 'EOF'
+          import os
+          import smtplib
+          from email.mime.text import MIMEText
+          from email.header import Header
+          from pathlib import Path
+
+          smtp_server = os.environ.get("SMTP_SERVER")
+          smtp_port = int(os.environ.get("SMTP_PORT", "25"))
+          smtp_user = os.environ.get("SMTP_USERNAME") or None
+          smtp_pass = os.environ.get("SMTP_PASSWORD") or None
+          mail_to = os.environ["MAIL_TO"]
+          mail_from = os.environ["MAIL_FROM"]
+
+          # Read HTML body
+          html = Path("report.html").read_text(encoding="utf-8")
+          msg = MIMEText(html, "html", "utf-8")
+          subject = f"Open PR Dashboard — {os.environ.get('GITHUB_REPOSITORY', '')} — {os.environ.get('GITHUB_RUN_NUMBER', '')}"
+          msg["Subject"] = Header(subject, "utf-8")
+          msg["From"] = mail_from
+          msg["To"] = mail_to
+
+          recipients = [addr.strip() for addr in mail_to.split(",") if addr.strip()]
+          if not smtp_server:
+              raise SystemExit("SMTP_SERVER is not set")
+
+          with smtplib.SMTP(smtp_server, smtp_port, timeout=60) as server:
+              # If credentials are provided, use them; otherwise assume open relay
+              if smtp_user and smtp_pass:
+                  server.login(smtp_user, smtp_pass)
+              server.sendmail(mail_from, recipients, msg.as_string())
+
+          print("Mail sent to:", ", ".join(recipients))
+          EOF
