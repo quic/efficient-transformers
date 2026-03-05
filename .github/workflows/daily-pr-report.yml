@@ -10,6 +10,7 @@ permissions:
   contents: read
   pull-requests: read
   checks: read
+  issues: write
 
 jobs:
   report:
@@ -37,24 +38,6 @@ jobs:
           echo "--- Report preview (first 120 lines) ---"
           sed -n '1,120p' report.md
 
-      - name: Resolve email recipients
-        id: recipients
-        run: |
-          # recipients.txt is written by pr_report.py from email_map.json
-          RECIPIENTS=""
-          if [ -f scripts/git_workflow/recipients.txt ] && [ -s scripts/git_workflow/recipients.txt ]; then
-            RECIPIENTS=$(cat scripts/git_workflow/recipients.txt)
-          fi
-          # Fall back to MAIL_TO secret if recipients.txt is empty/missing
-          if [ -z "$RECIPIENTS" ]; then
-            RECIPIENTS="${{ secrets.MAIL_TO }}"
-          fi
-          if [ -z "$RECIPIENTS" ]; then
-            echo "ERROR: No email recipients found. Set MAIL_TO secret or populate email_map.json." >&2
-            exit 1
-          fi
-          echo "MAIL_RECIPIENTS=$RECIPIENTS" >> "$GITHUB_ENV"
-          echo "Sending to: $RECIPIENTS"
 
       - name: Convert report to HTML
         run: |
@@ -107,54 +90,58 @@ jobs:
           print(f"report.html written ({{len(html):,}} bytes)")
           EOF
 
-      - name: Send email via SMTP using Python
-        # continue-on-error so a transient SMTP failure doesn't mark the whole
-        # workflow run as failed — the report was still generated and logged.
-        continue-on-error: true
-        env:
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          MAIL_TO: ${{ env.MAIL_RECIPIENTS }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-        run: |
-          python - << 'EOF'
-          import os
-          import smtplib
-          from email.mime.text import MIMEText
-          from email.header import Header
-          from pathlib import Path
+      - name: Upload HTML report as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-dashboard-report-${{ github.run_number }}
+          path: report.html
+          retention-days: 30
 
-          smtp_server = os.environ.get("SMTP_SERVER") or None
-          smtp_port_str = os.environ.get("SMTP_PORT") or "25"
-          smtp_port = int(smtp_port_str)
-          smtp_user = os.environ.get("SMTP_USERNAME") or None
-          smtp_pass = os.environ.get("SMTP_PASSWORD") or None
-          mail_to = os.environ.get("MAIL_TO") or ""
-          mail_from = os.environ.get("MAIL_FROM") or ""
-
-          # Read HTML body
-          html = Path("report.html").read_text(encoding="utf-8")
-          msg = MIMEText(html, "html", "utf-8")
-          subject = f"Open PR Dashboard — {os.environ.get('GITHUB_REPOSITORY', '')} — {os.environ.get('GITHUB_RUN_NUMBER', '')}"
-          msg["Subject"] = Header(subject, "utf-8")
-          msg["From"] = mail_from
-          msg["To"] = mail_to
-
-          recipients = [addr.strip() for addr in mail_to.split(",") if addr.strip()]
-          if not smtp_server:
-              raise SystemExit("SMTP_SERVER is not set")
-          if not mail_from:
-              raise SystemExit("MAIL_FROM is not set")
-          if not recipients:
-              raise SystemExit("MAIL_TO is not set or empty")
-
-          with smtplib.SMTP(smtp_server, smtp_port, timeout=60) as server:
-              # If credentials are provided, use them; otherwise assume open relay
-              if smtp_user and smtp_pass:
-                  server.login(smtp_user, smtp_pass)
-              server.sendmail(mail_from, recipients, msg.as_string())
-
-          print("Mail sent to:", ", ".join(recipients))
-          EOF
+      - name: Create GitHub Issue with PR Dashboard
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportMarkdown = fs.readFileSync('report.md', 'utf8');
+            
+            // Get current date for title
+            const date = new Date().toISOString().split('T')[0];
+            
+            // Create issue with the report
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `📊 PR Dashboard - ${date}`,
+              body: reportMarkdown + `\n\n---\n\n💾 **Download HTML Report:** [Artifact #${context.runNumber}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              labels: ['automated-report', 'pr-dashboard']
+            });
+            
+            console.log(`✅ Created issue #${issue.data.number}: ${issue.data.html_url}`);
+            
+            // Optional: Close previous day's report to keep issues tab clean
+            // Uncomment the following block if you want auto-closing of old reports
+            /*
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yesterdayStr = yesterday.toISOString().split('T')[0];
+            
+            const oldIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'pr-dashboard',
+              state: 'open'
+            });
+            
+            for (const oldIssue of oldIssues.data) {
+              if (oldIssue.number !== issue.data.number && 
+                  oldIssue.title.includes(yesterdayStr)) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: oldIssue.number,
+                  state: 'closed'
+                });
+                console.log(`Closed old report: #${oldIssue.number}`);
+              }
+            }
+            */

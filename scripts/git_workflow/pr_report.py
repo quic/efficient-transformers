@@ -342,24 +342,6 @@ def generate_pie_chart_svg(author_counts):
     return svg
 
 
-# ── Email list helper ─────────────────────────────────────────────────────────
-
-
-def load_email_list(path):
-    """
-    Load email_map.json — a plain JSON array of email addresses.
-    Returns a list of strings.
-    """
-    try:
-        with open(path) as f:
-            data = json.load(f)
-        if not isinstance(data, list):
-            print(f"Warning: {path} should be a JSON array of email addresses.", file=sys.stderr)
-            return []
-        return [e for e in data if isinstance(e, str) and e.strip()]
-    except FileNotFoundError:
-        print(f"Warning: email list not found at {path}", file=sys.stderr)
-        return []
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -379,12 +361,6 @@ def main():
     owner, repo = repo_full.split("/", 1)
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%B %d, %Y  %H:%M UTC")
-
-    # Load recipient email list (path configurable via EMAIL_MAP_FILE env var)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_map = os.path.join(script_dir, "email_map.json")
-    email_map_path = os.environ.get("EMAIL_MAP_FILE", default_map)
-    recipients = load_email_list(email_map_path)
 
     # 1) Fetch all open PRs (correctly paginated via Link header)
     pulls = paginate(f"/repos/{owner}/{repo}/pulls", token, params={"state": "open"})
@@ -472,13 +448,6 @@ def main():
         print(
             f"| {pr_label} | {author} | {assignee_str} | {age_days} | {draft} | {labels_str} | {reviewers_str} | {pending_with_str} | {review_summary} | {ci_str} |"
         )
-
-    # -- Write recipients.txt -------------------------------------------------
-    recipients_path = os.path.join(script_dir, "recipients.txt")
-    with open(recipients_path, "w") as f:
-        f.write(", ".join(recipients))
-
-    print(f"recipients written to {recipients_path} ({len(recipients)} addresses)", file=sys.stderr)
 
 
 if __name__ == "__main__":
