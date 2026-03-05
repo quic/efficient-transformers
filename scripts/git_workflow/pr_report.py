@@ -7,6 +7,7 @@ scripts/git_workflow/recipients.txt with resolved email addresses.
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -143,6 +144,80 @@ def summarize_reviews(reviews):
     }
 
 
+def determine_pending_with(pr, reviews, reviews_summary, requested_reviewers):
+    """
+    Determine who the PR is currently pending with, based on its state.
+
+    Rules (in priority order):
+    1. Draft → author (still being worked on)
+    2. No reviews yet, reviewers assigned → requested reviewers
+    3. No reviews yet, no reviewers assigned → author
+    4. Changes requested AND no new commits since the review (unresolved) → author
+    5. Changes requested AND author pushed new commits after the review (resolved) → reviewer(s) who requested changes
+    6. All approved, no outstanding change requests → author (ready to merge)
+    7. Only comments → requested reviewers if any, else author
+
+    "Resolved" is detected by comparing the PR's current head SHA against the
+    commit_id recorded on the last CHANGES_REQUESTED review for each reviewer.
+    If head_sha != that commit_id, the author has pushed new commits since the
+    review — meaning they have addressed the feedback.
+    """
+    author = (pr.get("user") or {}).get("login", "unknown")
+    is_draft = pr.get("draft", False)
+    head_sha = (pr.get("head") or {}).get("sha", "")
+
+    # 1. Draft → author
+    if is_draft:
+        return author
+
+    changes_requesters = reviews_summary["changes_requested"]
+    approvers = reviews_summary["approvers"]
+
+    # 2 & 3. No reviews yet
+    if not changes_requesters and not approvers and not reviews_summary["commenters"]:
+        if requested_reviewers:
+            return ", ".join(requested_reviewers)
+        return author
+
+    # 4 & 5. Outstanding change requests
+    if changes_requesters:
+        # For each reviewer whose latest state is CHANGES_REQUESTED, find the
+        # commit_id of their most recent CHANGES_REQUESTED review.
+        last_cr_commit_per_reviewer = {}
+        for r in sorted(reviews, key=lambda x: x.get("submitted_at") or ""):
+            user = (r.get("user") or {}).get("login", "unknown")
+            if is_bot(user):
+                continue
+            if r.get("state") == "CHANGES_REQUESTED":
+                last_cr_commit_per_reviewer[user] = r.get("commit_id", "")
+
+        # Split reviewers into "resolved" (new commits pushed) vs "unresolved"
+        resolved_reviewers = []
+        unresolved_reviewers = []
+        for reviewer in changes_requesters:
+            cr_commit = last_cr_commit_per_reviewer.get(reviewer, "")
+            if cr_commit and head_sha and cr_commit != head_sha:
+                resolved_reviewers.append(reviewer)
+            else:
+                unresolved_reviewers.append(reviewer)
+
+        if unresolved_reviewers:
+            # At least one reviewer's changes haven't been addressed yet → author
+            return author
+        else:
+            # All change requests have new commits pushed after them → pending re-review
+            return ", ".join(resolved_reviewers)
+
+    # 6. All approved, no outstanding change requests → author (ready to merge)
+    if approvers and not changes_requesters:
+        return author
+
+    # 7. Only comments → requested reviewers if any, else author
+    if requested_reviewers:
+        return ", ".join(requested_reviewers)
+    return author
+
+
 def format_check_runs(check_runs):
     """
     Return each individual check run name and its status.
@@ -169,6 +244,102 @@ def format_check_runs(check_runs):
         results.append(f"{name}: {state}")
 
     return " / ".join(results)
+
+
+# ── Pie chart helper ──────────────────────────────────────────────────────────
+
+
+def generate_pie_chart_svg(author_counts):
+    """
+    Generate a self-contained inline SVG pie chart showing PR distribution
+    by author.  Returns an HTML string (a <div> wrapping an <svg>) that can
+    be embedded directly in Markdown — the markdown library passes raw HTML
+    blocks through unchanged.
+    """
+    if not author_counts:
+        return ""
+
+    # Sort by count descending so the largest slice starts at the top
+    items = sorted(author_counts.items(), key=lambda x: -x[1])
+    total = sum(v for _, v in items)
+
+    # 15-colour palette; cycles if there are more authors
+    colors = [
+        "#4a90d9", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6",
+        "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
+        "#ff5722", "#607d8b", "#795548", "#9c27b0", "#4caf50",
+    ]
+
+    cx, cy, r = 190, 190, 160   # pie centre and radius
+    legend_x  = cx * 2 + 30     # legend column starts here
+    row_h     = 22               # legend row height
+    svg_w     = legend_x + 260   # total SVG width
+    svg_h     = max(cy * 2, len(items) * row_h + 50)  # total SVG height
+
+    # ── Build slice paths ────────────────────────────────────────────────────
+    paths_svg = ""
+    legend_svg = ""
+    start_angle = -math.pi / 2   # begin at 12 o'clock
+
+    for i, (author, count) in enumerate(items):
+        angle     = 2 * math.pi * count / total
+        end_angle = start_angle + angle
+
+        x1 = cx + r * math.cos(start_angle)
+        y1 = cy + r * math.sin(start_angle)
+        x2 = cx + r * math.cos(end_angle)
+        y2 = cy + r * math.sin(end_angle)
+
+        large_arc = 1 if angle > math.pi else 0
+        color     = colors[i % len(colors)]
+        pct       = count / total * 100
+
+        # SVG arc path: move to centre → line to arc start → arc → close
+        path = (
+            f"M {cx},{cy} "
+            f"L {x1:.2f},{y1:.2f} "
+            f"A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
+        )
+        paths_svg += (
+            f'  <path d="{path}" fill="{color}" '
+            f'stroke="white" stroke-width="2">\n'
+            f'    <title>{author}: {count} PR{"s" if count != 1 else ""} ({pct:.1f}%)</title>\n'
+            f'  </path>\n'
+        )
+
+        # Legend row
+        ly = 40 + i * row_h
+        legend_svg += (
+            f'  <rect x="{legend_x}" y="{ly}" width="14" height="14" '
+            f'fill="{color}" rx="2"/>\n'
+            f'  <text x="{legend_x + 20}" y="{ly + 11}" '
+            f'font-size="12" font-family="Arial, sans-serif" fill="#333">'
+            f'{author}  {count} PR{"s" if count != 1 else ""}  ({pct:.1f}%)'
+            f'</text>\n'
+        )
+
+        start_angle = end_angle
+
+    # ── Assemble SVG ─────────────────────────────────────────────────────────
+    svg = (
+        f'<div style="margin:24px 0;">\n'
+        f'<svg width="{svg_w}" height="{svg_h}" '
+        f'xmlns="http://www.w3.org/2000/svg" '
+        f'style="font-family:Arial,sans-serif;">\n'
+        # Chart title
+        f'  <text x="{cx}" y="20" text-anchor="middle" '
+        f'font-size="14" font-weight="bold" fill="#1a1a2e">'
+        f'PR Distribution by Author (Total: {total})</text>\n'
+        # Slices
+        + paths_svg
+        # Legend header
+        + f'  <text x="{legend_x}" y="22" font-size="13" '
+        f'font-weight="bold" fill="#1a1a2e">Author</text>\n'
+        # Legend rows
+        + legend_svg
+        + '</svg>\n</div>\n'
+    )
+    return svg
 
 
 # ── Email list helper ─────────────────────────────────────────────────────────
@@ -228,11 +399,20 @@ def main():
     print(f"| Open PRs | **{total_open}** |")
     print()
 
+    # -- Pie chart (author distribution) — collected in first pass ------------
+    author_counts: dict = {}
+    for pr in pulls:
+        author = (pr.get("user") or {}).get("login", "unknown")
+        if not is_bot(author):
+            author_counts[author] = author_counts.get(author, 0) + 1
+
+    print(generate_pie_chart_svg(author_counts))
+
     # -- Table ----------------------------------------------------------------
     print(
-        "| PR | Author | Assignee | Age (days) | Draft | Labels | Pending With (requested reviewers) | Review Summary | CI Checks |"
+        "| PR | Author | Assignee | Age (days) | Draft | Labels | Reviewers | Pending With | Review Summary | CI Checks |"
     )
-    print("|---|---|---|---:|:---:|---|---|---|---|")
+    print("|---|---|---|---:|:---:|---|---|---|---|---|")
 
     for pr in pulls:
         number = pr["number"]
@@ -252,12 +432,12 @@ def main():
         labels = [lbl["name"].replace("|", "\\|") for lbl in pr.get("labels") or []]
         labels_str = ", ".join(labels) if labels else "—"
 
-        # 2) Requested reviewers (who it's pending with)
+        # 2) Requested reviewers
         rr, _ = gh_request(f"/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", token)
         users = [u["login"] for u in rr.get("users", []) if not is_bot(u["login"])]
         teams = [t["name"] for t in rr.get("teams", [])]
-        pending_with = users + [f"team:{t}" for t in teams]
-        pending_with_str = ", ".join(pending_with) if pending_with else "—"
+        requested_reviewers = users + [f"team:{t}" for t in teams]
+        reviewers_str = ", ".join(requested_reviewers) if requested_reviewers else "—"
 
         # 3) Reviews submitted (paginated, bots excluded)
         reviews = paginate(f"/repos/{owner}/{repo}/pulls/{number}/reviews", token)
@@ -275,6 +455,9 @@ def main():
             parts.append("No reviews yet")
         review_summary = " / ".join(parts)
 
+        # Pending With — smart assignment based on PR state
+        pending_with_str = determine_pending_with(pr, reviews, rs, requested_reviewers)
+
         # 4) Individual CI check runs — fully paginated
         ci_str = "UNKNOWN"
         if head_sha:
@@ -287,7 +470,7 @@ def main():
 
         pr_label = f"[#{number}]({url}) {title}"
         print(
-            f"| {pr_label} | {author} | {assignee_str} | {age_days} | {draft} | {labels_str} | {pending_with_str} | {review_summary} | {ci_str} |"
+            f"| {pr_label} | {author} | {assignee_str} | {age_days} | {draft} | {labels_str} | {reviewers_str} | {pending_with_str} | {review_summary} | {ci_str} |"
         )
 
     # -- Write recipients.txt -------------------------------------------------
