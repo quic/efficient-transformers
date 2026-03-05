@@ -71,27 +71,6 @@ cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/ex
 
 ```
 
-### Step-by-Step Guide to run a fine-tuning job
-
-For Docker-based environments, use the provided `torch_qaic_env` environment.
-
-```bash
-source /opt/torch-qaic-env/bin/activate
-git clone https://github.com/quic/efficient-transformers.git
-cd efficient-transformers
-pip install -e .
-pip install   --index-url https://download.pytorch.org/whl/cpu   --extra-index-url     https://devpi.qualcomm.com/qcom/dev/+simple   --trusted-host devpi.qualcomm.com   "torch==2.9.1+cpu"   "torchvision==0.24.1+cpu"   "torchaudio==2.9.1+cpu"
-pip install trl==0.22.0`
-git clone https://github.com/quic-swatia/transformers.git
-cd transformers 
-git checkout version-4.55.0 && pip install -e .
-cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_config.yaml
-
-```
-
-
-
-
 > **Note**  
 > If you’re using the `torch_qaic_env` Docker environment, `torch_qaic` and `accelerate` may already be installed.
 

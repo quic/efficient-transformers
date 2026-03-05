@@ -1,12 +1,16 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# 👇 CHANGE THIS to the module path where FineTuningPipeline is defined
 MODULE = "QEfficient.cloud.finetune_experimental"
 
-# Import the class under test
 FineTuningPipeline = __import__(MODULE, fromlist=["FineTuningPipeline"]).FineTuningPipeline
 
 
@@ -77,7 +81,7 @@ def test_initialization(
     training_config_stub,
     model_bundle,
 ):
-    # Arrange: patch all internal factory steps to isolate the constructor
+    # patch all internal factory steps to isolate the constructor
     patch_prepare_training_config, training_cfg = training_config_stub
 
     mock_setup_env = mocker.patch.object(FineTuningPipeline, "_setup_environment", autospec=True)
@@ -158,9 +162,8 @@ def test_initialization(
     )
     assert pipeline.trainer is trainer_obj
 
-    # Assert: logger calls (optional but nice to verify sequence)
+    # Assert: logger calls
     lr0 = mock_logger.log_rank_zero
-    # We only assert messages were emitted; you can also assert exact call order if desired.
     expected_msgs = [
         mocker.call("Creating datasets..."),
         mocker.call("Loading model and tokenizer..."),
@@ -258,7 +261,7 @@ def test_create_datasets_called_and_assigned(
 
 
 def test_create_model_failure_stops_pipeline(mocker, mock_config_manager):
-    # Arrange
+
     mocker.patch(f"{MODULE}.prepare_training_config", autospec=True, return_value={})
     mocker.patch.object(FineTuningPipeline, "_setup_environment", autospec=True)
     mocker.patch.object(FineTuningPipeline, "_create_datasets", autospec=True, return_value=(None, None))
@@ -319,7 +322,7 @@ def test_create_datasets_failure_stops_pipeline(mocker, mock_config_manager):
     """
     If _create_datasets raises, pipeline should not proceed to model/optimizer/trainer.
     """
-    # Arrange
+
     mocker.patch(f"{MODULE}.prepare_training_config", autospec=True, return_value={})
     mocker.patch.object(FineTuningPipeline, "_setup_environment", autospec=True)
 
@@ -338,7 +341,6 @@ def test_create_datasets_failure_stops_pipeline(mocker, mock_config_manager):
     with pytest.raises(RuntimeError, match="dataset failure"):
         _ = FineTuningPipeline(mock_config_manager)
 
-    # Downstream steps must not run
     mock_create_datasets.assert_called_once()
     mock_create_model.assert_not_called()
     mock_create_optimizer.assert_not_called()
@@ -350,7 +352,6 @@ def test_create_trainer_failure_stops_pipeline(mocker, mock_config_manager):
     """
     If _create_trainer raises, ensure earlier steps ran and no further actions are taken.
     """
-    # Arrange
     mocker.patch(f"{MODULE}.prepare_training_config", autospec=True, return_value={})
     mocker.patch.object(FineTuningPipeline, "_setup_environment", autospec=True)
 
@@ -392,7 +393,6 @@ def test_config_manager_used_and_output_dir_set(mocker, mock_config_manager, tmp
     patch_prep = mocker.patch(f"{MODULE}.prepare_training_config", autospec=True, return_value=training_cfg)
     mocker.patch.object(FineTuningPipeline, "_setup_environment", autospec=True)
 
-    # Keep the rest minimal to complete __init__
     mocker.patch.object(FineTuningPipeline, "_create_datasets", autospec=True, return_value=(None, None))
     bundle = mocker.MagicMock(model=None, tokenizer=None)
     mocker.patch.object(FineTuningPipeline, "_create_model", autospec=True, return_value=bundle)
@@ -412,7 +412,6 @@ def test_complete_run_calls_trainer_train(mocker, mock_config_manager):
     Tests trainer.train() is called during run().
     This is a basic smoke test for the main execution flow.
     """
-    # Arrange a fully-initialized pipeline first
     mocker.patch.object(FineTuningPipeline, "_setup_environment", autospec=True)
     mocker.patch(f"{MODULE}.prepare_training_config", autospec=True, return_value={})
     mocker.patch.object(FineTuningPipeline, "_create_datasets", autospec=True, return_value=(None, None))
