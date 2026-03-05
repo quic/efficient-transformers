@@ -837,3 +837,20 @@ def custom_format_warning(msg, category, *args, **kwargs):
     YELLOW = "\033[93m"
     RESET = "\033[0m"
     return f"{YELLOW}[Warning]: {msg}{RESET}\n"
+
+
+def _get_attr_or_key(obj: Any, names: Tuple[str, ...], default: Any = None) -> Any:
+    if obj is None:
+        return default
+    for name in names:
+        if isinstance(obj, dict) and name in obj:
+            return obj[name]
+        if hasattr(obj, name):
+            return getattr(obj, name)
+    return default
+
+
+def _require_value(value: Any, label: str) -> Any:
+    if value is None:
+        raise ValueError(f"Missing required {label} to compute blocking configuration.")
+    return value
