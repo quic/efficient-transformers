@@ -126,12 +126,13 @@ jobs:
           from email.header import Header
           from pathlib import Path
 
-          smtp_server = os.environ.get("SMTP_SERVER")
-          smtp_port = int(os.environ.get("SMTP_PORT", "25"))
+          smtp_server = os.environ.get("SMTP_SERVER") or None
+          smtp_port_str = os.environ.get("SMTP_PORT") or "25"
+          smtp_port = int(smtp_port_str)
           smtp_user = os.environ.get("SMTP_USERNAME") or None
           smtp_pass = os.environ.get("SMTP_PASSWORD") or None
-          mail_to = os.environ["MAIL_TO"]
-          mail_from = os.environ["MAIL_FROM"]
+          mail_to = os.environ.get("MAIL_TO") or ""
+          mail_from = os.environ.get("MAIL_FROM") or ""
 
           # Read HTML body
           html = Path("report.html").read_text(encoding="utf-8")
@@ -144,6 +145,10 @@ jobs:
           recipients = [addr.strip() for addr in mail_to.split(",") if addr.strip()]
           if not smtp_server:
               raise SystemExit("SMTP_SERVER is not set")
+          if not mail_from:
+              raise SystemExit("MAIL_FROM is not set")
+          if not recipients:
+              raise SystemExit("MAIL_TO is not set or empty")
 
           with smtplib.SMTP(smtp_server, smtp_port, timeout=60) as server:
               # If credentials are provided, use them; otherwise assume open relay
