@@ -12,12 +12,12 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '5', daysToKeepStr: '30'))
     }
 
-    // triggers {
-    //     // Runs daily at 2:00 AM UTC
-    //     cron('0 2 * * *')
-    //     // Uncomment to also run on repository push
-    //     // githubPush()
-    // }
+    triggers {
+        // Runs daily at 9:00 PM UTC
+        cron('0 21 * * *')
+        // Uncomment to also run on repository push
+        // githubPush()
+    }
 
     environment {
         DOCKER_IMAGE = "${DOCKER_LATEST}:master_latest"
