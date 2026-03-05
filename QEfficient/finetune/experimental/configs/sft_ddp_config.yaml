@@ -21,9 +21,11 @@ model:
 # Dataset configuration
 dataset:
   dataset_type: "sft_dataset"
-  dataset_name: "yahma/alpaca-cleaned" # Dataset name from Hugging Face Hub
-  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt" # Function to create prompt from dataset fields
-  completion_template: "{output}" # Template for completion field in dataset
+  dataset_name: "openai/gsm8k" # Dataset name from Hugging Face Hub
+  prompt_template: "Solve the following math problem step by step.\n\n### Question:\n{question}\n\n### Answer:\n" # Template to create prompt from dataset fields
+  completion_template: "{answer}"    # Model will be trained on this part. 
+  config_name: "main" # Config name for the dataset
+
 
 
 # Training configuration
