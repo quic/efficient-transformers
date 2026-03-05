@@ -43,7 +43,7 @@ pipeline {
                         -e HF_TOKEN=${HF_TOKEN} \
                         -v ./:/efficient-transformers \
                         -v ${HF_PATH}:${DOCKER_HF_PATH} \
-                        ${DOCKER_IMAGE}
+                        ${DOCKER_LATEST}:master_latest
                     
                     # Install QEfficient and dependencies
                     sudo docker exec ${BUILD_TAG} bash -c "
