@@ -8,9 +8,6 @@
 import logging
 from typing import Any, Callable, Dict, Optional, Type
 
-# from QEfficient.finetune.experimental.core.logger import get_logger
-
-# logger = get_logger()
 logger = logging.getLogger(__name__)
 
 

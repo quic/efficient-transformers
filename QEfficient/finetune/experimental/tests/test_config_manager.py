@@ -100,7 +100,7 @@ def test_config_values(config_path):
     assert config_manager.config.training["output_dir"] == "./training_results"
     assert config_manager.config.training["per_device_train_batch_size"] == 1
     assert config_manager.config.training["num_train_epochs"] == 1
-    assert not config_manager.config.training["gradient_checkpointing_kwargs"]["use_reenrant"]
+    assert not config_manager.config.training["gradient_checkpointing_kwargs"]["use_reentrant"]
 
 
 def test_config_missing_file():

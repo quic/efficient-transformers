@@ -81,24 +81,24 @@ cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/ex
 
 **Single device using yaml file**
 ```bash
-python finetune_experimental.py configs/sft_single_device_config.yaml
+QAIC_VISIBLE_DEVICES=1 python QEfficient/cloud/finetune_experimental.py configs/sft_single_device_gsm8k_config.yaml
 
 #As Module
-python -m finetune_experimental configs/sft_single_device_config.yaml
+QAIC_VISIBLE_DEVICES=1 python -m QEfficient.cloud.finetune_experimental configs/sft_single_device_gsm8k_config.yaml
 ```
 
 **Single device using CLI flags**
 ```bash
-python finetune_experimental.py --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True
+QAIC_VISIBLE_DEVICES=1 python -m QEfficient.cloud.finetune_experimental --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True --dataset_name "yahma/alpaca-cleaned" --completion_template {output} --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt
 ```
 **Distributed (Using TorchRun)**
 ```bash
-torchrun --nproc_per_node=4 finetune_experimental.py configs/sft_ddp_config.yaml
+QAIC_VISIBLE_DEVICES=1,2,3,4 torchrun --nproc_per_node=4 -m QEfficient.cloud.finetune_experimental configs/sft_ddp_config.yaml
 ```
 
 **Distributed (Using Accelerate)**
 ```bash
-accelerate launch --num_processes 4 finetune_experimental.py configs/sft_ddp_config.yaml
+QAIC_VISIBLE_DEVICES=1,2,3,4 accelerate launch --num_processes 4 -m QEfficient.cloud.finetune_experimental configs/sft_ddp_config.yaml
 ```
 
 ***
