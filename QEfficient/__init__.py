@@ -31,6 +31,7 @@ from QEfficient.base import (
 from QEfficient.compile.compile_helper import compile
 from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
 from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
+from QEfficient.diffusers.pipelines.qwen_image.pipeline_qwenimage import QEFFQwenImagePipeline
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.peft import QEffAutoPeftModelForCausalLM
@@ -59,6 +60,7 @@ __all__ = [
     "QEFFCommonLoader",
     "QEffFluxPipeline",
     "QEffWanPipeline",
+    "QEFFQwenImagePipeline",
 ]
 
 
