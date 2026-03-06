@@ -449,6 +449,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             # Output AdaLN embedding
             # Shape: [batch_size, FLUX_ADALN_OUTPUT_DIM] for final projection
             "adaln_out": torch.randn(batch_size, constants.FLUX_ADALN_OUTPUT_DIM, dtype=torch.float32),
+            "image_rotary_emb_cos": torch.randn(constants.FLUX_IMAGE_SEQ_LENGTH, 128, dtype=torch.float32),
+            "image_rotary_emb_sin": torch.randn(constants.FLUX_IMAGE_SEQ_LENGTH, 128, dtype=torch.float32),
         }
 
         output_names = ["output"]
@@ -460,6 +462,8 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             "pooled_projections": {0: "batch_size"},
             "timestep": {0: "steps"},
             "img_ids": {0: "cl"},
+            "image_rotary_emb_cos": {0: "image_seq_len"},
+            "image_rotary_emb_sin": {0: "image_seq_len"},
         }
 
         return example_inputs, dynamic_axes, output_names
