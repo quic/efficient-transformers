@@ -128,9 +128,6 @@ class QEffGemmaAttention(GemmaAttention):
     - add new args cache idx for the kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGemmaRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -140,6 +137,7 @@ class QEffGemmaAttention(GemmaAttention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb: Optional[object] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -150,7 +148,7 @@ class QEffGemmaAttention(GemmaAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -194,6 +192,7 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -223,6 +222,7 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
+            rotary_emb=rotary_emb,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -322,10 +322,13 @@ class QEffGemmaModel(GemmaModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
+        rotary_emb = QEffGemmaRotaryEmbedding(config=self.config)
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
+            rotary_emb=rotary_emb,
         )
 
 

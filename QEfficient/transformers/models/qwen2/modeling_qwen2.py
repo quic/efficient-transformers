@@ -141,9 +141,6 @@ class QEffQwen2Attention(Qwen2Attention):
     - add new args position idx for the cache_kwargs for kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffQwen2RotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -153,6 +150,7 @@ class QEffQwen2Attention(Qwen2Attention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb: Optional[object] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -163,7 +161,7 @@ class QEffQwen2Attention(Qwen2Attention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -208,6 +206,7 @@ class QEffQwen2DecoderLayer(Qwen2DecoderLayer):
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -240,6 +239,7 @@ class QEffQwen2DecoderLayer(Qwen2DecoderLayer):
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
+            rotary_emb=rotary_emb,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -311,6 +311,8 @@ class QEffQwen2Model(Qwen2Model):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
 
+        rotary_emb = QEffQwen2RotaryEmbedding(config=self.config)
+
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -324,6 +326,7 @@ class QEffQwen2Model(Qwen2Model):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                rotary_emb=rotary_emb,
             )
 
         hidden_states = self.norm(hidden_states)

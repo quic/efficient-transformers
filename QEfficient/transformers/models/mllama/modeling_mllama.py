@@ -241,9 +241,6 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         - add new args cache idx for the kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -255,6 +252,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         position_embeddings: torch.Tensor = None,
         use_cache: bool = False,
         cache_position=None,
+        rotary_emb: Optional[object] = None,
         **kwargs,
     ):
         bsz, q_len, _ = hidden_states.size()
@@ -276,7 +274,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
                 )
             kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -326,6 +324,7 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        rotary_emb: Optional[object] = None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -361,6 +360,7 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            rotary_emb=rotary_emb,
         )
         hidden_states = residual + hidden_states
 
@@ -465,6 +465,7 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[torch.Tensor] = None,
+        rotary_emb: Optional[object] = None,
     ) -> Tuple[torch.Tensor]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -477,6 +478,7 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             cache_position=cache_position,
+            rotary_emb=rotary_emb,
         )
         hidden_states = residual + self.cross_attn_attn_gate.tanh() * hidden_states
 
@@ -646,6 +648,7 @@ class QEffMllamaTextModel(MllamaTextModel):
         # embed positions
         hidden_states = inputs_embeds
 
+        rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)
         for idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             # For text-only path we should skip cross attention layers.
             # Let's check if the layer is cross attention layer and if we have cross attention states
@@ -676,6 +679,7 @@ class QEffMllamaTextModel(MllamaTextModel):
                 comp_ctx_lengths=comp_ctx_lengths,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                rotary_emb=rotary_emb,
             )
 
         hidden_states = self.norm(hidden_states)

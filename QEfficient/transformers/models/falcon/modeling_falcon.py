@@ -108,9 +108,6 @@ class QEffFalconAttention(FalconAttention):
     - add new args position idx for the cache_kwargs for kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -125,6 +122,7 @@ class QEffFalconAttention(FalconAttention):
         use_cache: bool = False,
         output_attentions: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb: Optional[object] = None,
     ):
         fused_qkv = self.query_key_value(hidden_states)  # [batch_size, seq_length, 3 x hidden_size]
         num_kv_heads = self.num_heads if self.new_decoder_architecture else self.num_kv_heads
@@ -138,7 +136,7 @@ class QEffFalconAttention(FalconAttention):
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_layer, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_layer, seq_len=kv_seq_len)
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
 
         if layer_past is not None:
@@ -184,6 +182,7 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
         use_cache: bool = False,
         output_attentions: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb=None,
         **kwargs,
     ):
         residual = hidden_states
@@ -208,6 +207,7 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
             use_cache=use_cache,
             output_attentions=output_attentions,
             cache_position=cache_position,
+            rotary_emb=rotary_emb,
         )
 
         if not self.config.new_decoder_architecture:
@@ -305,6 +305,8 @@ class QEffFalconModel(FalconModel):
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
 
+        rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
+
         for i, block in enumerate(self.h):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -322,6 +324,7 @@ class QEffFalconModel(FalconModel):
                 output_attentions=output_attentions,
                 alibi=alibi,
                 cache_position=cache_position,
+                rotary_emb=rotary_emb,
             )
 
             hidden_states = outputs[0]

@@ -111,9 +111,6 @@ def qeff_apply_rotary_pos_emb(
 class QEffGraniteMoeAttention(GraniteMoeAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGraniteMoeRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -126,6 +123,7 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        rotary_emb: Optional[object] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -138,7 +136,7 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -214,6 +212,7 @@ class QEffGraniteMoeDecoderLayer(GraniteMoeDecoderLayer):
         cache_position: Optional[torch.LongTensor] = None,
         output_router_logits: Optional[bool] = False,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        rotary_emb=None,
         **kwargs,
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -255,6 +254,7 @@ class QEffGraniteMoeDecoderLayer(GraniteMoeDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            rotary_emb=rotary_emb,
             **kwargs,
         )
 
@@ -341,6 +341,8 @@ class QEffGraniteMoeModel(GraniteMoeModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
+        rotary_emb = QEffGraniteMoeRotaryEmbedding(config=self.config)
+
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -356,6 +358,7 @@ class QEffGraniteMoeModel(GraniteMoeModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
+                    rotary_emb=rotary_emb,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -368,6 +371,7 @@ class QEffGraniteMoeModel(GraniteMoeModel):
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
+                    rotary_emb=rotary_emb,
                 )
 
             hidden_states = layer_outputs[0]
