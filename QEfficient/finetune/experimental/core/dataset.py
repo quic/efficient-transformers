@@ -26,6 +26,7 @@ from QEfficient.finetune.experimental.core.utils.dataset_utils import (
 )
 
 logger = Logger(__name__)
+logger.logger.propagate = False
 
 
 class BaseDataset(Dataset, ABC):
