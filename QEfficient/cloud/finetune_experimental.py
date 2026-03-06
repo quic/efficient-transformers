@@ -9,6 +9,7 @@
 Main entry point for fine-tuning LLMs using the experimental finetune framework.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -35,7 +36,7 @@ try:
 except ImportError as e:
     logger.log_rank_zero(
         f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
-        level="warning",
+        level=logging.WARNING,
     )
 
 

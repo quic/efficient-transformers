@@ -61,6 +61,7 @@ For Docker-based environments, use the provided `torch_qaic_env` environment.
 source /opt/torch-qaic-env/bin/activate
 git clone https://github.com/quic/efficient-transformers.git
 cd efficient-transformers
+git checkout ft_experimental
 pip install -e .
 pip install   --index-url https://download.pytorch.org/whl/cpu   --extra-index-url     https://devpi.qualcomm.com/qcom/dev/+simple   --trusted-host devpi.qualcomm.com   "torch==2.9.1+cpu"   "torchvision==0.24.1+cpu"   "torchaudio==2.9.1+cpu"
 pip install trl==0.22.0`
@@ -70,8 +71,6 @@ git checkout version-4.55.0 && pip install -e .
 cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_config.yaml
 
 ```
-
-
 
 > **Note**  
 > If you’re using the `torch_qaic_env` Docker environment, `torch_qaic` and `accelerate` may already be installed.
@@ -83,24 +82,24 @@ cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/ex
 
 **Single device using yaml file**
 ```bash
-python finetune_experimental.py configs/sft_single_device_config.yaml
+QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 
 #As Module
-python -m finetune_experimental configs/sft_single_device_config.yaml
+QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 ```
 
 **Single device using CLI flags**
 ```bash
-python finetune_experimental.py --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True
+QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True --dataset_name "yahma/alpaca-cleaned" --completion_template {output} --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt
 ```
 **Distributed (Using TorchRun)**
 ```bash
-torchrun --nproc_per_node=4 finetune_experimental.py configs/sft_ddp_config.yaml
+QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
 
 **Distributed (Using Accelerate)**
 ```bash
-accelerate launch --num_processes 4 finetune_experimental.py configs/sft_ddp_config.yaml
+QAIC_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes 4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
 
 ***
