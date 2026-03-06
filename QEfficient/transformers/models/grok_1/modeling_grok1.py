@@ -110,7 +110,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
         if attention_mask is not None:
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype), attn_weights
             )
 
         attn_weights = F.softmax(attn_weights, dim=-1).to(query_states.dtype)

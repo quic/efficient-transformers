@@ -55,8 +55,8 @@ class QEffGPTJAttention(GPTJAttention):
         head_mask=None,
     ):
         # Keep the attention weights computation in fp32 to avoid overflow issues
-        query = query.to(torch.float32)
-        key = key.to(torch.float32)
+        query = query.to(torch.float16)
+        key = key.to(torch.float16)
 
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
         attn_weights = attn_weights / self.scale_attn
@@ -64,7 +64,7 @@ class QEffGPTJAttention(GPTJAttention):
         if attention_mask is not None:
             # Apply the attention mask
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float16), attn_weights
             )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
