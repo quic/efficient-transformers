@@ -206,8 +206,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         hidden_states = hidden_states.view(-1, hidden_dim)
         # router_logits: (batch * sequence_length, n_experts)
         router_logits = self.gate(hidden_states)
-
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+        routing_weights = F.softmax(router_logits, dim=1, dtype=self.gate.weight.dtype)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
         routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
         # we cast back to the input dtype
@@ -232,7 +231,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
             expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.float())[:, None]
+            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(self.gate.weight.dtype))[:, None]
             current_hidden_states = expert_layer(hidden_states) * scale
             current_hidden_states = torch.where(
                 torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(routing_weights.dtype)).to(torch.bool)[

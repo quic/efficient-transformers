@@ -430,8 +430,7 @@ class QEffGraniteForCausalLM(GraniteForCausalLM):
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
 
-        logits = self.lm_head(hidden_states)
-        logits = logits.float()
+        logits = self.lm_head(hidden_states).float()
 
         return CausalLMOutputWithPast(
             loss=None,
