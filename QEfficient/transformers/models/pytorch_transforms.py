@@ -425,6 +425,7 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3Model,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
+    QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     QEffQwen3MoeAttention,
     QEffQwen3MoeDecoderLayer,
     QEffQwen3MoeForCausalLM,
@@ -669,19 +670,25 @@ class PrefillOnlyTransform(ModuleMappingTransform):
 
 class PrefillOnlyChunkedTransform(ModuleMappingTransform):
     _module_mapping = {
+        # GPT_OSS
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+        # Qwen3Moe
+        QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     }
 
 
 class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
     _module_mapping = {
+        # GPT_OSS
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+        # Qwen3Moe
+        QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
     }
 
 
