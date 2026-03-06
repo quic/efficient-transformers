@@ -71,8 +71,6 @@ cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/ex
 
 ```
 
-
-
 > **Note**  
 > If you’re using the `torch_qaic_env` Docker environment, `torch_qaic` and `accelerate` may already be installed.
 
@@ -83,24 +81,24 @@ cd .. && python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/ex
 
 **Single device using yaml file**
 ```bash
-python finetune_experimental.py configs/sft_single_device_config.yaml
+QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 
 #As Module
-python -m finetune_experimental configs/sft_single_device_config.yaml
+QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 ```
 
 **Single device using CLI flags**
 ```bash
-python finetune_experimental.py --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True
+QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True --dataset_name "yahma/alpaca-cleaned" --completion_template {output} --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt
 ```
 **Distributed (Using TorchRun)**
 ```bash
-torchrun --nproc_per_node=4 finetune_experimental.py configs/sft_ddp_config.yaml
+QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
 
 **Distributed (Using Accelerate)**
 ```bash
-accelerate launch --num_processes 4 finetune_experimental.py configs/sft_ddp_config.yaml
+QAIC_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes 4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
 
 ***
@@ -128,13 +126,13 @@ This module supports both custom dataset loaders and Hugging Face datasets. You 
 
 ### Registering Datasets
 
-Register your dataset using  `registry/datasets.py`:
+Register your dataset using  `Component Factory`:
 
 ```python
-# registry/datasets.py
+# QEfficient/finetune/experimental/core/datasets.py
 import json
 from torch.utils.data import Dataset
-from .base import register  # your registry base
+from QEfficient.finetune.experimental.core.component_registry import registry  
 
 @registry.dataset( "my_custom_dataset")
 class MyCustomDataset(BaseDataset):
