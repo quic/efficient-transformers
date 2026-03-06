@@ -41,7 +41,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     # Original PyTorch model
     pt_model = AutoModel.from_pretrained(
         model_name,
-        num_hidden_layers=n_layer,
+        # num_hidden_layers=n_layer,
         attn_implementation="eager",
         trust_remote_code=True,
     )
@@ -85,7 +85,6 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
 
     qeff_model.compile(
-        num_cores=14,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )

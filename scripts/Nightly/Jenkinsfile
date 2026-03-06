@@ -12,11 +12,10 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '5', daysToKeepStr: '30'))
     }
 
-    triggers {
-        // Runs daily at 9:00 PM UTC
-        cron('0 21 * * *')
-        // Uncomment to also run on repository push
-        // githubPush()
+    triggers {        
+        cron('''TZ=Asia/Kolkata
+        0 21 * * *''')
+
     }
 
     environment {

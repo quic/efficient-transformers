@@ -115,7 +115,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     ctx_len: int,
     max_gen_len: int = 20,
     batch_size: int = 1,
-    n_layer: int = 1,
+    n_layer: int = -1,
     kv_offload: bool = False,
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
@@ -302,12 +302,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
 
     compile_kwargs = {
-        "num_devices": num_devices,
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
         "mxfp6": False,
         "enable_qnn": enable_qnn,
         "qnn_config": qnn_config,
+        "num_devices": 4,
     }
 
     if is_intern_model:
@@ -367,7 +367,7 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
         img_size=img_size,
         img_url=model_config_dict[model_name]["img_url"],
         query=model_config_dict[model_name]["text_prompt"],
-        n_layer=model_config_dict[model_name]["num_layers"],
+        # n_layer=model_config_dict[model_name]["num_layers"],
         batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
     )

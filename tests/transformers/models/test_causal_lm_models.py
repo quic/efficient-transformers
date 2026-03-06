@@ -72,11 +72,12 @@ def get_custom_n_layers(model_name):
 
     :return n_layer
     """
-    if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8", "openai/gpt-oss-20b"}:
-        return 2
-    elif model_name in ModelConfig.SWIFTKV_MODELS:
-        return None
-    return 1
+    # if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8", "openai/gpt-oss-20b"}:
+    #     return 2
+    # elif model_name in ModelConfig.SWIFTKV_MODELS:
+    #     return None
+    # return 1
+    return None
 
 
 def load_causal_lm_model(model_name, n_layer=1, config=None):
@@ -100,7 +101,7 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
             model_hf = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 use_cache=True,
-                num_hidden_layers=n_layer,
+                # num_hidden_layers=n_layer,
                 attn_implementation="eager",
                 low_cpu_mem_usage=False,
                 trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
@@ -193,7 +194,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        num_cores=14,
+        num_devices=4,
         mxfp6=False,
         aic_enable_depth_first=False,
         num_speculative_tokens=num_speculative_tokens,
@@ -268,7 +269,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        num_cores=14,
+        num_devices=4,
         mxfp6=False,
         aic_enable_depth_first=False,
         batch_size=batch_size,
