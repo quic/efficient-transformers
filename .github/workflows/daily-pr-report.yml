@@ -107,7 +107,7 @@ jobs:
             // Get current date for title
             const date = new Date().toISOString().split('T')[0];
             
-            // Create issue with the report
+            // Create issue with the report (no @mentions)
             const issue = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,

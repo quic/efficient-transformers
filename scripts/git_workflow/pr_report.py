@@ -3,7 +3,7 @@
 Daily PR report generator.
 
 Outputs a Markdown table to stdout and writes
-scripts/git_workflow/recipients.txt with resolved email addresses.
+scripts/git_workflow/github_mentions.txt with GitHub usernames for @mentions.
 """
 
 import json
@@ -15,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 API = "https://api.github.com"
 ACCEPT = "application/vnd.github+json"
@@ -342,6 +343,57 @@ def generate_pie_chart_svg(author_counts):
     return svg
 
 
+
+
+# ── Email/Username mapping ───────────────────────────────────────────────────
+
+
+def load_github_usernames():
+    """
+    Load email-to-GitHub-username mapping from email_map.json.
+    Returns a list of GitHub usernames to @mention in the issue.
+    """
+    script_dir = Path(__file__).parent
+    email_map_file = os.environ.get("EMAIL_MAP_FILE", script_dir / "email_map.json")
+    
+    try:
+        with open(email_map_file, "r") as f:
+            email_map = json.load(f)
+        
+        # Handle both list format (old) and dict format (new)
+        if isinstance(email_map, list):
+            # Old format: just emails, no usernames available
+            print("Warning: email_map.json is in old format (list). Please update to dict format: {email: username}", file=sys.stderr)
+            return []
+        elif isinstance(email_map, dict):
+            # New format: {email: username}
+            usernames = [username for username in email_map.values() if username]
+            return usernames
+        else:
+            print(f"Warning: email_map.json has unexpected format: {type(email_map)}", file=sys.stderr)
+            return []
+    except FileNotFoundError:
+        print(f"Warning: {email_map_file} not found. No @mentions will be added.", file=sys.stderr)
+        return []
+    except json.JSONDecodeError as e:
+        print(f"Warning: Failed to parse {email_map_file}: {e}", file=sys.stderr)
+        return []
+
+
+def write_mentions_file(usernames):
+    """
+    Write GitHub usernames to a file for the workflow to consume.
+    """
+    script_dir = Path(__file__).parent
+    mentions_file = script_dir / "github_mentions.txt"
+    
+    try:
+        with open(mentions_file, "w") as f:
+            for username in usernames:
+                f.write(f"@{username}\n")
+        print(f"Wrote {len(usernames)} username(s) to {mentions_file}", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: Failed to write mentions file: {e}", file=sys.stderr)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
