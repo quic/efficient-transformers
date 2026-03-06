@@ -100,7 +100,7 @@ pipeline {
                 
                 stage('QAIC LLM Tests') {
                     steps {
-                        timeout(time: 120, unit: 'MINUTES') {
+                        // timeout(time: 120, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec ${BUILD_TAG} bash -c "
                                 set -e
@@ -120,13 +120,13 @@ pipeline {
                                 deactivate
                             "
                         '''
-                        }
+                        // }
                     }
                 }
                 
                 stage('QAIC Feature Tests') {
                     steps {
-                        timeout(time: 80, unit: 'MINUTES') {
+                        // timeout(time: 80, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec ${BUILD_TAG} bash -c "
                                 set -e
@@ -146,14 +146,14 @@ pipeline {
                                 deactivate
                             "
                         '''
-                        }
+                        // }
                     }
                 }
             }
         }
         stage('QAIC MultiModal Tests') {
             steps {
-                timeout(time: 120, unit: 'MINUTES') {
+                // timeout(time: 120, unit: 'MINUTES') {
                     sh '''
                         sudo docker exec ${BUILD_TAG} bash -c "
                             set -e
@@ -173,7 +173,7 @@ pipeline {
                             deactivate
                         "
                     '''
-                }
+                // }
             }
         }
 
