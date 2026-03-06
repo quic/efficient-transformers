@@ -226,7 +226,7 @@ This section defines core parameters for fine-tuning and evaluation.
     ├── checkpoints/              # Saved model checkpoints (checkpoint-*)
     │
     ├── runs/                     # TensorBoard logs
-    │   └── events.out.tfevents.* # Written when report_to includes "tensorboard"
+    │   └── events.out.tfevents.* 
     │
     ├── logs/                     # Logs from other backends
 

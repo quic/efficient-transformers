@@ -10,6 +10,7 @@ Provides centralized configuration loading, validation, and management.
 """
 
 import json
+import logging
 import os
 import sys
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
@@ -24,6 +25,7 @@ from QEfficient.finetune.experimental.core.utils.dist_utils import is_main_proce
 from QEfficient.utils.device_utils import is_nsp_free
 
 logger = Logger(__name__)
+logger.logger.propagate = False
 
 
 @dataclass
@@ -31,7 +33,7 @@ class OptimizerConfig:
     """Configuration for optimizers."""
 
     optimizer_name: str = field(
-        default="AdamW",
+        default="adamw",
         metadata={"help": "The name of the optimizer to use."},
     )
     lr: float = field(
@@ -131,11 +133,11 @@ class DatasetConfig:
         metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     prompt_func: str = field(
-        default="QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt",
+        default=None,
         metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
     )
     completion_template: str = field(
-        default="{output}",
+        default=None,
         metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
     )
     completion_func: str = field(
@@ -279,7 +281,7 @@ class GradientCheckpointingKwargs:
         default=True,
         metadata={"help": "Whether to preserve the RNG state when checkpointing."},
     )
-    use_reenrant: bool = field(
+    use_reentrant: bool = field(
         default=False,
         metadata={"help": "Whether to use reentrant gradient checkpointing."},
     )
@@ -710,14 +712,14 @@ class ConfigManager:
             try:
                 import torch_qaic  # noqa: F401
 
-                logger.log_rank_zero("torch_qaic package found. Using QAIC devices.")
+                logger.log_rank_zero("torch_qaic package found. Using QAIC devices...")
                 if is_main_process():
                     is_nsp_free()
 
             except ImportError as e:
                 logger.log_rank_zero(
                     f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
-                    level=0,
+                    logging.WARNING,
                 )
         # PEFT validation
         if model.get("use_peft"):
