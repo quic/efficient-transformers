@@ -387,7 +387,6 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            **kwargs,
         )
 
     def generate(
