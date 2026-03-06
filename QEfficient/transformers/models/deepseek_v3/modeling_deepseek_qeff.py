@@ -382,7 +382,6 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
-        import ipdb; ipdb.set_trace()
         self.all_gate_proj = torch.nn.Parameter(
             torch.cat(
                 [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],

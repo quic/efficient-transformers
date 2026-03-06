@@ -40,8 +40,7 @@ class QuantLinearTorchFunction(torch.autograd.Function):
 def dequantize_blockwise_bits(quant_values, scale, zero_point, bits, group_size, g_idx, rows, cols):
     if bits != 4:
         raise ValueError("Only bits=4 is supported for executing quantized model")
-    if group_size != 128:
-        raise ValueError("Only group_size=128 is supported for executing quantized model")
+
     expand_quant_value = (quant_values.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32)) & 0x0F
     expand_quant_value = expand_quant_value.reshape(*quant_values.shape[:-1], -1)
     aligned_scale = scale.reshape(*quant_values.shape[:-1], 1)

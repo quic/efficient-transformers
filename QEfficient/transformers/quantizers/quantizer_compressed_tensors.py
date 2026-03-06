@@ -376,7 +376,6 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
         run_compressed: bool = None,
         **kwargs,
     ):
-        import ipdb; ipdb.set_trace()
         if format == "pack-quantized":
             self.handle_pack_quantized_init(
                 config_groups=config_groups,
