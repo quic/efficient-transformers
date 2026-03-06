@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+from types import SimpleNamespace
+
 import pytest
 
 import QEfficient
@@ -99,3 +101,44 @@ def test_infer_vlm(mocker):
         prompt="Describe the image.",
         image_url="https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg",
     )
+
+
+class _DummyQEFFModel:
+    def __init__(self, architecture):
+        self.model = SimpleNamespace(config=SimpleNamespace(architectures=[architecture]))
+        self.compile_kwargs = None
+
+    def compile(self, **kwargs):
+        self.compile_kwargs = kwargs
+        return "/tmp/qpc"
+
+    def generate(self, *args, **kwargs):
+        return {}
+
+
+def _run_infer_with_dummy_model(mocker, architecture, **infer_kwargs):
+    dummy_model = _DummyQEFFModel(architecture=architecture)
+    mocker.patch.object(QEfficient.cloud.infer, "check_and_assign_cache_dir", return_value="/tmp/cache")
+    mocker.patch.object(QEfficient.cloud.infer.QEFFCommonLoader, "from_pretrained", return_value=dummy_model)
+    mocker.patch.object(QEfficient.cloud.infer, "load_hf_tokenizer", return_value=object())
+
+    infer(
+        model_name="dummy/model",
+        num_cores=16,
+        prompt=["hello"],
+        generation_len=1,
+        **infer_kwargs,
+    )
+    return dummy_model
+
+
+def test_infer_enables_onnx_subfunctions_when_explicitly_set(mocker):
+    dummy_model = _run_infer_with_dummy_model(
+        mocker, architecture="Qwen3MoeForCausalLM", use_onnx_subfunctions=True
+    )
+    assert dummy_model.compile_kwargs["use_onnx_subfunctions"] is True
+
+
+def test_infer_keeps_onnx_subfunctions_disabled_by_default(mocker):
+    dummy_model = _run_infer_with_dummy_model(mocker, architecture="LlamaForCausalLM")
+    assert dummy_model.compile_kwargs["use_onnx_subfunctions"] is False

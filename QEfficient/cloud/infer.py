@@ -139,6 +139,7 @@ def main(
     qnn_config: Optional[str] = None,
     trust_remote_code: Optional[bool] = False,
     ccl_enabled: Optional[bool] = False,
+    use_onnx_subfunctions: bool = False,
     **kwargs,
 ) -> None:
     """
@@ -205,6 +206,8 @@ def main(
         Path of the QNN Config parameters file. Default is None.
     trust_remote_code : bool, optional
         If True, trusts remote code when loading models from HuggingFace. Default is False.
+    use_onnx_subfunctions : bool, optional
+        Enables ONNX subfunctions during export and compile. Default is False.
     **kwargs :
         Additional compiler options passed directly to `qaic-compile`. Any flag supported by
         `qaic-compile` can be passed. Parameters are converted to flags as follows:
@@ -231,12 +234,10 @@ def main(
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
-    if "--mxfp6" in sys.argv:
-        if args.mxfp6:
-            logger.warning("mxfp6 is going to be deprecated in a future release, use -mxfp6_matmul instead.")
-    if "--mxint8" in sys.argv:
-        if args.mxint8:
-            logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
+    if "--mxfp6" in sys.argv and mxfp6:
+        logger.warning("mxfp6 is going to be deprecated in a future release, use -mxfp6_matmul instead.")
+    if "--mxint8" in sys.argv and mxint8:
+        logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
 
     qaic_config = {"ccl_enabled": True} if ccl_enabled else None
 
@@ -280,6 +281,7 @@ def main(
         allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        use_onnx_subfunctions=use_onnx_subfunctions,
         **kwargs,
     )
 
@@ -381,6 +383,14 @@ if __name__ == "__main__":
         "--mxint8-kv-cache",
         action="store_true",
         help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
+    )
+    parser.add_argument(
+        "--use-onnx-subfunctions",
+        "--use_onnx_subfunctions",
+        dest="use_onnx_subfunctions",
+        action="store_true",
+        default=False,
+        help="Enable ONNX subfunctions during export/compile.",
     )
     parser.add_argument(
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
