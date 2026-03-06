@@ -22,8 +22,8 @@ model:
 dataset:
   dataset_type: "sft_dataset"
   dataset_name: "yahma/alpaca-cleaned" # Dataset name from Hugging Face Hub
-  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt" # Function to create prompt from dataset fields
-  completion_template: "{output}" # Template for completion field in dataset
+  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt" # function to create prompt from dataset fields
+  completion_template: "{output}"    # Model will be trained on this part. 
 
 
 # Training configuration
@@ -36,7 +36,7 @@ training:
 
 # Optimizer configuration
 optimizers:
-  optimizer_name: "AdamW"
+  optimizer_name: "adamw"
   lr: 2e-4
 
 scheduler:
