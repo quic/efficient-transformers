@@ -32,6 +32,7 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 def apply_rotary_pos_emb(tensor: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor) -> torch.Tensor:
+    # Sin Cos are also fixated on fp32 here
     sin = torch.repeat_interleave(sin[:, :, None, :], 2, 3)
     cos = torch.repeat_interleave(cos[:, :, None, :], 2, 3)
     return (tensor * cos) + (rotate_every_two(tensor) * sin)
@@ -109,7 +110,7 @@ class QEffGPTJAttention(GPTJAttention):
             embed_positions = get_embed_positions(self.embed_positions, position_ids)
         else:
             embed_positions = self._get_embed_positions(position_ids)
-
+        embed_positions = embed_positions.to(value.dtype)
         repeated_position_ids = position_ids.unsqueeze(-1).repeat(1, 1, embed_positions.shape[-1])
         repeated_position_ids = torch.where(repeated_position_ids == -1, 0, repeated_position_ids)
         sincos = torch.gather(embed_positions, 1, repeated_position_ids)
