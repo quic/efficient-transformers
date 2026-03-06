@@ -76,6 +76,12 @@ from QEfficient.utils.check_ccl_specializations import process_ccl_specializatio
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
+DTYPE_TO_STRING_MAP = {
+    torch.float16: "float16",
+    torch.bfloat16: "bfloat16",
+    torch.float32: "float16",  # Since compiler doesn't support fp32
+}
+
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -1460,17 +1466,18 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         custom_io_vision = {}
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        needed_dtype = self.model.config.torch_dtype
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else DTYPE_TO_STRING_MAP[needed_dtype]
         molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
         if molmo:
-            custom_io_vision["image_masks"] = "float16"
-        custom_io_vision["pixel_values"] = "float16"
+            custom_io_vision["image_masks"] = DTYPE_TO_STRING_MAP[needed_dtype]
+        custom_io_vision["pixel_values"] = DTYPE_TO_STRING_MAP[needed_dtype]
 
         for output_name in output_names["vision"]:
             if output_name.startswith("past_"):
                 custom_io_vision[output_name] = kv_cache_dtype
             else:
-                custom_io_vision[output_name] = "float16"
+                custom_io_vision[output_name] = DTYPE_TO_STRING_MAP[needed_dtype]
 
         if vision_onnx_path:
             self.vision_model.onnx_path = vision_onnx_path
@@ -1513,19 +1520,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name[: -len("_RetainedState")]] = (
-                        "float16" if "vision_embeds" in output_name else kv_cache_dtype
+                        DTYPE_TO_STRING_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
                     )
 
             # outputs
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
+                    custom_io_lang[output_name] = (
+                        DTYPE_TO_STRING_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
+                    )
             self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
                 retained_state=True,
                 specializations=specializations["lang"],
-                convert_to_fp16=True,
+                convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
                 mxfp6_matmul=mxfp6_matmul,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -2139,18 +2148,21 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
         custom_io = {}
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        needed_dtype = self.model.config.torch_dtype
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else DTYPE_TO_STRING_MAP[needed_dtype]
         # inputs
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
                 custom_io[input_name[: -len("_RetainedState")]] = (
-                    "float16" if "pixel_values" in input_name else kv_cache_dtype
+                    DTYPE_TO_STRING_MAP[needed_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
 
         # outputs
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
+                custom_io[output_name] = (
+                    DTYPE_TO_STRING_MAP[needed_dtype] if "pixel_values" in output_name else kv_cache_dtype
+                )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
@@ -2162,7 +2174,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -2997,7 +3009,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                    )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -3020,7 +3034,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                    )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 

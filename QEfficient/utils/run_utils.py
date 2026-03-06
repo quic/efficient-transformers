@@ -30,7 +30,9 @@ class ApiRunner:
     4. ``ONNX`` model on Cloud AI 100
     """
 
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None):
+    def __init__(
+        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None, dtype=torch.float32
+    ):
         """
         Initialization
 
@@ -50,6 +52,7 @@ class ApiRunner:
             prompt_len=prompt_len,
             ctx_len=ctx_len,
             full_batch_size=full_batch_size,
+            dtype=dtype,
         )
 
         self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len

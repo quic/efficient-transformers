@@ -125,10 +125,14 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
         if attention_mask is not None:
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                attention_mask,
+                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.k_proj_swiftkv.weight.dtype),
+                attn_weights,
             )
         # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=self.v_proj_swiftkv.weight.dtype).to(
+            query_states.dtype
+        )
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
@@ -436,7 +440,7 @@ class QEffLlamaSwiftKVForCausalLM(PreTrainedModel):
         hidden_states, output_past_key_values = self.model(
             input_ids, position_ids, past_key_values, comp_ctx_lengths, batch_index
         )
-        logits = self.lm_head(hidden_states)
+        logits = self.lm_head(hidden_states).float()
         return CausalLMOutputWithPast(
             loss=None,
             logits=logits,
