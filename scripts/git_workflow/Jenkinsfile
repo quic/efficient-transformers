@@ -1,0 +1,78 @@
+pipeline {
+    agent any
+    
+    triggers {
+        // Run daily at 9:00 AM IST (3:30 AM UTC)
+        cron('30 3 * * *')
+    }
+    
+    environment {
+        GITHUB_TOKEN = credentials('github-token-id')  // Configure in Jenkins credentials
+        GITHUB_REPOSITORY = 'quic-rishinr/efficient-transformers'
+        SMTP_SERVER = 'smtp.gmail.com'  // Update with your SMTP server
+        SMTP_PORT = '465'
+        SMTP_CREDENTIALS = credentials('smtp-credentials-id')  // Configure in Jenkins credentials
+        EMAIL_TO = 'quic_rishinr@quicinc.com'
+    }
+    
+    stages {
+        stage('Setup') {
+            steps {
+                echo 'Setting up Python environment...'
+                sh '''
+                    python3 -m pip install --user -r scripts/git_workflow/requirements.txt
+                '''
+            }
+        }
+        
+        stage('Generate Report') {
+            steps {
+                echo 'Generating PR Dashboard Report...'
+                sh '''
+                    cd scripts/git_workflow
+                    python3 pr_report_jenkins.py
+                '''
+            }
+        }
+        
+        stage('Send Email') {
+            steps {
+                echo 'Sending email with report...'
+                emailext (
+                    subject: "📊 PR Dashboard Report - ${env.GITHUB_REPOSITORY}",
+                    body: '''${FILE,path="scripts/git_workflow/pr_dashboard.html"}''',
+                    mimeType: 'text/html',
+                    to: "${env.EMAIL_TO}",
+                    attachmentsPattern: 'scripts/git_workflow/pr_dashboard.xlsx',
+                    from: 'jenkins@example.com'  // Update with your from address
+                )
+            }
+        }
+        
+        stage('Archive Artifacts') {
+            steps {
+                echo 'Archiving generated files...'
+                archiveArtifacts artifacts: 'scripts/git_workflow/pr_dashboard*.html, scripts/git_workflow/pr_dashboard.xlsx', 
+                                 fingerprint: true,
+                                 allowEmptyArchive: false
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '✅ PR Dashboard report generated and sent successfully!'
+        }
+        failure {
+            echo '❌ Failed to generate or send PR Dashboard report'
+            emailext (
+                subject: "❌ PR Dashboard Report Failed - ${env.GITHUB_REPOSITORY}",
+                body: "The PR Dashboard report generation failed. Check Jenkins logs for details.",
+                to: "${env.EMAIL_TO}"
+            )
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
