@@ -170,9 +170,14 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLTextModel,
     Qwen2_5_VLVisionAttention,
 )
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2RMSNorm as Qwen2_5RMSNorm,
-)
+
+# v5 compatibility: Qwen2.5-VL RMSNorm class is named `Qwen2_5_VLRMSNorm`.
+# Fall back to Qwen2's text `Qwen2RMSNorm` if needed (older versions / edge cases).
+try:
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLRMSNorm as Qwen2_5RMSNorm
+except Exception:
+    from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm as Qwen2_5RMSNorm
+
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
     Qwen3DecoderLayer,
@@ -821,3 +826,4 @@ class PoolingTransform:
         model = PooledModel(model, pooling_method)
         warnings.warn("Pooling is applied to the model.")
         return model, transformed
+

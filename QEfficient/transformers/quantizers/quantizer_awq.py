@@ -7,7 +7,8 @@
 
 import torch
 from transformers.quantizers.quantizer_awq import AwqQuantizer
-from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
+# v5: AwqBackendPackingMethod -> AwqBackend, AWQLinearVersion -> AwqFormat
+from transformers.utils.quantization_config import AwqBackend, AwqConfig, AwqFormat
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.quantizer_utils import (
@@ -24,15 +25,29 @@ class QEffAwqConfig(AwqConfig):
         Safety checker that arguments are correct
         """
 
-        if self.backend not in [AwqBackendPackingMethod.AUTOAWQ]:
+        # Coerce backend to the new enum if it was provided as a string (e.g. "autoawq")
+        if isinstance(self.backend, str):
+            try:
+                self.backend = AwqBackend(self.backend)
+            except ValueError:
+                pass  # keep as-is and let the check below fail with a clear message
+
+        if self.backend not in [AwqBackend.LEGACY_AWQ]:
             raise ValueError(
-                f"Only quantization backend {AwqBackendPackingMethod.AUTOAWQ} is supported - not recognized backend {self.backend}"
+                f"Only quantization backend {AwqBackend.LEGACY_AWQ} is supported - not recognized backend {self.backend}"
             )
 
-        self.version = AWQLinearVersion.from_str(self.version)
-        if self.version not in [AWQLinearVersion.GEMM]:
+        # In v5 AwqFormat values are lowercase ("gemm", "gemv", ...).
+        # Accept both enum and string inputs (e.g. "GEMM"/"gemm")
+        if isinstance(self.version, str):
+            try:
+                self.version = AwqFormat(self.version)
+            except ValueError:
+                self.version = AwqFormat(self.version.lower())
+
+        if self.version not in [AwqFormat.GEMM]:
             raise ValueError(
-                f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}"
+                f"Only {AwqFormat.GEMM} version in supported - not recognized version {self.version}"
             )
 
         if self.do_fuse or self.fuse_max_seq_len is not None:

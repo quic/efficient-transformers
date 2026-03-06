@@ -10,7 +10,31 @@ from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from transformers.cache_utils import DynamicCache, DynamicLayer, EncoderDecoderCache, HybridCache, HybridChunkedCache
+
+# In Transformers v5, HybridCache / HybridChunkedCache were removed.
+# Import them if available (v4); otherwise define minimal v5-compatible shims.
+# References:
+# - GH issue confirming removal/deprecation: https://github.com/huggingface/transformers/issues/44351
+# - Current cache classes live in transformers/cache_utils.py
+from transformers.cache_utils import DynamicCache, DynamicLayer, EncoderDecoderCache  # v4/v5
+try:
+    # v4 path (present)
+    from transformers.cache_utils import HybridCache, HybridChunkedCache
+except ImportError:
+    # v5 path (Hybrid* removed) – provide minimal compatibility bases so that our subclasses work unchanged.
+    class HybridCache:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            # Accept legacy signatures like (config, batch_size, max_cache_len=...)
+            # No-op: our subclass initializes/maintains its own buffers.
+            pass
+
+    class HybridChunkedCache:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            # Provide attributes used by QEffHybridChunkedCache
+            self.key_cache: List[torch.Tensor] = []
+            self.value_cache: List[torch.Tensor] = []
+            # Used as per-layer flags in QEffHybridChunkedCache.update()
+            self.is_sliding: List[bool] = []
 
 from QEfficient.customop import (
     CtxGatherFunc,

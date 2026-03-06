@@ -23,10 +23,15 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeRotaryEmbedding,
     GraniteMoeTopKGating,
     load_balancing_loss_func,
-    logger,
+    # logger,  # <-- removed: not exported anymore in Transformers v5+
     repeat_kv,
     rotate_half,
 )
+
+# NEW (minimal change): create a local logger using HF logging utilities.
+# This preserves support for `warning_once` used below.
+from transformers.utils import logging as hf_logging
+logger = hf_logging.get_logger(__name__)
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
