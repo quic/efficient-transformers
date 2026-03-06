@@ -21,7 +21,7 @@
                     "compilation":  {
                                       "onnx_path": null,
                                       "compile_dir": null,
-                                      "mdp_ts_num_devices": 16,
+                                      "mdp_ts_num_devices": 4,
                                       "mxfp6_matmul": true,
                                       "convert_to_fp16": true,
                                       "compile_only":true,
