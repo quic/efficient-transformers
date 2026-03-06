@@ -447,7 +447,7 @@ class QEffGemma2ForCausalLM(Gemma2ForCausalLM, GenerationMixin):
             logits = logits / self.config.final_logit_softcapping
             logits = torch.tanh(logits)
             logits = logits * self.config.final_logit_softcapping
-
+        logits = logits.float()
         return CausalLMOutputWithPast(
             loss=None,
             logits=logits,
