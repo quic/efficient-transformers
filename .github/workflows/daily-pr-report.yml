@@ -1,0 +1,155 @@
+name: Daily PR Report
+
+on:
+  schedule:
+    # Runs daily at 03:30 UTC = 09:00 IST
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        # Pin markdown to avoid surprise breakage on future major versions
+        run: pip install "markdown>=3.5,<4"
+
+      - name: Generate report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Override email map path if needed (default: scripts/git_workflow/email_map.json)
+          # EMAIL_MAP_FILE: path/to/custom_email_map.json
+        run: |
+          python scripts/git_workflow/pr_report.py > report.md
+          echo "--- Report preview (first 120 lines) ---"
+          sed -n '1,120p' report.md
+
+      - name: Resolve email recipients
+        id: recipients
+        run: |
+          # recipients.txt is written by pr_report.py from email_map.json
+          RECIPIENTS=""
+          if [ -f scripts/git_workflow/recipients.txt ] && [ -s scripts/git_workflow/recipients.txt ]; then
+            RECIPIENTS=$(cat scripts/git_workflow/recipients.txt)
+          fi
+          # Fall back to MAIL_TO secret if recipients.txt is empty/missing
+          if [ -z "$RECIPIENTS" ]; then
+            RECIPIENTS="${{ secrets.MAIL_TO }}"
+          fi
+          if [ -z "$RECIPIENTS" ]; then
+            echo "ERROR: No email recipients found. Set MAIL_TO secret or populate email_map.json." >&2
+            exit 1
+          fi
+          echo "MAIL_RECIPIENTS=$RECIPIENTS" >> "$GITHUB_ENV"
+          echo "Sending to: $RECIPIENTS"
+
+      - name: Convert report to HTML
+        run: |
+          python - <<'EOF'
+          import markdown, pathlib, re
+
+          md_text   = pathlib.Path("report.md").read_text()
+          html_body = markdown.markdown(md_text, extensions=["tables", "nl2br"])
+
+          BADGE = '<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:12px;font-weight:bold;color:{fg};background:{bg};">{text}</span>'
+
+          def badge(text, fg, bg):
+              return BADGE.format(text=text, fg=fg, bg=bg)
+
+          html_body = re.sub(r'\bPASS\b',    badge("PASS",    "#155724", "#d4edda"), html_body)
+          html_body = re.sub(r'\bFAIL\b',    badge("FAIL",    "#721c24", "#f8d7da"), html_body)
+          html_body = re.sub(r'\bPENDING\b', badge("PENDING", "#856404", "#fff3cd"), html_body)
+          html_body = re.sub(r'\bNONE\b',    badge("NONE",    "#555",    "#e9ecef"), html_body)
+          html_body = re.sub(r'\bUNKNOWN\b', badge("UNKNOWN", "#555",    "#e9ecef"), html_body)
+
+          html_body = re.sub(r'Changes Requested:',
+              '<span style="color:#721c24;font-weight:bold;">Changes Requested:</span>', html_body)
+          html_body = re.sub(r'Approved:',
+              '<span style="color:#155724;font-weight:bold;">Approved:</span>', html_body)
+          html_body = re.sub(r'Commented:',
+              '<span style="color:#004085;font-weight:bold;">Commented:</span>', html_body)
+          html_body = re.sub(r'Dismissed:',
+              '<span style="color:#856404;font-weight:bold;">Dismissed:</span>', html_body)
+
+          html = f"""<!DOCTYPE html>
+          <html><head>
+          <meta charset="utf-8">
+          <style>
+            body  {{ font-family: Arial, sans-serif; font-size: 13px; color: #333; max-width: 1400px; margin: 0 auto; padding: 16px; }}
+            h1    {{ color: #1a1a2e; border-bottom: 2px solid #4a90d9; padding-bottom: 6px; font-size: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; margin-top: 10px; table-layout: auto; }}
+            th    {{ background: #2c3e50; color: #fff; padding: 8px 10px; text-align: left; white-space: nowrap; font-size: 12px; }}
+            td    {{ border: 1px solid #ddd; padding: 6px 8px; vertical-align: top; font-size: 12px; }}
+            tr:nth-child(even) td {{ background: #f8f9fa; }}
+            tr:hover td {{ background: #eaf2ff; }}
+            a     {{ color: #1a6bbf; text-decoration: none; }}
+            a:hover {{ text-decoration: underline; }}
+            table:first-of-type th {{ background: #4a90d9; }}
+          </style>
+          </head><body>
+          {html_body}
+          </body></html>"""
+
+          pathlib.Path("report.html").write_text(html)
+          print(f"report.html written ({{len(html):,}} bytes)")
+          EOF
+
+      - name: Send email via SMTP using Python
+        # continue-on-error so a transient SMTP failure doesn't mark the whole
+        # workflow run as failed — the report was still generated and logged.
+        continue-on-error: true
+        env:
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAIL_TO: ${{ env.MAIL_RECIPIENTS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+        run: |
+          python - << 'EOF'
+          import os
+          import smtplib
+          from email.mime.text import MIMEText
+          from email.header import Header
+          from pathlib import Path
+
+          smtp_server = os.environ.get("SMTP_SERVER")
+          smtp_port = int(os.environ.get("SMTP_PORT", "25"))
+          smtp_user = os.environ.get("SMTP_USERNAME") or None
+          smtp_pass = os.environ.get("SMTP_PASSWORD") or None
+          mail_to = os.environ["MAIL_TO"]
+          mail_from = os.environ["MAIL_FROM"]
+
+          # Read HTML body
+          html = Path("report.html").read_text(encoding="utf-8")
+          msg = MIMEText(html, "html", "utf-8")
+          subject = f"Open PR Dashboard — {os.environ.get('GITHUB_REPOSITORY', '')} — {os.environ.get('GITHUB_RUN_NUMBER', '')}"
+          msg["Subject"] = Header(subject, "utf-8")
+          msg["From"] = mail_from
+          msg["To"] = mail_to
+
+          recipients = [addr.strip() for addr in mail_to.split(",") if addr.strip()]
+          if not smtp_server:
+              raise SystemExit("SMTP_SERVER is not set")
+
+          with smtplib.SMTP(smtp_server, smtp_port, timeout=60) as server:
+              # If credentials are provided, use them; otherwise assume open relay
+              if smtp_user and smtp_pass:
+                  server.login(smtp_user, smtp_pass)
+              server.sendmail(mail_from, recipients, msg.as_string())
+
+          print("Mail sent to:", ", ".join(recipients))
+          EOF
