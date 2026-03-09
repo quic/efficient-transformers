@@ -19,6 +19,7 @@ from QEfficient.transformers.quantizers import replace_transformers_quantizers, 
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 =======
 model_id = [
@@ -36,6 +37,9 @@ model_names_chunking = [
 ]
 
 =======
+=======
+# model id based on blocking support and chunking
+>>>>>>> a5299dc (Link error fix)
 model_id_blocking = [
     "openai/gpt-oss-20b",
 ]
