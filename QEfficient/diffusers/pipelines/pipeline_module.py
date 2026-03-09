@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import copy
 from typing import Dict, List, Tuple
 
 import torch
@@ -246,13 +245,8 @@ class QEffVAE(QEFFBaseModel):
             model (nn.Module): The pipeline model containing the VAE
             type (str): VAE operation type ("encoder" or "decoder")
         """
-        # Create a deep copy to avoid shared model instances
-        model_copy = copy.deepcopy(model)
-        super().__init__(model_copy)
-        self.model = model_copy
-
-        # To have different hashing for encoder/decoder
-        self.model.config["type"] = type
+        super().__init__(model)
+        self.model = model
 
     def get_onnx_params(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
         """

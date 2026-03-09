@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Optional
+
 import torch
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
     AutoencoderKLWan,
@@ -212,3 +214,32 @@ class QEffAutoencoderKLWan(AutoencoderKLWan):
         else:
             h = self._encode(x)
         return h
+
+    def forward(
+        self,
+        image: Optional[torch.Tensor] = None,
+        latent_sample: Optional[torch.Tensor] = None,
+        return_dict: bool = True,
+    ) -> torch.Tensor:
+        r"""
+        Forward pass through the VAE autoencoder with dual-mode functionality.
+        This method automatically determines whether to perform encoding or decoding based on the provided inputs:
+        - If `image` is provided, performs encoding (image → latent space)
+        - If `latent_sample` is provided, performs decoding (latent space → image)
+
+        Args:
+            image (`torch.Tensor`, *optional*): Input image tensor to encode into latent space.
+            latent_sample (`torch.Tensor`, *optional*): input latent tensor to decode back to image space.
+                    If provided, `image` should be None.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether to return a dictionary with structured output or a raw tensor.
+                Only applies to decoding operations.
+        Returns:
+            `torch.Tensor`:
+                - If encoding: Latent representation of the input image
+                - If decoding: Reconstructed image/video from latent representation
+        """
+        if image is not None:
+            return self.encode(image)
+        else:
+            return self.decode(latent_sample, return_dict)

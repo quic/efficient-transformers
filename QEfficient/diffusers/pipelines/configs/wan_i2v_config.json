@@ -20,8 +20,7 @@
                                         "compile_only":true,
                                         "mos": 1,
                                         "mdts_mos": 1,
-                                        "node_precision_info" : "efficient-transformers/QEfficient/diffusers/pipelines/configs/npi_wan_i2v_vae_encoder.yaml"
-
+                                        "node_precision_info" : "QEfficient/diffusers/pipelines/configs/npi_wan_i2v_vae_encoder.yaml"
                                       },
                     "execute":
                                       {
