@@ -238,7 +238,6 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
-from QEfficient.transformers.attention_blocking import AttentionBlockingConfig
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -1008,11 +1007,11 @@ def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
     return model_decoder_classes
 
 
-class KVBlockingAttentionTransform:
+class BlockingAttentionTransform:
     _skip_classes = {}
 
     @classmethod
-    def apply(cls, model: nn.Module, num_kv_blocks) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
         transformed = False
         supported_attention_classes = {
             qeff_class
@@ -1021,74 +1020,11 @@ class KVBlockingAttentionTransform:
         }
         for module in model.modules():
             if type(module) in cls._skip_classes:
-                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
+                warnings.warn(f"Blocking is not yet supported for {type(module)}.")
                 continue
             if type(module) in supported_attention_classes:
-                module.num_kv_blocks = num_kv_blocks
-                if getattr(module, "attn_blocking_config", None):
-                    module.attn_blocking_config.num_kv_blocks = int(num_kv_blocks)
-                    module.attn_blocking_config.mode = "kv" + module.attn_blocking_config.mode
-                else:
-                    module.attn_blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
+                module.attn_blocking_config = attn_blocking_config
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
-                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
-        return model, transformed
-
-
-class QBlockingAttentionTransform:
-    _skip_classes = {}
-
-    @classmethod
-    def apply(cls, model: nn.Module, num_q_blocks) -> Tuple[nn.Module, bool]:
-        transformed = False
-        supported_attention_classes = {
-            qeff_class
-            for qeff_class in KVCacheTransform._module_mapping.values()
-            if qeff_class.__name__.endswith("Attention")
-        }
-        for module in model.modules():
-            if type(module) in cls._skip_classes:
-                warnings.warn(f"Q blocking is not yet supported for {type(module)}.")
-                continue
-            if type(module) in supported_attention_classes:
-                module.num_q_blocks = num_q_blocks
-                if getattr(module, "attn_blocking_config", None):
-                    module.attn_blocking_config.num_q_blocks = int(num_q_blocks)
-                    module.attn_blocking_config.mode = "q" + module.attn_blocking_config.mode
-                else:
-                    module.attn_blocking_config = AttentionBlockingConfig(mode="q", num_q_blocks=int(num_q_blocks))
-                transformed = True
-            elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
-                warnings.warn(f"Q blocking is not yet supported for {type(module)}.")
-        return model, transformed
-
-
-class HeadBlockingAttentionTransform:
-    _skip_classes = {}
-
-    @classmethod
-    def apply(cls, model: nn.Module, head_block_size) -> Tuple[nn.Module, bool]:
-        transformed = False
-        supported_attention_classes = {
-            qeff_class
-            for qeff_class in KVCacheTransform._module_mapping.values()
-            if qeff_class.__name__.endswith("Attention")
-        }
-        for module in model.modules():
-            if type(module) in cls._skip_classes:
-                warnings.warn(f"Head blocking is not yet supported for {type(module)}.")
-                continue
-            if type(module) in supported_attention_classes:
-                module.head_block_size = head_block_size
-                if getattr(module, "attn_blocking_config", None):
-                    module.attn_blocking_config.head_block_size = int(head_block_size)
-                    module.attn_blocking_config.mode = "h" + module.attn_blocking_config.mode
-                else:
-                    module.attn_blocking_config = AttentionBlockingConfig(
-                        mode="head", head_block_size=int(head_block_size)
-                    )
-                transformed = True
-            elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
-                warnings.warn(f"Head blocking is not yet supported for {type(module)}.")
+                warnings.warn(f"Blocking is not yet supported for {type(module)}.")
         return model, transformed

@@ -30,8 +30,8 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
-from QEfficient.transformers.attention_blocking import AttentionBlockingConfig
-from QEfficient.transformers.blocked_attention_utils import _normalize_int, supports_blocked_kv
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, supports_blocked_kv
+from QEfficient.blocking.blocked_attention_forwards import _normalize_int
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE

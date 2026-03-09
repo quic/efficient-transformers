@@ -26,7 +26,8 @@ from transformers.models.gemma2.modeling_gemma2 import (
     rotate_half,
 )
 
-from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
+from QEfficient.blocking.attention_blocking import supports_blocked_kv
+from QEfficient.blocking.blocked_attention_forwards import blocked_kv_attention_forward
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 # from transformers.utils import is_torchdynamo_compiling

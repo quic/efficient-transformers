@@ -33,6 +33,9 @@ NPI_MAPPING = {
     ),
 }
 
+# Blocking defaults
+VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.75
+
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
@@ -209,9 +212,6 @@ class Constants:
     GB = 2**30
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
-    NUM_KV_BLOCKS = 2
-    NUM_Q_BLOCKS = 2
-    HEAD_BLOCK_SIZE = 8
     NUM_SPECULATIVE_TOKENS = 2
     MAX_TOP_K_IDS = ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
     SAMPLER_OPS = {
