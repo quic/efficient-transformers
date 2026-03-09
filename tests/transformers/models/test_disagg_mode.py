@@ -16,21 +16,13 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
-
-=======
-=======
 # model id based on blocking support and chunking
->>>>>>> a5299dc (Link error fix)
 model_id_blocking = [
     "openai/gpt-oss-20b",
 ]
 model_id_chunking = [
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
 ]
->>>>>>> 493cc0f (Test Added for Qwen3Moe)
 prompt2 = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
 
@@ -43,7 +35,6 @@ prompt1 = "Once upon a time"
 prompts = [prompt1, prompt2]
 
 
-@pytest.mark.skip(reason="only works for gpt-oss right now")
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", model_id_blocking)
@@ -119,7 +110,6 @@ def test_disagg_mode_prefill(model_id, prompt):
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
 
 
-# @pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", model_id_chunking)

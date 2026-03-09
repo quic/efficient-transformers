@@ -2933,10 +2933,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> af63ce5 (Fix CI and lint issues)
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
                 if not enable_chunking and self.continuous_batching:
@@ -2947,47 +2943,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("retain_full_kv", None)
                 seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                     prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
-<<<<<<< HEAD
                 )
                 kv_cache_shape[2] = (
                     seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
                     if enable_chunking
                     else seq_len
-=======
-
-        if prefill_only:
-            if not enable_chunking and self.continuous_batching:
-                raise NotImplementedError(
-                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                )
-            self.prefill(enable=True, enable_chunking=enable_chunking)
-            self.hash_params.pop("retain_full_kv", None)
-            seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
-            )
-            kv_cache_shape[2] = (
-                seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                if enable_chunking
-                else seq_len
-            )
-        else:
-            self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-            self.hash_params.pop("prefill_only", None)
-            self.hash_params.pop("NUM_Q_BLOCKS", None)
-            self.hash_params.pop("NUM_FFN_BLOCKS", None)
-            self.hash_params.pop("ENABLE_OPT_SWA", None)
-            self.hash_params.pop("chunking", None)
-            if kwargs.get("retain_full_kv", False):
-                kv_cache_shape[2] = seq_len + (
-                    self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
->>>>>>> 17662e7 (Fix lint error)
-=======
-                )
-                kv_cache_shape[2] = (
-                    seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                    if enable_chunking
-                    else seq_len
->>>>>>> af63ce5 (Fix CI and lint issues)
                 )
             else:
                 self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
