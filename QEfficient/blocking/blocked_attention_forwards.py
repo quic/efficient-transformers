@@ -42,10 +42,6 @@ def _normalize_int(value: Optional[torch.Tensor | int]) -> int:
     return int(value) if value is not None else 0
 
 
-def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
-    return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
-
-
 def blocked_kv_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -61,6 +57,7 @@ def blocked_kv_attention_forward(
     score_mod: Optional[Callable[[torch.Tensor, int, int], torch.Tensor]] = None,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
+    **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     # Initialize result tensor
     output = torch.zeros_like(query)
@@ -176,6 +173,7 @@ def blocked_qkv_attention_forward(
     score_mod: Optional[Callable[[torch.Tensor, int, int], torch.Tensor]] = None,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
+    **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
@@ -267,7 +265,7 @@ def blocked_qkv_attention_forward(
 
             # Update Running row maximum
             prev_max = current_max
-            current_max_updated = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
+            current_max_updated = torch.max(prev_max, attn_weights_block.max(dim=3).values)
             delta_max = prev_max - current_max_updated
 
             current_exp = torch.exp(attn_weights_block - current_max_updated.unsqueeze(-1))
@@ -319,6 +317,7 @@ def blocked_hqkv_attention_forward(
     score_mod: Optional[Callable[[torch.Tensor, int, int], torch.Tensor]] = None,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
+    **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
@@ -430,7 +429,7 @@ def blocked_hqkv_attention_forward(
 
                 # Update Running row maximum
                 prev_max = current_max
-                current_max_updated = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
+                current_max_updated = torch.max(prev_max, attn_weights_block.max(dim=3).values)
                 delta_max = prev_max - current_max_updated
 
                 current_exp = torch.exp(attn_weights_block - current_max_updated.unsqueeze(-1))
@@ -471,7 +470,7 @@ def blocked_hqkv_attention_forward(
     return attn_output, attn_weights
 
 
-def h_blocked_attention_forward(
+def blocked_h_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
     key: torch.Tensor,
@@ -522,7 +521,7 @@ def h_blocked_attention_forward(
     return attn_output, attn_weights
 
 
-def q_blocked_attention_forward(
+def blocked_q_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
     key: torch.Tensor,
@@ -571,3 +570,7 @@ def q_blocked_attention_forward(
     attn_weights = torch.cat(q_attn_blocks, dim=2)
 
     return attn_output, attn_weights
+
+
+def invalid_blocking_attention_forward(*args, **kwargs):
+    raise NotImplementedError("Invalid blocking strategy was selected")

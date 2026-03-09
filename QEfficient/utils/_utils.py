@@ -953,7 +953,9 @@ def to_named_specializations(specializations: List[Dict], module_name: Optional[
         seen[name] = seen.get(name, 0) + 1
 
     return result
-def _get_attr_or_key(obj: Any, names: Tuple[str, ...], default: Any = None) -> Any:
+    
+    
+def get_attr_or_key(obj: Any, names: Tuple[str, ...], default: Any = None) -> Any:
     if obj is None:
         return default
     for name in names:
@@ -964,7 +966,7 @@ def _get_attr_or_key(obj: Any, names: Tuple[str, ...], default: Any = None) -> A
     return default
 
 
-def _require_value(value: Any, label: str) -> Any:
+def require_value(value: Any, label: str) -> Any:
     if value is None:
         raise ValueError(f"Missing required {label} to compute blocking configuration.")
     return value

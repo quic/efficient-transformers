@@ -11,14 +11,13 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
 )
 from QEfficient.utils._utils import (  # noqa: F401
     LRUCache,
-    _get_attr_or_key,
-    _require_value,
     check_and_assign_cache_dir,
     create_json,
     create_model_params,
     custom_format_warning,
     dump_qconfig,
     generate_mdp_partition_config,
+    get_attr_or_key,
     get_num_layers_from_config,
     get_num_layers_vlm,
     get_onnx_dir_name,
@@ -37,6 +36,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     padding_check_and_fix,
     qpc_exists,
     to_named_specializations,
+    require_value,
 )
 from QEfficient.utils.hash_utils import (  # noqa: F401
     create_export_hash,
