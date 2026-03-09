@@ -25,9 +25,6 @@ profiler.generate_memory_graph()
 ```
 """
 
-__version__ = "2.0.0"
-__author__ = "Qualcomm Technologies, Inc."
-
 # Core profiler components
 from .profiler import (
     MetricsCollector,
