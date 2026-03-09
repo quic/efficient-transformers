@@ -22,8 +22,7 @@ from transformers.models.phi.modeling_phi import (
     repeat_kv,
 )
 
-from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
-from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE

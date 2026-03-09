@@ -47,7 +47,6 @@ from QEfficient.transformers.modeling_utils import (
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
-    KVBlockingAttentionTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
@@ -1020,9 +1019,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
-
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
         """
         Exports the language decoder component to ONNX format.
@@ -1328,6 +1324,33 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         return self.onnx_path
+
+    def transform(
+        self,
+        ctx_len: Optional[int] = None,
+        seq_len: Optional[int] = None,
+        bs: Optional[int] = 1,
+        num_devices: int = 1,
+        qaic_config: Optional[dict] = None,
+        **compiler_options,
+    ):
+        self.vision_model.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
+
+        self.lang_model.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
 
     def compile(
         self,
