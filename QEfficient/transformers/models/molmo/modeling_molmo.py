@@ -557,6 +557,7 @@ class QEffMolmo(nn.Module):
         if use_cache:
             next_cache = past_key_values.to_legacy_cache()
 
+        logits = logits.float()
         return ModelOutput(
             logits=logits,
             past_key_values=next_cache,

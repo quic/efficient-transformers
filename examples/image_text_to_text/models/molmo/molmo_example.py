@@ -19,13 +19,9 @@ config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
 # For faster execution user can run on 2 layers, This is only for testing purpose
 # config.num_hidden_layers = 2
 
-# To change the model weights to required dtype (bf16/fp16/fp32)
-LOAD_DTYPE = torch.float32
 
 # load the model
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-    model_id, kv_offload=True, trust_remote_code=True, config=config, torch_dtype=LOAD_DTYPE
-)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, kv_offload=True, trust_remote_code=True, config=config)
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
