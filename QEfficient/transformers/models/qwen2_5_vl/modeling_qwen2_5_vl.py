@@ -934,6 +934,7 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
         logits = self.model.lm_head(hidden_states)
+        logits = logits.float()
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
 
         return logits, vision_embeds, image_idx, outputs.past_key_values
