@@ -36,10 +36,7 @@ def run_intern_on_aic(
     # The original Intern-VL model, despite being multimodal, is loaded using `AutoModelForCausalLM` in Huggingface.
     # To maintain compatibility, we load this model using `QEFFAutoModelForCausalLM`.
 
-    LOAD_DTYPE = torch.float16
-    model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_name, kv_offload=kv_offload, trust_remote_code=True, torch_dtype=LOAD_DTYPE
-    )
+    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, trust_remote_code=True)
 
     ## STEP 2 -- EXPORT & COMPILE THE MODEL
 
