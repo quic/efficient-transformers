@@ -14,7 +14,13 @@ from QEfficient.cloud.infer import main as infer
 
 
 def check_infer(
-    mocker, model_name, prompt="My name is", full_batch_size=None, enable_qnn=False, image_url=None, generation_len=20
+    mocker,
+    model_name,
+    prompt="My name is",
+    full_batch_size=None,
+    enable_qnn=False,
+    image_url=None,
+    generation_len=20,
 ):
     check_and_assign_cache_dir_spy = mocker.spy(QEfficient.cloud.infer, "check_and_assign_cache_dir")
     qeff_model_load_spy = mocker.spy(QEfficient.cloud.infer.QEFFCommonLoader, "from_pretrained")
@@ -133,9 +139,7 @@ def _run_infer_with_dummy_model(mocker, architecture, **infer_kwargs):
 
 
 def test_infer_enables_onnx_subfunctions_when_explicitly_set(mocker):
-    dummy_model = _run_infer_with_dummy_model(
-        mocker, architecture="Qwen3MoeForCausalLM", use_onnx_subfunctions=True
-    )
+    dummy_model = _run_infer_with_dummy_model(mocker, architecture="Qwen3MoeForCausalLM", use_onnx_subfunctions=True)
     assert dummy_model.compile_kwargs["use_onnx_subfunctions"] is True
 
 
