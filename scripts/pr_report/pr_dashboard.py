@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 """
 Daily PR report generator.
 
@@ -265,24 +271,36 @@ def generate_pie_chart_svg(author_counts):
 
     # 15-colour palette; cycles if there are more authors
     colors = [
-        "#4a90d9", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6",
-        "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
-        "#ff5722", "#607d8b", "#795548", "#9c27b0", "#4caf50",
+        "#4a90d9",
+        "#e74c3c",
+        "#2ecc71",
+        "#f39c12",
+        "#9b59b6",
+        "#1abc9c",
+        "#e67e22",
+        "#3498db",
+        "#e91e63",
+        "#00bcd4",
+        "#ff5722",
+        "#607d8b",
+        "#795548",
+        "#9c27b0",
+        "#4caf50",
     ]
 
-    cx, cy, r = 190, 190, 160   # pie centre and radius
-    legend_x  = cx * 2 + 30     # legend column starts here
-    row_h     = 22               # legend row height
-    svg_w     = legend_x + 260   # total SVG width
-    svg_h     = max(cy * 2, len(items) * row_h + 50)  # total SVG height
+    cx, cy, r = 190, 190, 160  # pie centre and radius
+    legend_x = cx * 2 + 30  # legend column starts here
+    row_h = 22  # legend row height
+    svg_w = legend_x + 260  # total SVG width
+    svg_h = max(cy * 2, len(items) * row_h + 50)  # total SVG height
 
     # ── Build slice paths ────────────────────────────────────────────────────
     paths_svg = ""
     legend_svg = ""
-    start_angle = -math.pi / 2   # begin at 12 o'clock
+    start_angle = -math.pi / 2  # begin at 12 o'clock
 
     for i, (author, count) in enumerate(items):
-        angle     = 2 * math.pi * count / total
+        angle = 2 * math.pi * count / total
         end_angle = start_angle + angle
 
         x1 = cx + r * math.cos(start_angle)
@@ -291,20 +309,16 @@ def generate_pie_chart_svg(author_counts):
         y2 = cy + r * math.sin(end_angle)
 
         large_arc = 1 if angle > math.pi else 0
-        color     = colors[i % len(colors)]
-        pct       = count / total * 100
+        color = colors[i % len(colors)]
+        pct = count / total * 100
 
         # SVG arc path: move to centre → line to arc start → arc → close
-        path = (
-            f"M {cx},{cy} "
-            f"L {x1:.2f},{y1:.2f} "
-            f"A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
-        )
+        path = f"M {cx},{cy} L {x1:.2f},{y1:.2f} A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
         paths_svg += (
             f'  <path d="{path}" fill="{color}" '
             f'stroke="white" stroke-width="2">\n'
-            f'    <title>{author}: {count} PR{"s" if count != 1 else ""} ({pct:.1f}%)</title>\n'
-            f'  </path>\n'
+            f"    <title>{author}: {count} PR{'s' if count != 1 else ''} ({pct:.1f}%)</title>\n"
+            f"  </path>\n"
         )
 
         # Legend row
@@ -314,8 +328,8 @@ def generate_pie_chart_svg(author_counts):
             f'fill="{color}" rx="2"/>\n'
             f'  <text x="{legend_x + 20}" y="{ly + 11}" '
             f'font-size="12" font-family="Arial, sans-serif" fill="#333">'
-            f'{author}  {count} PR{"s" if count != 1 else ""}  ({pct:.1f}%)'
-            f'</text>\n'
+            f"{author}  {count} PR{'s' if count != 1 else ''}  ({pct:.1f}%)"
+            f"</text>\n"
         )
 
         start_angle = end_angle
@@ -329,15 +343,14 @@ def generate_pie_chart_svg(author_counts):
         # Chart title
         f'  <text x="{cx}" y="20" text-anchor="middle" '
         f'font-size="14" font-weight="bold" fill="#1a1a2e">'
-        f'PR Distribution by Author (Total: {total})</text>\n'
+        f"PR Distribution by Author (Total: {total})</text>\n"
         # Slices
         + paths_svg
         # Legend header
         + f'  <text x="{legend_x}" y="22" font-size="13" '
         f'font-weight="bold" fill="#1a1a2e">Author</text>\n'
         # Legend rows
-        + legend_svg
-        + '</svg>\n</div>\n'
+         + legend_svg + "</svg>\n</div>\n"
     )
     return svg
 
