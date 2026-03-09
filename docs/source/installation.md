@@ -48,7 +48,7 @@ Efficient Transformers have been validated to work with the same compatible SDK.
 ```bash
 # Create Python virtual env and activate it. (Required Python 3.10)
 
-python3.10 -m venv qeff_env
+python3.12 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
