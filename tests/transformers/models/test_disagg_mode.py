@@ -17,9 +17,13 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
 
 =======
+=======
+# model id based on blocking support and chunking
+>>>>>>> a5299dc (Link error fix)
 model_id_blocking = [
     "openai/gpt-oss-20b",
 ]
