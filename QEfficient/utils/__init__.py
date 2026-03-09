@@ -11,8 +11,6 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
 )
 from QEfficient.utils._utils import (  # noqa: F401
     LRUCache,
-    _get_attr_or_key,
-    _require_value,
     check_and_assign_cache_dir,
     create_json,
     create_model_params,

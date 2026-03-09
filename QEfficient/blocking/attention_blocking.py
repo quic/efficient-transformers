@@ -74,7 +74,6 @@ def generic_blocked_attention_interface(
     position_ids: Optional[torch.LongTensor] = None,
     past_seen_tokens: Optional[int] = None,
     non_blocked_forward: Callable = None,
-    score_mod: Optional[Callable] = None,
     **kwargs,
 ):
     use_kv_blocked = (
@@ -112,7 +111,6 @@ def generic_blocked_attention_interface(
             num_kv_blocks=blocking_config.num_kv_blocks,
             num_q_blocks=blocking_config.num_q_blocks,
             head_block_size=blocking_config.head_block_size,
-            score_mod=score_mod,
         )
     else:
         attn_output, attn_weights = non_blocked_forward(

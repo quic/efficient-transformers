@@ -31,8 +31,8 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     rotate_half,
 )
 
-from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
-from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
+from QEfficient.blocking.blocked_attention_forwards import blocked_kv_attention_forward
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 # from transformers import Qw

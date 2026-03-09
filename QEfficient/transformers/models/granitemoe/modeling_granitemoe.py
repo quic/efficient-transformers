@@ -26,7 +26,8 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     rotate_half,
 )
 
-from QEfficient.transformers.blocked_attention_utils import blocked_kv_attention_forward, supports_blocked_kv
+from QEfficient.blocking.attention_blocking import supports_blocked_kv
+from QEfficient.blocking.blocked_attention_forwards import blocked_kv_attention_forward
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE

@@ -25,8 +25,7 @@ from transformers.models.llama.modeling_llama import (
     rotate_half,
 )
 
-from QEfficient.transformers.attention_blocking import AttentionBlockingConfig, get_blocking_strategy
-from QEfficient.transformers.blocked_attention_utils import supports_blocked_kv
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, generic_blocked_attention_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -152,6 +151,7 @@ class QEffLlamaAttention(LlamaAttention):
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
+<<<<<<< HEAD
         num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
         blocking_config = getattr(self, "attn_blocking_config", None)
         if blocking_config is None and num_kv_blocks is not None:
@@ -171,6 +171,10 @@ class QEffLlamaAttention(LlamaAttention):
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
 
+=======
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+
+>>>>>>> 8c7223c (Restructured blocking changes to have generic blocked attention interface and calls to blocking directory)
         attn_output, attn_weights = generic_blocked_attention_interface(
             module=self,
             query=query_states,
