@@ -15,8 +15,7 @@ from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.test_utils import InternProcessor
-from tests.transformers.models.image_text_to_text.test_continuous_batching import set_num_layers
+from QEfficient.utils.test_utils import InternProcessor, set_num_layers_vlm
 
 test_configs = [
     pytest.param(
@@ -52,7 +51,7 @@ def prepare_model_setup(
     additional_params = {}
     if is_vlm:
         config = AutoConfig.from_pretrained(model, trust_remote_code=True)
-        config = set_num_layers(config, n_layer=num_hidden_layers)
+        config = set_num_layers_vlm(config, n_layer=num_hidden_layers)
         additional_configs["config"] = config
         additional_configs["kv_offload"] = True
         assert isinstance(prompts, tuple), "For VLMs, both image and text prompts must be provided."

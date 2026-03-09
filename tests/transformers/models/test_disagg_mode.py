@@ -5,7 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import time
+from typing import Optional
 
 import numpy as np
 import pytest
@@ -16,7 +18,12 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
-model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
+CONFIG_PATH = "tests/configs/causal_model_configs.json"
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    disaggregated_causal_lm_models = config_data["disaggregated_causal_lm_models"]
+test_disaggregated_causal_models = [model["model_name"] for model in disaggregated_causal_lm_models]
+model_config_dict = {model["model_name"]: model for model in disaggregated_causal_lm_models}
 
 prompt2 = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
@@ -26,26 +33,32 @@ As Alex flipped through the pages, he discovered a map that led to a hidden trea
 The path to the treasure was not an easy one. Alex had to navigate through dense forests, cross rickety bridges, and solve riddles that guarded the treasure's location.
 """
 prompt1 = "Once upon a time"
-
 prompts = [prompt1, prompt2]
 
 
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_id", [model_id])
-@pytest.mark.parametrize("prompt", prompts)
-def test_disagg_mode_prefill(model_id, prompt):
-    # Run prefill
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+def check_disagg_mode_prefill(
+    model_name: str, hf_config: Optional[AutoConfig] = None, prompt: str = "My name is"
+) -> None:
+    replace_transformers_quantizers()
+    torch.manual_seed(42)
+
+    if hf_config is None:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            num_hidden_layers=2,
+        )
+    else:
+        model = AutoModelForCausalLM.from_config(
+            hf_config,
+        )
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     PREFILL_SEQ_LEN = 256
     CTX_LEN = 256
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
-
-    replace_transformers_quantizers()
-    model = AutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
     config = model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
     inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -57,7 +70,7 @@ def test_disagg_mode_prefill(model_id, prompt):
 
     undo_transformers_quantizers()
 
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+    qeff_model = QEFFAutoModelForCausalLM(model)
     qeff_model.prefill(True)
     config = qeff_model.model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
@@ -105,10 +118,45 @@ def test_disagg_mode_prefill(model_id, prompt):
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
 
 
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.regular
+@pytest.mark.parametrize("model_name", test_disaggregated_causal_models)
+@pytest.mark.parametrize("prompt", prompts)
+def test_custom_disagg_mode_prefill(model_name, prompt):
+    """
+    Test function to validate the PyTorch model for disaggregated prefill mode for 2 layers dummy config model.
+     ``Mandatory`` Args:
+         :model_name (str): Hugging Face Model Card name, Example: ``gpt-oss-20b``
+         :prompt (str): The prompt to use for testing the prefill mode.
+    """
+    custom_config = model_config_dict[model_name]
+    hf_config = AutoConfig.from_pretrained(
+        model_name,
+        **custom_config.get("additional_params", {}),
+    )
+    check_disagg_mode_prefill(model_name, hf_config, prompt)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.nightly
+@pytest.mark.parametrize("model_name", test_disaggregated_causal_models)
+@pytest.mark.parametrize("prompt", prompts)
+def test_disagg_mode_prefill(model_name, prompt):
+    """
+    Test function to validate the PyTorch model for disaggregated prefill mode for 2 layers model.
+     ``Mandatory`` Args:
+         :model_name (str): Hugging Face Model Card name, Example: ``gpt-oss-20b``
+         :prompt (str): The prompt to use for testing the prefill mode.
+    """
+    check_disagg_mode_prefill(model_name=model_name, prompt=prompt)
+
+
 @pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", test_disaggregated_causal_models)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill_chunked(model_id, prompt):
     # Run prefill
@@ -195,7 +243,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", test_disaggregated_causal_models)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     # Run prefill for original pytorch model
@@ -366,7 +414,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_id", [model_id])
+@pytest.mark.parametrize("model_id", test_disaggregated_causal_models)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefix_caching(model_id, prompt):
     PREFILL_SEQ_LEN = 128
