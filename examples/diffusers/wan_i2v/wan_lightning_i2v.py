@@ -42,35 +42,16 @@ pipeline.transformer.model.transformer_low.load_lora_adapter(
 )
 pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 
-# TODO create a custom file and move it there
-# # Configure for 2-layer model (faster inference)
-# pipeline.transformer.model.transformer_high.config['num_layers'] = 1
-# pipeline.transformer.model.transformer_low.config['num_layers']= 1
-
-# # Reduce high noise transformer blocks
-# original_blocks = pipeline.transformer.model.transformer_high.blocks
-# pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
-#     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config['num_layers'])]
-# )
-
-# # Reduce low noise transformer blocks
-# org_blocks = pipeline.transformer.model.transformer_low.blocks
-# pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
-#     [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config['num_layers'])]
-# )
-
-
 image = load_image(
     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/astronaut.jpg"
 )
-# max_area = 190 * 320
-max_area = 480 * 832
+max_area = 192 * 320  # for 180p
+# max_area = 480 * 832 # for 480p
 aspect_ratio = image.height / image.width
 mod_value = pipeline.model.vae.config.scale_factor_spatial * pipeline.model.transformer.config.patch_size[1]
 height = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
 width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
 
-# heigth : 544, width : 720 for 480p
 image = image.resize((width, height))
 prompt = (
     "An astronaut hatching from an egg, on the surface of the moon, the darkness and depth of space realised in "
@@ -85,8 +66,7 @@ output = pipeline(
     width=width,
     num_frames=81,
     guidance_scale=1.0,
-    generator=torch.manual_seed(0),
-    # custom_config_path="examples/diffusers/wan/wan_i2v_config.json",
+    generator=torch.manual_seed(42),
     use_onnx_subfunctions=True,
     parallel_compile=True,
 )

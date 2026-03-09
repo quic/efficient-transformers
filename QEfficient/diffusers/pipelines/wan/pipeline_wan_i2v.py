@@ -26,12 +26,12 @@ from diffusers.image_processor import PipelineImageInput
 from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
 
+from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper
 from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
-    QEffWanUnifiedWrapper,
     calculate_latent_dimensions_with_frames,
     compile_modules_parallel,
     compile_modules_sequential,
@@ -58,7 +58,6 @@ class QEffWanImageToVideoPipeline:
     - UMT5 text encoding for rich semantic understanding
     - Unified transformer architecture: Combines multiple transformer stages into a single optimized model
     - VAE encoding/decoding for image-to-latent and latent-to-video conversion
-    - Temporal mask generation for maintaining first-frame consistency
     - Performance monitoring and optimization
 
     Attributes:
@@ -128,11 +127,6 @@ class QEffWanImageToVideoPipeline:
         self.tokenizer = model.tokenizer
         self.text_encoder.tokenizer = model.tokenizer
         self.scheduler = model.scheduler
-
-        self.vae_encoder.model.forward = lambda image: self.vae_encoder.model.encode(image)
-        self.vae_decoder.model.forward = lambda latent_sample, return_dict: self.vae_decoder.model.decode(
-            latent_sample, return_dict
-        )
 
         self.vae_encoder.get_onnx_params = self.vae_decoder.get_img_encoder_onnx_params
         self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
@@ -249,7 +243,6 @@ class QEffWanImageToVideoPipeline:
         for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
             # Get ONNX export configuration with video dimensions
             example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
-            # import pdb; pdb.set_trace()
 
             # Prepare export parameters
             export_params = {
@@ -499,7 +492,6 @@ class QEffWanImageToVideoPipeline:
 
         # Initialize VAE encoder inference session
         if self.vae_encoder.qpc_session is None:
-            # self.vae_encoder.qpc_path = "/home/vtirumal/pr_i2v/480p_with_npi"
             self.vae_encoder.qpc_session = QAICInferenceSession(
                 str(self.vae_encoder.qpc_path), device_ids=self.vae_encoder.device_ids
             )
@@ -990,7 +982,6 @@ class QEffWanImageToVideoPipeline:
 
             # Initialize VAE decoder inference session
             if self.vae_decoder.qpc_session is None:
-                # self.vae_decoder.qpc_path = "/home/vtirumal/imp_qpcs/i2v_vae_decoder_480p_81f"
                 self.vae_decoder.qpc_session = QAICInferenceSession(
                     str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
                 )

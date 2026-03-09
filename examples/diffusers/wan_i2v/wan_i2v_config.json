@@ -7,8 +7,7 @@
                                           "batch_size": 1,
                                           "num_channels": 16
                                       },
-                    "compilation":
-                                      {
+                    "compilation":    {
                                         "onnx_path": null,
                                         "compile_dir": null,
                                         "mdp_ts_num_devices": 4,
@@ -18,10 +17,10 @@
                                         "aic-enable-depth-first": true,
                                         "compile_only":true,
                                         "mos": 1,
-                                        "mdts_mos": 1
+                                        "mdts_mos": 1,
+                                        "node_precision_info" : "QEfficient/diffusers/pipelines/configs/npi_wan_i2v_vae_encoder.yaml"
                                       },
-                    "execute":
-                                      {
+                    "execute":        {
                                         "device_ids": null,
                                         "qpc_path" : null
                                       }
@@ -61,13 +60,11 @@
                    },
     "vae_decoder":
                   {
-                    "specializations":
-                                        {
+                    "specializations": {
                                           "batch_size": 1,
                                           "num_channels": 16
-                                        },
-                    "compilation":
-                                      {
+                                       },
+                    "compilation":    {
                                         "onnx_path": null,
                                         "compile_dir": null,
                                         "mdp_ts_num_devices": 4,
@@ -79,8 +76,7 @@
                                         "mos": 1,
                                         "mdts_mos": 1
                                       },
-                    "execute":
-                                      {
+                    "execute":       {
                                         "device_ids": null,
                                         "qpc_path" : null
                                       }
