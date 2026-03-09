@@ -31,10 +31,7 @@ npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
 
 # For single QPC: kv_offload=False, For dual QPC: kv_offload=True
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id,
-    config=config,
-    attn_implementation="eager",
-    kv_offload=True,
+    model_id, config=config, attn_implementation="eager", kv_offload=True
 )
 
 ### use skip_vision=True, if want to run only text, or false ###
