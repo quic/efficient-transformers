@@ -4,6 +4,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
+# This example shows how developers can register and train on a new dataset type (seq_completion) 
+# via the dataset registry for other tasks like sequence‑completion or next‑token prediction tasks.
+
 # Model configuration
 model:
   model_type: "hf"  # Hugging Face model
@@ -18,6 +22,10 @@ model:
     task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
     peft_type: "LORA"  # Options: LORA, IA3, etc.
 
+
+# Dataset config for the custom registered dataset type `seq_completion`.
+# The value of `dataset_type` must match the identifier used in the
+# `@registry.dataset(...)` decorator when defining the custom dataset class.
 dataset:
   dataset_type: "seq_completion"
   dataset_name: "Salesforce/wikitext"

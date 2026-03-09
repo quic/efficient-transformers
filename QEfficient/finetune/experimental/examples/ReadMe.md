@@ -26,25 +26,26 @@ registry using the `@registry.dataset(<name>)` decorator.
 The SeqCompletionDataset class in custom_dataset.py mirrors `SFTDataset` in structure.
 ---
 
-## 2. `config.yaml`
+## 2. `example_config.yaml`
+
+The main changes in the config are in the dataset config. 
+**dataset_type must exactly match the name passed to `@registry.dataset(...)` in your custom dataset file.**
 
 ```yaml
 dataset:
-  dataset_type: "my_custom_dataset"    # Must match @registry.dataset(<name>)
+  dataset_type: "seq_completion"       # Must match @registry.dataset(<name>)
   dataset_name: "Salesforce/wikitext"
-  config_name: "wikitext-103-raw-v1"
-  prompt_template: "{text}"        
+  config_name: "wikitext-103-raw-v1" 
+  prompt_template: "{text}"              
   train_split: "train"
-  test_split: "test"
+  test_split: "test"                    
   seed: 42
   dataset_num_samples: 100
 ```
 
-**dataset_type must exactly match the name passed to `@registry.dataset(...)` in your custom dataset file.**
-
 ---
 
-## 3. `finetune_custom.py`
+## 3. `example_finetunepy`
 
 ```python
 from QEfficient.finetune.experimental.examples.custom_dataset import CustomDataset  # noqa: F401
