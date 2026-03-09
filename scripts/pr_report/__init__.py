@@ -45,6 +45,5 @@ __all__ = [
     "ProfilerConfig",
     "ProfileSample",
     "MetricsCollector",
-    "QEffMemoryVisualizer",
-    "__version__",
+    "QEffMemoryVisualizer"
 ]
