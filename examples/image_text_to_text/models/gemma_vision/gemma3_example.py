@@ -25,8 +25,8 @@ config = AutoConfig.from_pretrained(model_id)
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
 
-# Path to Node Precision Info YAML file, please refer to the README.md file located at gemma_vision/README.md for more details.
-npi_file_path = "configs/gemma_updated_npi.yaml"
+# Path to Node Precision Info YAML file
+npi_file_path = "configs/fp32_nodes_gemma3_27b.yaml"
 npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
 
 # For single QPC: kv_offload=False, For dual QPC: kv_offload=True
