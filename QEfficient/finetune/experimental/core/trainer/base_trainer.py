@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
 from typing import Optional
 
 from peft import get_peft_model
@@ -62,7 +63,7 @@ class BaseTrainer(Trainer):
         if peft_config is not None and model is not None:
             model = get_peft_model(model, peft_config)
             model.print_trainable_parameters()
-
+            model.config.use_cache = False
         # Initialize the parent Trainer class
         super().__init__(
             model=model,
