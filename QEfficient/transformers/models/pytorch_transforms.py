@@ -402,24 +402,14 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3ForCausalLM,
     QEffQwen3Model,
 )
-from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-    QEffQwen3VLMoeForConditionalGeneration,
-    QEffQwen3VLMoeModel,
-    QEffQwen3VLMoeTextAttention,
-    QEffQwen3VLMoeTextDecoderLayer,
-    QEffQwen3VLMoeTextModel,
-    # QEffQwen3VLMoeTextSparseMoeBlock,
-    QEffQwen3VLMoeVisionAttention,
-    QEffQwen3VLMoeVisionModel,
-)
-from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
-    QEffQwen3VLForConditionalGeneration,
-    QEffQwen3VLModel,
-    QEffQwen3VLTextAttention,
-    QEffQwen3VLTextDecoderLayer,
-    QEffQwen3VLTextModel,
-    QEffQwen3VLVisionAttention,
-    QEffQwen3VLVisionModel,
+from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
+    QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+    QEffQwen3MoeAttention,
+    QEffQwen3MoeDecoderLayer,
+    QEffQwen3MoeForCausalLM,
+    QEffQwen3MoeModel,
+    QEffQwen3MoeRotaryEmbedding,
+    QEffQwen3MoeSparseMoeBlock,
 )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
@@ -660,19 +650,25 @@ class PrefillOnlyTransform(ModuleMappingTransform):
 
 class PrefillOnlyChunkedTransform(ModuleMappingTransform):
     _module_mapping = {
+        # GPT_OSS
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+        # Qwen3Moe
+        QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     }
 
 
 class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
     _module_mapping = {
+        # GPT_OSS
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+        # Qwen3Moe
+        QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
     }
 
 
