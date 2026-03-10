@@ -96,8 +96,6 @@ def generic_blocked_attention_interface(
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
             key, value = past_key_value.update(key, value, module.layer_idx, cache_kwargs)
 
-    print(blocking_config)
-
     if use_blocking:
         strategy = get_blocking_strategy(blocking_config)
         attn_output, attn_weights = strategy(
