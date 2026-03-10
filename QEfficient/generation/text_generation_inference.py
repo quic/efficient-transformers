@@ -956,7 +956,7 @@ class QEffTextGenerationBase:
                 else:
                     # If the generated sequence is valid and within generation len prepare for next decode
                     decode_inputs["input_ids"][decode_batch_id, -1] = next_token_id[decode_batch_id, -1]
-                    decode_inputs["position_ids"][decode_batch_id, -1] += 1
+                    decode_inputs["position_ids"][decode_batch_id][..., -1] += 1
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
                         next_token_id[decode_batch_id, -1]
                     )

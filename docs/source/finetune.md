@@ -11,7 +11,7 @@ For QEfficient Library : https://github.com/quic/efficient-transformers
 
 For torch_qaic, assuming QEfficient is already installed,
 ```bash
-pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
+pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-linux_x86_64.whl
 ```
 If qeff-env inside docker is used then torch_qaic and accelerate packages are already installed.
 
@@ -75,6 +75,8 @@ This enables scaling training across multiple nodes.
 
 Use servers with compatible/same network interface(eg:ethernet).
 
+And supported only for linux servers now. Use servers connected to same switch for benefits in time while scaling.
+
 ```
 PYTHONUNBUFFERED: make python prints unbuffered, especially useful to identify progress (or lack thereof) for distributed tasks.This is optional and not compulsory
 ```
@@ -102,13 +104,13 @@ Steps to run Multi Node Finetuning:
 
 Run the following docker setup commands on both machines (server and client).
 
-# Expose QAIC accelerator devices
+#### Expose QAIC accelerator devices
 
 ```
 devices=(/dev/accel/*)
 ```
 
-# Start Docker container
+#### Start Docker container
 
 ```
 sudo docker run -it \
@@ -127,10 +129,12 @@ In distributed ML setups, all nodes must resolve each other’s hostnames. If DN
 
 2. Set QAIC Device Visibility
 
-``` export QAIC_VISIBLE_DEVICES=$(seq -s, 0 63)
+``` 
+export QAIC_VISIBLE_DEVICES=$(seq -s, 0 63)
+
 ```
 
-This exposes devices 0–63 to the training process.
+For example this sample command exposes devices 0–63 to the training process.
 
 3. Activate the TORCH_QAIC Environment Inside the Container
 
@@ -138,7 +142,11 @@ This exposes devices 0–63 to the training process.
 source /opt/torch-qaic-env/bin/activate
 ```
 
-4. Verify that the Qefficient Library is installed
+4. Verify that the Qefficient Library is installed:
+
+```
+pip install -e .
+```
 
 
 5. Use below command on host server
