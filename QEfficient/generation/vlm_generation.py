@@ -146,7 +146,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
 
         # Vision-specific initialization
-        self.is_qwen_vl = (hasattr(qeff_model.model.config, "model_type")and qeff_model.model.config.model_type in {"qwen2_5_vl", "qwen3_vl_moe", "qwen3_vl"})
+        self.is_qwen_vl = hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in {
+            "qwen2_5_vl",
+            "qwen3_vl_moe",
+            "qwen3_vl",
+        }
         self.qeff_model = qeff_model
         self.processor = processor
         self.tokenizer = tokenizer
@@ -279,7 +283,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
         self.generation_len[decode_batch_id or slice(None)] = generation_len
         return next_token_id
-
 
     def _execute_chunked_prefill(
         self,
