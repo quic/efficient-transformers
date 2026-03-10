@@ -248,15 +248,15 @@ training:
   pp_degree: 2         # split model into 2 pipeline stages
 ```
 
-> **Note:** `pp_degree` must be ≤ the number of locally available devices. The total devices consumed per node is `pp_degree` (for PP-only) or `LOCAL_WORLD_SIZE × pp_degree` (for PP + DDP).
+> **Note:** `pp_degree` must be ≤ the number of locally available devices. The total devices consumed per node is `pp_degree` (for PP-only) or `LOCAL_WORLD_SIZE × pp_degree` (for PP + DDP). For example, add 'pp_degree: 2' as explained above in the existing yaml file: sft_single_device_gsm8k_config.yaml and use below commands. 
 
 ### Launch commands
 
 **PP only — single process, 2 stages (via YAML)**
 ```bash
-python -m QEfficient.cloud.finetune_experimental configs/sample_pp_config.yaml
+python -m QEfficient.cloud.finetune_experimental configs/sft_single_device_gsm8k_config.yaml
 ```
-where `sample_pp_config.yaml` contains `pp_degree: 2` under `training:`.
+where `sft_single_device_gsm8k_config.yaml` contains `pp_degree: 2` under `training:`.
 
 **PP only — single process, 2 stages (via CLI flags)**
 ```bash
