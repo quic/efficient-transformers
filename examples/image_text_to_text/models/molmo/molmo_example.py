@@ -19,7 +19,6 @@ config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
 # For faster execution user can run on 2 layers, This is only for testing purpose
 # config.num_hidden_layers = 2
 
-
 # load the model
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, kv_offload=True, trust_remote_code=True, config=config)
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)

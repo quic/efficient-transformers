@@ -122,6 +122,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     img_size: Optional[int] = None,
+    torch_dtype: Optional[int] = torch.float32,
 ):
     """
     Unified function to test PyTorch model, PyTorch KV model, ONNX model, and Cloud AI 100 model.
@@ -280,7 +281,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # )
 
     streamer = TextStreamer(processor.tokenizer)
-    LOAD_DTYPE = torch.float16
 
     # ========== Export and Compile Model ==========
     if is_intern_model or is_molmo_model:
@@ -288,14 +288,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name,
             kv_offload=kv_offload,
             config=config,
-            torch_dtype=LOAD_DTYPE,
+            torch_dtype=torch_dtype,
         )
     else:
         qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
             model_name,
             kv_offload=kv_offload,
             config=config,
-            torch_dtype=LOAD_DTYPE,
+            torch_dtype=torch_dtype,
         )
 
     qeff_model.export()
@@ -373,6 +373,50 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
         n_layer=model_config_dict[model_name]["num_layers"],
         batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
+    )
+
+
+### Custom dtype Test ###
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("torch_dtype", [torch.float16])
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_custom_dtype(model_name, kv_offload, torch_dtype):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    if model_name in [
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "allenai/Molmo-7B-D-0924",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    ]:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if (
+        model_name in ["OpenGVLab/InternVL2_5-1B", "OpenGVLab/InternVL3_5-1B", "Qwen/Qwen2.5-VL-3B-Instruct"]
+        and not kv_offload
+    ):
+        pytest.skip("These models require kv_offload=True for testing.")
+    # Get img_size for standard models, None for InternVL and Molmo
+    img_size = model_config_dict[model_name].get("img_size")
+
+    # TODO: Add custom dtype support in ORT and Pytorch_KV APIs
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=model_config_dict[model_name]["prompt_len"],
+        ctx_len=model_config_dict[model_name]["ctx_len"],
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=model_config_dict[model_name]["img_url"],
+        query=model_config_dict[model_name]["text_prompt"],
+        n_layer=model_config_dict[model_name]["num_layers"],
+        batch_size=model_config_dict[model_name]["batch_size"],
+        kv_offload=kv_offload,
+        torch_dtype=torch_dtype,
     )
 
 
