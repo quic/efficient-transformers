@@ -284,6 +284,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self.generation_len[decode_batch_id or slice(None)] = generation_len
         return next_token_id
 
+<<<<<<< HEAD
     def update_decode_inputs_qwen3_vl_moe(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
         Updates the decode input with the generated values.
@@ -304,6 +305,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
         self.generation_len[decode_batch_id or slice(None)] = generation_len
         return next_token_id
+=======
+>>>>>>> 9c81014 (Addressing Review Comments 2)
 
     def _execute_chunked_prefill(
         self,
@@ -715,10 +718,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                     self.update_decode_inputs_qwen_vl(
                         outputs, position_ids_decode, generation_len_final, decode_batch_id
                     )
+<<<<<<< HEAD
                 if self.is_qwen3_vl_moe:
                     self.update_decode_inputs_qwen3_vl_moe(
                         outputs, position_ids_decode, generation_len_final, decode_batch_id
                     )
+=======
+>>>>>>> 9c81014 (Addressing Review Comments 2)
                 else:
                     self.update_decode_input(outputs, position_ids_decode, generation_len_final, decode_batch_id)
             else:
