@@ -142,7 +142,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             gate = x @ W_g  # [T, I]
             up = x @ W_u  # [T, I]
             down = (up * self.experts[e].act_fn(gate)) @ W_d  # [T, H]
-            masked_down = torch.where(routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out))
+            masked_down = down * routing_weight
             expert_out += masked_down
         return expert_out.view(B, S, H), router_logits
 
