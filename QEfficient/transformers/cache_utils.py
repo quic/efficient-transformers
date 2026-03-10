@@ -480,7 +480,6 @@ class QEffDynamicCache(Cache):
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].update3D(key_states, value_states, cache_kwargs)
 
-   
 
 class QEffEncoderDecoderCache(EncoderDecoderCache):
     """
