@@ -4037,7 +4037,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         seq_len = constants.WAV2VEC2_MAX_SEQ_LEN
 
         example_inputs = {
-            "input_values": torch.zeros((bs, seq_len), dtype=torch.float32),
+            "input_values": torch.zeros((bs, seq_len), dtype=self.model.config.torch_dtype),
         }
 
         dynamic_axes = {"input_values": {0: "batch_size", 1: "seq_len"}}
@@ -4183,6 +4183,8 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         input_values = np.array(
             torch.nn.functional.pad(inputs["input_values"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
+        needed_dtype = self.model.config.torch_dtype
+        input_values = input_values.astype(DTYPE_TO_STRING_MAP[needed_dtype])
         inputs = dict(input_values=input_values)
         outputs = self.qpc_session.run(inputs)
 
