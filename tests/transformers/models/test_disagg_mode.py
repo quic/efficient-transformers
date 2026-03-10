@@ -10,7 +10,7 @@ import time
 import numpy as np
 import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, HybridCache
+from transformers import AutoModelForCausalLM, AutoTokenizer, HybridCache
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
