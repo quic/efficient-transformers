@@ -504,7 +504,7 @@ def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
-    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    Test function to validate the PyTorch model for HQKV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """

@@ -367,9 +367,9 @@ class QEFFBaseModel(ABC):
 
         qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
 
-        if getattr(self.model, "config", None):
+        if getattr(self.model, "config", None) or getattr(self.model.model, "config", None):
             blocking_config = build_transformer_blocking_config_for_transform(
-                self.model.config,
+                getattr(self.model, "config", None) if getattr(self.model, "config", None) else getattr(self.model.model, "config", None),
                 ctx_len=ctx_len,
                 seq_len=seq_len,
                 bs=bs,
