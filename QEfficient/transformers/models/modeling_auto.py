@@ -2699,7 +2699,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def prefill(
+    def __update_prefill_transform(
         self,
         enable: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
@@ -2997,7 +2997,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     raise NotImplementedError(
                         "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
                     )
-                self.prefill(enable=True, enable_chunking=enable_chunking)
+                self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
                 seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                     prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
@@ -3008,7 +3008,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     else seq_len
                 )
             else:
-                self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+                self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
                 self.hash_params.pop("prefill_only", None)
                 self.hash_params.pop("NUM_Q_BLOCKS", None)
                 self.hash_params.pop("NUM_FFN_BLOCKS", None)
