@@ -628,29 +628,32 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
 
         router_logits = self.gate(x)  # [T, E]
         prob = F.softmax(router_logits, dim=-1, dtype=hidden_states.dtype)
-        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)  # [T, k], [T, k]
+        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
         top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(hidden_states.dtype)
-
-        # gate_up_proj: [E, H, 2I], down_proj: [E, I, H]
-        W_up = self.experts.gate_up_proj
-        W_dn = self.experts.down_proj
-        E, H_w, twoI = W_up.shape
-        I2 = twoI // 2
-        routing_weights = torch.zeros_like(prob, dtype=hidden_states.dtype)  # [T, E]
+        routing_weights = torch.zeros((T, self.num_experts), dtype=x.dtype)
         routing_weights.scatter_(1, top_i, top_w)
-        expert_out = x.new_zeros((T, H))
-        for e in range(E):
-            rw = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
-            # Split fused [H, 2I] -> [H, I] + [H, I]
-            W_gate_e = W_up[e, :, :I2]
-            W_up_e = W_up[e, :, I2:]
-            W_dn_e = W_dn[e, :, :]
-            gate = x @ W_gate_e
-            up = x @ W_up_e
-            down = (up * act(gate)) @ W_dn_e
-            expert_out.add_(down * rw)
-        return expert_out.view(B, S, H), router_logits
+
+        expert_out = torch.zeros_like(x, dtype=x.dtype)
+
+        for e in range(self.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
+
+            W_gate_up_e = self.experts.gate_up_proj[e]  # [H, 2I]
+            W_dn_e = self.experts.down_proj[e]  # [I, H]
+            gate_up = x @ W_gate_up_e  # [T, 2I]
+
+            I2 = gate_up.shape[-1] // 2
+            gate = gate_up[:, :I2]  # [T, I]
+            up = gate_up[:, I2:]  # [T, I]
+            intermediate = up * act(gate)
+            down = intermediate @ W_dn_e
+            masked_down = torch.where(
+                routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out, dtype=down.dtype)
+            )  # TODO: verify and remove
+            expert_out += masked_down
+        expert_out = expert_out.to(x.dtype).view(B, S, H)
+        return expert_out, router_logits
 
 
 class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
