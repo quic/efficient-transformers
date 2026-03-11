@@ -77,3 +77,6 @@ class BaseTrainer(Trainer):
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
             **kwargs,
         )
+
+        # Disable DataParallel:  PP and DDP remain unaffected
+        self.args._n_gpu = 1
