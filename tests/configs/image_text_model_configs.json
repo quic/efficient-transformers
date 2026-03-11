@@ -463,5 +463,28 @@
       "full_batch_size": 2,
       "additional_params": {}
     }
+  ],
+  "blocking_models":[
+    {
+      "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
+      "model_type": "qwen2_5_vl",
+      "batch_size": 1,
+      "prompt_len": 128,
+      "ctx_len": 4096,
+      "img_size": 1540,
+      "img_url": "https://picsum.photos/id/237/536/354",
+      "text_prompt": "Can you describe the image in detail.",
+      "num_layers": 1,
+      "img_url_list":[
+            "https://picsum.photos/id/237/536/354",
+            "https://picsum.photos/id/237/536/354"
+        ],
+      "text_prompt_list": [
+            "Can you describe the image in detail?",
+            "What are the objects in the image?"
+        ],
+      "full_batch_size": 2,
+      "additional_params": {}
+    }
   ]
 }
