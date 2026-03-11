@@ -661,7 +661,7 @@ def eager_attention_forward_blocked(
         )
         combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
         combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
-        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=module.config.torch_dtype)
+        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
         curr_attn_weights = curr_attn_weights[..., :-1]
         out_block = torch.matmul(curr_attn_weights, value_states)
         outs.append(out_block)
@@ -724,7 +724,7 @@ def opt_eager_attention_forward_blocked(
         )
         combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
         combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
-        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=module.config.torch_dtype)
+        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
         curr_attn_weights = curr_attn_weights[..., :-1]
         out_block = torch.matmul(curr_attn_weights, v_block)
         outs.append(out_block)

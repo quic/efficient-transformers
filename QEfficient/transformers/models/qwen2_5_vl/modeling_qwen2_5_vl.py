@@ -147,7 +147,7 @@ class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
         v = v.transpose(0, 1)
         attn_weights = torch.matmul(q, k.transpose(1, 2)) / math.sqrt(self.head_dim)
         attn_weights = attn_weights + attention_mask
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=self.config.torch_dtype).to(q.dtype)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
         attn_output = torch.matmul(attn_weights, v)
         attn_output = attn_output.transpose(0, 1)
         attn_output = attn_output.reshape(seq_length, -1)
@@ -488,7 +488,7 @@ def eager_attention_forward_q_blocked(
                 attn_weights,
             )
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=module.config.torch_dtype).to(query.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
 
         # Compute output for this Q block
         output_block = torch.matmul(attn_weights, value_states)
@@ -549,7 +549,7 @@ def eager_attention_forward(
                 attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
             )
 
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=module.config.torch_dtype).to(query.dtype)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
         attn_output = attn_output.transpose(1, 2).contiguous()
 

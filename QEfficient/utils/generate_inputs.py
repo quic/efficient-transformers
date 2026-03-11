@@ -173,8 +173,8 @@ class InputHandler:
         if hasattr(self.config, "model_type") and self.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH:
             for i in range(self.n_layer):
                 cache_shape = self.global_shape if not self.is_chunked_attention[i] else self.sliding_shape
-                inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float16)
-                inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float16)
+                inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+                inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
         else:
             for i in range(self.n_layer):
                 if (
@@ -184,8 +184,8 @@ class InputHandler:
                     pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
                 else:
                     pad_shape = self.padding_shape
-                inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float16)
-                inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float16)
+                inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
+                inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
         if self.full_batch_size:
             inputs["batch_index"] = np.arange(self.full_batch_size).reshape(-1, 1)
         return inputs
@@ -339,17 +339,17 @@ class InputHandlerVLM:
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
                 inputs["past_key." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float16
+                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float32
                 )
                 inputs["past_value." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float16
+                    (self.batch_size, num_key_value_heads, image_tokens_len, head_dim), dtype=np.float32
                 )
             else:
                 inputs["past_key." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float16
+                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
                 )
                 inputs["past_value." + str(i)] = np.zeros(
-                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float16
+                    (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
                 )
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         return vision_inputs, lang_inputs
@@ -489,10 +489,10 @@ class InputHandlerInternVL(InputHandlerVLM):
 
         for i in range(num_hidden_layers):
             inputs["past_key." + str(i)] = np.zeros(
-                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float16
+                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
             )
             inputs["past_value." + str(i)] = np.zeros(
-                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float16
+                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
             )
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         return vision_inputs, lang_inputs

@@ -149,7 +149,7 @@ class QEffGrok1MoeBlock(nn.Module):
         hidden_states = hidden_states.view(-1, hidden_dim)
         router_logits = self.gate(hidden_states)
 
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
         # Creating experts mask and routing weights masked
         awesome_experts_mask_1 = (

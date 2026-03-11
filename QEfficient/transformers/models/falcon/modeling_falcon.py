@@ -156,7 +156,9 @@ class QEffFalconAttention(FalconAttention):
         attention_scores = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype), attention_scores
         )
-        attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=hidden_states.dtype)
+        attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=torch.float32).to(
+            query_layer.dtype
+        )
         # It is unclear why neither dropout nor head_mask is applied here (while it is with alibi).
         attn_output = attention_scores @ value_layer
 
