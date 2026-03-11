@@ -12,7 +12,7 @@ from QEfficient.finetune.experimental.core.config_manager import PeftConfig
 
 @registry.trainer_module(name="sft", args_cls=SFTConfig, required_kwargs={"peft_config": PeftConfig})
 class SFTTrainerModule(SFTTrainer):
-    """ SFT Trainer that disbales DataParallel (single-device, PP, or DDP only)."""
+    """SFT Trainer that disbales DataParallel (single-device, PP, or DDP only)."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
