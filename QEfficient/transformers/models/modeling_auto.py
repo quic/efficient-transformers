@@ -1036,7 +1036,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
             BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
-    def prefill(
+    def __update_prefill_transform(
         self,
         enable: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
@@ -1096,10 +1096,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                     "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
                 )
             self.hash_params["prefill_only"] = True
-            self.prefill(enable=True, enable_chunking=enable_chunking)
+            self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
         else:
             self.hash_params["prefill_only"] = False
-            self.prefill(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+            self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
         return self._export(
             inputs,

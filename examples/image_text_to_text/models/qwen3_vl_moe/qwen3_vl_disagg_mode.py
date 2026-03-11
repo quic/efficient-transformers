@@ -23,7 +23,7 @@ config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
 # config.vision_config.depth = 9
-# config.text_config.num_hidden_layers = 1
+# config.text_config.num_hidden_layers = 6
 # config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -47,8 +47,10 @@ if not skip_vision:
         num_cores=16,
         num_devices=1,
         mos=1,
+        mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=skip_vision,
+        split_retained_state_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
     )
@@ -57,6 +59,8 @@ prefill_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
+    height=354,
+    width=536,
     num_cores=16,
     num_devices=1,
     mxfp6_matmul=True,
@@ -76,6 +80,8 @@ decode_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
+    height=354,
+    width=536,
     num_cores=16,
     num_devices=1,
     mxfp6_matmul=True,
@@ -111,10 +117,11 @@ else:
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": "Descibe all the colors seen in the image."},
+                {"type": "text", "text": "Describe all the colors seen in the image."},
             ],
         },
     ]
+    vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
 
 
 messages = [messages] * BS
@@ -163,27 +170,11 @@ vision_inputs = {
 vision_inputs_fp16 = {"pixel_values", "image_masks"}
 vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
 
-if not skip_vision:
-    vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
-
 vision_start = perf_counter()
 vision_outputs = {}
 if vision_inputs:
     vision_outputs = vision_session.run(vision_inputs)
 vision_end = perf_counter()
-
-if not skip_vision:
-    vision_session.deactivate()
-
-lang_prefill_session.activate()
-# Skip inputs/outputs
-lang_prefill_session.skip_buffers(
-    [
-        x
-        for x in lang_prefill_session.input_names + lang_prefill_session.output_names
-        if x.startswith("past_") or x.endswith("_RetainedState")
-    ]
-)
 
 lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 if "position_ids" in inputs:
@@ -196,31 +187,25 @@ else:
 
 lang_inputs["image_idx"] = np.array([[0]])
 
+if not skip_vision:
+    lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
+    lang_inputs["deepstack_features"] = vision_outputs["deepstack_features"]
 
 # RUN prefill
 lang_start = perf_counter()
+lang_prefill_session.set_buffers(vision_outputs)
 all_outputs = []
 chunk_inputs = lang_inputs.copy()
 for i in range(num_chunks):
     chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     outputs = lang_prefill_session.run(chunk_inputs)
+    for i in range(config.text_config.num_hidden_layers):
+        chunk_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
+        chunk_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
     chunk_inputs["image_idx"] = outputs["image_idx_output"]
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
 print(f"Prefill time : {prefill_time:.2f} secs")
-
-lang_prefill_session.deactivate()
-lang_decode_session.activate()
-# Skip inputs/outputs
-lang_decode_session.skip_buffers(
-    [
-        x
-        for x in lang_decode_session.input_names + lang_decode_session.output_names
-        if x.startswith("past_") or x.endswith("_RetainedState")
-    ]
-)
-
-lang_decode_session.set_buffers(outputs)
 
 all_outputs.append(np.argmax(outputs["logits"]))
 decode_inputs = {
@@ -228,22 +213,41 @@ decode_inputs = {
     "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
 }
 
+for i in range(config.text_config.num_hidden_layers):
+    decode_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
+    decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
+
+decode_inputs["image_idx"] = outputs["image_idx_output"]
+decode_inputs["vision_embeds"] = outputs["vision_embeds_RetainedState"]
+decode_inputs["deepstack_features"] = outputs["deepstack_features_RetainedState"]
+
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
 
 all_outputs.append(np.argmax(decode_out["logits"]))
-pos_id = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
+pos_id = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
 loop_decode_inputs = {
     "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
     "position_ids": pos_id,
 }
+
+for i in range(config.text_config.num_hidden_layers):
+    loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
+    loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
+loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
+loop_decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
+loop_decode_inputs["deepstack_features"] = decode_out["deepstack_features_RetainedState"]
+
 
 st = perf_counter()
 for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
     all_outputs.append(np.argmax(decode_out["logits"]))
     pos_id += 1
+    for j in range(config.text_config.num_hidden_layers):
+        loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
+        loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
     loop_decode_inputs.update(
         {
             "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
@@ -251,6 +255,5 @@ for i in range(generation_len - 2):
         }
     )
 ft = perf_counter()
-
 print(f"decode tok/sec={(generation_len - 2) / (ft - st)}")
 print(f"\noutput\n{tokenizer.decode(all_outputs)}")
