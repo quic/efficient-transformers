@@ -33,6 +33,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     pooling: Optional[str] = None,
+    dtype: Optional[torch.dtype] = torch.float32,
 ):
     # Prepare input
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -41,6 +42,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     # Original PyTorch model
     pt_model = AutoModel.from_pretrained(
         model_name,
+        torch_dtype=dtype,
         num_hidden_layers=n_layer,
         attn_implementation="eager",
         trust_remote_code=True,
@@ -62,7 +64,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     qeff_pt_outputs = qeff_model.generate(inputs=inputs, runtime_ai100=False)
     qeff_pt_embeddings = qeff_pt_outputs if pooling else qeff_pt_outputs[0]
 
-    mad = torch.mean(torch.abs(pt_embeddings - qeff_pt_embeddings))
+    mad = torch.max(torch.abs(pt_embeddings - qeff_pt_embeddings))
     print("Mad for PyTorch and PyTorch transformed qeff_model is ", mad)
     assert mad <= 0, f"MAD is too high for onnx and Pytorch: {mad}"
 
@@ -80,7 +82,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     onnx_outputs = ort_session.run(None, onnx_inputs)
 
     # Compare Transformed PyTorch and ONNX outputs
-    mad = torch.mean(torch.abs(pt_embeddings - torch.tensor(onnx_outputs[0])))
+    mad = torch.max(torch.abs(pt_embeddings - torch.tensor(onnx_outputs[0])))
     print("Mad for onnx and PyTorch is ", mad)
     assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
 
@@ -119,6 +121,16 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
     """
     check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=32, n_layer=1, pooling=model["pooling"])
+
+
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model", embed_test_models)
+def test_embed_model_pytorch_vs_onnx_vs_ai100_fp16(model):
+    """
+    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output for FP16 dtype.
+    """
+    check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=32, n_layer=1, dtype=torch.float16)
 
 
 @pytest.mark.on_qaic

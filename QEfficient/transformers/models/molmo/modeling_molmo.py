@@ -56,7 +56,7 @@ def eager_attention_forward(
     if attention_mask is not None:
         attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=k.dtype), attn_weights)
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=k.dtype).to(q.dtype)
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
     attn_output = torch.matmul(attn_weights, v)
 
     return attn_output, attn_weights
@@ -206,7 +206,7 @@ class QEffMultiHeadDotProductAttention(nn.Module):
 
         if self.config.attention_type == "direct":
             attn_weights = torch.einsum("...qhd,...khd->...hqk", xq / math.sqrt(xq.size(-1)), xk)
-            attn_weights = F.softmax(attn_weights, dim=-1, dtype=self.config.torch_dtype).to(xq.dtype)
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(xq.dtype)
             if self.attention_dropout is not None:
                 attn_weights = self.attention_dropout(attn_weights)
             attn_output = torch.einsum("...hqk,...khd->...qhd", attn_weights.to(xv.dtype), xv)

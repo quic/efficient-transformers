@@ -82,6 +82,12 @@ DTYPE_TO_STRING_MAP = {
     torch.float32: "float16",  # Since compiler doesn't support fp32
 }
 
+TORCH_TO_NUMPY_DTYPE_MAP = {
+    torch.float16: np.float16,
+    torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
+    torch.float32: np.float32,
+}
+
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -445,12 +451,13 @@ class QEFFAutoModel(QEFFTransformersBase):
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
+        needed_dtype = self.model.config.torch_dtype
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -464,6 +471,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
         write_io: bool = False,
+        dtype: Optional[torch.dtype] = torch.float32,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output by executing the compiled QPC on Cloud AI 100 hardware or using PyTorch runtime.
@@ -503,6 +511,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         self,
         inputs: torch.Tensor,
         device_ids: List[int] = [0],
+        dtype: Optional[torch.dtype] = torch.float32,
     ) -> np.ndarray:
         """
         Generate features for a batch of inputs using the Cloud AI 100 hardware runtime.
@@ -555,14 +564,16 @@ class QEFFAutoModel(QEFFTransformersBase):
         # TODO: Remove try and catch after compiler fix
         try:
             outputs = {
-                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(np.float32),
+                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(
+                    TORCH_TO_NUMPY_DTYPE_MAP[dtype]
+                ),
             }
             self.qpc_session.set_buffers(outputs)
             outputs = self.qpc_session.run(inputs)
         except Exception:
             outputs = {
                 "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
-                    np.float32
+                    TORCH_TO_NUMPY_DTYPE_MAP[dtype]
                 ),
             }
             self.qpc_session.set_buffers(outputs)
@@ -784,13 +795,13 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         specializations = [
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
-
+        needed_dtype = self.model.config.torch_dtype
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -3409,6 +3420,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
+        needed_dtype = self.model.config.torch_dtype
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else DTYPE_TO_STRING_MAP[needed_dtype]
 
         for suffix in ["", "_RetainedState"]:
             for i in range(self.num_layers):
@@ -3420,7 +3433,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -3763,7 +3776,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         output_names = self.model.get_output_names()
 
-        kv_cache_dtype = "float16"
+        needed_dtype = self.model.config.torch_dtype
+        kv_cache_dtype = DTYPE_TO_STRING_MAP[needed_dtype]
         custom_io = {}
 
         custom_io["input_features"] = kv_cache_dtype
@@ -3784,7 +3798,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -3844,7 +3858,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
+        inputs["input_features"] = (
+            inputs["input_features"].numpy().astype(TORCH_TO_NUMPY_DTYPE_MAP[self.model.config.torch_dtype])
+        )
 
         # add start token id and initial position ids to inputs
         seq_len = 1
@@ -3881,7 +3897,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if streamer:
             streamer.put(next_token)
 
-        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float16)
+        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(
+            TORCH_TO_NUMPY_DTYPE_MAP[self.model.config.torch_dtype]
+        )
 
         loop_start = perf_counter()
         for num_tokens in range(generation_len):
