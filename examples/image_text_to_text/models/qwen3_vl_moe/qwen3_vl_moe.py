@@ -18,7 +18,7 @@ config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
 # config.vision_config.depth = 9
-# config.text_config.num_hidden_layers = 1
+# config.text_config.num_hidden_layers = 6
 # config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -102,7 +102,7 @@ else:
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": "Descibe all the colors seen in the image."},
+                {"type": "text", "text": "Describe all the colors seen in the image."},
             ],
         },
     ]
