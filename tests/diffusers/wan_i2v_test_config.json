@@ -57,14 +57,14 @@
             "specializations": [
                 {
                     "batch_size": "1",
-                    "num_channels": "20",
+                    "num_channels": "36",
                     "steps": "1",
                     "sequence_length": "512",
                     "model_type": 1
                 },
                 {
                     "batch_size": "1",
-                    "num_channels": "20",
+                    "num_channels": "36",
                     "steps": "1",
                     "sequence_length": "512",
                     "model_type": 2
