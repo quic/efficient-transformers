@@ -51,7 +51,6 @@ aspect_ratio = image.height / image.width
 mod_value = pipeline.model.vae.config.scale_factor_spatial * pipeline.model.transformer.config.patch_size[1]
 height = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
 width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
-
 image = image.resize((width, height))
 prompt = (
     "An astronaut hatching from an egg, on the surface of the moon, the darkness and depth of space realised in "

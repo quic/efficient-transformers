@@ -59,6 +59,7 @@ export_to_video(frames, "output.mp4", fps=16)
 ### 2. Run Basic Example
 
 ```bash
+cd examples/diffusers/wan_i2v
 python wan_lightning_i2v.py
 ```
 
@@ -122,6 +123,11 @@ pipeline.transformer.model.transformer_high.load_lora_adapter(
     load_wan_lora(high_noise_lora_path), adapter_name="high_noise"
 )
 pipeline.transformer.model.transformer_high.set_adapters(["high_noise"], weights=[1.0])
+
+pipeline.transformer.model.transformer_low.load_lora_adapter(
+    load_wan_lora(low_noise_lora_path), adapter_name="low_noise"
+)
+pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 ```
 
 ## Blocking Guide
@@ -148,7 +154,7 @@ ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=21 num_q_blocks=2 p
 ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=48 num_q_blocks=5 python wan_lightning_i2v.py
 ```
 
-### Key Parameters
+## Key Parameters
 
 #### Generation Parameters
 - **`image`** (PIL.Image or str): Input image or path/URL

@@ -109,7 +109,7 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # - When you need to skip video generation and only prepare the model
 #
 # NOTE-1: If compile_config is not specified, the default configuration from
-#       QEfficient/diffusers/pipelines/wan/wan_i2v_config.json will be used
+#       QEfficient/diffusers/pipelines/configs/wan_i2v_config.json will be used
 #
 # NOTE-2: use_onnx_subfunctions=True enables modular ONNX export optimizations
 #       This feature improves export performance by breaking down the model into smaller,
@@ -135,9 +135,11 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 #
 # "execute":
 #          {
-#           "device_ids": null,
+#           "device_ids": [0, 1, 2, 3],
 #           "qpc_path" : "<QPC_PATH>"
 #          }
+#
+# Note: At runtime deivce will be autopicked, if user want to run on specific device ids, update device_ids.
 
 # ============================================================================
 # IMAGE INPUT CONFIGURATION
@@ -158,11 +160,9 @@ image = load_image(image_url)
 # Calculate optimal dimensions based on image aspect ratio and target resolution
 
 # Choose target resolution preset
-max_area = (
-    190 * 320
-)  # 180p - ATTENTION_BLOCKING_MODE=kv head_block_size=16 num_kv_blocks=3 python3 examples/diffusers/wan_i2v/wan_i2v_custom.py
-# max_area = 480 * 832    # 480p - ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=21 num_q_blocks=2 python3 examples/diffusers/wan_i2v/wan_i2v_custom.py
-# max_area = 720 * 1280   # 720p - ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=48 num_q_blocks=5 python3 examples/diffusers/wan_i2v/wan_i2v_custom.py
+max_area = 190 * 320  # 180p - ATTENTION_BLOCKING_MODE=kv head_block_size=16 num_kv_blocks=3 python3 wan_i2v_custom.py
+# max_area = 480 * 832    # 480p - ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=21 num_q_blocks=2 python3 wan_i2v_custom.py
+# max_area = 720 * 1280   # 720p - ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=48 num_q_blocks=5 python3 wan_i2v_custom.py
 
 # Calculate dimensions preserving aspect ratio
 aspect_ratio = image.height / image.width
@@ -179,10 +179,6 @@ print(f"Image resized to: {width}x{height} (aspect ratio: {aspect_ratio:.2f})")
 # IMAGE-TO-VIDEO GENERATION WITH CUSTOM RUNTIME CONFIGURATION
 # ============================================================================
 # Generate a video using the configured pipeline and input image.
-#
-# Note: Use of custom_config_path provides flexibility to set device_ids for each
-#       module, so you can skip the separate pipeline.compile() step.
-
 # Custom prompt for image-to-video generation
 prompt = (
     "An astronaut hatching from an egg, on the surface of the moon, the darkness and depth of space realised in "
@@ -199,7 +195,7 @@ output = pipeline(
     guidance_scale=1.0,  # Guidance scale for Lightning model
     num_inference_steps=4,  # Lightning model uses fewer steps
     generator=torch.manual_seed(42),  # For reproducible results
-    custom_config_path="wan_i2v_config.json",  # I2V-specific config : examples/diffusers/wan_i2v/wan_i2v_config.json
+    custom_config_path="wan_i2v_config.json",  # I2V config relative path: examples/diffusers/wan_i2v/wan_i2v_config.json
     use_onnx_subfunctions=True,  # Enable ONNX optimizations
     parallel_compile=True,  # Set to False for sequential compilation
 )

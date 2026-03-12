@@ -247,6 +247,8 @@ class QEffVAE(QEFFBaseModel):
         """
         super().__init__(model)
         self.model = model
+        self.type = type
+        # TODO: add vae type in hash file
 
     def get_onnx_params(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
         """

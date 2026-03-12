@@ -58,7 +58,6 @@ class QEffWanImageToVideoPipeline:
     - UMT5 text encoding for rich semantic understanding
     - Unified transformer architecture: Combines multiple transformer stages into a single optimized model
     - VAE encoding/decoding for image-to-latent and latent-to-video conversion
-    - Performance monitoring and optimization
 
     Attributes:
         text_encoder: UMT5 text encoder for semantic text understanding (TODO: QEfficient optimization)
@@ -72,19 +71,26 @@ class QEffWanImageToVideoPipeline:
         scheduler: Diffusion scheduler for timestep management
 
     Example:
-        >>> from QEfficient.diffusers.pipelines.wan import QEffWanImageToVideoPipeline
-        >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("path/to/wan/i2v/model")
-        >>> from PIL import Image
-        >>> image = Image.open("input_image.jpg")
-        >>> videos = pipeline(
-        ...     image=image,
-        ...     prompt="A cat playing in a garden",
-        ...     height=480,
-        ...     width=832,
-        ...     num_frames=81,
-        ...     num_inference_steps=4
-        ... )
-        >>> videos.images[0].save("generated_video.mp4")
+            >>> from QEfficient.diffusers.pipelines.wan import QEffWanImageToVideoPipeline
+            >>> from PIL import Image
+            >>>
+            >>> # Load pipeline and input image
+            >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
+            >>> image = Image.open("input_frame.jpg")
+            >>>
+            >>> # Generate video with motion
+            >>> result = pipeline(
+            ...     image=image,
+            ...     prompt="A person walking through a sunny garden with flowing motion",
+            ...     height=544,
+            ...     width=720,
+            ...     num_frames=81,
+            ...     num_inference_steps=4,
+            ...     guidance_scale=1.0
+            ... )
+            >>> # Save generated video
+            >>> frames = result.images[0]
+            >>> export_to_video(frames, "generated_video.mp4", fps=16)
     """
 
     _hf_auto_class = WanImageToVideoPipeline
@@ -109,10 +115,11 @@ class QEffWanImageToVideoPipeline:
 
         # Text encoder (TODO: Replace with QEfficient UMT5 optimization)
         self.text_encoder = model.text_encoder
-        self.vae_encoder = QEffVAE(model.vae, "encoder")
         # Create unified transformer wrapper combining dual-stage models(high, low noise DiTs)
         self.unified_wrapper = QEffWanUnifiedWrapper(model.transformer, model.transformer_2)
         self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper)
+        # VAE encoder for image-to-latent conversion
+        self.vae_encoder = QEffVAE(model.vae, "encoder")
         # VAE decoder for latent-to-video conversion
         self.vae_decoder = QEffVAE(model.vae, "decoder")
 
@@ -128,7 +135,7 @@ class QEffWanImageToVideoPipeline:
         self.text_encoder.tokenizer = model.tokenizer
         self.scheduler = model.scheduler
 
-        self.vae_encoder.get_onnx_params = self.vae_decoder.get_img_encoder_onnx_params
+        self.vae_encoder.get_onnx_params = self.vae_encoder.get_img_encoder_onnx_params
         self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
 
         # Extract patch dimensions from transformer configuration
@@ -372,7 +379,6 @@ class QEffWanImageToVideoPipeline:
                     "latent_height": latent_height,  # Latent space height
                     "latent_width": latent_width,  # Latent space width
                     "latent_frames": latent_frames,  # Latent frames
-                    "num_channels": constants.WAN_DIT_I2V_IN_CHANNELS,
                 },
                 # low noise
                 {
@@ -380,7 +386,6 @@ class QEffWanImageToVideoPipeline:
                     "latent_height": latent_height,  # Latent space height
                     "latent_width": latent_width,  # Latent space width
                     "latent_frames": latent_frames,  # Latent frames
-                    "num_channels": constants.WAN_DIT_I2V_IN_CHANNELS,
                 },
             ],
             "vae_decoder": {
@@ -550,11 +555,11 @@ class QEffWanImageToVideoPipeline:
         image: PipelineImageInput,
         prompt: Union[str, List[str]] = None,
         negative_prompt: Union[str, List[str]] = None,
-        height: int = 480,
-        width: int = 832,
+        height: int = 544,
+        width: int = 720,
         num_frames: int = 81,
         num_inference_steps: int = 50,
-        guidance_scale: float = 3.0,
+        guidance_scale: float = 1.0,
         guidance_scale_2: Optional[float] = None,
         num_videos_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
@@ -637,31 +642,23 @@ class QEffWanImageToVideoPipeline:
             >>> from PIL import Image
             >>>
             >>> # Load pipeline and input image
-            >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("path/to/wan/i2v/model")
+            >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
             >>> image = Image.open("input_frame.jpg")
             >>>
             >>> # Generate video with motion
             >>> result = pipeline(
             ...     image=image,
             ...     prompt="A person walking through a sunny garden with flowing motion",
-            ...     height=480,
-            ...     width=832,
+            ...     height=544,
+            ...     width=720,
             ...     num_frames=81,
             ...     num_inference_steps=4,
-            ...     guidance_scale=3.0
+            ...     guidance_scale=1.0
             ... )
             >>>
             >>> # Save generated video
-            >>> result.images[0].save("generated_video.mp4")
-            >>>
-            >>> # Generate video with temporal boundaries
-            >>> last_frame = Image.open("end_frame.jpg")
-            >>> result = pipeline(
-            ...     image=image,
-            ...     last_image=last_frame,
-            ...     prompt="Smooth transition between two scenes",
-            ...     num_frames=81
-            ... )
+            >>> frames = result.images[0]
+            >>> export_to_video(frames, "generated_video.mp4", fps=16)
         """
         device = self.model._execution_device
 
@@ -920,7 +917,7 @@ class QEffWanImageToVideoPipeline:
                     noise_pred = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
 
                 # Run unconditional prediction for classifier-free guidance
-                if self.do_classifier_free_guidance:  # Note: CFG is False for WAN Lightning
+                if self.do_classifier_free_guidance:  # Note: CFG will increase DIT num steps.
                     with current_model.cache_context("uncond"):
                         # QAIC inference for unconditional prediction
                         start_transformer_step_time = time.perf_counter()
@@ -945,7 +942,7 @@ class QEffWanImageToVideoPipeline:
                 # Update latents using scheduler (x_t -> x_t-1)
                 latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
-                # Execute callback if provided
+                # Execute callback if provided #TODO: verify and optimize to run DIT and vae in parallel
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
@@ -964,7 +961,7 @@ class QEffWanImageToVideoPipeline:
         if self.model.config.expand_timesteps:
             latents = (1 - first_frame_mask) * condition + first_frame_mask * latents
 
-        # Step 9: Decode latents to video
+        # Step 9: Decode latents to video #TODO: if callbacks not needed if else here then remove
         if not output_type == "latent":
             # Prepare latents for VAE decoding
             latents = latents.to(self.vae_decoder.model.dtype)
