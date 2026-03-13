@@ -111,10 +111,10 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=module.config.torch_dtype).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -139,7 +139,9 @@ def eager_attention_forward_blockedKV(
 
     # Initialize Running Maximum
     batch_size, num_heads, seq_len, _ = query.shape
-    current_max = torch.full((batch_size, num_heads, seq_len), float(MIN_MASKED_ATTENTION_VALUE))
+    current_max = torch.full(
+        (batch_size, num_heads, seq_len), MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype
+    )
 
     # Initialize Denominator
     current_denominator = torch.zeros(batch_size, num_heads, seq_len)
@@ -147,7 +149,7 @@ def eager_attention_forward_blockedKV(
     past_seen_tokens = cache_kwargs.get("past_seen_tokens")
     position_ids = cache_kwargs.get("position_ids")
     block_size = -(-past_seen_tokens // num_kv_blocks)
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype)
 
     for j in range(num_kv_blocks):
         start_index = j * block_size
