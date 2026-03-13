@@ -1511,7 +1511,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
-                convert_to_fp16=True,
+                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -3434,7 +3434,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kw_spec := compiler_options.pop("specializations", None):
             specializations = kw_spec
         # --- Compilation ---
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
         needed_dtype = self.model.config.torch_dtype
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
@@ -4142,12 +4141,13 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
+        needed_dtype = self.model.config.torch_dtype
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
