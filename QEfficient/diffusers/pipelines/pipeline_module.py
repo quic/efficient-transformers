@@ -247,9 +247,8 @@ class QEffVAE(QEFFBaseModel):
         """
         super().__init__(model)
         self.model = model
-
-        # To have different hashing for encoder/decoder
-        self.model.config["type"] = type
+        self.type = type
+        # TODO: add vae type in hash file
 
     def get_onnx_params(self, latent_height: int = 32, latent_width: int = 32) -> Tuple[Dict, Dict, List[str]]:
         """
@@ -278,6 +277,44 @@ class QEffVAE(QEFFBaseModel):
         # All dimensions except channels can be dynamic
         dynamic_axes = {
             "latent_sample": {0: "batch_size", 1: "channels", 2: "latent_height", 3: "latent_width"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def get_img_encoder_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
+        """
+        Generate ONNX export configuration for the VAE Encoder.
+
+        Returns:
+            Tuple containing:
+                - example_inputs (Dict): Sample inputs for ONNX export
+                - dynamic_axes (Dict): Specification of dynamic dimensions
+                - output_names (List[str]): Names of model outputs
+        """
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        num_frames = constants.WAN_ONNX_EXPORT_FRAMES
+        height = constants.WAN_I2V_HEIGHT_480P
+        width = constants.WAN_I2V_WIDTH_480P
+        # TODO update for less resolution further
+        example_inputs = {
+            "image": torch.randn(
+                bs,
+                3,  # channels
+                num_frames,
+                height,
+                width,
+            ),
+        }
+        output_names = ["latents"]
+        # All dimensions except channels can be dynamic
+        dynamic_axes = {
+            "image": {
+                0: "batch_size",
+                # 1: "num_channels",
+                2: "num_frames",
+                3: "height",
+                4: "width",
+            },
         }
 
         return example_inputs, dynamic_axes, output_names
