@@ -10,6 +10,8 @@ from functools import partial
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
+import transformers
+from packaging import version
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -194,27 +196,29 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeRotaryEmbedding,
     Qwen3MoeSparseMoeBlock,
 )
-from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-    Qwen3VLForConditionalGeneration,
-    Qwen3VLModel,
-    Qwen3VLTextAttention,
-    Qwen3VLTextDecoderLayer,
-    Qwen3VLTextModel,
-    Qwen3VLTextRMSNorm,
-    Qwen3VLVisionAttention,
-    Qwen3VLVisionModel,
-)
-from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-    Qwen3VLMoeForConditionalGeneration,
-    Qwen3VLMoeModel,
-    Qwen3VLMoeTextAttention,
-    Qwen3VLMoeTextDecoderLayer,
-    Qwen3VLMoeTextModel,
-    Qwen3VLMoeTextRMSNorm,
-    Qwen3VLMoeTextSparseMoeBlock,
-    Qwen3VLMoeVisionAttention,
-    Qwen3VLMoeVisionModel,
-)
+
+if version.parse(transformers.__version__) >= version.parse("4.57.0"):
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+        Qwen3VLForConditionalGeneration,
+        Qwen3VLModel,
+        Qwen3VLTextAttention,
+        Qwen3VLTextDecoderLayer,
+        Qwen3VLTextModel,
+        Qwen3VLTextRMSNorm,
+        Qwen3VLVisionAttention,
+        Qwen3VLVisionModel,
+    )
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        Qwen3VLMoeForConditionalGeneration,
+        Qwen3VLMoeModel,
+        Qwen3VLMoeTextAttention,
+        Qwen3VLMoeTextDecoderLayer,
+        Qwen3VLMoeTextModel,
+        Qwen3VLMoeTextRMSNorm,
+        Qwen3VLMoeTextSparseMoeBlock,
+        Qwen3VLMoeVisionAttention,
+        Qwen3VLMoeVisionModel,
+    )
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -454,26 +458,28 @@ from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeRotaryEmbedding,
     QEffQwen3MoeSparseMoeBlock,
 )
-from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
-    QEffQwen3VLForConditionalGeneration,
-    QEffQwen3VLModel,
-    QEffQwen3VLTextAttention,
-    QEffQwen3VLTextDecoderLayer,
-    QEffQwen3VLTextModel,
-    QEffQwen3VLVisionAttention,
-    QEffQwen3VLVisionModel,
-)
-from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-    QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
-    QEffQwen3VLMoeForConditionalGeneration,
-    QEffQwen3VLMoeModel,
-    QEffQwen3VLMoeTextAttention,
-    QEffQwen3VLMoeTextDecoderLayer,
-    QEffQwen3VLMoeTextModel,
-    QEffQwen3VLMoeTextSparseMoeBlock,
-    QEffQwen3VLMoeVisionAttention,
-    QEffQwen3VLMoeVisionModel,
-)
+
+if version.parse(transformers.__version__) >= version.parse("4.57.0"):
+    from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
+        QEffQwen3VLForConditionalGeneration,
+        QEffQwen3VLModel,
+        QEffQwen3VLTextAttention,
+        QEffQwen3VLTextDecoderLayer,
+        QEffQwen3VLTextModel,
+        QEffQwen3VLVisionAttention,
+        QEffQwen3VLVisionModel,
+    )
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3VLMoeForConditionalGeneration,
+        QEffQwen3VLMoeModel,
+        QEffQwen3VLMoeTextAttention,
+        QEffQwen3VLMoeTextDecoderLayer,
+        QEffQwen3VLMoeTextModel,
+        QEffQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3VLMoeVisionAttention,
+        QEffQwen3VLMoeVisionModel,
+    )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
@@ -501,217 +507,226 @@ SPD_TARGET = "target"
 
 
 class CustomOpsTransform(ModuleMappingTransform):
-    _module_mapping = {
-        GemmaRMSNorm: GemmaCustomRMSNormAIC,
-        Gemma2RMSNorm: GemmaCustomRMSNormAIC,
-        GptOssRMSNorm: CustomRMSNormAIC,
-        LlamaRMSNorm: CustomRMSNormAIC,
-        Llama4TextRMSNorm: CustomRMSNormAIC,
-        MistralRMSNorm: CustomRMSNormAIC,
-        Mistral3RMSNorm: CustomRMSNormAIC,
-        MixtralRMSNorm: CustomRMSNormAIC,
-        Phi3RMSNorm: CustomRMSNormAIC,
-        Qwen2RMSNorm: CustomRMSNormAIC,
-        Qwen3RMSNorm: CustomRMSNormAIC,
-        Qwen2_5RMSNorm: CustomRMSNormAIC,
-        MllamaTextRMSNorm: CustomRMSNormAIC,
-        GraniteRMSNorm: CustomRMSNormAIC,
-        PixtralRMSNorm: CustomRMSNormAIC,
-        GraniteMoeRMSNorm: CustomRMSNormAIC,
-        Qwen3MoeRMSNorm: CustomRMSNormAIC,
-        Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
-        Olmo2RMSNorm: CustomRMSNormAIC,
-        Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
-        Qwen3VLTextRMSNorm: CustomRMSNormAIC,
-    }
+    if version.parse(transformers.__version__) >= version.parse("4.57.0"):
+        _module_mapping = {
+            Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
+            Qwen3VLTextRMSNorm: CustomRMSNormAIC,
+        }
+    else:
+        _module_mapping = {
+            GemmaRMSNorm: GemmaCustomRMSNormAIC,
+            Gemma2RMSNorm: GemmaCustomRMSNormAIC,
+            GptOssRMSNorm: CustomRMSNormAIC,
+            LlamaRMSNorm: CustomRMSNormAIC,
+            Llama4TextRMSNorm: CustomRMSNormAIC,
+            MistralRMSNorm: CustomRMSNormAIC,
+            Mistral3RMSNorm: CustomRMSNormAIC,
+            MixtralRMSNorm: CustomRMSNormAIC,
+            Phi3RMSNorm: CustomRMSNormAIC,
+            Qwen2RMSNorm: CustomRMSNormAIC,
+            Qwen3RMSNorm: CustomRMSNormAIC,
+            Qwen2_5RMSNorm: CustomRMSNormAIC,
+            MllamaTextRMSNorm: CustomRMSNormAIC,
+            GraniteRMSNorm: CustomRMSNormAIC,
+            PixtralRMSNorm: CustomRMSNormAIC,
+            GraniteMoeRMSNorm: CustomRMSNormAIC,
+            Qwen3MoeRMSNorm: CustomRMSNormAIC,
+            Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
+            Olmo2RMSNorm: CustomRMSNormAIC,
+        }
 
 
 class KVCacheTransform(ModuleMappingTransform):
-    _module_mapping = {
-        # CodeGen
-        CodeGenAttention: QEffCodeGenAttention,
-        CodeGenBlock: QEffCodeGenBlock,
-        CodeGenModel: QEffCodeGenModel,
-        CodeGenForCausalLM: QEffCodeGenForCausalLM,
-        # Falcon
-        FalconAttention: QEffFalconAttention,
-        FalconDecoderLayer: QEffFalconDecoderLayer,
-        FalconModel: QEffFalconModel,
-        FalconForCausalLM: QEffFalconForCausalLM,
-        # GPT2
-        GPT2Attention: QEffGPT2Attention,
-        GPT2Block: QEffGPT2Block,
-        GPT2Model: QEffGPT2Model,
-        GPT2LMHeadModel: QEffGPT2LMHeadModel,
-        # GPTJ
-        GPTJAttention: QEffGPTJAttention,
-        GPTJBlock: QEffGPTJBlock,
-        GPTJModel: QEffGPTJModel,
-        GPTJForCausalLM: QEffGPTJForCausalLM,
-        # Llama
-        LlamaAttention: QEffLlamaAttention,
-        LlamaDecoderLayer: QEffLlamaDecoderLayer,
-        LlamaModel: QEffLlamaModel,
-        LlamaForCausalLM: QEffLlamaForCausalLM,
-        LlamaRotaryEmbedding: QEffLlamaRotaryEmbedding,
-        # Llama4
-        Llama4TextAttention: QEffLlama4TextAttention,
-        Llama4ForCausalLM: QEffLlama4ForCausalLM,
-        Llama4TextDecoderLayer: QEffLlama4TextDecoderLayer,
-        Llama4TextModel: QEffLlama4TextModel,
-        Llama4TextMoe: QEffLlama4TextMoe,
-        Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
-        Llama4VisionAttention: QEffLlama4VisionAttention,
-        Llama4VisionModel: QEffLlama4VisionModel,
-        Llama4TextExperts: QEffLlama4TextExperts,
-        Llama4Router: QEffLlama4Router,
-        # Llava
-        LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
-        # Llava Next
-        LlavaNextForConditionalGeneration: QEffLlavaNextForConditionalGeneration,
-        # Gemma
-        GemmaAttention: QEffGemmaAttention,
-        GemmaDecoderLayer: QEffGemmaDecoderLayer,
-        GemmaModel: QEffGemmaModel,
-        GemmaForCausalLM: QEffGemmaForCausalLM,
-        # Qwen3Moe
-        Qwen3MoeForCausalLM: QEffQwen3MoeForCausalLM,
-        Qwen3MoeModel: QEffQwen3MoeModel,
-        Qwen3MoeDecoderLayer: QEffQwen3MoeDecoderLayer,
-        Qwen3MoeAttention: QEffQwen3MoeAttention,
-        Qwen3MoeRotaryEmbedding: QEffQwen3MoeRotaryEmbedding,
-        Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
-        Qwen3VLMoeForConditionalGeneration: QEffQwen3VLMoeForConditionalGeneration,
-        Qwen3VLMoeModel: QEffQwen3VLMoeModel,
-        Qwen3VLMoeTextAttention: QEffQwen3VLMoeTextAttention,
-        Qwen3VLMoeTextDecoderLayer: QEffQwen3VLMoeTextDecoderLayer,
-        Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
-        Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
-        Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
-        Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
-        # Qwen3vl
-        Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
-        Qwen3VLModel: QEffQwen3VLModel,
-        Qwen3VLTextAttention: QEffQwen3VLTextAttention,
-        Qwen3VLTextDecoderLayer: QEffQwen3VLTextDecoderLayer,
-        Qwen3VLVisionAttention: QEffQwen3VLVisionAttention,
-        Qwen3VLVisionModel: QEffQwen3VLVisionModel,
-        Qwen3VLTextModel: QEffQwen3VLTextModel,
-        # Gemma2
-        Gemma2Attention: QEffGemma2Attention,
-        Gemma2DecoderLayer: QEffGemma2DecoderLayer,
-        Gemma2Model: QEffGemma2Model,
-        Gemma2ForCausalLM: QEffGemma2ForCausalLM,
-        # Gemma3
-        Gemma3Attention: QEffGemma3Attention,
-        Gemma3DecoderLayer: QEffGemma3DecoderLayer,
-        Gemma3TextModel: QEffGemma3TextModel,
-        Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
-        Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
-        # GPT_OSS
-        GptOssAttention: QEffGptOssAttention,
-        GptOssDecoderLayer: QEffGptOssDecoderLayer,
-        GptOssModel: QEffGptOssModel,
-        GptOssForCausalLM: QEffGptOssForCausalLM,
-        GptOssMLP: QEffGptOssMLP,
-        GptOssExperts: QEffGptOssExperts,
-        # Granite
-        GraniteModel: QEffGraniteModel,
-        GraniteForCausalLM: QEffGraniteForCausalLM,
-        GraniteAttention: QEffGraniteAttention,
-        GraniteDecoderLayer: QEffGraniteDecoderLayer,
-        # GraniteMoe
-        GraniteMoeModel: QEffGraniteMoeModel,
-        GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
-        GraniteMoeAttention: QEffGraniteMoeAttention,
-        GraniteMoeRotaryEmbedding: QEffGraniteMoeRotaryEmbedding,
-        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
-        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
-        GraniteMoeMoE: QEffGraniteMoeMoE,
-        # mllama
-        MllamaTextRMSNorm: CustomRMSNormAIC,
-        MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
-        MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
-        MllamaModel: QEffMllamaModel,
-        MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
-        MllamaRotaryEmbedding: QEffMllamaRotaryEmbedding,
-        MllamaVisionModel: QEffMllamaVisionModel,
-        MllamaTextModel: QEffMllamaTextModel,
-        MllamaForCausalLM: QEffMllamaForCausalLM,
-        MllamaForConditionalGeneration: QEffMllamaForConditionalGeneration,
-        # Mistral
-        MistralAttention: QEffMistralAttention,
-        MistralDecoderLayer: QEffMistralDecoderLayer,
-        MistralModel: QEffMistralModel,
-        MistralForCausalLM: QEffMistralForCausalLM,
-        # Mistral3
-        Mistral3ForConditionalGeneration: QEffMistral3ForConditionalGeneration,
-        Mistral3Model: QEffMistral3Model,
-        # Mixtral
-        MixtralAttention: QEffMixtralAttention,
-        MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
-        MixtralDecoderLayer: QeffMixtralDecoderLayer,
-        MixtralModel: QEffMixtralModel,
-        MixtralForCausalLM: QEffMixtralForCausalLM,
-        # Mpt
-        MptAttention: QEffMptAttention,
-        MptBlock: QEffMptBlock,
-        MptModel: QEFfMptModel,
-        MptForCausalLM: QEffMptForCausalLM,
-        # Phi3
-        Phi3Attention: QEffPhi3Attention,
-        Phi3DecoderLayer: QEffPhi3DecoderLayer,
-        Phi3Model: QEffPhi3Model,
-        Phi3ForCausalLM: QEffPhi3ForCausalLM,
-        # Phi
-        PhiAttention: QEffPhiAttention,
-        PhiDecoderLayer: QEffPhiDecoderLayer,
-        PhiModel: QEffPhiModel,
-        PhiForCausalLM: QEffPhiForCausalLM,
-        # Pixtral
-        PixtralVisionModel: QEffPixtralVisionModel,
-        # Qwen2
-        Qwen2Attention: QEffQwen2Attention,
-        Qwen2DecoderLayer: QEffQwen2DecoderLayer,
-        Qwen2Model: QEffQwen2Model,
-        Qwen2ForCausalLM: QEffQwen2ForCausalLM,
-        # Qwen3
-        Qwen3Attention: QEffQwen3Attention,
-        Qwen3DecoderLayer: QEffQwen3DecoderLayer,
-        Qwen3Model: QEffQwen3Model,
-        Qwen3ForCausalLM: QEffQwen3ForCausalLM,
-        # Qwen2.5 VL
-        Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
-        Qwen2_5_VLModel: QEffQwen2_5_VLModel,
-        Qwen2_5_VLAttention: QEffQwen2_5_VLAttention,
-        Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
-        Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
-        Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
-        Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
-        # Starcoder2
-        Starcoder2Attention: QEffStarcoder2Attention,
-        Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
-        Starcoder2Model: QEffStarcoder2Model,
-        Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
-        # GptBigcode
-        GPTBigCodeAttention: QEffGPTBigCodeAttention,
-        GPTBigCodeBlock: QEffGPTBigCodeBlock,
-        GPTBigCodeModel: QEffGPTBigCodeModel,
-        GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
-        # Olmo2
-        Olmo2Attention: QEffOlmo2Attention,
-        Olmo2DecoderLayer: QEffOlmo2DecoderLayer,
-        Olmo2Model: QEffOlmo2Model,
-        Olmo2ForCausalLM: QEffOlmo2ForCausalLM,
-        # Whisper encoder and decoder layers
-        WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
-        WhisperAttention: QEffWhisperAttention,
-        WhisperDecoderLayer: QEffWhisperDecoderLayer,
-        WhisperEncoder: QEffWhisperEncoder,
-        WhisperDecoder: QEffWhisperDecoder,
-        WhisperModel: QEffWhisperModel,
-        WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
-    }
+    if version.parse(transformers.__version__) >= version.parse("4.57.0"):
+        _module_mapping = {
+            # Qwen3VlMoe
+            Qwen3VLMoeForConditionalGeneration: QEffQwen3VLMoeForConditionalGeneration,
+            Qwen3VLMoeModel: QEffQwen3VLMoeModel,
+            Qwen3VLMoeTextAttention: QEffQwen3VLMoeTextAttention,
+            Qwen3VLMoeTextDecoderLayer: QEffQwen3VLMoeTextDecoderLayer,
+            Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
+            Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
+            Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
+            Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
+            # Qwen3vl
+            Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
+            Qwen3VLModel: QEffQwen3VLModel,
+            Qwen3VLTextAttention: QEffQwen3VLTextAttention,
+            Qwen3VLTextDecoderLayer: QEffQwen3VLTextDecoderLayer,
+            Qwen3VLVisionAttention: QEffQwen3VLVisionAttention,
+            Qwen3VLVisionModel: QEffQwen3VLVisionModel,
+            Qwen3VLTextModel: QEffQwen3VLTextModel,
+        }
+    else:
+        _module_mapping = {
+            # CodeGen
+            CodeGenAttention: QEffCodeGenAttention,
+            CodeGenBlock: QEffCodeGenBlock,
+            CodeGenModel: QEffCodeGenModel,
+            CodeGenForCausalLM: QEffCodeGenForCausalLM,
+            # Falcon
+            FalconAttention: QEffFalconAttention,
+            FalconDecoderLayer: QEffFalconDecoderLayer,
+            FalconModel: QEffFalconModel,
+            FalconForCausalLM: QEffFalconForCausalLM,
+            # GPT2
+            GPT2Attention: QEffGPT2Attention,
+            GPT2Block: QEffGPT2Block,
+            GPT2Model: QEffGPT2Model,
+            GPT2LMHeadModel: QEffGPT2LMHeadModel,
+            # GPTJ
+            GPTJAttention: QEffGPTJAttention,
+            GPTJBlock: QEffGPTJBlock,
+            GPTJModel: QEffGPTJModel,
+            GPTJForCausalLM: QEffGPTJForCausalLM,
+            # Llama
+            LlamaAttention: QEffLlamaAttention,
+            LlamaDecoderLayer: QEffLlamaDecoderLayer,
+            LlamaModel: QEffLlamaModel,
+            LlamaForCausalLM: QEffLlamaForCausalLM,
+            LlamaRotaryEmbedding: QEffLlamaRotaryEmbedding,
+            # Llama4
+            Llama4TextAttention: QEffLlama4TextAttention,
+            Llama4ForCausalLM: QEffLlama4ForCausalLM,
+            Llama4TextDecoderLayer: QEffLlama4TextDecoderLayer,
+            Llama4TextModel: QEffLlama4TextModel,
+            Llama4TextMoe: QEffLlama4TextMoe,
+            Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
+            Llama4VisionAttention: QEffLlama4VisionAttention,
+            Llama4VisionModel: QEffLlama4VisionModel,
+            Llama4TextExperts: QEffLlama4TextExperts,
+            Llama4Router: QEffLlama4Router,
+            # Llava
+            LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
+            # Llava Next
+            LlavaNextForConditionalGeneration: QEffLlavaNextForConditionalGeneration,
+            # Gemma
+            GemmaAttention: QEffGemmaAttention,
+            GemmaDecoderLayer: QEffGemmaDecoderLayer,
+            GemmaModel: QEffGemmaModel,
+            GemmaForCausalLM: QEffGemmaForCausalLM,
+            # Qwen3Moe
+            Qwen3MoeForCausalLM: QEffQwen3MoeForCausalLM,
+            Qwen3MoeModel: QEffQwen3MoeModel,
+            Qwen3MoeDecoderLayer: QEffQwen3MoeDecoderLayer,
+            Qwen3MoeAttention: QEffQwen3MoeAttention,
+            Qwen3MoeRotaryEmbedding: QEffQwen3MoeRotaryEmbedding,
+            Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
+            # Gemma2
+            Gemma2Attention: QEffGemma2Attention,
+            Gemma2DecoderLayer: QEffGemma2DecoderLayer,
+            Gemma2Model: QEffGemma2Model,
+            Gemma2ForCausalLM: QEffGemma2ForCausalLM,
+            # Gemma3
+            Gemma3Attention: QEffGemma3Attention,
+            Gemma3DecoderLayer: QEffGemma3DecoderLayer,
+            Gemma3TextModel: QEffGemma3TextModel,
+            Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
+            Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
+            # GPT_OSS
+            GptOssAttention: QEffGptOssAttention,
+            GptOssDecoderLayer: QEffGptOssDecoderLayer,
+            GptOssModel: QEffGptOssModel,
+            GptOssForCausalLM: QEffGptOssForCausalLM,
+            GptOssMLP: QEffGptOssMLP,
+            GptOssExperts: QEffGptOssExperts,
+            # Granite
+            GraniteModel: QEffGraniteModel,
+            GraniteForCausalLM: QEffGraniteForCausalLM,
+            GraniteAttention: QEffGraniteAttention,
+            GraniteDecoderLayer: QEffGraniteDecoderLayer,
+            # GraniteMoe
+            GraniteMoeModel: QEffGraniteMoeModel,
+            GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
+            GraniteMoeAttention: QEffGraniteMoeAttention,
+            GraniteMoeRotaryEmbedding: QEffGraniteMoeRotaryEmbedding,
+            GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
+            GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
+            GraniteMoeMoE: QEffGraniteMoeMoE,
+            # mllama
+            MllamaTextRMSNorm: CustomRMSNormAIC,
+            MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
+            MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
+            MllamaModel: QEffMllamaModel,
+            MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
+            MllamaRotaryEmbedding: QEffMllamaRotaryEmbedding,
+            MllamaVisionModel: QEffMllamaVisionModel,
+            MllamaTextModel: QEffMllamaTextModel,
+            MllamaForCausalLM: QEffMllamaForCausalLM,
+            MllamaForConditionalGeneration: QEffMllamaForConditionalGeneration,
+            # Mistral
+            MistralAttention: QEffMistralAttention,
+            MistralDecoderLayer: QEffMistralDecoderLayer,
+            MistralModel: QEffMistralModel,
+            MistralForCausalLM: QEffMistralForCausalLM,
+            # Mistral3
+            Mistral3ForConditionalGeneration: QEffMistral3ForConditionalGeneration,
+            Mistral3Model: QEffMistral3Model,
+            # Mixtral
+            MixtralAttention: QEffMixtralAttention,
+            MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+            MixtralDecoderLayer: QeffMixtralDecoderLayer,
+            MixtralModel: QEffMixtralModel,
+            MixtralForCausalLM: QEffMixtralForCausalLM,
+            # Mpt
+            MptAttention: QEffMptAttention,
+            MptBlock: QEffMptBlock,
+            MptModel: QEFfMptModel,
+            MptForCausalLM: QEffMptForCausalLM,
+            # Phi3
+            Phi3Attention: QEffPhi3Attention,
+            Phi3DecoderLayer: QEffPhi3DecoderLayer,
+            Phi3Model: QEffPhi3Model,
+            Phi3ForCausalLM: QEffPhi3ForCausalLM,
+            # Phi
+            PhiAttention: QEffPhiAttention,
+            PhiDecoderLayer: QEffPhiDecoderLayer,
+            PhiModel: QEffPhiModel,
+            PhiForCausalLM: QEffPhiForCausalLM,
+            # Pixtral
+            PixtralVisionModel: QEffPixtralVisionModel,
+            # Qwen2
+            Qwen2Attention: QEffQwen2Attention,
+            Qwen2DecoderLayer: QEffQwen2DecoderLayer,
+            Qwen2Model: QEffQwen2Model,
+            Qwen2ForCausalLM: QEffQwen2ForCausalLM,
+            # Qwen3
+            Qwen3Attention: QEffQwen3Attention,
+            Qwen3DecoderLayer: QEffQwen3DecoderLayer,
+            Qwen3Model: QEffQwen3Model,
+            Qwen3ForCausalLM: QEffQwen3ForCausalLM,
+            # Qwen2.5 VL
+            Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
+            Qwen2_5_VLModel: QEffQwen2_5_VLModel,
+            Qwen2_5_VLAttention: QEffQwen2_5_VLAttention,
+            Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
+            Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
+            Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
+            Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
+            # Starcoder2
+            Starcoder2Attention: QEffStarcoder2Attention,
+            Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
+            Starcoder2Model: QEffStarcoder2Model,
+            Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
+            # GptBigcode
+            GPTBigCodeAttention: QEffGPTBigCodeAttention,
+            GPTBigCodeBlock: QEffGPTBigCodeBlock,
+            GPTBigCodeModel: QEffGPTBigCodeModel,
+            GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
+            # Olmo2
+            Olmo2Attention: QEffOlmo2Attention,
+            Olmo2DecoderLayer: QEffOlmo2DecoderLayer,
+            Olmo2Model: QEffOlmo2Model,
+            Olmo2ForCausalLM: QEffOlmo2ForCausalLM,
+            # Whisper encoder and decoder layers
+            WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
+            WhisperAttention: QEffWhisperAttention,
+            WhisperDecoderLayer: QEffWhisperDecoderLayer,
+            WhisperEncoder: QEffWhisperEncoder,
+            WhisperDecoder: QEffWhisperDecoder,
+            WhisperModel: QEffWhisperModel,
+            WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
+        }
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
@@ -728,16 +743,20 @@ class PrefillOnlyTransform(ModuleMappingTransform):
 
 
 class PrefillOnlyChunkedTransform(ModuleMappingTransform):
-    _module_mapping = {
-        # GPT_OSS
-        QEffGptOssModel: QEffPrefillOnlyGptOssModel,
-        QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
-        # Qwen3Moe
-        QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
-        # Qwen3 VL Moe
-        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
-    }
+    if version.parse(transformers.__version__) >= version.parse("4.57.0"):
+        _module_mapping = {
+            # Qwen3 VL Moe
+            QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+        }
+    else:
+        _module_mapping = {
+            # GPT_OSS
+            QEffGptOssModel: QEffPrefillOnlyGptOssModel,
+            QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
+            QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+            # Qwen3Moe
+            QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+        }
 
 
 class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):

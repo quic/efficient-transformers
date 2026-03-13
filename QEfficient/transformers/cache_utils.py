@@ -10,6 +10,8 @@ from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+import transformers
+from packaging import version
 from transformers.cache_utils import DynamicCache, DynamicLayer, EncoderDecoderCache, HybridCache, HybridChunkedCache
 
 from QEfficient.customop import (
@@ -330,12 +332,15 @@ class QEffDynamicCache(DynamicCache):
         layers = []
         # If a config is passed, use it to infer the layer types and initialize accordingly
         if len(layers) == 0:
-            Cache.__init__(
-                self,
-                layer_class_to_replicate=QEffDynamicLayer,
-                offloading=offloading,
-                offload_only_non_sliding=offload_only_non_sliding,
-            )
+            if version.parse(transformers.__version__) < version.parse("4.57.0"):
+                Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
+            else:
+                Cache.__init__(
+                    self,
+                    layer_class_to_replicate=QEffDynamicLayer,
+                    offloading=offloading,
+                    offload_only_non_sliding=offload_only_non_sliding,
+                )
         else:
             Cache.__init__(
                 self,

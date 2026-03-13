@@ -10,7 +10,11 @@ from enum import Enum
 from typing import List
 
 import torch
-from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextExperts
+import transformers
+from packaging import version
+
+if version.parse(transformers.__version__) >= version.parse("4.57.0"):
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextExperts
 from transformers.quantizers.quantizer_compressed_tensors import CompressedTensorsHfQuantizer
 from transformers.utils.quantization_config import CompressedTensorsConfig, QuantizationConfigMixin, QuantizationMethod
 
