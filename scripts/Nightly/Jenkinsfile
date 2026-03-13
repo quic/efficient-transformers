@@ -1,0 +1,309 @@
+pipeline {
+    agent {
+        node {
+            label 'qeff_node'
+        }
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 1, unit: 'DAYS')
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '5', daysToKeepStr: '30'))
+    }
+
+    triggers {        
+        cron('''TZ=Asia/Kolkata
+        0 21 * * *''')
+
+    }
+
+    environment {
+        DOCKER_IMAGE = "${DOCKER_LATEST}:master_latest"
+        VENV_PATH = 'preflight_qeff'
+        TOKENIZERS_PARALLELISM = 'false'
+        HF_HUB_CACHE = '/huggingface_hub'
+        PYTEST_ARGS = '--durations=10'
+        DOCKER_USER = 'ubuntu'
+    }
+
+    stages {
+        stage('Prepare Environment') {
+            steps {
+                script {
+                    echo "Starting QEfficient Nightly Test Suite"
+                    echo "Build Tag: ${BUILD_TAG}"
+                }
+                sh '''
+                    . ~/.bashrc
+                    # Launch privileged Docker container with necessary mounts
+                    sudo docker run --privileged -dit \
+                        --name ${BUILD_TAG} \
+                        -e HF_TOKEN=${HF_TOKEN} \
+                        -v ./:/efficient-transformers \
+                        -v ${HF_PATH}:${DOCKER_HF_PATH} \
+                        ${DOCKER_LATEST}:master_latest
+                    
+                    # Install QEfficient and dependencies
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                        set -e
+                        cd /efficient-transformers
+                        apt update && apt install -y python3.10-venv
+                        python3.10 -m venv ${VENV_PATH}
+                        . ${VENV_PATH}/bin/activate
+                        
+                        # Upgrade pip and core packages
+                        pip install --upgrade pip setuptools wheel
+                        pip install .[test]
+                        pip install junitparser pytest-xdist
+                        
+                        # Audio processing libraries for speech-to-text models
+                        pip install librosa==0.10.2 soundfile==0.13.1
+                        
+                        # Vision and multimodal model dependencies
+                        pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+                            timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1
+                        
+                        rm -rf QEfficient
+                    "
+                '''
+            }
+        }
+        stage('Unit & Integration Tests') {
+            parallel {
+                stage('Model Export & ONNX Tests') {
+                    steps {
+                        timeout(time: 40, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                                set -e
+                                cd /efficient-transformers
+                                . ${VENV_PATH}/bin/activate
+                                
+                                mkdir -p $PWD/Non_cli_qaic
+                                export QEFF_HOME=$PWD/Non_cli_qaic
+                                
+                                pytest tests \
+                                    -m '(not cli) and (not on_qaic) and (not finetune)' \
+                                    --ignore tests/vllm \
+                                    --ignore tests/transformers/models/image_text_to_text \
+                                    ${PYTEST_ARGS} -n 4\
+                                    --junitxml=tests/tests_log1.xml
+                                
+                                junitparser merge tests/tests_log1.xml tests/tests_log.xml
+                                deactivate
+                            "
+                        '''
+                        }
+                    }
+                }
+                
+                stage('QAIC LLM Tests') {
+                    steps {
+                        // timeout(time: 120, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                                set -e
+                                cd /efficient-transformers
+                                . ${VENV_PATH}/bin/activate
+                                
+                                mkdir -p $PWD/Non_qaic_llm
+                                export QEFF_HOME=$PWD/Non_qaic_llm
+                                
+                                pytest tests \
+                                    -m '(not cli) and (on_qaic) and (llm_model) and (not regular) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
+                                    --ignore tests/vllm \
+                                    ${PYTEST_ARGS} \
+                                    --junitxml=tests/tests_log2.xml
+                                
+                                junitparser merge tests/tests_log2.xml tests/tests_log.xml
+                                deactivate
+                            "
+                        '''
+                        // }
+                    }
+                }
+                
+                stage('QAIC Feature Tests') {
+                    steps {
+                        // timeout(time: 80, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                                set -e
+                                cd /efficient-transformers
+                                . ${VENV_PATH}/bin/activate
+                                
+                                mkdir -p $PWD/Non_qaic_feature
+                                export QEFF_HOME=$PWD/Non_qaic_feature
+                                
+                                pytest tests \
+                                    -m '(not cli) and (on_qaic) and (feature) and (not regular) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
+                                    --ignore tests/vllm \
+                                    ${PYTEST_ARGS} \
+                                    --junitxml=tests/tests_log2_feature.xml
+                                
+                                junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml
+                                deactivate
+                            "
+                        '''
+                        // }
+                    }
+                }
+            }
+        }
+        stage('QAIC MultiModal Tests') {
+            steps {
+                // timeout(time: 120, unit: 'MINUTES') {
+                    sh '''
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            set -e
+                            cd /efficient-transformers
+                            . ${VENV_PATH}/bin/activate
+                            
+                            mkdir -p $PWD/Non_cli_qaic_multimodal
+                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal
+                            
+                            pytest tests \
+                                -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
+                                --ignore tests/vllm \
+                                ${PYTEST_ARGS} \
+                                --junitxml=tests/tests_log6.xml
+                            
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml
+                            deactivate
+                        "
+                    '''
+                // }
+            }
+        }
+
+        stage('QAIC Diffusion Models Tests') {
+            steps {
+                timeout(time: 120, unit: 'MINUTES') {
+                    sh '''
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            set -e
+                            cd /efficient-transformers
+                            . ${VENV_PATH}/bin/activate
+                            
+                            mkdir -p $PWD/Non_cli_qaic_diffusion
+                            export QEFF_HOME=$PWD/Non_cli_qaic_diffusion
+                            export HF_HUB_CACHE=${HF_HUB_CACHE}
+                            
+                            pytest tests \
+                                -m '(not cli) and (on_qaic) and (diffusion_models) and (not wan) and (not qnn) and (not finetune)' \
+                                --ignore tests/vllm \
+                                ${PYTEST_ARGS} \
+                                --junitxml=tests/tests_log_diffusion.xml
+                            
+                            junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml
+                            deactivate
+                        "
+                    '''
+                }
+            }
+        }
+
+        stage('CLI Inference Tests') {
+            steps {
+                timeout(time: 120, unit: 'MINUTES') {
+                    sh '''
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            set -e
+                            cd /efficient-transformers
+                            . ${VENV_PATH}/bin/activate
+                            
+                            mkdir -p $PWD/cli
+                            export QEFF_HOME=$PWD/cli
+                            
+                            pytest tests \
+                                -m '(cli and not qnn) and (not finetune)' \
+                                --ignore tests/vllm \
+                                ${PYTEST_ARGS} \
+                                --junitxml=tests/tests_log3.xml
+                            
+                            junitparser merge tests/tests_log3.xml tests/tests_log.xml
+                            deactivate
+                        "
+                    '''
+                }
+            }
+        }
+        stage('Finetune CLI Tests') {
+            steps {
+                timeout(time: 20, unit: 'MINUTES') {
+                    sh '''
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            set -e
+                            cd /efficient-transformers
+                            . ${VENV_PATH}/bin/activate
+                            
+                            # Install QAIC PyTorch integration
+                            pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
+                            pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 \
+                                --index-url https://download.pytorch.org/whl/cpu
+                            
+                            mkdir -p $PWD/cli_qaic_finetuning
+                            export QEFF_HOME=$PWD/cli_qaic_finetuning
+                            
+                            pytest tests \
+                                -m '(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)' \
+                                --ignore tests/vllm \
+                                ${PYTEST_ARGS} \
+                                --junitxml=tests/tests_log_finetune.xml
+                            
+                            junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml
+                            deactivate
+                        "
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "========== Test Execution Summary =========="
+                sh '''
+                    # Restore file ownership
+                    sudo chown -R ${DOCKER_USER} . 2>/dev/null || true
+                '''
+            }
+            
+            junit testResults: 'tests/tests_log.xml', 
+                  allowEmptyResults: true,
+                  keepLongStdio: true
+            
+            script {
+                sh '''
+                    # Cleanup Docker container
+                    echo "Cleaning up Docker container: ${BUILD_TAG}"
+                    sudo docker rm -f ${BUILD_TAG} 2>/dev/null || true
+                '''
+            }
+            
+            cleanWs(
+                deleteDirs: true,
+            )
+            
+            echo "Pipeline cleanup completed"
+        }
+
+        success {
+            echo "✓ QEfficient Nightly Test Suite completed successfully"
+            // Optionally trigger downstream jobs here
+            // build job: 'qefficient_downstream_job', wait: false
+        }
+
+        failure {
+            echo "✗ QEfficient Nightly Test Suite failed"
+            echo "Check logs above for detailed error information"
+        }
+
+        unstable {
+            echo "⚠ QEfficient Nightly Test Suite produced unstable results"
+            echo "Some tests may have been skipped or failed"
+        }
+    }
+}

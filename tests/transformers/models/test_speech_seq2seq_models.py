@@ -49,7 +49,7 @@ def load_seq2seq_model(model_config):
     model_hf = AutoModelForSpeechSeq2Seq.from_pretrained(
         model_path,
         use_cache=True,
-        num_hidden_layers=model_config["n_layer"],
+        # num_hidden_layers=model_config["n_layer"],
         attn_implementation="eager",
         low_cpu_mem_usage=False,
     )  # Run models for single layers only

@@ -50,7 +50,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
     replace_transformers_quantizers()
-    model = AutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+    model = AutoModelForCausalLM.from_pretrained(model_id)
     config = model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
     inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -62,7 +62,7 @@ def test_disagg_mode_prefill(model_id, prompt):
 
     undo_transformers_quantizers()
 
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
     qeff_model.prefill(True)
     config = qeff_model.model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
@@ -87,10 +87,9 @@ def test_disagg_mode_prefill(model_id, prompt):
     prefill_qpc_path = qeff_model.compile(
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
-        num_cores=16,
+        num_devices=4,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
-        num_devices=1,
         mos=1,
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
@@ -212,7 +211,9 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
     replace_transformers_quantizers()
-    model = AutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+    )
     config = model.config
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
     inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -246,7 +247,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
 
     undo_transformers_quantizers()
 
-    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
     prefill_qeff_model.prefill(enable=True)
     config = prefill_qeff_model.model.config
     past_key_values = []
@@ -264,7 +265,9 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     # Check our pytorch implementation
     assert (prefill_qeff_out.logits - orig_out.logits[:, -1, :]).abs().max() < 1e-4
 
-    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_id,
+    )
     decode_qeff_model.prefill(enable=False)
     qeff_out = prefill_qeff_out
 
@@ -293,10 +296,9 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     prefill_qpc_path = prefill_qeff_model.compile(
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
-        num_cores=16,
+        num_devices=4,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
-        num_devices=1,
         mos=1,
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
@@ -316,10 +318,9 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     decode_qpc_path = decode_qeff_model.compile(
         prefill_seq_len=1,
         ctx_len=CTX_LEN,
-        num_cores=16,
+        num_devices=4,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
-        num_devices=1,
         mos=1,
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
@@ -375,18 +376,17 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
 def test_disagg_mode_prefix_caching(model_id, prompt):
     PREFILL_SEQ_LEN = 128
     CTX_LEN = 128 * 3
-    config = AutoConfig.from_pretrained(model_id, num_hidden_layers=2)
-    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_id, num_hidden_layers=2, continuous_batching=True
+    config = AutoConfig.from_pretrained(
+        model_id,
     )
+    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, continuous_batching=True)
     prefill_qeff_model.prefill(enable=True, enable_chunking=True)
     prefill_qpc_path = prefill_qeff_model.compile(
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
-        num_cores=16,
+        num_devices=4,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
-        num_devices=1,
         mos=1,
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
@@ -396,17 +396,14 @@ def test_disagg_mode_prefix_caching(model_id, prompt):
         kv_cache_batch_size=2,
     )
 
-    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_id, num_hidden_layers=2, continuous_batching=True
-    )
+    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, continuous_batching=True)
     decode_qeff_model.prefill(enable=False)
     decode_qpc_path = decode_qeff_model.compile(
         prefill_seq_len=1,
         ctx_len=CTX_LEN,
-        num_cores=16,
+        num_devices=4,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
-        num_devices=1,
         mos=1,
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
@@ -437,7 +434,9 @@ def test_disagg_mode_prefix_caching(model_id, prompt):
 def prefix_caching_inference(model_id, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id):
     PREFILL_SEQ_LEN = 128
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    config = AutoConfig.from_pretrained(model_id, num_hidden_layers=2)
+    config = AutoConfig.from_pretrained(
+        model_id,
+    )
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float

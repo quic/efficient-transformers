@@ -90,7 +90,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     ctx_len: int,
     max_gen_len: int = 20,
     batch_size: int = 1,
-    n_layer: int = 1,
+    n_layer: int = -1,
     kv_offload: bool = False,
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
@@ -277,12 +277,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 
     compile_kwargs = {
         "num_cores": 16,
-        "num_devices": num_devices,
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
         "batch_size": batch_size,
         "full_batch_size": full_batch_size,
         "mxfp6_matmul": False,
+        "num_devices": 4,
     }
 
     if is_intern_model:
@@ -375,7 +375,7 @@ def test_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_
         img_size=img_size,
         image_urls=model_config_dict[model_name]["img_url_list"],
         queries=model_config_dict[model_name]["text_prompt_list"],
-        n_layer=model_config_dict[model_name]["num_layers"],
+        # n_layer=model_config_dict[model_name]["num_layers"],
         batch_size=model_config_dict[model_name]["batch_size"],
         full_batch_size=model_config_dict[model_name]["full_batch_size"],
         kv_offload=kv_offload,
