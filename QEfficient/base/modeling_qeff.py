@@ -247,7 +247,7 @@ class QEFFBaseModel(ABC):
 
         # Setup temporary paths
         tmp_onnx_dir = export_dir / "onnx_tmp"
-        tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
+        # tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
@@ -278,7 +278,7 @@ class QEFFBaseModel(ABC):
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
-                str(tmp_onnx_path),
+                str(onnx_path),
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -287,11 +287,11 @@ class QEFFBaseModel(ABC):
             )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
+            model = onnx.load(onnx_path, load_external_data=False)
 
             # Clear temporary references
             transform_kwargs = {
-                "onnx_base_dir": str(tmp_onnx_dir),
+                "onnx_base_dir": None,
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:

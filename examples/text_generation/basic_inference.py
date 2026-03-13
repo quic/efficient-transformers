@@ -6,15 +6,15 @@
 # -----------------------------------------------------------------------------
 
 import argparse
-
+import torch
 from transformers import AutoTokenizer
-
+import time
 from QEfficient import QEFFAutoModelForCausalLM
 
 
 def main():
     parser = argparse.ArgumentParser(description="Basic text generation inference")
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
+    parser.add_argument("--model-name", type=str, default="hpcai-tech/grok-1", help="HuggingFace model ID")
     parser.add_argument("--prompt", type=str, default="Hello, how are you?", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
@@ -30,8 +30,12 @@ def main():
 
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
-
+    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name,torch_dtype=torch.float16)
+    breakpoint()
+    s_time=time.time()
+    model.export()
+    print(f"Export time: {time.time()-s_time} seconds")
+    breakpoint()
     # Compile the model
     qpc_path = model.compile(
         prefill_seq_len=args.prefill_seq_len,

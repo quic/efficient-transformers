@@ -40,7 +40,7 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
     if attention_mask is not None:
         # Apply the attention mask
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1)
