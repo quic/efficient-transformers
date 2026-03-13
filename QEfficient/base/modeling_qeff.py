@@ -283,6 +283,7 @@ class QEFFBaseModel(ABC):
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
+                verbose=False,
                 **export_kwargs,
             )
             logger.info("PyTorch export successful")
@@ -507,6 +508,7 @@ class QEFFBaseModel(ABC):
             command.append(f"-network-specialization-config={specializations_json}")
 
         # Write custom_io.yaml file
+
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
             with open(custom_io_yaml, "w") as fp:
@@ -518,6 +520,7 @@ class QEFFBaseModel(ABC):
         logger.info(f"Running compiler: {' '.join(command)}")
 
         try:
+
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
             raise RuntimeError(

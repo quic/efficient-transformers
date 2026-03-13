@@ -58,10 +58,17 @@ pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 #
 # original_blocks = pipeline.transformer.model.transformer_blocks
 # org_single_blocks = pipeline.transformer.model.single_transformer_blocks
-# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0]])
-# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_single_blocks[0]])
-# pipeline.transformer.model.config['num_layers'] = 1
-# pipeline.transformer.model.config['num_single_layers'] = 1
+# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList(original_blocks[:1])
+# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList(org_single_blocks[:1])
+# pipeline.transformer.model.config['num_layers'] = 2
+# pipeline.transformer.model.config['num_single_layers'] = 2
+
+# original_blocks = pipeline.transformer.model.transformer_blocks
+# org_single_blocks = pipeline.transformer.model.single_transformer_blocks
+# pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1], original_blocks[2]])
+# pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList([org_single_blocks[0],org_single_blocks[1], org_single_blocks[2]])
+# pipeline.transformer.model.config['num_layers'] = 3
+# pipeline.transformer.model.config['num_single_layers'] = 3
 
 # ============================================================================
 # OPTIONAL: COMPILE WITH CUSTOM CONFIGURATION
@@ -96,18 +103,19 @@ pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
 output = pipeline(
     prompt="A laughing girl",
-    custom_config_path="examples/diffusers/flux/flux_config.json",
-    height=1024,
-    width=1024,
+    custom_config_path="/home/amitraj/project/first_cache/efficient-transformers/examples/diffusers/flux/flux_config.json",
+    height=256,
+    width=256,
     guidance_scale=0.0,
-    num_inference_steps=4,
+    num_inference_steps=40,
     max_sequence_length=256,
-    generator=torch.manual_seed(42),
+    generator=torch.Generator().manual_seed(42),
     parallel_compile=True,
     use_onnx_subfunctions=False,
+    cache_threshold=0.08,
 )
 
 image = output.images[0]
 # Save the generated image to disk
-image.save("laughing_girl.png")
+image.save("new_lg_256.png")
 print(output)
