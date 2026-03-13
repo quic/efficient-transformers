@@ -3304,7 +3304,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
                 logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
             self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
-                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
+                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len, enable_chunking
             )
         # For supporting VLLM and Disaggregated with CCL
         elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
@@ -3324,7 +3324,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.comp_ctx_lengths_decode = comp_ctx_lengths_decode
 
             self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
-                self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len, prefill_seq_len
+                self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len, prefill_seq_len, enable_chunking
             )
         # --- Validation ---
         if prefill_only is not None and not isinstance(prefill_only, bool):
@@ -3349,8 +3349,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 ccl_lengths = self.comp_ctx_lengths_decode if prefill_seq_len == 1 else self.comp_ctx_lengths_prefill
                 # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
                 for i in range(0, len(ccl_lengths)):
-                    if prefill_only or enable_chunking:
-                        raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
+                    # if prefill_only or enable_chunking:
+                    #     raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
                     specializations.append(
                         self.build_prefill_specialization(
                             prefill_seq_len=prefill_seq_len,
