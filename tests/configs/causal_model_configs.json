@@ -373,6 +373,32 @@
         "num_key_value_heads": 1
       }
     },
+        {
+      "model_name": "unsloth/gemma-2b",
+      "model_type": "gemma",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 256000,
+        "num_key_value_heads": 1
+      }
+    },
+    {
+      "model_name": "unsloth/gemma-2-2b",
+      "model_type": "gemma2",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 256000,
+        "num_key_value_heads": 1
+      }
+    },
     {
       "model_name": "ibm-granite/granite-20b-code-base",
       "model_type": "gpt_bigcode",
@@ -447,20 +473,6 @@
         "intermediate_size": 256,
         "vocab_size": 100352,
         "num_key_value_heads": 1
-      }
-    },
-    {
-      "model_name": "hakurei/gpt-j-random-tinier",
-      "model_type": "gptj",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 50400,
-        "num_key_value_heads": 1,
-        "rotary_dim": 16
       }
     },
     {
