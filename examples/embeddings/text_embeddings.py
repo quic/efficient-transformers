@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import argparse
-
 import torch
 from transformers import AutoTokenizer
 
