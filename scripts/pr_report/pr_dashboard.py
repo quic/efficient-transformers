@@ -1,15 +1,9 @@
-# -----------------------------------------------------------------------------
-#
-# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
-# SPDX-License-Identifier: BSD-3-Clause
-#
-# -----------------------------------------------------------------------------
-
+#!/usr/bin/env python3
 """
 Daily PR report generator.
 
 Outputs a Markdown table to stdout and writes
-scripts/git_workflow/recipients.txt with resolved email addresses.
+scripts/git_workflow/github_mentions.txt with GitHub usernames for @mentions.
 """
 
 import json
@@ -21,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 API = "https://api.github.com"
 ACCEPT = "application/vnd.github+json"
@@ -271,36 +266,24 @@ def generate_pie_chart_svg(author_counts):
 
     # 15-colour palette; cycles if there are more authors
     colors = [
-        "#4a90d9",
-        "#e74c3c",
-        "#2ecc71",
-        "#f39c12",
-        "#9b59b6",
-        "#1abc9c",
-        "#e67e22",
-        "#3498db",
-        "#e91e63",
-        "#00bcd4",
-        "#ff5722",
-        "#607d8b",
-        "#795548",
-        "#9c27b0",
-        "#4caf50",
+        "#4a90d9", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6",
+        "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
+        "#ff5722", "#607d8b", "#795548", "#9c27b0", "#4caf50",
     ]
 
-    cx, cy, r = 190, 190, 160  # pie centre and radius
-    legend_x = cx * 2 + 30  # legend column starts here
-    row_h = 22  # legend row height
-    svg_w = legend_x + 260  # total SVG width
-    svg_h = max(cy * 2, len(items) * row_h + 50)  # total SVG height
+    cx, cy, r = 190, 190, 160   # pie centre and radius
+    legend_x  = cx * 2 + 30     # legend column starts here
+    row_h     = 22               # legend row height
+    svg_w     = legend_x + 260   # total SVG width
+    svg_h     = max(cy * 2, len(items) * row_h + 50)  # total SVG height
 
     # ── Build slice paths ────────────────────────────────────────────────────
     paths_svg = ""
     legend_svg = ""
-    start_angle = -math.pi / 2  # begin at 12 o'clock
+    start_angle = -math.pi / 2   # begin at 12 o'clock
 
     for i, (author, count) in enumerate(items):
-        angle = 2 * math.pi * count / total
+        angle     = 2 * math.pi * count / total
         end_angle = start_angle + angle
 
         x1 = cx + r * math.cos(start_angle)
@@ -309,16 +292,20 @@ def generate_pie_chart_svg(author_counts):
         y2 = cy + r * math.sin(end_angle)
 
         large_arc = 1 if angle > math.pi else 0
-        color = colors[i % len(colors)]
-        pct = count / total * 100
+        color     = colors[i % len(colors)]
+        pct       = count / total * 100
 
         # SVG arc path: move to centre → line to arc start → arc → close
-        path = f"M {cx},{cy} L {x1:.2f},{y1:.2f} A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
+        path = (
+            f"M {cx},{cy} "
+            f"L {x1:.2f},{y1:.2f} "
+            f"A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
+        )
         paths_svg += (
             f'  <path d="{path}" fill="{color}" '
             f'stroke="white" stroke-width="2">\n'
-            f"    <title>{author}: {count} PR{'s' if count != 1 else ''} ({pct:.1f}%)</title>\n"
-            f"  </path>\n"
+            f'    <title>{author}: {count} PR{"s" if count != 1 else ""} ({pct:.1f}%)</title>\n'
+            f'  </path>\n'
         )
 
         # Legend row
@@ -328,8 +315,8 @@ def generate_pie_chart_svg(author_counts):
             f'fill="{color}" rx="2"/>\n'
             f'  <text x="{legend_x + 20}" y="{ly + 11}" '
             f'font-size="12" font-family="Arial, sans-serif" fill="#333">'
-            f"{author}  {count} PR{'s' if count != 1 else ''}  ({pct:.1f}%)"
-            f"</text>\n"
+            f'{author}  {count} PR{"s" if count != 1 else ""}  ({pct:.1f}%)'
+            f'</text>\n'
         )
 
         start_angle = end_angle
@@ -343,36 +330,70 @@ def generate_pie_chart_svg(author_counts):
         # Chart title
         f'  <text x="{cx}" y="20" text-anchor="middle" '
         f'font-size="14" font-weight="bold" fill="#1a1a2e">'
-        f"PR Distribution by Author (Total: {total})</text>\n"
+        f'PR Distribution by Author (Total: {total})</text>\n'
         # Slices
         + paths_svg
         # Legend header
         + f'  <text x="{legend_x}" y="22" font-size="13" '
         f'font-weight="bold" fill="#1a1a2e">Author</text>\n'
         # Legend rows
-         + legend_svg + "</svg>\n</div>\n"
+        + legend_svg
+        + '</svg>\n</div>\n'
     )
     return svg
 
 
-# ── Email list helper ─────────────────────────────────────────────────────────
 
 
-def load_email_list(path):
+# ── Email/Username mapping ───────────────────────────────────────────────────
+
+
+def load_github_usernames():
     """
-    Load email_map.json — a plain JSON array of email addresses.
-    Returns a list of strings.
+    Load email-to-GitHub-username mapping from email_map.json.
+    Returns a list of GitHub usernames to @mention in the issue.
     """
+    script_dir = Path(__file__).parent
+    email_map_file = os.environ.get("EMAIL_MAP_FILE", script_dir / "email_map.json")
+    
     try:
-        with open(path) as f:
-            data = json.load(f)
-        if not isinstance(data, list):
-            print(f"Warning: {path} should be a JSON array of email addresses.", file=sys.stderr)
+        with open(email_map_file, "r") as f:
+            email_map = json.load(f)
+        
+        # Handle both list format (old) and dict format (new)
+        if isinstance(email_map, list):
+            # Old format: just emails, no usernames available
+            print("Warning: email_map.json is in old format (list). Please update to dict format: {email: username}", file=sys.stderr)
             return []
-        return [e for e in data if isinstance(e, str) and e.strip()]
+        elif isinstance(email_map, dict):
+            # New format: {email: username}
+            usernames = [username for username in email_map.values() if username]
+            return usernames
+        else:
+            print(f"Warning: email_map.json has unexpected format: {type(email_map)}", file=sys.stderr)
+            return []
     except FileNotFoundError:
-        print(f"Warning: email list not found at {path}", file=sys.stderr)
+        print(f"Warning: {email_map_file} not found. No @mentions will be added.", file=sys.stderr)
         return []
+    except json.JSONDecodeError as e:
+        print(f"Warning: Failed to parse {email_map_file}: {e}", file=sys.stderr)
+        return []
+
+
+def write_mentions_file(usernames):
+    """
+    Write GitHub usernames to a file for the workflow to consume.
+    """
+    script_dir = Path(__file__).parent
+    mentions_file = script_dir / "github_mentions.txt"
+    
+    try:
+        with open(mentions_file, "w") as f:
+            for username in usernames:
+                f.write(f"@{username}\n")
+        print(f"Wrote {len(usernames)} username(s) to {mentions_file}", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: Failed to write mentions file: {e}", file=sys.stderr)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -392,12 +413,6 @@ def main():
     owner, repo = repo_full.split("/", 1)
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%B %d, %Y  %H:%M UTC")
-
-    # Load recipient email list (path configurable via EMAIL_MAP_FILE env var)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_map = os.path.join(script_dir, "email_map.json")
-    email_map_path = os.environ.get("EMAIL_MAP_FILE", default_map)
-    recipients = load_email_list(email_map_path)
 
     # 1) Fetch all open PRs (correctly paginated via Link header)
     pulls = paginate(f"/repos/{owner}/{repo}/pulls", token, params={"state": "open"})
@@ -485,13 +500,6 @@ def main():
         print(
             f"| {pr_label} | {author} | {assignee_str} | {age_days} | {draft} | {labels_str} | {reviewers_str} | {pending_with_str} | {review_summary} | {ci_str} |"
         )
-
-    # -- Write recipients.txt -------------------------------------------------
-    recipients_path = os.path.join(script_dir, "recipients.txt")
-    with open(recipients_path, "w") as f:
-        f.write(", ".join(recipients))
-
-    print(f"recipients written to {recipients_path} ({len(recipients)} addresses)", file=sys.stderr)
 
 
 if __name__ == "__main__":
