@@ -23,7 +23,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Supported Features" href="supported_features.html" />
-    <link rel="prev" title="Efficient Transformer Library - 1.20.0 Release Notes" href="release_docs.html" /> 
+    <link rel="prev" title="Efficient Transformer Library - 1.21.0 Release Notes" href="release_docs.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -47,7 +47,8 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Efficient Transformer Library - 1.21.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html#efficient-transformer-library-1-20-0-release-notes">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul class="current">
@@ -70,11 +71,14 @@
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="qeff_autoclasses.html">QEfficient Auto Classes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diffuser_classes.html">Diffuser Classes</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html">CLI API Reference</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -138,14 +142,25 @@ We support wide range of <a class="reference internal" href="validate.html#valid
 <p><em><strong>Latest news</strong></em> : <br></p>
 <ul class="simple">
 <li><p>[coming soon] Support for more popular <a class="reference internal" href="validate.html#models-coming-soon"><span class="std std-ref">models</span></a><br></p></li>
-<li><p>[06/2025] Added support for Llama4 Multi-Model <a class="reference external" href="https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct">meta-llama/Llama-4-Scout-17B-16E-Instruct</a></p></li>
-<li><p>[06/2025] Added support for Gemma3 Multi-Modal-Model <a class="reference external" href="https://huggingface.co/google/gemma-3-4b-it">google/gemma-3-4b-it</a></p></li>
-<li><p>[06/2025] Added support of model <code class="docutils literal notranslate"><span class="pre">hpcai-tech/grok-1</span></code> <a class="reference external" href="https://huggingface.co/hpcai-tech/grok-1">hpcai-tech/grok-1</a></p></li>
-<li><p>[06/2025] Added support for sentence embedding which improves efficiency, Flexible/Custom Pooling configuration and compilation with multiple sequence lengths, <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/424">Embedding model</a>.</p></li>
+<li><p>[12/2025] Enabled <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/disagg_serving">disaggregated serving</a> for GPT-OSS model</p></li>
+<li><p>[12/2025] Added support for wav2vec2 Audio Model <a class="reference external" href="https://huggingface.co/facebook/wav2vec2-base-960h">facebook/wav2vec2-base-960h</a></p></li>
+<li><p>[12/2025] Added support for diffuser video generation model <a class="reference external" href="https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers">WAN 2.2 Model Card</a></p></li>
+<li><p>[12/2025] Added support for diffuser image generation model <a class="reference external" href="https://huggingface.co/black-forest-labs/FLUX.1-schnell">FLUX.1 Model Card</a></p></li>
+<li><p>[12/2025] Added support for <a class="reference external" href="https://huggingface.co/openai/gpt-oss-20b">openai/gpt-oss-20b</a></p></li>
+<li><p>[12/2025] Added support for <a class="reference external" href="https://huggingface.co/OpenGVLab/InternVL3_5-1B">OpenGVLab/InternVL3_5-1B</a></p></li>
+<li><p>[12/2025] Added support for Olmo Model <a class="reference external" href="https://huggingface.co/allenai/OLMo-2-0425-1B">allenai/OLMo-2-0425-1B</a></p></li>
+<li><p>[10/2025] Added support for Qwen3 MOE Model <a class="reference external" href="https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507">Qwen/Qwen3-30B-A3B-Instruct-2507</a></p></li>
+<li><p>[10/2025] Added support for Qwen2.5VL Multi-Model <a class="reference external" href="https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct">Qwen/Qwen2.5-VL-32B-Instruct</a></p></li>
+<li><p>[10/2025] Added support for Mistral3 Multi-Model <a class="reference external" href="https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503">mistralai/Mistral-Small-3.1-24B-Instruct-2503</a></p></li>
+<li><p>[10/2025] Added support for Molmo Multi-Model <a class="reference external" href="https://huggingface.co/allenai/Molmo-7B-D-0924">allenai/Molmo-7B-D-0924</a></p></li>
 </ul>
 <details>
 <summary>More</summary>
 <ul class="simple">
+<li><p>[06/2025] Added support for Llama4 Multi-Model <a class="reference external" href="https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct">meta-llama/Llama-4-Scout-17B-16E-Instruct</a></p></li>
+<li><p>[06/2025] Added support for Gemma3 Multi-Modal-Model <a class="reference external" href="https://huggingface.co/google/gemma-3-4b-it">google/gemma-3-4b-it</a></p></li>
+<li><p>[06/2025] Added support of model <code class="docutils literal notranslate"><span class="pre">hpcai-tech/grok-1</span></code> <a class="reference external" href="https://huggingface.co/hpcai-tech/grok-1">hpcai-tech/grok-1</a></p></li>
+<li><p>[06/2025] Added support for sentence embedding which improves efficiency, Flexible/Custom Pooling configuration and compilation with multiple sequence lengths, <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/424">Embedding model</a></p></li>
 <li><p>[04/2025] Support for <a class="reference external" href="https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding">SpD, multiprojection heads</a>. Implemented post-attention hidden size projections to speculate tokens ahead of the base model</p></li>
 <li><p>[04/2025] <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/374">QNN Compilation support</a> for AutoModel classes. QNN compilation capabilities for multi-models, embedding models and causal models.</p></li>
 <li><p>[04/2025] Added support for separate prefill and decode compilation for encoder (vision) and language models. This feature will be utilized for <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/365">disaggregated serving</a>.</p></li>
@@ -192,7 +207,7 @@ We support wide range of <a class="reference internal" href="validate.html#valid
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="release_docs.html" class="btn btn-neutral float-left" title="Efficient Transformer Library - 1.20.0 Release Notes" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="release_docs.html" class="btn btn-neutral float-left" title="Efficient Transformer Library - 1.21.0 Release Notes" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
         <a href="supported_features.html" class="btn btn-neutral float-right" title="Supported Features" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
@@ -224,6 +239,7 @@ We support wide range of <a class="reference internal" href="validate.html#valid
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
+        <dd><a href="release/v1.21/index.html">release/v1.21</a></dd>
       </dl>
     </div>
 </div><script>

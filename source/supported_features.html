@@ -47,7 +47,8 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Efficient Transformer Library - 1.21.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html#efficient-transformer-library-1-20-0-release-notes">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul class="current">
@@ -70,11 +71,14 @@
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="qeff_autoclasses.html">QEfficient Auto Classes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diffuser_classes.html">Diffuser Classes</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html">CLI API Reference</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -130,47 +134,65 @@
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>Sentence embedding, Flexible Pooling configuration and compilation with multiple sequence lengths</p></td>
-<td><p>Supports standard/custom pooling with AI 100 acceleration and sentence embedding. Enables efficient sentence embeddings via Efficient-Transformers. Compile with one or multiple seq_len; optimal graph auto-selected at runtime. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/embedding_model.py">sample script</a> for more <strong>details</strong>.</p></td>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/diffusers">Diffusion Models</a></p></td>
+<td><p>Full support for diffuser-based image generation models like Stable Diffusion, Imagen, Videogen enabling efficient image and video synthesis tasks.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference external" href="https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding">SpD, multiprojection heads</a></p></td>
-<td><p>Implemented post-attention hidden size projections to speculate tokens ahead of the base model. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/multiprojs_spd_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/disagg_serving">Disaggregated Serving for GPT-OSS</a></p></td>
+<td><p>Enabled for GPT-OSS models, allowing for flexible deployment of large language models across different hardware configurations.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/374">QNN Compilation support</a></p></td>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/621">ONNX Sub-Functions</a></p></td>
+<td><p>Feature enabling more efficient model compilation and execution on hardware.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/618">BlockedKV attention in CausalLM</a></p></td>
+<td><p>Implements a blocked K/V cache layout so attention reads/processes the cache blockbyblock, improving longcontext decode performance.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/performance/compute_context_length/README.md">Compute Context Length (CCL)</a></p></td>
+<td><p>Optimizes inference by using different context lengths during prefill and decode phases, reducing memory footprint and computation for shorter sequences while maintaining support for longer contexts. Supports both text-only and vision-language models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/performance/compute_context_length/basic_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Sentence embedding, Flexible Pooling configuration and compilation with multiple sequence lengths</p></td>
+<td><p>Supports standard/custom pooling with AI 100 acceleration and sentence embedding. Enables efficient sentence embeddings via Efficient-Transformers. Compile with one or multiple seq_len; optimal graph auto-selected at runtime. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/embeddings/sentence_embeddings.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding">SpD, multiprojection heads</a></p></td>
+<td><p>Implemented post-attention hidden size projections to speculate tokens ahead of the base model. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/performance/speculative_decoding/multi_projection.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/374">QNN Compilation support</a></p></td>
 <td><p>Enabled for AutoModel classes QNN compilation capabilities for multi-models, embedding models and causal models.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/365">Disaggregated serving</a></p></td>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/365">Disaggregated serving</a></p></td>
 <td><p>It support for separate prefill and decode compilation for encoder (vision) and language models.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/368">GGUF model execution</a></p></td>
-<td><p>Supported GGUF model execution (without quantized weights). Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/basic_gguf_models.py">sample script</a> for more <strong>details</strong>.</p></td>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/368">GGUF model execution</a></p></td>
+<td><p>Supported GGUF model execution (without quantized weights). Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/gguf_models.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Replication of KV</p></td>
+<tr class="row-even"><td><p>Replication of KV</p></td>
 <td><p>Enabled FP8 model support on <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head">replicate_kv_heads script</a>.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/338">gradient checkpointing</a></p></td>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/338">gradient checkpointing</a></p></td>
 <td><p>Supports gradient checkpointing in the finetuning script</p></td>
 </tr>
-<tr class="row-odd"><td><p>Swift KV <a class="reference external" href="https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct">Snowflake/Llama-3.1-SwiftKV-8B-Instruct</a></p></td>
+<tr class="row-even"><td><p>Swift KV <a class="reference external" href="https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct">Snowflake/Llama-3.1-SwiftKV-8B-Instruct</a></p></td>
 <td><p>Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. Support for both <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/367">continuous and non-continuous batching execution</a> in SwiftKV</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforimagetexttotext"><span class="std std-ref">Vision Language Model</span></a></p></td>
-<td><p>Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforimagetexttotext"><span class="std std-ref">Vision Language Model</span></a></p></td>
+<td><p>Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/basic_vlm_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforspeechseq2seq"><span class="std std-ref">Speech Sequence to Sequence Model</span></a></p></td>
-<td><p>Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py">sample script</a> for more <strong>details</strong>.</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforspeechseq2seq"><span class="std std-ref">Speech Sequence to Sequence Model</span></a></p></td>
+<td><p>Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/audio/speech_to_text.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p>Support for FP8 Execution</p></td>
+<tr class="row-odd"><td><p>Support for FP8 Execution</p></td>
 <td><p>Enables execution with FP8 precision, significantly improving performance and reducing memory usage for computational tasks.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Prefill caching</p></td>
+<tr class="row-even"><td><p>Prefill caching</p></td>
 <td><p>Enhances inference speed by caching key-value pairs for shared prefixes, reducing redundant computations and improving efficiency.</p></td>
 </tr>
+<tr class="row-odd"><td><p>On Device Sampling</p></td>
+<td><p>Enables sampling operations to be executed directly on the QAIC device rather than the host CPU for QEffForCausalLM models. This enhancement significantly reduces host-device communication overhead and improves inference throughput and scalability. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/on_device_sampling.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
 <tr class="row-even"><td><p>Prompt-Lookup Decoding</p></td>
-<td><p>Speeds up text generation by using overlapping parts of the input prompt and the generated text, making the process faster without losing quality. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/pld_spd_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
+<td><p>Speeds up text generation by using overlapping parts of the input prompt and the generated text, making the process faster without losing quality. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/performance/speculative_decoding/prompt_lookup.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="qeff_autoclasses.html#qeffautopeftmodelforcausallm"><span class="std std-ref">PEFT LoRA support</span></a></p></td>
-<td><p>Enables parameter-efficient fine-tuning using low-rank adaptation techniques, reducing the computational and memory requirements for fine-tuning large models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/peft_models.py">sample script</a> for more <strong>details</strong>.</p></td>
+<td><p>Enables parameter-efficient fine-tuning using low-rank adaptation techniques, reducing the computational and memory requirements for fine-tuning large models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/peft/single_adapter.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="features_enablement.html#id-qnn-compilation-via-python-api"><span class="std std-ref">QNN support</span></a></p></td>
 <td><p>Enables compilation using QNN SDK, making Qeff adaptable for various backends in the future.</p></td>
@@ -179,13 +201,13 @@
 <td><p>Facilitates the generation of vector embeddings for retrieval tasks.</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="features_enablement.html#id-draft-based-speculative-decoding"><span class="std std-ref">Speculative Decoding</span></a></p></td>
-<td><p>Accelerates text generation by using a draft model to generate preliminary predictions, which are then verified by the target model, reducing latency and improving efficiency. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/draft_spd_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
+<td><p>Accelerates text generation by using a draft model to generate preliminary predictions, which are then verified by the target model, reducing latency and improving efficiency. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/performance/speculative_decoding/draft_based.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="qeff_autoclasses.html#qeffautoloramodelforcausallm"><span class="std std-ref">Finite lorax</span></a></p></td>
-<td><p>Users can activate multiple LoRA adapters and compile them with the base model. At runtime, they can specify which prompt should use which adapter, enabling mixed adapter usage within the same batch. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/lora_models.py">sample script</a> for more <strong>details</strong>.</p></td>
+<td><p>Users can activate multiple LoRA adapters and compile them with the base model. At runtime, they can specify which prompt should use which adapter, enabling mixed adapter usage within the same batch. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/peft/multi_adapter.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 <tr class="row-even"><td><p>Python and CPP Inferencing API support</p></td>
-<td><p>Provides flexibility while running inference with Qeff and enabling integration with various applications and improving accessibility for developers. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/cpp_execution/text_inference_using_cpp.py">sample script</a> for more <strong>details</strong>.</p></td>
+<td><p>Provides flexibility while running inference with Qeff and enabling integration with various applications and improving accessibility for developers. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/performance/cpp_execution/text_inference_cpp.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="features_enablement.html#id-continuous-batching"><span class="std std-ref">Continuous batching</span></a></p></td>
 <td><p>Optimizes throughput and latency by dynamically batching requests, ensuring efficient use of computational resources.</p></td>
@@ -201,12 +223,6 @@
 </tr>
 <tr class="row-odd"><td><p>KV Heads Replication Script</p></td>
 <td><p>A sample script for replicating key-value (KV) heads for the Llama-3-8B-Instruct model, running inference with the original model, replicating KV heads, validating changes, and exporting the modified model to ONNX format. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/scripts/replicate_kv_head/replicate_kv_heads.py">sample script</a> for more <strong>details</strong>.</p></td>
-</tr>
-<tr class="row-even"><td><p>Context Length Specializations (upcoming)</p></td>
-<td><p>Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text.</p></td>
-</tr>
-<tr class="row-odd"><td><p>Block Attention (in progress)</p></td>
-<td><p>Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.</p></td>
 </tr>
 </tbody>
 </table>
@@ -248,6 +264,7 @@
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
+        <dd><a href="release/v1.21/index.html">release/v1.21</a></dd>
       </dl>
     </div>
 </div><script>
