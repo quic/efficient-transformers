@@ -73,8 +73,10 @@ from QEfficient.utils import (
     get_padding_shape_from_config,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
+
+logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -139,7 +141,7 @@ class QEFFTransformersBase(QEFFBaseModel):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
+        logger.info("Initiating the model weight loading.")
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -305,7 +307,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
+        logger.info("Initiating the model weight loading.")
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
@@ -673,7 +675,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
+        logger.info("Initiating the model weight loading.")
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
@@ -1217,7 +1219,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
+        logger.info("Initiating the model weight loading.")
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -1987,6 +1989,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
+        logger.info("Initiating the model weight loading.")
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2586,6 +2589,7 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        logger.info("Initiating the model weight loading.")
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2818,6 +2822,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_offload = kwargs.pop("kv_offload", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        logger.info("Initiating the model weight loading.")
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
@@ -4008,7 +4013,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
+        logger.info("Initiating the model weight loading.")
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class

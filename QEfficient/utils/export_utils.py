@@ -16,8 +16,10 @@ from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOut
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.hash_utils import create_export_hash
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
+
+logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
 
 
 def export_wrapper(func):

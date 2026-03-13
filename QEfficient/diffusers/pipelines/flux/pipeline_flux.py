@@ -38,7 +38,9 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
 
 
 class QEffFluxPipeline:
