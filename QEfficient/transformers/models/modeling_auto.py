@@ -80,6 +80,7 @@ CUSTOM_IO_DTYPE_MAP = {
     torch.float16: "float16",
     torch.bfloat16: "bfloat16",
     torch.float32: "float16",  # Since compiler doesn't support fp32
+    "float32": "float16", # Since compiler doesn't support fp32
 }
 
 TORCH_TO_NUMPY_DTYPE_MAP = {
@@ -451,7 +452,9 @@ class QEFFAutoModel(QEFFTransformersBase):
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
-        needed_dtype = self.model.config.torch_dtype
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -795,7 +798,9 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         specializations = [
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
-        needed_dtype = self.model.config.torch_dtype
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -1468,7 +1473,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         custom_io_vision = {}
-        needed_dtype = self.model.config.torch_dtype
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
         molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
         if molmo:
@@ -2146,7 +2153,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
         custom_io = {}
-        needed_dtype = self.model.config.torch_dtype
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
         # inputs
         for input_name in output_names:
@@ -3419,7 +3428,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             specializations = kw_spec
         # --- Compilation ---
         custom_io = {}
-        needed_dtype = self.model.config.torch_dtype
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
 
         for suffix in ["", "_RetainedState"]:
@@ -3775,7 +3786,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         output_names = self.model.get_output_names()
 
-        needed_dtype = self.model.config.torch_dtype
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         kv_cache_dtype = CUSTOM_IO_DTYPE_MAP[needed_dtype]
         custom_io = {}
 
@@ -4119,7 +4132,9 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
-        needed_dtype = self.model.config.torch_dtype
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -4201,7 +4216,9 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         input_values = np.array(
             torch.nn.functional.pad(inputs["input_values"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
-        needed_dtype = self.model.config.torch_dtype
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         input_values = input_values.astype(CUSTOM_IO_DTYPE_MAP[needed_dtype])
         inputs = dict(input_values=input_values)
         outputs = self.qpc_session.run(inputs)
