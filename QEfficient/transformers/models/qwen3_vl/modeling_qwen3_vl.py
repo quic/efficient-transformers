@@ -953,7 +953,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 lang.append(lang_prefill)
 
             for i in range(0, len(comp_ctx_lengths_decode)):
-                breakpoint()
                 lang_decode = {
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",

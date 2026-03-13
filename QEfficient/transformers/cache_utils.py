@@ -332,8 +332,6 @@ class QEffDynamicCache(DynamicCache):
         layers = []
         # If a config is passed, use it to infer the layer types and initialize accordingly
         if len(layers) == 0:
-            # breakpoint()
-
             if version.parse(transformers.__version__) < version.parse("4.57.0"):
                 Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
             else:
