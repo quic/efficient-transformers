@@ -10,23 +10,27 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import transformers
+from packaging import version
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
 )
-from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-    Qwen3VLForConditionalGeneration,
-    Qwen3VLModel,
-    Qwen3VLModelOutputWithPast,
-    Qwen3VLTextAttention,
-    Qwen3VLTextDecoderLayer,
-    Qwen3VLTextModel,
-    Qwen3VLVisionAttention,
-    Qwen3VLVisionModel,
-    apply_rotary_pos_emb_vision,
-    repeat_kv,
-    rotate_half,
-)
+
+if version.parse(transformers.__version__) >= version.parse("4.57.0"):
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+        Qwen3VLForConditionalGeneration,
+        Qwen3VLModel,
+        Qwen3VLModelOutputWithPast,
+        Qwen3VLTextAttention,
+        Qwen3VLTextDecoderLayer,
+        Qwen3VLTextModel,
+        Qwen3VLVisionAttention,
+        Qwen3VLVisionModel,
+        apply_rotary_pos_emb_vision,
+        repeat_kv,
+        rotate_half,
+    )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -844,10 +848,10 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
         if height is None or width is None:
-            height = 1365
-            width = 2048
+            height = constants.QWEN3_VL_HEIGHT
+            width = constants.QWEN3_VL_WIDTH
             logger.warning(
-                "Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config"
+                f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
@@ -949,6 +953,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 lang.append(lang_prefill)
 
             for i in range(0, len(comp_ctx_lengths_decode)):
+                breakpoint()
                 lang_decode = {
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
