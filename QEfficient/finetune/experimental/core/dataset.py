@@ -26,7 +26,6 @@ from QEfficient.finetune.experimental.core.utils.dataset_utils import (
 )
 
 logger = Logger(__name__)
-logger.logger.propagate = False
 
 
 class BaseDataset(Dataset, ABC):
@@ -102,9 +101,11 @@ class SFTDataset(BaseDataset):
             if not os.path.isfile(self.json_file_path):
                 raise FileNotFoundError(f"JSON file not found or invalid: '{self.json_file_path}'")
         if self.prompt_template and self.prompt_func_path:
-            logger.info("Both prompt_template and prompt_func are provided. Using prompt_template for preprocessing.")
+            logger.log_rank_zero(
+                "Both prompt_template and prompt_func are provided. Using prompt_template for preprocessing."
+            )
         if self.completion_template and self.completion_func_path:
-            logger.info(
+            logger.log_rank_zero(
                 "Both completion_template and completion_func are provided. Using completion_template for preprocessing."
             )
         if self.prompt_template is None and self.prompt_func_path is None:

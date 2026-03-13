@@ -7,13 +7,13 @@
 
 
 import logging
-import sys
 from pathlib import Path
 from typing import Optional
 
 from transformers.utils.logging import get_logger as hf_get_logger
 
-from QEfficient.finetune.experimental.core.utils.dist_utils import get_local_rank
+from QEfficient.finetune.experimental.core.utils.dist_utils import is_global_rank_zero
+
 
 # -----------------------------------------------------------------------------
 # Logger usage:
@@ -27,6 +27,34 @@ from QEfficient.finetune.experimental.core.utils.dist_utils import get_local_ran
 # Attach file handler later if needed:
 #   logger.prepare_for_logs(output_dir="logs", log_level="DEBUG")
 # -----------------------------------------------------------------------------
+class QEffFormatter(logging.Formatter):
+    """
+    Formatter class used to set colors for printing different logging levels of messages on console.
+    """
+
+    cyan: str = "\x1b[38;5;14m"
+    yellow: str = "\x1b[33;20m"
+    red: str = "\x1b[31;20m"
+    bold_red: str = "\x1b[31;1m"
+    reset: str = "\x1b[0m"
+    common_format: str = "%(levelname)s - %(name)s - %(message)s"  # type: ignore
+    format_with_line_info = "%(levelname)s - %(name)s - %(message)s  (%(filename)s:%(lineno)d)"  # type: ignore
+
+    FORMATS = {
+        logging.DEBUG: cyan + format_with_line_info + reset,
+        logging.INFO: cyan + common_format + reset,
+        logging.WARNING: yellow + common_format + reset,
+        logging.ERROR: red + format_with_line_info + reset,
+        logging.CRITICAL: bold_red + format_with_line_info + reset,
+    }
+
+    def format(self, record):
+        """
+        Overriding the base class method to Choose format based on log level.
+        """
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
 
 
 class Logger:
@@ -48,7 +76,7 @@ class Logger:
         """
         self.logger = hf_get_logger(name)
         self.logger.setLevel(level)
-
+        self.logger.propagate = False
         # Clear any existing handlers
         self.logger.handlers.clear()
 
@@ -56,9 +84,9 @@ class Logger:
         self.formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
         # Console handler
-        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
-        console_handler.setFormatter(self.formatter)
+        console_handler.setFormatter(QEffFormatter())
         self.logger.addHandler(console_handler)
 
         # File handler (if log_file is provided)
@@ -100,7 +128,7 @@ class Logger:
             message: Message to log
             level: Logging level
         """
-        if get_local_rank() == 0:
+        if is_global_rank_zero():
             self.logger.log(level, message)
 
     def log_exception(self, message: str, exception: Exception, raise_exception: bool = True) -> None:
@@ -130,6 +158,7 @@ class Logger:
         # Convert string log level to logging constant
         level = getattr(logging, log_level.upper(), logging.INFO)
         self.logger.setLevel(level)
+        self.logger.propagate = False
 
         # Update existing handlers' levels
         for handler in self.logger.handlers:
