@@ -26,8 +26,6 @@ dependencies = [
     "peft==0.17.0",
     "datasets==2.20.0",
     "fsspec==2023.6.0",
-    "multidict==6.0.4",
-    "urllib3<2",
     "sentencepiece==0.2.0",
     "onnx==1.18.0",
     "onnxruntime==1.22",
