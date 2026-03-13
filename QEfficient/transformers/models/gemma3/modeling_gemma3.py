@@ -536,7 +536,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if self.config.torch_dtype == torch.float16:
-            logger.warning("Accucary might drop with float16 as torch_dtype")
+            logger.warning("Accuracy might drop with float16 as torch_dtype")
 
         outputs = self.model(
             input_ids=input_ids,

@@ -204,5 +204,43 @@
       "num_layers": 1,
       "additional_params": {}
     }
+  ],
+  "image_text_custom_dtype_models":[
+    {
+      "model_name": "OpenGVLab/InternVL2_5-1B",
+      "model_type": "internvl_chat",
+      "batch_size": 1,
+      "prompt_len": 384,
+      "ctx_len": 512,
+      "img_size": null,
+      "img_url": "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
+      "text_prompt": "Please describe the image in detail.",
+      "num_layers": 2,
+      "additional_params": {}
+    },
+    {
+      "model_name": "google/gemma-3-4b-it",
+      "model_type": "gemma3",
+      "batch_size": 1,
+      "prompt_len": 128,
+      "ctx_len": 3072,
+      "img_size": 896,
+      "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+      "text_prompt": "Can you describe the image in detail.",
+      "num_layers": 6,
+      "additional_params": {}
+    },
+    {
+      "model_name": "llava-hf/llava-1.5-7b-hf",
+      "model_type": "llava",
+      "batch_size": 1,
+      "prompt_len": 784,
+      "ctx_len": 1024,
+      "img_size": 336,
+      "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+      "text_prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+      "num_layers": 1,
+      "additional_params": {}
+    }
   ]
 }

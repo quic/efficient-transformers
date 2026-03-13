@@ -18,6 +18,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 def _non_meta_init_device(config) -> torch.device:
@@ -54,7 +55,9 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(q, k.transpose(2, 3)) * scale_factor
     if attention_mask is not None:
-        attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=k.dtype), attn_weights)
+        attn_weights = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=k.dtype), attn_weights
+        )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
     attn_output = torch.matmul(attn_weights, v)

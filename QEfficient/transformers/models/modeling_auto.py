@@ -76,7 +76,7 @@ from QEfficient.utils.check_ccl_specializations import process_ccl_specializatio
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
-DTYPE_TO_STRING_MAP = {
+CUSTOM_IO_DTYPE_MAP = {
     torch.float16: "float16",
     torch.bfloat16: "bfloat16",
     torch.float32: "float16",  # Since compiler doesn't support fp32
@@ -457,7 +457,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -801,7 +801,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -1469,17 +1469,17 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         custom_io_vision = {}
         needed_dtype = self.model.config.torch_dtype
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else DTYPE_TO_STRING_MAP[needed_dtype]
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
         molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
         if molmo:
-            custom_io_vision["image_masks"] = DTYPE_TO_STRING_MAP[needed_dtype]
-        custom_io_vision["pixel_values"] = DTYPE_TO_STRING_MAP[needed_dtype]
+            custom_io_vision["image_masks"] = CUSTOM_IO_DTYPE_MAP[needed_dtype]
+        custom_io_vision["pixel_values"] = CUSTOM_IO_DTYPE_MAP[needed_dtype]
 
         for output_name in output_names["vision"]:
             if output_name.startswith("past_"):
                 custom_io_vision[output_name] = kv_cache_dtype
             else:
-                custom_io_vision[output_name] = DTYPE_TO_STRING_MAP[needed_dtype]
+                custom_io_vision[output_name] = CUSTOM_IO_DTYPE_MAP[needed_dtype]
 
         if vision_onnx_path:
             self.vision_model.onnx_path = vision_onnx_path
@@ -1522,21 +1522,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name[: -len("_RetainedState")]] = (
-                        DTYPE_TO_STRING_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
+                        CUSTOM_IO_DTYPE_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
                     )
 
             # outputs
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name] = (
-                        DTYPE_TO_STRING_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
+                        CUSTOM_IO_DTYPE_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
                     )
             self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
                 retained_state=True,
                 specializations=specializations["lang"],
-                convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
+                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
                 mxfp6_matmul=mxfp6_matmul,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -2147,19 +2147,19 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         custom_io = {}
         needed_dtype = self.model.config.torch_dtype
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else DTYPE_TO_STRING_MAP[needed_dtype]
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
         # inputs
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
                 custom_io[input_name[: -len("_RetainedState")]] = (
-                    DTYPE_TO_STRING_MAP[needed_dtype] if "pixel_values" in input_name else kv_cache_dtype
+                    CUSTOM_IO_DTYPE_MAP[needed_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
 
         # outputs
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = (
-                    DTYPE_TO_STRING_MAP[needed_dtype] if "pixel_values" in output_name else kv_cache_dtype
+                    CUSTOM_IO_DTYPE_MAP[needed_dtype] if "pixel_values" in output_name else kv_cache_dtype
                 )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
@@ -2172,7 +2172,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -3421,7 +3421,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
         needed_dtype = self.model.config.torch_dtype
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else DTYPE_TO_STRING_MAP[needed_dtype]
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
 
         for suffix in ["", "_RetainedState"]:
             for i in range(self.num_layers):
@@ -3433,7 +3433,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -3777,7 +3777,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         output_names = self.model.get_output_names()
 
         needed_dtype = self.model.config.torch_dtype
-        kv_cache_dtype = DTYPE_TO_STRING_MAP[needed_dtype]
+        kv_cache_dtype = CUSTOM_IO_DTYPE_MAP[needed_dtype]
         custom_io = {}
 
         custom_io["input_features"] = kv_cache_dtype
@@ -3798,7 +3798,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(DTYPE_TO_STRING_MAP[needed_dtype] == "float16"),
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -4202,7 +4202,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             torch.nn.functional.pad(inputs["input_values"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
         needed_dtype = self.model.config.torch_dtype
-        input_values = input_values.astype(DTYPE_TO_STRING_MAP[needed_dtype])
+        input_values = input_values.astype(CUSTOM_IO_DTYPE_MAP[needed_dtype])
         inputs = dict(input_values=input_values)
         outputs = self.qpc_session.run(inputs)
 
