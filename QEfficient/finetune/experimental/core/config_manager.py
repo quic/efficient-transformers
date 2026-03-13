@@ -25,7 +25,6 @@ from QEfficient.finetune.experimental.core.utils.dist_utils import is_main_proce
 from QEfficient.utils.device_utils import is_nsp_free
 
 logger = Logger(__name__)
-logger.logger.propagate = False
 
 
 @dataclass

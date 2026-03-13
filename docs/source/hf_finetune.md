@@ -50,31 +50,51 @@ export QAIC_DEVICE_LOG_LEVEL=0   # Device-level logs
 export QAIC_DEBUG=1              # Show CPU fallback ops, etc.
 
 # Set temp directory
-export TMPDIR = $HOME/tmp
+export TMPDIR=$HOME/tmp
 ```
 
 ### Step-by-Step Guide to run a fine-tuning job
 
+### For QAIC Training
 For Docker-based environments, use the provided `torch-qaic-env` environment.
 
 ```bash
-source /opt/torch-qaic-env/bin/activate
+python -m venv finetune_env
+source finetune_env/bin/activate
 git clone https://github.com/quic/efficient-transformers.git
-git checkout ft_experimental
 cd efficient-transformers
+git checkout ft_experimental
 pip install -e .
 pip install   --index-url https://download.pytorch.org/whl/cpu   --extra-index-url     https://devpi.qualcomm.com/qcom/dev/+simple   --trusted-host devpi.qualcomm.com   "torch==2.9.1+cpu"   "torchvision==0.24.1+cpu"   "torchaudio==2.9.1+cpu"
 pip install trl==0.22.0
-git clone https://github.com/quic-swatia/transformers.git
+cd .. && git clone https://github.com/quic-swatia/transformers.git
 cd transformers 
 git checkout version-4.55.0 && pip install -e .
-cd .. && QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
+cd .. && cd efficient-transformers
+QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 
 ```
 
 > **Note**  
 > If you’re using the `torch-qaic-env` Docker environment, `torch_qaic` and `accelerate` may already be installed.
 
+### For CUDA Training
+
+```bash
+python -m venv finetune_env
+source finetune_env/bin/activate
+git clone https://github.com/quic/efficient-transformers.git
+cd efficient-transformers
+git checkout ft_experimental
+pip install -e .
+pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
+pip install trl==0.22.0
+cd .. && git clone https://github.com/quic-swatia/transformers.git
+cd transformers 
+git checkout version-4.55.0 && pip install -e .
+cd .. && cd efficient-transformers
+CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_experimental --device cuda --num_epochs 1 --model_name meta-llama/Llama-3.2-3B --dataset_name  yahma/alpaca-cleaned --train_batch_size 1 --gradient_accumulation_steps 768 --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt --completion_template {output}
+```
 ***
 ## Finetuning
 

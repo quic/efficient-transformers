@@ -42,8 +42,6 @@ def is_nsp_free():
             # Check if NSP free is eqaul to total nsp
             if nsp_free != nsp_total:
                 raise RuntimeError(f"QAIC device {qid_idx} does not have {nsp_total} NSP free")
-            else:
-                logger.info(f"QAIC device {qid_idx} has {nsp_free} NSP free")
         else:
             logger.warning("Failed to parse NSP free information from qaic-util output")
 

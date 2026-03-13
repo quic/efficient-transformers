@@ -18,7 +18,6 @@ from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.utils.dataset_utils import insert_pad_token
 
 logger = Logger(__name__)
-logger.logger.propagate = False
 
 
 class BaseModel(nn.Module, ABC):
