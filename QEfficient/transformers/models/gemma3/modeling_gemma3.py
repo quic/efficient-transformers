@@ -555,7 +555,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         )
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states)
+        logits = self.lm_head(hidden_states).float()
 
         if self.config.final_logit_softcapping is not None:
             logits = logits / self.config.final_logit_softcapping

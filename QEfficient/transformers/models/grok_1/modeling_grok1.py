@@ -113,7 +113,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
                 attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype), attn_weights
             )
 
-        attn_weights = F.softmax(attn_weights, dim=-1).to(query_states.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
