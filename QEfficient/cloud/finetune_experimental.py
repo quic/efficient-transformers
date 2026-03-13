@@ -265,7 +265,8 @@ class FineTuningPipeline:
         if num_samples > 0:
             # Truncating datasets to a smaller number of samples.
             # If you want to use all data, set dataset_num_samples to -1 or remove it from config.
-            logger.log_rank_zero("Using fewer samples may impact finetuning quality.", logging.WARNING)
+            if (num_samples*split_ratio)/len(train_dataset) <=0.05:
+                 logger.log_rank_zero("Using fewer samples may impact finetuning quality.", logging.WARNING)
             subset_train_indices = list(range(0, int(num_samples * split_ratio)))
             subset_eval_indices = list(range(0, int(num_samples - num_samples * split_ratio)))
             eval_dataset = eval_dataset.select(subset_eval_indices)
