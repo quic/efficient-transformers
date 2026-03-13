@@ -26,10 +26,10 @@ import torch.nn.functional as F
 from transformers import (
     FalconConfig,
     FalconForCausalLM,
-    GPT2Config,
-    GPT2LMHeadModel,
     GemmaConfig,
     GemmaForCausalLM,
+    GPT2Config,
+    GPT2LMHeadModel,
     LlamaConfig,
     LlamaForCausalLM,
     MistralConfig,
@@ -94,32 +94,52 @@ def make_tiny_gpt2():
 
 def make_tiny_llama():
     cfg = LlamaConfig(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=CTX_LEN,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
     )
     return LlamaForCausalLM(cfg).eval(), cfg
 
 
 def make_tiny_mistral():
     cfg = MistralConfig(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=CTX_LEN,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
     )
     return MistralForCausalLM(cfg).eval(), cfg
 
 
 def make_tiny_qwen2():
     cfg = Qwen2Config(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=CTX_LEN,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
     )
     return Qwen2ForCausalLM(cfg).eval(), cfg
 
 
 def make_tiny_phi3():
     cfg = Phi3Config(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=CTX_LEN,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
         pad_token_id=0,
     )
     return Phi3ForCausalLM(cfg).eval(), cfg
@@ -127,17 +147,24 @@ def make_tiny_phi3():
 
 def make_tiny_gemma():
     cfg = GemmaConfig(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
-        max_position_embeddings=CTX_LEN, head_dim=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
+        head_dim=32,
     )
     return GemmaForCausalLM(cfg).eval(), cfg
 
 
 def make_tiny_falcon():
     cfg = FalconConfig(
-        num_hidden_layers=2, num_attention_heads=2,
-        hidden_size=64, vocab_size=VOCAB_SIZE,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        hidden_size=64,
+        vocab_size=VOCAB_SIZE,
         max_position_embeddings=CTX_LEN,
         new_decoder_architecture=False,
         multi_query=True,
@@ -159,8 +186,9 @@ class TestHFCausalLMBaseline:
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
         with torch.no_grad():
             out = model(input_ids=input_ids)
-        assert out.logits.shape == (1, SEQ_LEN, VOCAB_SIZE), \
+        assert out.logits.shape == (1, SEQ_LEN, VOCAB_SIZE), (
             f"[{label}] Expected logits shape (1, {SEQ_LEN}, {VOCAB_SIZE}), got {out.logits.shape}"
+        )
 
     def test_gpt2_forward_returns_logits_with_correct_shape(self):
         self._check_logits_shape(make_tiny_gpt2, "GPT2")
@@ -186,9 +214,12 @@ class TestHFCausalLMBaseline:
     def test_hf_logits_are_finite(self):
         """HF logits must not contain NaN or Inf for any model."""
         for factory, label in [
-            (make_tiny_gpt2, "GPT2"), (make_tiny_llama, "Llama"),
-            (make_tiny_mistral, "Mistral"), (make_tiny_qwen2, "Qwen2"),
-            (make_tiny_phi3, "Phi3"), (make_tiny_gemma, "Gemma"),
+            (make_tiny_gpt2, "GPT2"),
+            (make_tiny_llama, "Llama"),
+            (make_tiny_mistral, "Mistral"),
+            (make_tiny_qwen2, "Qwen2"),
+            (make_tiny_phi3, "Phi3"),
+            (make_tiny_gemma, "Gemma"),
         ]:
             model, cfg = factory()
             input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
@@ -251,9 +282,7 @@ class TestQEffCausalLMAccuracyVsHF:
         hf_probs = F.softmax(hf_logits, dim=-1)
         qeff_probs = F.softmax(qeff_logits, dim=-1)
         max_diff = (hf_probs - qeff_probs).abs().max().item()
-        assert max_diff < atol, (
-            f"[{label}] Probability distribution mismatch: max_diff={max_diff:.6f} > atol={atol}."
-        )
+        assert max_diff < atol, f"[{label}] Probability distribution mismatch: max_diff={max_diff:.6f} > atol={atol}."
 
     def test_gpt2_qeff_matches_hf_greedy_token(self):
         model, cfg = make_tiny_gpt2()
@@ -302,8 +331,10 @@ class TestQEffCausalLMAccuracyVsHF:
     def test_qeff_logits_are_finite(self):
         """QEff logits must not contain NaN or Inf for any model."""
         for factory, label in [
-            (make_tiny_gpt2, "GPT2"), (make_tiny_llama, "Llama"),
-            (make_tiny_mistral, "Mistral"), (make_tiny_qwen2, "Qwen2"),
+            (make_tiny_gpt2, "GPT2"),
+            (make_tiny_llama, "Llama"),
+            (make_tiny_mistral, "Mistral"),
+            (make_tiny_qwen2, "Qwen2"),
             (make_tiny_phi3, "Phi3"),
         ]:
             model, cfg = factory()
@@ -441,6 +472,7 @@ class TestQEffDecodeStepAccuracy:
     def test_gpt2_decode_is_deterministic(self):
         """Same model + same input must produce the same decode sequence."""
         import copy
+
         model, cfg = make_tiny_gpt2()
         model_copy = copy.deepcopy(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
@@ -476,6 +508,7 @@ class TestContinuousBatchingMode:
     def test_gpt2_continuous_batching_model_is_transformed(self):
         """With continuous_batching=True, the model must still be KV-transformed."""
         from QEfficient.transformers.models.gpt2.modeling_gpt2 import QEffGPT2LMHeadModel
+
         model, cfg = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
         assert isinstance(qeff.model, QEffGPT2LMHeadModel)
@@ -511,6 +544,7 @@ class TestCausalLMONNXStructure:
 
     def _check_onnx_export(self, factory, label, tmp_export_dir):
         import os
+
         model, cfg = factory()
         qeff_model = QEFFAutoModelForCausalLM(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -536,18 +570,21 @@ class TestCausalLMONNXStructure:
 
     def test_gpt2_onnx_passes_checker(self, tmp_export_dir):
         import onnx
+
         onnx_path = self._check_onnx_export(make_tiny_gpt2, "GPT2", tmp_export_dir)
         onnx_model = onnx.load(str(onnx_path))
         onnx.checker.check_model(onnx_model)
 
     def test_llama_onnx_passes_checker(self, tmp_export_dir):
         import onnx
+
         onnx_path = self._check_onnx_export(make_tiny_llama, "Llama", tmp_export_dir)
         onnx_model = onnx.load(str(onnx_path))
         onnx.checker.check_model(onnx_model)
 
     def test_gpt2_onnx_has_input_ids_and_position_ids(self, tmp_export_dir):
         import onnx
+
         onnx_path = self._check_onnx_export(make_tiny_gpt2, "GPT2", tmp_export_dir)
         onnx_model = onnx.load(str(onnx_path))
         input_names = {inp.name for inp in onnx_model.graph.input}
@@ -556,6 +593,7 @@ class TestCausalLMONNXStructure:
 
     def test_gpt2_onnx_has_kv_cache_inputs_for_all_layers(self, tmp_export_dir):
         import onnx
+
         n_layers = 2
         onnx_path = self._check_onnx_export(make_tiny_gpt2, "GPT2", tmp_export_dir)
         onnx_model = onnx.load(str(onnx_path))
@@ -566,6 +604,7 @@ class TestCausalLMONNXStructure:
 
     def test_llama_onnx_has_kv_cache_inputs_for_all_layers(self, tmp_export_dir):
         import onnx
+
         n_layers = 2
         onnx_path = self._check_onnx_export(make_tiny_llama, "Llama", tmp_export_dir)
         onnx_model = onnx.load(str(onnx_path))
@@ -576,6 +615,7 @@ class TestCausalLMONNXStructure:
 
     def test_gpt2_onnx_has_logits_output(self, tmp_export_dir):
         import onnx
+
         onnx_path = self._check_onnx_export(make_tiny_gpt2, "GPT2", tmp_export_dir)
         onnx_model = onnx.load(str(onnx_path))
         output_names = {out.name for out in onnx_model.graph.output}
@@ -584,6 +624,7 @@ class TestCausalLMONNXStructure:
     def test_gpt2_onnx_has_retained_state_outputs(self, tmp_export_dir):
         """KV cache outputs must be present as RetainedState outputs."""
         import onnx
+
         onnx_path = self._check_onnx_export(make_tiny_gpt2, "GPT2", tmp_export_dir)
         onnx_model = onnx.load(str(onnx_path))
         output_names = [out.name for out in onnx_model.graph.output]
@@ -593,6 +634,7 @@ class TestCausalLMONNXStructure:
     def test_gpt2_onnx_uses_correct_opset_version(self, tmp_export_dir):
         """Exported ONNX must use the opset version defined in QEfficient constants."""
         import onnx
+
         from QEfficient.utils.constants import ONNX_EXPORT_OPSET
 
         onnx_path = self._check_onnx_export(make_tiny_gpt2, "GPT2", tmp_export_dir)
@@ -605,6 +647,7 @@ class TestCausalLMONNXStructure:
     def test_gpt2_ort_session_creation_succeeds(self, tmp_export_dir):
         """ORT session must be creatable from the exported ONNX."""
         import onnxruntime as ort
+
         onnx_path = self._check_onnx_export(make_tiny_gpt2, "GPT2", tmp_export_dir)
         session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         assert session is not None
@@ -624,6 +667,7 @@ class TestCausalLMONNXStructure:
         """
         import numpy as np
         import onnxruntime as ort
+
         from QEfficient.transformers.cache_utils import InvalidIndexProvider
 
         model, cfg = factory()
@@ -658,9 +702,7 @@ class TestCausalLMONNXStructure:
 
     def test_gpt2_ort_prefill_produces_correct_logits(self, tmp_export_dir):
         """ORT prefill must produce logits matching QEff PyTorch."""
-        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(
-            make_tiny_gpt2, "GPT2", tmp_export_dir
-        )
+        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_gpt2, "GPT2", tmp_export_dir)
         pt_token = int(pt_logits.argmax(-1))
         ort_token = int(ort_logits.argmax(-1))
         assert pt_token == ort_token, f"Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
@@ -668,6 +710,7 @@ class TestCausalLMONNXStructure:
     def test_llama_ort_session_creation_succeeds(self, tmp_export_dir):
         """ORT session must be creatable from the exported Llama ONNX."""
         import onnxruntime as ort
+
         from QEfficient.transformers.cache_utils import InvalidIndexProvider
 
         model, cfg = make_tiny_llama()
@@ -686,6 +729,7 @@ class TestCausalLMONNXStructure:
     def test_mistral_ort_session_creation_succeeds(self, tmp_export_dir):
         """ORT session must be creatable from the exported Mistral ONNX."""
         import onnxruntime as ort
+
         from QEfficient.transformers.cache_utils import InvalidIndexProvider
 
         model, cfg = make_tiny_mistral()
@@ -704,6 +748,7 @@ class TestCausalLMONNXStructure:
     def test_qwen2_ort_session_creation_succeeds(self, tmp_export_dir):
         """ORT session must be creatable from the exported Qwen2 ONNX."""
         import onnxruntime as ort
+
         from QEfficient.transformers.cache_utils import InvalidIndexProvider
 
         model, cfg = make_tiny_qwen2()
@@ -722,6 +767,7 @@ class TestCausalLMONNXStructure:
     def test_phi3_ort_session_creation_succeeds(self, tmp_export_dir):
         """ORT session must be creatable from the exported Phi3 ONNX."""
         import onnxruntime as ort
+
         from QEfficient.transformers.cache_utils import InvalidIndexProvider
 
         model, cfg = make_tiny_phi3()
@@ -739,9 +785,7 @@ class TestCausalLMONNXStructure:
 
     def test_llama_ort_prefill_produces_correct_logits(self, tmp_export_dir):
         """ORT Llama prefill must produce logits matching QEff PyTorch."""
-        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(
-            make_tiny_llama, "Llama", tmp_export_dir
-        )
+        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_llama, "Llama", tmp_export_dir)
         pt_token = int(pt_logits.argmax(-1))
         ort_token = int(ort_logits.argmax(-1))
         assert pt_token == ort_token, f"[Llama] Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
@@ -757,18 +801,14 @@ class TestCausalLMONNXStructure:
 
     def test_qwen2_ort_prefill_produces_correct_logits(self, tmp_export_dir):
         """ORT Qwen2 prefill must produce logits matching QEff PyTorch."""
-        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(
-            make_tiny_qwen2, "Qwen2", tmp_export_dir
-        )
+        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_qwen2, "Qwen2", tmp_export_dir)
         pt_token = int(pt_logits.argmax(-1))
         ort_token = int(ort_logits.argmax(-1))
         assert pt_token == ort_token, f"[Qwen2] Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
 
     def test_phi3_ort_prefill_produces_correct_logits(self, tmp_export_dir):
         """ORT Phi3 prefill must produce logits matching QEff PyTorch."""
-        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(
-            make_tiny_phi3, "Phi3", tmp_export_dir
-        )
+        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_phi3, "Phi3", tmp_export_dir)
         pt_token = int(pt_logits.argmax(-1))
         ort_token = int(ort_logits.argmax(-1))
         assert pt_token == ort_token, f"[Phi3] Token mismatch: PyTorch={pt_token}, ORT={ort_token}"
@@ -776,15 +816,15 @@ class TestCausalLMONNXStructure:
     def test_gpt2_ort_logits_are_finite(self, tmp_export_dir):
         """ORT logits must not contain NaN or Inf."""
         import numpy as np
-        _, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(
-            make_tiny_gpt2, "GPT2", tmp_export_dir
-        )
+
+        _, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_gpt2, "GPT2", tmp_export_dir)
         assert np.isfinite(ort_logits).all(), "ORT GPT2 logits contain NaN/Inf"
 
     def test_gpt2_ort_output_shape_is_correct(self, tmp_export_dir):
         """ORT logits shape must be (batch, seq_len, vocab_size) where seq_len matches input."""
         import numpy as np
         import onnxruntime as ort
+
         from QEfficient.transformers.cache_utils import InvalidIndexProvider
 
         model, cfg = make_tiny_gpt2()
@@ -813,27 +853,20 @@ class TestCausalLMONNXStructure:
         # where actual_seq_len may be 1 (last token only) or match input seq_len
         assert logits.shape[0] == 1, f"Expected batch size 1, got {logits.shape[0]}"
         assert logits.shape[2] == VOCAB_SIZE, f"Expected vocab size {VOCAB_SIZE}, got {logits.shape[2]}"
-        assert logits.shape[1] in [1, SEQ_LEN], (
-            f"Expected seq_len to be 1 or {SEQ_LEN}, got {logits.shape[1]}"
-        )
+        assert logits.shape[1] in [1, SEQ_LEN], f"Expected seq_len to be 1 or {SEQ_LEN}, got {logits.shape[1]}"
 
     def test_gpt2_ort_kv_cache_outputs_present(self, tmp_export_dir):
         """ORT outputs must include RetainedState KV cache entries."""
-        _, _, session, output_names, _, _ = self._check_ort_prefill_accuracy(
-            make_tiny_gpt2, "GPT2", tmp_export_dir
-        )
+        _, _, session, output_names, _, _ = self._check_ort_prefill_accuracy(make_tiny_gpt2, "GPT2", tmp_export_dir)
         retained = [n for n in output_names if "RetainedState" in n]
         assert len(retained) > 0, f"No RetainedState outputs in ORT session: {output_names}"
 
     def test_gpt2_ort_logits_numerically_close_to_pytorch(self, tmp_export_dir):
         """ORT and PyTorch softmax distributions must be close (max_diff < 1e-3)."""
         import numpy as np
-        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(
-            make_tiny_gpt2, "GPT2", tmp_export_dir
-        )
+
+        pt_logits, ort_logits, _, _, _, _ = self._check_ort_prefill_accuracy(make_tiny_gpt2, "GPT2", tmp_export_dir)
         pt_probs = torch.tensor(pt_logits).softmax(-1).numpy()
         ort_probs = torch.tensor(ort_logits).softmax(-1).numpy()
         max_diff = float(np.abs(pt_probs - ort_probs).max())
-        assert max_diff < 1e-3, (
-            f"ORT vs PyTorch softmax max_diff={max_diff:.6f} exceeds 1e-3"
-        )
+        assert max_diff < 1e-3, f"ORT vs PyTorch softmax max_diff={max_diff:.6f} exceeds 1e-3"

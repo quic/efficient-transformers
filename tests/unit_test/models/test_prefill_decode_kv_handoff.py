@@ -28,10 +28,10 @@ All tests run on CPU only.
 import pytest
 import torch
 from transformers import (
-    GPT2Config,
-    GPT2LMHeadModel,
     GemmaConfig,
     GemmaForCausalLM,
+    GPT2Config,
+    GPT2LMHeadModel,
     LlamaConfig,
     LlamaForCausalLM,
     MistralConfig,
@@ -118,16 +118,24 @@ def _decode_inputs(next_token, decode_position, past_key_values):
 
 def make_tiny_gpt2():
     cfg = GPT2Config(
-        n_layer=2, n_head=2, n_embd=64,
-        vocab_size=VOCAB_SIZE, n_positions=CTX_LEN, n_ctx=CTX_LEN,
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        vocab_size=VOCAB_SIZE,
+        n_positions=CTX_LEN,
+        n_ctx=CTX_LEN,
     )
     return GPT2LMHeadModel(cfg).eval(), cfg
 
 
 def make_tiny_llama():
     cfg = LlamaConfig(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
         max_position_embeddings=CTX_LEN,
     )
     return LlamaForCausalLM(cfg).eval(), cfg
@@ -135,8 +143,12 @@ def make_tiny_llama():
 
 def make_tiny_mistral():
     cfg = MistralConfig(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
         max_position_embeddings=CTX_LEN,
     )
     return MistralForCausalLM(cfg).eval(), cfg
@@ -144,8 +156,12 @@ def make_tiny_mistral():
 
 def make_tiny_qwen2():
     cfg = Qwen2Config(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
         max_position_embeddings=CTX_LEN,
     )
     return Qwen2ForCausalLM(cfg).eval(), cfg
@@ -153,18 +169,28 @@ def make_tiny_qwen2():
 
 def make_tiny_phi3():
     cfg = Phi3Config(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
-        max_position_embeddings=CTX_LEN, pad_token_id=0,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
+        pad_token_id=0,
     )
     return Phi3ForCausalLM(cfg).eval(), cfg
 
 
 def make_tiny_gemma():
     cfg = GemmaConfig(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
-        max_position_embeddings=CTX_LEN, head_dim=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
+        head_dim=32,
     )
     return GemmaForCausalLM(cfg).eval(), cfg
 
@@ -237,16 +263,14 @@ class TestPrefillWritesCache:
         with torch.no_grad():
             out = qeff.model(**_prefill_inputs(input_ids, cfg))
 
-        assert out.past_key_values is not None, (
-            f"[{label}] past_key_values is None after prefill"
-        )
+        assert out.past_key_values is not None, f"[{label}] past_key_values is None after prefill"
 
         # Inspect layer-0 keys — works for both QEffDynamicCache and legacy tuple
         pkv = out.past_key_values
         if hasattr(pkv, "layers"):
             layer0_keys = pkv.layers[0].keys  # QEffDynamicCache
         elif isinstance(pkv, (list, tuple)) and len(pkv) > 0:
-            layer0_keys = pkv[0][0]           # legacy tuple
+            layer0_keys = pkv[0][0]  # legacy tuple
         else:
             pytest.skip(f"[{label}] Unrecognised past_key_values type: {type(pkv)}")
             return
@@ -294,23 +318,17 @@ class TestRealCacheDecodeCorrectness:
         _, decode_tokens, _ = _run_real_handoff(factory, n_decode_steps=3)
         assert len(decode_tokens) == 3
         for i, tok in enumerate(decode_tokens):
-            assert 0 <= tok < VOCAB_SIZE, (
-                f"[{label}] Decode step {i}: token {tok} out of range [0, {VOCAB_SIZE})"
-            )
+            assert 0 <= tok < VOCAB_SIZE, f"[{label}] Decode step {i}: token {tok} out of range [0, {VOCAB_SIZE})"
 
     def _assert_finite(self, factory, label):
         _, _, all_logits = _run_real_handoff(factory, n_decode_steps=3)
         for i, logits in enumerate(all_logits):
-            assert torch.isfinite(logits).all(), (
-                f"[{label}] Step {i}: logits contain NaN/Inf after real-cache handoff"
-            )
+            assert torch.isfinite(logits).all(), f"[{label}] Step {i}: logits contain NaN/Inf after real-cache handoff"
 
     def _assert_deterministic(self, factory, label):
         _, tokens1, _ = _run_real_handoff(factory, n_decode_steps=3, seed=7)
         _, tokens2, _ = _run_real_handoff(factory, n_decode_steps=3, seed=7)
-        assert tokens1 == tokens2, (
-            f"[{label}] Decode is not deterministic: {tokens1} vs {tokens2}"
-        )
+        assert tokens1 == tokens2, f"[{label}] Decode is not deterministic: {tokens1} vs {tokens2}"
 
     def test_gpt2_decode_valid(self):
         self._assert_valid(make_tiny_gpt2, "GPT2")
@@ -390,9 +408,7 @@ class TestRealCacheInfluencesOutput:
 
             # Decode with ZERO cache (what the old tests did)
             with torch.no_grad():
-                out_zero = qeff.model(**_decode_inputs(
-                    prefill_token, decode_pos, _zero_kv_cache(cfg)
-                ))
+                out_zero = qeff.model(**_decode_inputs(prefill_token, decode_pos, _zero_kv_cache(cfg)))
             zero_token = _extract_next_token(out_zero.logits)
 
             if real_token != zero_token:
@@ -445,8 +461,7 @@ class TestDecodePositionAdvancesStrictly:
             next_pos = positions_used[-1] + 1
             decode_in = _decode_inputs(token, next_pos, current_past)
             assert decode_in["position_ids"].item() == next_pos, (
-                f"[{label}] Step {step}: position_ids={decode_in['position_ids'].item()}, "
-                f"expected {next_pos}"
+                f"[{label}] Step {step}: position_ids={decode_in['position_ids'].item()}, expected {next_pos}"
             )
             positions_used.append(next_pos)
 
@@ -505,23 +520,17 @@ class TestFullPipelineConsistency:
             prefill_out = qeff.model(**_prefill_inputs(input_ids, cfg))
         qeff_token = _extract_next_token(prefill_out.logits)
 
-        assert hf_token == qeff_token, (
-            f"[{label}] Prefill token mismatch: HF={hf_token}, QEff={qeff_token}"
-        )
+        assert hf_token == qeff_token, f"[{label}] Prefill token mismatch: HF={hf_token}, QEff={qeff_token}"
 
         # Decode with REAL cache
         with torch.no_grad():
-            decode_out = qeff.model(**_decode_inputs(
-                qeff_token, PREFILL_LEN, prefill_out.past_key_values
-            ))
+            decode_out = qeff.model(**_decode_inputs(qeff_token, PREFILL_LEN, prefill_out.past_key_values))
 
         assert torch.isfinite(decode_out.logits).all(), (
             f"[{label}] Decode logits contain NaN/Inf after real-cache handoff"
         )
         dec_token = _extract_next_token(decode_out.logits)
-        assert 0 <= dec_token < VOCAB_SIZE, (
-            f"[{label}] Decode token {dec_token} out of range [0, {VOCAB_SIZE})"
-        )
+        assert 0 <= dec_token < VOCAB_SIZE, f"[{label}] Decode token {dec_token} out of range [0, {VOCAB_SIZE})"
 
     def test_gpt2_full_pipeline(self):
         self._assert_full_pipeline(make_tiny_gpt2, "GPT2")

@@ -26,8 +26,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-import torch
-from transformers import GPT2Config, GPT2LMHeadModel, AutoTokenizer
+from transformers import AutoTokenizer
 
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfo,
@@ -96,7 +95,9 @@ def _make_mock_session(
     # run() returns logits with argmax-able values
     def _run(inputs):
         bs = inputs.get("input_ids", np.zeros((batch_size, 1))).shape[0]
-        seq = force_seq_len if force_seq_len is not None else inputs.get("input_ids", np.zeros((batch_size, 1))).shape[1]
+        seq = (
+            force_seq_len if force_seq_len is not None else inputs.get("input_ids", np.zeros((batch_size, 1))).shape[1]
+        )
         logits = np.zeros((bs, seq, vocab_size), dtype=np.float32)
         logits[:, :, 42] = 1.0  # always predict token 42
         return {"logits": logits}
@@ -160,34 +161,42 @@ class TestGenerationModuleImportability:
 
     def test_cloud_infer_importable(self):
         import QEfficient.generation.cloud_infer
+
         assert QEfficient.generation.cloud_infer is not None
 
     def test_embedding_handler_importable(self):
         import QEfficient.generation.embedding_handler
+
         assert QEfficient.generation.embedding_handler is not None
 
     def test_text_generation_inference_importable(self):
         import QEfficient.generation.text_generation_inference
+
         assert QEfficient.generation.text_generation_inference is not None
 
     def test_vlm_generation_importable(self):
         import QEfficient.generation.vlm_generation
+
         assert QEfficient.generation.vlm_generation is not None
 
     def test_vision_handler_importable(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         assert VisionHandler is not None
 
     def test_text_generation_class_importable(self):
         from QEfficient.generation.text_generation_inference import TextGeneration
+
         assert TextGeneration is not None
 
     def test_qeff_text_generation_base_importable(self):
         from QEfficient.generation.text_generation_inference import QEffTextGenerationBase
+
         assert QEffTextGenerationBase is not None
 
     def test_vision_language_generation_importable(self):
         from QEfficient.generation.vlm_generation import VisionLanguageGeneration
+
         assert VisionLanguageGeneration is not None
 
 
@@ -436,7 +445,9 @@ class TestGetCompilationDims:
         assert bs == 4 and cl == 128 and fbs is None
 
     def test_with_full_batch_size(self, tmp_path):
-        path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128", "full_batch_size": "16"}]})
+        path = self._write_spec(
+            tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128", "full_batch_size": "16"}]}
+        )
         bs, cl, fbs = get_compilation_dims(path)
         assert fbs == 16
 
@@ -1031,21 +1042,25 @@ class TestVisionHandlerInit:
 
     def test_construction_with_none_sessions(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         assert h is not None
 
     def test_is_available_false_with_none(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         assert h.is_available() is False
 
     def test_is_available_false_session_no_processor(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         h = VisionHandler(qeff_model=None, vision_session=MagicMock(), processor=None, tokenizer=None)
         assert h.is_available() is False
 
     def test_get_vision_output_shapes_default(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         shapes = h.get_vision_output_shapes()
         assert isinstance(shapes, dict)
@@ -1053,6 +1068,7 @@ class TestVisionHandlerInit:
 
     def test_get_vision_output_shapes_from_config(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         config = {"vision_output_shapes": {"my_out": (100, 200)}}
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None, config=config)
         shapes = h.get_vision_output_shapes()
@@ -1060,24 +1076,29 @@ class TestVisionHandlerInit:
 
     def test_image_dims_stored(self):
         from QEfficient.generation.embedding_handler import VisionHandler
-        h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None,
-                          image_height=224, image_width=224)
+
+        h = VisionHandler(
+            qeff_model=None, vision_session=None, processor=None, tokenizer=None, image_height=224, image_width=224
+        )
         assert h._image_height == 224 and h._image_width == 224
 
     def test_setup_vision_buffers_raises_without_session(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         with pytest.raises(ValueError):
             h.setup_vision_buffers()
 
     def test_run_vision_inference_raises_without_session(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         with pytest.raises(ValueError):
             h.run_vision_inference({})
 
     def test_prepare_vlm_inputs_raises_without_processor(self):
         from QEfficient.generation.embedding_handler import VisionHandler
+
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         with pytest.raises((ValueError, AttributeError)):
             h.prepare_vlm_inputs("image.jpg", "query", 128)

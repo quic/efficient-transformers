@@ -31,12 +31,21 @@ MAX_TARGET_POS = 32
 
 def make_tiny_whisper():
     cfg = WhisperConfig(
-        vocab_size=VOCAB_SIZE, num_mel_bins=NUM_MEL_BINS,
-        encoder_layers=1, encoder_attention_heads=2,
-        decoder_layers=1, decoder_attention_heads=2,
-        decoder_ffn_dim=D_MODEL, encoder_ffn_dim=D_MODEL, d_model=D_MODEL,
-        max_source_positions=MAX_SOURCE_POS, max_target_positions=MAX_TARGET_POS,
-        decoder_start_token_id=1, eos_token_id=2, pad_token_id=0, bos_token_id=1,
+        vocab_size=VOCAB_SIZE,
+        num_mel_bins=NUM_MEL_BINS,
+        encoder_layers=1,
+        encoder_attention_heads=2,
+        decoder_layers=1,
+        decoder_attention_heads=2,
+        decoder_ffn_dim=D_MODEL,
+        encoder_ffn_dim=D_MODEL,
+        d_model=D_MODEL,
+        max_source_positions=MAX_SOURCE_POS,
+        max_target_positions=MAX_TARGET_POS,
+        decoder_start_token_id=1,
+        eos_token_id=2,
+        pad_token_id=0,
+        bos_token_id=1,
     )
     return WhisperForConditionalGeneration(cfg).eval(), cfg
 
@@ -113,6 +122,7 @@ class TestQEffWhisperArchitecture:
 
     def test_qeff_whisper_model_class_replaced(self):
         from QEfficient.transformers.models.whisper.modeling_whisper import QEffWhisperForConditionalGeneration
+
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
         assert isinstance(qeff_model.model, QEffWhisperForConditionalGeneration), (
@@ -121,6 +131,7 @@ class TestQEffWhisperArchitecture:
 
     def test_qeff_whisper_encoder_replaced(self):
         from QEfficient.transformers.models.whisper.modeling_whisper import QEffWhisperEncoder
+
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
         assert isinstance(qeff_model.model.model.encoder, QEffWhisperEncoder), (
@@ -129,6 +140,7 @@ class TestQEffWhisperArchitecture:
 
     def test_qeff_whisper_decoder_replaced(self):
         from QEfficient.transformers.models.whisper.modeling_whisper import QEffWhisperDecoder
+
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
         assert isinstance(qeff_model.model.model.decoder, QEffWhisperDecoder), (
@@ -137,6 +149,7 @@ class TestQEffWhisperArchitecture:
 
     def test_qeff_whisper_has_qeff_attention_layers(self):
         from QEfficient.transformers.models.whisper.modeling_whisper import QEffWhisperAttention
+
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
         has_qeff_attn = any(isinstance(m, QEffWhisperAttention) for m in qeff_model.model.modules())
@@ -144,6 +157,7 @@ class TestQEffWhisperArchitecture:
 
     def test_qeff_whisper_has_positional_embedding_replaced(self):
         from QEfficient.transformers.models.whisper.modeling_whisper import QEffWhisperPositionalEmbedding
+
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
         has_pos_emb = any(isinstance(m, QEffWhisperPositionalEmbedding) for m in qeff_model.model.modules())
@@ -229,20 +243,22 @@ class TestWhisperONNXExport:
 
     def test_whisper_onnx_files_exist(self, tmp_export_dir):
         import pathlib
+
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
         search_root = pathlib.Path(str(onnx_path)).parent if onnx_path else tmp_export_dir
         onnx_files = list(search_root.rglob("*.onnx")) or list(tmp_export_dir.rglob("*.onnx"))
         assert len(onnx_files) > 0, (
-            f"No ONNX files found after Whisper export. "
-            f"onnx_path={onnx_path}, search_root={search_root}"
+            f"No ONNX files found after Whisper export. onnx_path={onnx_path}, search_root={search_root}"
         )
 
     def test_whisper_onnx_encoder_passes_checker(self, tmp_export_dir):
         """At least one exported Whisper ONNX file must pass onnx.checker."""
-        import onnx
         import pathlib
+
+        import onnx
+
         model, cfg = make_tiny_whisper()
         qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))

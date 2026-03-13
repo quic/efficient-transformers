@@ -32,7 +32,6 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -67,50 +66,62 @@ class TestDiffusersModuleImportability:
 
     def test_diffusers_init_importable(self):
         import QEfficient.diffusers
+
         assert QEfficient.diffusers is not None
 
     def test_modeling_utils_importable(self):
         import QEfficient.diffusers.models.modeling_utils
+
         assert QEfficient.diffusers.models.modeling_utils is not None
 
     def test_normalization_importable(self):
         import QEfficient.diffusers.models.normalization
+
         assert QEfficient.diffusers.models.normalization is not None
 
     def test_pytorch_transforms_importable(self):
         import QEfficient.diffusers.models.pytorch_transforms
+
         assert QEfficient.diffusers.models.pytorch_transforms is not None
 
     def test_transformer_flux_importable(self):
         import QEfficient.diffusers.models.transformers.transformer_flux
+
         assert QEfficient.diffusers.models.transformers.transformer_flux is not None
 
     def test_pipeline_utils_importable(self):
         import QEfficient.diffusers.pipelines.pipeline_utils
+
         assert QEfficient.diffusers.pipelines.pipeline_utils is not None
 
     def test_pipeline_module_importable(self):
         import QEfficient.diffusers.pipelines.pipeline_module
+
         assert QEfficient.diffusers.pipelines.pipeline_module is not None
 
     def test_get_attention_blocking_config_importable(self):
         from QEfficient.diffusers.models.modeling_utils import get_attention_blocking_config
+
         assert callable(get_attention_blocking_config)
 
     def test_compute_blocked_attention_importable(self):
         from QEfficient.diffusers.models.modeling_utils import compute_blocked_attention
+
         assert callable(compute_blocked_attention)
 
     def test_qeff_flux_transformer_2d_model_importable(self):
         from QEfficient.diffusers.models.transformers.transformer_flux import QEffFluxTransformer2DModel
+
         assert QEffFluxTransformer2DModel is not None
 
     def test_qeff_ada_layer_norm_zero_importable(self):
         from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZero
+
         assert QEffAdaLayerNormZero is not None
 
     def test_qeff_pipeline_output_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_utils import QEffPipelineOutput
+
         assert QEffPipelineOutput is not None
 
 
@@ -402,7 +413,9 @@ class TestComputeBlockedAttention:
         from QEfficient.diffusers.models.modeling_utils import compute_blocked_attention
 
         q, k, v = _make_qkv(bs=1, nh=4, cl=8, dh=16)
-        out = compute_blocked_attention(q, k, v, head_block_size=2, num_kv_blocks=2, num_q_blocks=2, blocking_mode="head")
+        out = compute_blocked_attention(
+            q, k, v, head_block_size=2, num_kv_blocks=2, num_q_blocks=2, blocking_mode="head"
+        )
         assert out.shape == q.shape
 
     def test_kv_mode_output_shape(self):
@@ -423,7 +436,9 @@ class TestComputeBlockedAttention:
         from QEfficient.diffusers.models.modeling_utils import compute_blocked_attention
 
         q, k, v = _make_qkv(bs=1, nh=2, cl=8, dh=16)
-        out = compute_blocked_attention(q, k, v, head_block_size=2, num_kv_blocks=2, num_q_blocks=2, blocking_mode="qkv")
+        out = compute_blocked_attention(
+            q, k, v, head_block_size=2, num_kv_blocks=2, num_q_blocks=2, blocking_mode="qkv"
+        )
         assert out.shape == q.shape
 
     def test_all_modes_produce_finite_outputs(self):
@@ -432,7 +447,9 @@ class TestComputeBlockedAttention:
 
         q, k, v = _make_qkv(bs=1, nh=4, cl=8, dh=16)
         for mode in ["head", "kv", "q", "qkv"]:
-            out = compute_blocked_attention(q, k, v, head_block_size=2, num_kv_blocks=2, num_q_blocks=2, blocking_mode=mode)
+            out = compute_blocked_attention(
+                q, k, v, head_block_size=2, num_kv_blocks=2, num_q_blocks=2, blocking_mode=mode
+            )
             assert torch.isfinite(out).all(), f"Mode '{mode}' produced NaN/Inf"
 
     def test_small_seq_all_modes_agree(self):
@@ -443,11 +460,11 @@ class TestComputeBlockedAttention:
         ref = _standard_attention(q, k, v)
 
         for mode in ["head", "kv", "q", "qkv"]:
-            out = compute_blocked_attention(q, k, v, head_block_size=1, num_kv_blocks=1, num_q_blocks=1, blocking_mode=mode)
-            max_diff = (ref - out).abs().max().item()
-            assert max_diff < 1e-4, (
-                f"Mode '{mode}' vs standard attention max_diff={max_diff:.2e}"
+            out = compute_blocked_attention(
+                q, k, v, head_block_size=1, num_kv_blocks=1, num_q_blocks=1, blocking_mode=mode
             )
+            max_diff = (ref - out).abs().max().item()
+            assert max_diff < 1e-4, f"Mode '{mode}' vs standard attention max_diff={max_diff:.2e}"
 
     def test_with_attention_mask(self):
         """compute_blocked_attention must accept an optional boolean attention_mask."""
@@ -456,7 +473,9 @@ class TestComputeBlockedAttention:
         q, k, v = _make_qkv(bs=1, nh=2, cl=8, dh=16)
         # attention_mask must be boolean (True = masked/ignored position)
         mask = torch.zeros(1, 1, 8, 8, dtype=torch.bool)
-        out = compute_blocked_attention(q, k, v, head_block_size=2, num_kv_blocks=2, num_q_blocks=2, blocking_mode="head", attention_mask=mask)
+        out = compute_blocked_attention(
+            q, k, v, head_block_size=2, num_kv_blocks=2, num_q_blocks=2, blocking_mode="head", attention_mask=mask
+        )
         assert out.shape == q.shape
         assert torch.isfinite(out).all()
 
@@ -473,14 +492,17 @@ class TestQEffNormalizationLayers:
 
     def _make_ada_layer_norm_zero(self, embedding_dim=16):
         from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZero
+
         return QEffAdaLayerNormZero(embedding_dim=embedding_dim).eval()
 
     def _make_ada_layer_norm_zero_single(self, embedding_dim=16):
         from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZeroSingle
+
         return QEffAdaLayerNormZeroSingle(embedding_dim=embedding_dim).eval()
 
     def _make_ada_layer_norm_continuous(self, embedding_dim=16, conditioning_dim=16):
         from QEfficient.diffusers.models.normalization import QEffAdaLayerNormContinuous
+
         return QEffAdaLayerNormContinuous(
             embedding_dim=embedding_dim,
             conditioning_embedding_dim=conditioning_dim,
@@ -587,70 +609,88 @@ class TestDiffusersTransforms:
 
     def test_custom_ops_transform_importable(self):
         from QEfficient.diffusers.models.pytorch_transforms import CustomOpsTransform
+
         assert CustomOpsTransform is not None
 
     def test_attention_transform_importable(self):
         from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
+
         assert AttentionTransform is not None
 
     def test_normalization_transform_importable(self):
         from QEfficient.diffusers.models.pytorch_transforms import NormalizationTransform
+
         assert NormalizationTransform is not None
 
     def test_custom_ops_transform_has_module_mapping(self):
         from QEfficient.diffusers.models.pytorch_transforms import CustomOpsTransform
+
         assert hasattr(CustomOpsTransform, "_module_mapping")
         assert len(CustomOpsTransform._module_mapping) > 0
 
     def test_attention_transform_has_module_mapping(self):
         from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
+
         assert hasattr(AttentionTransform, "_module_mapping")
         assert len(AttentionTransform._module_mapping) > 0
 
     def test_normalization_transform_has_module_mapping(self):
         from QEfficient.diffusers.models.pytorch_transforms import NormalizationTransform
+
         assert hasattr(NormalizationTransform, "_module_mapping")
         assert len(NormalizationTransform._module_mapping) > 0
 
     def test_attention_transform_maps_flux_attention(self):
         from diffusers.models.transformers.transformer_flux import FluxAttention
+
         from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
         from QEfficient.diffusers.models.transformers.transformer_flux import QEffFluxAttention
+
         assert FluxAttention in AttentionTransform._module_mapping
         assert AttentionTransform._module_mapping[FluxAttention] is QEffFluxAttention
 
     def test_attention_transform_maps_flux_transformer_block(self):
         from diffusers.models.transformers.transformer_flux import FluxTransformerBlock
+
         from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
         from QEfficient.diffusers.models.transformers.transformer_flux import QEffFluxTransformerBlock
+
         assert FluxTransformerBlock in AttentionTransform._module_mapping
         assert AttentionTransform._module_mapping[FluxTransformerBlock] is QEffFluxTransformerBlock
 
     def test_attention_transform_maps_flux_single_transformer_block(self):
         from diffusers.models.transformers.transformer_flux import FluxSingleTransformerBlock
+
         from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
         from QEfficient.diffusers.models.transformers.transformer_flux import QEffFluxSingleTransformerBlock
+
         assert FluxSingleTransformerBlock in AttentionTransform._module_mapping
         assert AttentionTransform._module_mapping[FluxSingleTransformerBlock] is QEffFluxSingleTransformerBlock
 
     def test_attention_transform_maps_flux_transformer_2d_model(self):
         from diffusers.models.transformers.transformer_flux import FluxTransformer2DModel
+
         from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
         from QEfficient.diffusers.models.transformers.transformer_flux import QEffFluxTransformer2DModel
+
         assert FluxTransformer2DModel in AttentionTransform._module_mapping
         assert AttentionTransform._module_mapping[FluxTransformer2DModel] is QEffFluxTransformer2DModel
 
     def test_normalization_transform_maps_ada_layer_norm_zero(self):
         from diffusers.models.normalization import AdaLayerNormZero
-        from QEfficient.diffusers.models.pytorch_transforms import NormalizationTransform
+
         from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZero
+        from QEfficient.diffusers.models.pytorch_transforms import NormalizationTransform
+
         assert AdaLayerNormZero in NormalizationTransform._module_mapping
         assert NormalizationTransform._module_mapping[AdaLayerNormZero] is QEffAdaLayerNormZero
 
     def test_normalization_transform_maps_ada_layer_norm_zero_single(self):
         from diffusers.models.normalization import AdaLayerNormZeroSingle
-        from QEfficient.diffusers.models.pytorch_transforms import NormalizationTransform
+
         from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZeroSingle
+        from QEfficient.diffusers.models.pytorch_transforms import NormalizationTransform
+
         assert AdaLayerNormZeroSingle in NormalizationTransform._module_mapping
         assert NormalizationTransform._module_mapping[AdaLayerNormZeroSingle] is QEffAdaLayerNormZeroSingle
 
@@ -660,6 +700,7 @@ class TestDiffusersTransforms:
             CustomOpsTransform,
             NormalizationTransform,
         )
+
         for cls in [CustomOpsTransform, AttentionTransform, NormalizationTransform]:
             assert hasattr(cls, "apply"), f"{cls.__name__} missing apply method"
             assert callable(cls.apply), f"{cls.__name__}.apply is not callable"
@@ -676,10 +717,12 @@ class TestPipelineUtils:
 
     def test_calculate_compressed_latent_dimension_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_utils import calculate_compressed_latent_dimension
+
         assert callable(calculate_compressed_latent_dimension)
 
     def test_calculate_latent_dimensions_with_frames_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_utils import calculate_latent_dimensions_with_frames
+
         assert callable(calculate_latent_dimensions_with_frames)
 
     def test_compressed_latent_dimension_basic(self):
@@ -728,9 +771,13 @@ class TestPipelineUtils:
         from QEfficient.diffusers.pipelines.pipeline_utils import calculate_latent_dimensions_with_frames
 
         result = calculate_latent_dimensions_with_frames(
-            height=64, width=64, num_frames=16,
-            vae_scale_factor_spatial=2, vae_scale_factor_temporal=4,
-            patch_height=2, patch_width=2
+            height=64,
+            width=64,
+            num_frames=16,
+            vae_scale_factor_spatial=2,
+            vae_scale_factor_temporal=4,
+            patch_height=2,
+            patch_width=2,
         )
         assert isinstance(result, (tuple, list, int)), f"Unexpected return type: {type(result)}"
 
@@ -738,9 +785,13 @@ class TestPipelineUtils:
         from QEfficient.diffusers.pipelines.pipeline_utils import calculate_latent_dimensions_with_frames
 
         result = calculate_latent_dimensions_with_frames(
-            height=64, width=64, num_frames=16,
-            vae_scale_factor_spatial=2, vae_scale_factor_temporal=4,
-            patch_height=2, patch_width=2
+            height=64,
+            width=64,
+            num_frames=16,
+            vae_scale_factor_spatial=2,
+            vae_scale_factor_temporal=4,
+            patch_height=2,
+            patch_width=2,
         )
         if isinstance(result, (tuple, list)):
             assert all(r > 0 for r in result), "All dimensions must be positive"
@@ -749,40 +800,44 @@ class TestPipelineUtils:
 
     def test_module_perf_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_utils import ModulePerf
+
         assert ModulePerf is not None
 
     def test_module_perf_instantiable(self):
         from QEfficient.diffusers.pipelines.pipeline_utils import ModulePerf
+
         perf = ModulePerf(module_name="test", perf=100)
         assert perf is not None
 
     def test_module_perf_has_expected_fields(self):
         from QEfficient.diffusers.pipelines.pipeline_utils import ModulePerf
+
         perf = ModulePerf(module_name="test", perf=100)
         assert hasattr(perf, "module_name")
         assert hasattr(perf, "perf")
 
     def test_qeff_pipeline_output_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_utils import QEffPipelineOutput
+
         assert QEffPipelineOutput is not None
 
     def test_qeff_pipeline_output_instantiable(self):
-        from QEfficient.diffusers.pipelines.pipeline_utils import QEffPipelineOutput, ModulePerf
         import numpy as np
+
+        from QEfficient.diffusers.pipelines.pipeline_utils import ModulePerf, QEffPipelineOutput
+
         output = QEffPipelineOutput(
-            pipeline_module=[ModulePerf(module_name="test", perf=100)],
-            images=np.zeros((1, 64, 64, 3))
+            pipeline_module=[ModulePerf(module_name="test", perf=100)], images=np.zeros((1, 64, 64, 3))
         )
         assert output is not None
 
     def test_qeff_pipeline_output_has_images(self):
-        from QEfficient.diffusers.pipelines.pipeline_utils import QEffPipelineOutput, ModulePerf
         import numpy as np
+
+        from QEfficient.diffusers.pipelines.pipeline_utils import ModulePerf, QEffPipelineOutput
+
         images = np.zeros((1, 64, 64, 3))
-        output = QEffPipelineOutput(
-            pipeline_module=[ModulePerf(module_name="test", perf=100)],
-            images=images
-        )
+        output = QEffPipelineOutput(pipeline_module=[ModulePerf(module_name="test", perf=100)], images=images)
         assert hasattr(output, "images")
         assert output.images is images
 
@@ -798,43 +853,52 @@ class TestPipelineModuleStructure:
 
     def test_qeff_text_encoder_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffTextEncoder
+
         assert QEffTextEncoder is not None
 
     def test_qeff_vae_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE
+
         assert QEffVAE is not None
 
     def test_qeff_flux_transformer_model_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffFluxTransformerModel
+
         assert QEffFluxTransformerModel is not None
 
     def test_qeff_wan_unified_transformer_importable(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffWanUnifiedTransformer
+
         assert QEffWanUnifiedTransformer is not None
 
     def test_qeff_text_encoder_has_pytorch_transforms(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffTextEncoder
+
         assert hasattr(QEffTextEncoder, "_pytorch_transforms")
         assert isinstance(QEffTextEncoder._pytorch_transforms, list)
 
     def test_qeff_text_encoder_has_onnx_transforms(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffTextEncoder
+
         assert hasattr(QEffTextEncoder, "_onnx_transforms")
         assert isinstance(QEffTextEncoder._onnx_transforms, list)
 
     def test_qeff_flux_transformer_model_has_pytorch_transforms(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffFluxTransformerModel
+
         assert hasattr(QEffFluxTransformerModel, "_pytorch_transforms")
         assert isinstance(QEffFluxTransformerModel._pytorch_transforms, list)
 
     def test_qeff_flux_transformer_model_has_onnx_transforms(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffFluxTransformerModel
+
         assert hasattr(QEffFluxTransformerModel, "_onnx_transforms")
         assert isinstance(QEffFluxTransformerModel._onnx_transforms, list)
 
     def test_qeff_flux_transformer_model_pytorch_transforms_include_attention(self):
         from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
         from QEfficient.diffusers.pipelines.pipeline_module import QEffFluxTransformerModel
+
         assert AttentionTransform in QEffFluxTransformerModel._pytorch_transforms, (
             "AttentionTransform not in QEffFluxTransformerModel._pytorch_transforms"
         )
@@ -842,6 +906,7 @@ class TestPipelineModuleStructure:
     def test_qeff_flux_transformer_model_pytorch_transforms_include_normalization(self):
         from QEfficient.diffusers.models.pytorch_transforms import NormalizationTransform
         from QEfficient.diffusers.pipelines.pipeline_module import QEffFluxTransformerModel
+
         assert NormalizationTransform in QEffFluxTransformerModel._pytorch_transforms, (
             "NormalizationTransform not in QEffFluxTransformerModel._pytorch_transforms"
         )
@@ -849,6 +914,7 @@ class TestPipelineModuleStructure:
     def test_qeff_text_encoder_pytorch_transforms_include_custom_ops(self):
         from QEfficient.diffusers.models.pytorch_transforms import CustomOpsTransform
         from QEfficient.diffusers.pipelines.pipeline_module import QEffTextEncoder
+
         assert CustomOpsTransform in QEffTextEncoder._pytorch_transforms, (
             "CustomOpsTransform not in QEffTextEncoder._pytorch_transforms"
         )
@@ -856,6 +922,7 @@ class TestPipelineModuleStructure:
     def test_qeff_text_encoder_onnx_transforms_include_fp16_clip(self):
         from QEfficient.base.onnx_transforms import FP16ClipTransform
         from QEfficient.diffusers.pipelines.pipeline_module import QEffTextEncoder
+
         assert FP16ClipTransform in QEffTextEncoder._onnx_transforms, (
             "FP16ClipTransform not in QEffTextEncoder._onnx_transforms"
         )
@@ -863,17 +930,20 @@ class TestPipelineModuleStructure:
     def test_qeff_flux_transformer_model_onnx_transforms_include_fp16_clip(self):
         from QEfficient.base.onnx_transforms import FP16ClipTransform
         from QEfficient.diffusers.pipelines.pipeline_module import QEffFluxTransformerModel
+
         assert FP16ClipTransform in QEffFluxTransformerModel._onnx_transforms, (
             "FP16ClipTransform not in QEffFluxTransformerModel._onnx_transforms"
         )
 
     def test_qeff_vae_has_pytorch_transforms(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE
+
         assert hasattr(QEffVAE, "_pytorch_transforms")
         assert isinstance(QEffVAE._pytorch_transforms, list)
 
     def test_qeff_wan_unified_transformer_has_pytorch_transforms(self):
         from QEfficient.diffusers.pipelines.pipeline_module import QEffWanUnifiedTransformer
+
         assert hasattr(QEffWanUnifiedTransformer, "_pytorch_transforms")
         assert isinstance(QEffWanUnifiedTransformer._pytorch_transforms, list)
 
@@ -890,6 +960,7 @@ def _make_tiny_flux_transformer():
     """
     try:
         from diffusers.models.transformers.transformer_flux import FluxTransformer2DModel
+
         from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform, NormalizationTransform
 
         model = FluxTransformer2DModel(
@@ -965,9 +1036,8 @@ class TestFluxTransformerBlocks:
         if model is None:
             pytest.skip("Could not instantiate tiny FluxTransformer2DModel")
         from QEfficient.diffusers.models.transformers.transformer_flux import QEffFluxTransformer2DModel
-        assert isinstance(model, QEffFluxTransformer2DModel), (
-            f"Expected QEffFluxTransformer2DModel, got {type(model)}"
-        )
+
+        assert isinstance(model, QEffFluxTransformer2DModel), f"Expected QEffFluxTransformer2DModel, got {type(model)}"
 
     def test_qeff_flux_transformer_2d_model_is_eval_mode(self):
         model = _make_tiny_flux_transformer()
@@ -995,9 +1065,7 @@ class TestFluxTransformerBlocks:
             out = model(**inputs)
         # out is a tuple when return_dict=False; out[0] is the sample
         sample = out[0] if isinstance(out, (tuple, list)) else out.sample
-        assert sample.shape == (batch, cl, in_channels), (
-            f"Expected ({batch}, {cl}, {in_channels}), got {sample.shape}"
-        )
+        assert sample.shape == (batch, cl, in_channels), f"Expected ({batch}, {cl}, {in_channels}), got {sample.shape}"
 
     def test_qeff_flux_transformer_2d_model_output_is_finite(self):
         model = _make_tiny_flux_transformer()
@@ -1031,10 +1099,9 @@ class TestFluxTransformerBlocks:
             QEffFluxSingleTransformerBlock,
             QEffFluxTransformerBlock,
         )
+
         submodules = model.get_submodules_for_export()
-        assert QEffFluxTransformerBlock in submodules, (
-            "QEffFluxTransformerBlock not in get_submodules_for_export()"
-        )
+        assert QEffFluxTransformerBlock in submodules, "QEffFluxTransformerBlock not in get_submodules_for_export()"
         assert QEffFluxSingleTransformerBlock in submodules, (
             "QEffFluxSingleTransformerBlock not in get_submodules_for_export()"
         )
@@ -1045,9 +1112,10 @@ class TestFluxTransformerBlocks:
         if model is None:
             pytest.skip("Could not instantiate tiny FluxTransformer2DModel")
         from QEfficient.diffusers.models.transformers.transformer_flux import (
-            QEffFluxAttnProcessor,
             QEffFluxAttention,
+            QEffFluxAttnProcessor,
         )
+
         for m in model.modules():
             if isinstance(m, QEffFluxAttention):
                 assert isinstance(m.processor, QEffFluxAttnProcessor), (

@@ -49,44 +49,53 @@ class TestPEFTModuleImportability:
 
     def test_qeff_peft_model_for_causal_lm_importable(self):
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         assert QEffAutoPeftModelForCausalLM is not None
 
     def test_peft_pytorch_transforms_importable(self):
         from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
+
         assert PeftModelInputsTransform is not None
 
     def test_peft_onnx_transforms_importable(self):
         from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
+
         assert AdapterWeightsToInputsTransform is not None
 
     def test_qeff_peft_model_has_from_pretrained(self):
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         assert hasattr(QEffAutoPeftModelForCausalLM, "from_pretrained")
         assert callable(QEffAutoPeftModelForCausalLM.from_pretrained)
 
     def test_qeff_peft_model_has_pytorch_transforms(self):
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         assert hasattr(QEffAutoPeftModelForCausalLM, "_pytorch_transforms")
         assert isinstance(QEffAutoPeftModelForCausalLM._pytorch_transforms, list)
 
     def test_qeff_peft_model_has_onnx_transforms(self):
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         assert hasattr(QEffAutoPeftModelForCausalLM, "_onnx_transforms")
         assert isinstance(QEffAutoPeftModelForCausalLM._onnx_transforms, list)
 
     def test_peft_inputs_transform_has_apply(self):
         from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
+
         assert hasattr(PeftModelInputsTransform, "apply")
         assert callable(PeftModelInputsTransform.apply)
 
     def test_adapter_weights_transform_has_apply(self):
         from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
+
         assert hasattr(AdapterWeightsToInputsTransform, "apply")
         assert callable(AdapterWeightsToInputsTransform.apply)
 
     def test_peft_model_importable_from_qefficient(self):
         """QEffAutoPeftModelForCausalLM must be accessible from the QEfficient package."""
         import QEfficient
+
         assert hasattr(QEfficient, "QEffAutoPeftModelForCausalLM")
 
 
@@ -99,16 +108,20 @@ class TestLoRATransformStructure:
     """LoRA transforms must have correct structure."""
 
     def test_peft_inputs_transform_has_apply_classmethod(self):
-        from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
         import inspect
+
+        from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
+
         assert isinstance(
             inspect.getattr_static(PeftModelInputsTransform, "apply"),
             classmethod,
         ), "PeftModelInputsTransform.apply must be a classmethod"
 
     def test_adapter_weights_transform_has_apply_classmethod(self):
-        from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
         import inspect
+
+        from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
+
         assert isinstance(
             inspect.getattr_static(AdapterWeightsToInputsTransform, "apply"),
             classmethod,
@@ -117,10 +130,10 @@ class TestLoRATransformStructure:
     def test_peft_pytorch_transforms_include_peft_inputs_transform(self):
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
         from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
+
         assert PeftModelInputsTransform in QEffAutoPeftModelForCausalLM._pytorch_transforms, (
             "PeftModelInputsTransform not in QEffAutoPeftModelForCausalLM._pytorch_transforms"
         )
-
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +269,7 @@ class TestLoRAAccuracyVsBase:
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
         with torch.no_grad():
             lora_out = lora_model(input_ids=input_ids)
-        assert lora_out.logits.shape == (1, SEQ_LEN, VOCAB_SIZE), (
-            f"LoRA output shape mismatch: {lora_out.logits.shape}"
-        )
+        assert lora_out.logits.shape == (1, SEQ_LEN, VOCAB_SIZE), f"LoRA output shape mismatch: {lora_out.logits.shape}"
 
     def test_lora_model_with_random_weights_differs_from_base(self):
         """LoRA model with random (non-zero) weights must produce different logits than base."""
@@ -295,8 +306,7 @@ class TestLoRAAccuracyVsBase:
 
         max_diff = (base_logits - lora_logits).abs().max().item()
         assert max_diff > 1e-6, (
-            f"LoRA model with non-zero B weights must produce different logits than base. "
-            f"max_diff={max_diff:.2e}"
+            f"LoRA model with non-zero B weights must produce different logits than base. max_diff={max_diff:.2e}"
         )
 
     def test_lora_model_with_zero_b_weights_matches_base(self):
@@ -328,9 +338,7 @@ class TestLoRAAccuracyVsBase:
             lora_logits = lora_model(input_ids=input_ids).logits
 
         max_diff = (base_logits - lora_logits).abs().max().item()
-        assert max_diff < 1e-5, (
-            f"LoRA model with zero B weights must match base model. max_diff={max_diff:.2e}"
-        )
+        assert max_diff < 1e-5, f"LoRA model with zero B weights must match base model. max_diff={max_diff:.2e}"
 
     def test_lora_trainable_params_are_subset_of_all_params(self):
         """LoRA trainable parameters must be a subset of all parameters."""
@@ -367,16 +375,20 @@ class TestAdapterWeightsToInputsTransformStructure:
 
     def test_adapter_weights_transform_importable(self):
         from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
+
         assert AdapterWeightsToInputsTransform is not None
 
     def test_adapter_weights_transform_has_apply_method(self):
         from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
+
         assert hasattr(AdapterWeightsToInputsTransform, "apply")
         assert callable(AdapterWeightsToInputsTransform.apply)
 
     def test_adapter_weights_transform_apply_is_classmethod(self):
         import inspect
+
         from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
+
         assert isinstance(
             inspect.getattr_static(AdapterWeightsToInputsTransform, "apply"),
             classmethod,
@@ -385,6 +397,7 @@ class TestAdapterWeightsToInputsTransformStructure:
     def test_adapter_weights_transform_in_peft_onnx_transforms(self):
         """AdapterWeightsToInputsTransform (from base or peft) must be in QEffAutoPeftModelForCausalLM._onnx_transforms."""
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         # AdapterWeightsToInputsTransform may be in base.onnx_transforms or peft.onnx_transforms
         transform_names = [t.__name__ for t in QEffAutoPeftModelForCausalLM._onnx_transforms]
         assert "AdapterWeightsToInputsTransform" in transform_names, (
@@ -395,21 +408,25 @@ class TestAdapterWeightsToInputsTransformStructure:
     def test_peft_onnx_transforms_list_not_empty(self):
         """QEffAutoPeftModelForCausalLM._onnx_transforms must not be empty."""
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         assert len(QEffAutoPeftModelForCausalLM._onnx_transforms) > 0
 
     def test_peft_pytorch_transforms_list_not_empty(self):
         """QEffAutoPeftModelForCausalLM._pytorch_transforms must not be empty."""
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         assert len(QEffAutoPeftModelForCausalLM._pytorch_transforms) > 0
 
     def test_peft_model_has_export_method(self):
         """QEffAutoPeftModelForCausalLM must have an export() method."""
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         assert hasattr(QEffAutoPeftModelForCausalLM, "export")
         assert callable(QEffAutoPeftModelForCausalLM.export)
 
     def test_peft_model_has_compile_method(self):
         """QEffAutoPeftModelForCausalLM must have a compile() method."""
         from QEfficient.peft.auto import QEffAutoPeftModelForCausalLM
+
         assert hasattr(QEffAutoPeftModelForCausalLM, "compile")
         assert callable(QEffAutoPeftModelForCausalLM.compile)

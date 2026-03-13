@@ -33,17 +33,28 @@ NUM_LABELS = 3
 
 def make_tiny_bert(num_labels=NUM_LABELS):
     cfg = BertConfig(
-        num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-        intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=64, num_labels=num_labels,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=64,
+        num_labels=num_labels,
     )
     return BertForSequenceClassification(cfg).eval(), cfg
 
 
 def make_tiny_deberta(num_labels=NUM_LABELS):
     cfg = DebertaV2Config(
-        num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-        intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=64,
-        num_labels=num_labels, type_vocab_size=0, pos_att_type=["p2c", "c2p"],
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=64,
+        num_labels=num_labels,
+        type_vocab_size=0,
+        pos_att_type=["p2c", "c2p"],
     )
     return DebertaV2ForSequenceClassification(cfg).eval(), cfg
 
@@ -172,6 +183,7 @@ class TestSeqClassORTAccuracy:
 
     def test_bert_ort_predicts_same_class_as_qeff(self, tmp_export_dir):
         import onnxruntime as ort
+
         model, cfg = make_tiny_bert()
         inputs = make_inputs()
         qeff_model = QEFFAutoModelForSequenceClassification(model)
@@ -187,6 +199,7 @@ class TestSeqClassORTAccuracy:
 
     def test_bert_ort_predicts_same_class_as_hf(self, tmp_export_dir):
         import onnxruntime as ort
+
         model, cfg = make_tiny_bert()
         inputs = make_inputs()
         with torch.no_grad():
@@ -202,6 +215,7 @@ class TestSeqClassORTAccuracy:
 
     def test_bert_ort_logits_numerically_close_to_qeff(self, tmp_export_dir):
         import onnxruntime as ort
+
         model, cfg = make_tiny_bert()
         inputs = make_inputs()
         qeff_model = QEFFAutoModelForSequenceClassification(model)
@@ -217,6 +231,7 @@ class TestSeqClassORTAccuracy:
 
     def test_bert_ort_logits_shape_correct(self, tmp_export_dir):
         import onnxruntime as ort
+
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModelForSequenceClassification(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -229,6 +244,7 @@ class TestSeqClassORTAccuracy:
 
     def test_bert_ort_batch_predictions_match_qeff(self, tmp_export_dir):
         import onnxruntime as ort
+
         batch_size = 4
         model, cfg = make_tiny_bert()
         inputs = make_inputs(batch=batch_size)
@@ -245,6 +261,7 @@ class TestSeqClassORTAccuracy:
 
     def test_bert_onnx_passes_checker(self, tmp_export_dir):
         import onnx
+
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModelForSequenceClassification(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -253,6 +270,7 @@ class TestSeqClassORTAccuracy:
 
     def test_bert_onnx_has_input_ids_and_logits(self, tmp_export_dir):
         import onnx
+
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModelForSequenceClassification(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -265,6 +283,7 @@ class TestSeqClassORTAccuracy:
     def test_deberta_ort_predicts_same_class_as_hf(self, tmp_export_dir):
         """DeBERTa-v2 full pipeline: HF, QEff, ORT must agree on class."""
         import onnxruntime as ort
+
         try:
             model, cfg = make_tiny_deberta()
             inputs = make_inputs()

@@ -20,8 +20,6 @@ Tests verify:
 All tests run on CPU only, no quantized model downloads required.
 """
 
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Tests: Quantization Transform Importability and Structure
@@ -33,49 +31,60 @@ class TestQuantizationTransformImportability:
 
     def test_awq_transform_importable(self):
         from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
+
         assert AwqToMatmulNbitsTransform is not None
 
     def test_gptq_transform_importable(self):
         from QEfficient.transformers.quantizers.quant_transforms import GPTQToMatmulNbitsTransform
+
         assert GPTQToMatmulNbitsTransform is not None
 
     def test_fp8_transform_importable(self):
         from QEfficient.transformers.quantizers.quant_transforms import FP8DeQuantLinearToLinearTransform
+
         assert FP8DeQuantLinearToLinearTransform is not None
 
     def test_mxfp4_transform_importable(self):
         from QEfficient.transformers.quantizers.quant_transforms import Mxfp4GptOssExpertDequantizeTransform
+
         assert Mxfp4GptOssExpertDequantizeTransform is not None
 
     def test_awq_transform_has_match_class(self):
         from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
+
         assert hasattr(AwqToMatmulNbitsTransform, "_match_class")
 
     def test_gptq_transform_has_match_class(self):
         from QEfficient.transformers.quantizers.quant_transforms import GPTQToMatmulNbitsTransform
+
         assert hasattr(GPTQToMatmulNbitsTransform, "_match_class")
 
     def test_fp8_transform_has_match_class(self):
         from QEfficient.transformers.quantizers.quant_transforms import FP8DeQuantLinearToLinearTransform
+
         assert hasattr(FP8DeQuantLinearToLinearTransform, "_match_class")
 
     def test_mxfp4_transform_has_match_class(self):
         from QEfficient.transformers.quantizers.quant_transforms import Mxfp4GptOssExpertDequantizeTransform
+
         assert hasattr(Mxfp4GptOssExpertDequantizeTransform, "_match_class")
 
     def test_awq_match_class_is_wqlinear_gemm(self):
-        from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
         from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
+        from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
+
         assert AwqToMatmulNbitsTransform._match_class is WQLinear_GEMM
 
     def test_gptq_match_class_is_quantlinear_gptq(self):
-        from QEfficient.transformers.quantizers.quant_transforms import GPTQToMatmulNbitsTransform
         from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
+        from QEfficient.transformers.quantizers.quant_transforms import GPTQToMatmulNbitsTransform
+
         assert GPTQToMatmulNbitsTransform._match_class is QuantLinearGPTQ
 
     def test_fp8_match_class_is_fp8_dequant_linear(self):
         from QEfficient.transformers.quantizers.quant_transforms import FP8DeQuantLinearToLinearTransform
         from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
+
         assert FP8DeQuantLinearToLinearTransform._match_class is FP8DeQuantLinear
 
     def test_all_transforms_have_mutate_classmethod(self):
@@ -85,6 +94,7 @@ class TestQuantizationTransformImportability:
             GPTQToMatmulNbitsTransform,
             Mxfp4GptOssExpertDequantizeTransform,
         )
+
         for cls in [
             AwqToMatmulNbitsTransform,
             GPTQToMatmulNbitsTransform,
@@ -102,6 +112,7 @@ class TestQuantizationTransformImportability:
             GPTQToMatmulNbitsTransform,
             Mxfp4GptOssExpertDequantizeTransform,
         )
+
         for cls in [
             AwqToMatmulNbitsTransform,
             GPTQToMatmulNbitsTransform,
@@ -123,32 +134,39 @@ class TestQEffAutoQuantizationConfigMapping:
 
     def test_mapping_exists_and_is_dict(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
+
         assert isinstance(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, dict)
 
     def test_contains_awq(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
+
         assert "awq" in QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
 
     def test_contains_gptq(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
+
         assert "gptq" in QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
 
     def test_contains_compressed_tensors(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
+
         assert "compressed-tensors" in QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
 
     def test_awq_config_is_qeff_awq_config(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
         from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
+
         assert QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING["awq"] is QEffAwqConfig
 
     def test_gptq_config_is_qeff_gptq_config(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
         from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
+
         assert QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING["gptq"] is QEffGPTQConfig
 
     def test_all_values_are_classes(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING
+
         for key, val in QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.items():
             assert isinstance(val, type), f"Expected class for key '{key}', got {type(val)}"
 
@@ -163,28 +181,34 @@ class TestQEffAutoQuantizerMapping:
 
     def test_mapping_exists_and_is_dict(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZER_MAPPING
+
         assert isinstance(QEFF_AUTO_QUANTIZER_MAPPING, dict)
 
     def test_contains_awq(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZER_MAPPING
+
         assert "awq" in QEFF_AUTO_QUANTIZER_MAPPING
 
     def test_contains_gptq(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZER_MAPPING
+
         assert "gptq" in QEFF_AUTO_QUANTIZER_MAPPING
 
     def test_awq_quantizer_is_qeff_awq_quantizer(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZER_MAPPING
         from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqQuantizer
+
         assert QEFF_AUTO_QUANTIZER_MAPPING["awq"] is QEffAwqQuantizer
 
     def test_gptq_quantizer_is_qeff_gptq_quantizer(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZER_MAPPING
         from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQQuantizer
+
         assert QEFF_AUTO_QUANTIZER_MAPPING["gptq"] is QEffGPTQQuantizer
 
     def test_all_values_are_classes(self):
         from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZER_MAPPING
+
         for key, val in QEFF_AUTO_QUANTIZER_MAPPING.items():
             assert isinstance(val, type), f"Expected class for key '{key}', got {type(val)}"
 
@@ -199,6 +223,7 @@ class TestWithReplacedQuantizers:
 
     def test_with_replaced_quantizers_is_callable(self):
         from QEfficient.transformers.quantizers.auto import with_replaced_quantizers
+
         assert callable(with_replaced_quantizers)
 
     def test_with_replaced_quantizers_wraps_function(self):
@@ -267,6 +292,7 @@ class TestQEFFAutoModelQuantizationIntegration:
     def test_pytorch_transforms_include_awq_transform(self):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
         from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
+
         assert AwqToMatmulNbitsTransform in QEFFAutoModelForCausalLM._pytorch_transforms, (
             "AwqToMatmulNbitsTransform not in QEFFAutoModelForCausalLM._pytorch_transforms"
         )
@@ -274,6 +300,7 @@ class TestQEFFAutoModelQuantizationIntegration:
     def test_pytorch_transforms_include_gptq_transform(self):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
         from QEfficient.transformers.quantizers.quant_transforms import GPTQToMatmulNbitsTransform
+
         assert GPTQToMatmulNbitsTransform in QEFFAutoModelForCausalLM._pytorch_transforms, (
             "GPTQToMatmulNbitsTransform not in QEFFAutoModelForCausalLM._pytorch_transforms"
         )
@@ -281,6 +308,7 @@ class TestQEFFAutoModelQuantizationIntegration:
     def test_pytorch_transforms_include_fp8_transform(self):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
         from QEfficient.transformers.quantizers.quant_transforms import FP8DeQuantLinearToLinearTransform
+
         assert FP8DeQuantLinearToLinearTransform in QEFFAutoModelForCausalLM._pytorch_transforms, (
             "FP8DeQuantLinearToLinearTransform not in QEFFAutoModelForCausalLM._pytorch_transforms"
         )
@@ -292,17 +320,12 @@ class TestQEFFAutoModelQuantizationIntegration:
         from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
 
         transforms = QEFFAutoModelForCausalLM._pytorch_transforms
-        awq_idx = next(
-            (i for i, t in enumerate(transforms) if t is AwqToMatmulNbitsTransform), None
-        )
-        kv_idx = next(
-            (i for i, t in enumerate(transforms) if t is KVCacheTransform), None
-        )
+        awq_idx = next((i for i, t in enumerate(transforms) if t is AwqToMatmulNbitsTransform), None)
+        kv_idx = next((i for i, t in enumerate(transforms) if t is KVCacheTransform), None)
         assert awq_idx is not None, "AwqToMatmulNbitsTransform not found in _pytorch_transforms"
         assert kv_idx is not None, "KVCacheTransform not found in _pytorch_transforms"
         assert awq_idx < kv_idx, (
-            f"AwqToMatmulNbitsTransform (idx={awq_idx}) must come before "
-            f"KVCacheTransform (idx={kv_idx})"
+            f"AwqToMatmulNbitsTransform (idx={awq_idx}) must come before KVCacheTransform (idx={kv_idx})"
         )
 
     def test_non_quantized_model_not_affected_by_quant_transforms(self):
@@ -331,6 +354,4 @@ class TestQEFFAutoModelQuantizationIntegration:
         with torch.no_grad():
             original_logits = model(input_ids=input_ids).logits
             awq_logits = model_awq(input_ids=input_ids).logits
-        assert torch.allclose(original_logits, awq_logits), (
-            "AWQ transform must not change non-quantized model output"
-        )
+        assert torch.allclose(original_logits, awq_logits), "AWQ transform must not change non-quantized model output"

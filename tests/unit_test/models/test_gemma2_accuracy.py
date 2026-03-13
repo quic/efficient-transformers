@@ -173,9 +173,7 @@ class TestQEffGemma2Architecture:
     def test_qeff_model_class_is_qeff_gemma2(self):
         model, cfg = make_tiny_gemma2()
         qeff = QEFFAutoModelForCausalLM(model)
-        assert isinstance(qeff.model, QEffGemma2ForCausalLM), (
-            f"Expected QEffGemma2ForCausalLM, got {type(qeff.model)}"
-        )
+        assert isinstance(qeff.model, QEffGemma2ForCausalLM), f"Expected QEffGemma2ForCausalLM, got {type(qeff.model)}"
 
     def test_qeff_model_is_eval_mode(self):
         model, cfg = make_tiny_gemma2()
@@ -187,9 +185,7 @@ class TestQEffGemma2Architecture:
         hf_params = sum(p.numel() for p in model.parameters())
         qeff = QEFFAutoModelForCausalLM(model)
         qeff_params = sum(p.numel() for p in qeff.model.parameters())
-        assert hf_params == qeff_params, (
-            f"Parameter count changed: HF={hf_params}, QEff={qeff_params}"
-        )
+        assert hf_params == qeff_params, f"Parameter count changed: HF={hf_params}, QEff={qeff_params}"
 
 
 # ---------------------------------------------------------------------------
@@ -231,12 +227,9 @@ class TestQEffGemma2LogitShape:
             prefill_out = qeff.model(**_prefill_inputs(input_ids, cfg))
         prefill_token = _extract_next_token(prefill_out.logits)
         with torch.no_grad():
-            decode_out = qeff.model(**_decode_inputs(
-                prefill_token, PREFILL_LEN, prefill_out.past_key_values
-            ))
+            decode_out = qeff.model(**_decode_inputs(prefill_token, PREFILL_LEN, prefill_out.past_key_values))
         assert decode_out.logits.shape == (1, 1, VOCAB_SIZE), (
-            f"QEffGemma2 decode logits shape: expected (1, 1, {VOCAB_SIZE}), "
-            f"got {decode_out.logits.shape}"
+            f"QEffGemma2 decode logits shape: expected (1, 1, {VOCAB_SIZE}), got {decode_out.logits.shape}"
         )
 
     def test_prefill_logits_are_finite(self):
@@ -296,9 +289,7 @@ class TestQEffGemma2AccuracyVsHF:
         hf_probs = F.softmax(hf_logits, dim=-1)
         qeff_probs = F.softmax(qeff_logits, dim=-1)
         max_diff = (hf_probs - qeff_probs).abs().max().item()
-        assert max_diff < 1e-3, (
-            f"Gemma2 probability distribution mismatch: max_diff={max_diff:.6f} > 1e-3"
-        )
+        assert max_diff < 1e-3, f"Gemma2 probability distribution mismatch: max_diff={max_diff:.6f} > 1e-3"
 
     def test_top5_tokens_overlap_with_hf(self):
         """Top-5 predicted tokens must overlap between HF and QEff."""
@@ -306,9 +297,7 @@ class TestQEffGemma2AccuracyVsHF:
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
 
         with torch.no_grad():
-            hf_top5 = set(
-                model(input_ids=input_ids).logits[:, -1, :].topk(5).indices.squeeze().tolist()
-            )
+            hf_top5 = set(model(input_ids=input_ids).logits[:, -1, :].topk(5).indices.squeeze().tolist())
 
         qeff = QEFFAutoModelForCausalLM(model)
         with torch.no_grad():
@@ -316,10 +305,7 @@ class TestQEffGemma2AccuracyVsHF:
         qeff_top5 = set(qeff_out.logits[:, -1, :].topk(5).indices.squeeze().tolist())
 
         overlap = len(hf_top5 & qeff_top5)
-        assert overlap >= 4, (
-            f"Gemma2 top-5 token overlap too low: {overlap}/5. "
-            f"HF={hf_top5}, QEff={qeff_top5}"
-        )
+        assert overlap >= 4, f"Gemma2 top-5 token overlap too low: {overlap}/5. HF={hf_top5}, QEff={qeff_top5}"
 
 
 # ---------------------------------------------------------------------------
@@ -342,9 +328,7 @@ class TestQEffGemma2CacheWritten:
         input_ids = torch.randint(0, VOCAB_SIZE, (1, PREFILL_LEN))
         with torch.no_grad():
             out = qeff.model(**_prefill_inputs(input_ids, cfg))
-        assert out.past_key_values is not None, (
-            "Gemma2 past_key_values is None after prefill"
-        )
+        assert out.past_key_values is not None, "Gemma2 past_key_values is None after prefill"
 
     def test_cache_is_non_zero_after_prefill(self):
         """
@@ -395,9 +379,7 @@ class TestQEffGemma2CacheWritten:
             pytest.skip(f"Unrecognised past_key_values type: {type(pkv)}")
             return
 
-        assert n_cached == cfg.num_hidden_layers, (
-            f"Expected {cfg.num_hidden_layers} cached layers, got {n_cached}"
-        )
+        assert n_cached == cfg.num_hidden_layers, f"Expected {cfg.num_hidden_layers} cached layers, got {n_cached}"
 
 
 # ---------------------------------------------------------------------------
@@ -423,14 +405,10 @@ class TestQEffGemma2PrefillDecodeHandoff:
         prefill_token = _extract_next_token(prefill_out.logits)
 
         with torch.no_grad():
-            decode_out = qeff.model(**_decode_inputs(
-                prefill_token, PREFILL_LEN, prefill_out.past_key_values
-            ))
+            decode_out = qeff.model(**_decode_inputs(prefill_token, PREFILL_LEN, prefill_out.past_key_values))
 
         dec_token = _extract_next_token(decode_out.logits)
-        assert 0 <= dec_token < VOCAB_SIZE, (
-            f"Gemma2 decode token {dec_token} out of range [0, {VOCAB_SIZE})"
-        )
+        assert 0 <= dec_token < VOCAB_SIZE, f"Gemma2 decode token {dec_token} out of range [0, {VOCAB_SIZE})"
 
     def test_decode_with_real_cache_returns_finite_logits(self):
         model, cfg = make_tiny_gemma2()
@@ -442,13 +420,9 @@ class TestQEffGemma2PrefillDecodeHandoff:
         prefill_token = _extract_next_token(prefill_out.logits)
 
         with torch.no_grad():
-            decode_out = qeff.model(**_decode_inputs(
-                prefill_token, PREFILL_LEN, prefill_out.past_key_values
-            ))
+            decode_out = qeff.model(**_decode_inputs(prefill_token, PREFILL_LEN, prefill_out.past_key_values))
 
-        assert torch.isfinite(decode_out.logits).all(), (
-            "Gemma2 decode logits contain NaN/Inf after real-cache handoff"
-        )
+        assert torch.isfinite(decode_out.logits).all(), "Gemma2 decode logits contain NaN/Inf after real-cache handoff"
 
     def test_three_decode_steps_all_valid(self):
         """Three consecutive decode steps with real cache must all produce valid tokens."""
@@ -474,9 +448,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
 
         assert len(decode_tokens) == 3
         for i, tok in enumerate(decode_tokens):
-            assert 0 <= tok < VOCAB_SIZE, (
-                f"Gemma2 decode step {i}: token {tok} out of range"
-            )
+            assert 0 <= tok < VOCAB_SIZE, f"Gemma2 decode step {i}: token {tok} out of range"
 
     def test_three_decode_steps_all_finite(self):
         """All decode logits must be finite."""
@@ -494,9 +466,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
         for step in range(3):
             with torch.no_grad():
                 out = qeff.model(**_decode_inputs(token, decode_pos, current_past))
-            assert torch.isfinite(out.logits).all(), (
-                f"Gemma2 decode step {step}: logits contain NaN/Inf"
-            )
+            assert torch.isfinite(out.logits).all(), f"Gemma2 decode step {step}: logits contain NaN/Inf"
             token = _extract_next_token(out.logits)
             current_past = out.past_key_values
             decode_pos += 1
@@ -526,9 +496,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
 
         tokens1 = _run(model)
         tokens2 = _run(model_copy)
-        assert tokens1 == tokens2, (
-            f"Gemma2 decode is not deterministic: {tokens1} vs {tokens2}"
-        )
+        assert tokens1 == tokens2, f"Gemma2 decode is not deterministic: {tokens1} vs {tokens2}"
 
     def test_real_cache_differs_from_zero_cache(self):
         """
@@ -555,9 +523,7 @@ class TestQEffGemma2PrefillDecodeHandoff:
 
             # Decode with ZERO cache
             with torch.no_grad():
-                out_zero = qeff.model(**_decode_inputs(
-                    prefill_token, PREFILL_LEN, _zero_kv_cache(cfg)
-                ))
+                out_zero = qeff.model(**_decode_inputs(prefill_token, PREFILL_LEN, _zero_kv_cache(cfg)))
             zero_token = _extract_next_token(out_zero.logits)
 
             if real_token != zero_token:

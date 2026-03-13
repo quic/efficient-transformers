@@ -22,7 +22,6 @@ import pytest
 import torch
 from transformers import BertConfig, BertModel
 
-from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 
@@ -33,8 +32,12 @@ HIDDEN_SIZE = 64
 
 def make_tiny_bert():
     cfg = BertConfig(
-        num_hidden_layers=1, num_attention_heads=2, hidden_size=HIDDEN_SIZE,
-        intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=64,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        hidden_size=HIDDEN_SIZE,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=64,
     )
     return BertModel(cfg).eval(), cfg
 
@@ -210,6 +213,7 @@ class TestEmbeddingORTAccuracy:
 
     def test_bert_onnx_export_succeeds(self, tmp_export_dir):
         import os
+
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModel(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -218,6 +222,7 @@ class TestEmbeddingORTAccuracy:
 
     def test_bert_onnx_passes_checker(self, tmp_export_dir):
         import onnx
+
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModel(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -227,6 +232,7 @@ class TestEmbeddingORTAccuracy:
     def test_bert_ort_hidden_states_match_qeff(self, tmp_export_dir):
         """ORT hidden states must match QEff PyTorch hidden states."""
         import onnxruntime as ort
+
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModel(model)
         inputs = make_inputs()
@@ -257,6 +263,7 @@ class TestEmbeddingORTAccuracy:
     def test_bert_ort_output_shape_correct(self, tmp_export_dir):
         """ORT BERT output must have correct shape."""
         import onnxruntime as ort
+
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModel(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -271,6 +278,7 @@ class TestEmbeddingORTAccuracy:
     def test_bert_ort_batch_hidden_states_match_qeff(self, tmp_export_dir):
         """ORT batch hidden states must match QEff PyTorch for batch_size=4."""
         import onnxruntime as ort
+
         batch_size = 4
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModel(model)
@@ -299,6 +307,7 @@ class TestEmbeddingORTAccuracy:
     def test_bert_ort_mean_pooled_embedding_matches_qeff(self, tmp_export_dir):
         """ORT mean-pooled embedding argmax must match QEff PyTorch."""
         import onnxruntime as ort
+
         model, cfg = make_tiny_bert()
         qeff_model = QEFFAutoModel(model)
         inputs = make_inputs()

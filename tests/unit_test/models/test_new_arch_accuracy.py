@@ -126,8 +126,7 @@ def _check_kv_transform_finite(model, label, ctx_len=CTX_LEN, use_cache_obj=Fals
         past_key_values = cache
     else:
         past_key_values = tuple(
-            (torch.zeros(1, n_kv, ctx_len, head_dim), torch.zeros(1, n_kv, ctx_len, head_dim))
-            for _ in range(n_layers)
+            (torch.zeros(1, n_kv, ctx_len, head_dim), torch.zeros(1, n_kv, ctx_len, head_dim)) for _ in range(n_layers)
         )
 
     with torch.no_grad():
@@ -453,8 +452,6 @@ class TestQwen3MoEAccuracy:
         assert isinstance(transformed, QEffQwen3MoeForCausalLM)
 
     def test_qwen3_moe_kv_transform_replaces_sparse_moe_block(self):
-        from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeSparseMoeBlock
-
         from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import QEffQwen3MoeSparseMoeBlock
 
         model, cfg = make_tiny_qwen3_moe()
@@ -844,9 +841,8 @@ class TestGPTOSSTransformStructure:
         assert KVCacheTransform._module_mapping[GptOssForCausalLM] is QEffGptOssForCausalLM
 
     def test_prefill_only_transform_maps_gpt_oss_model(self):
-        from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
-
         from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffGptOssModel
+        from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
 
         assert QEffGptOssModel in PrefillOnlyTransform._module_mapping
 

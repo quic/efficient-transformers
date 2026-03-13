@@ -20,10 +20,9 @@ is performed - only argument parsing and function structure validation.
 
 import argparse
 import inspect
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Tests: Module importability
@@ -35,30 +34,37 @@ class TestCloudModuleImportability:
 
     def test_cloud_init_importable(self):
         import QEfficient.cloud
+
         assert QEfficient.cloud is not None
 
     def test_compile_module_importable(self):
         import QEfficient.cloud.compile
+
         assert QEfficient.cloud.compile is not None
 
     def test_execute_module_importable(self):
         import QEfficient.cloud.execute
+
         assert QEfficient.cloud.execute is not None
 
     def test_export_module_importable(self):
         import QEfficient.cloud.export
+
         assert QEfficient.cloud.export is not None
 
     def test_infer_module_importable(self):
         import QEfficient.cloud.infer
+
         assert QEfficient.cloud.infer is not None
 
     def test_finetune_module_importable(self):
         import QEfficient.cloud.finetune
+
         assert QEfficient.cloud.finetune is not None
 
     def test_finetune_experimental_importable(self):
         import QEfficient.cloud.finetune_experimental
+
         assert QEfficient.cloud.finetune_experimental is not None
 
 
@@ -72,69 +78,83 @@ class TestExportFunctionSignatures:
 
     def test_get_onnx_path_exists(self):
         from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
+
         assert callable(get_onnx_path_and_setup_customIO)
 
     def test_get_onnx_path_has_model_name(self):
         from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
+
         sig = inspect.signature(get_onnx_path_and_setup_customIO)
         assert "model_name" in sig.parameters
 
     def test_get_onnx_path_has_cache_dir(self):
         from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
+
         sig = inspect.signature(get_onnx_path_and_setup_customIO)
         assert "cache_dir" in sig.parameters
 
     def test_get_onnx_path_has_hf_token(self):
         from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
+
         sig = inspect.signature(get_onnx_path_and_setup_customIO)
         assert "hf_token" in sig.parameters
 
     def test_get_onnx_path_has_full_batch_size(self):
         from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
+
         sig = inspect.signature(get_onnx_path_and_setup_customIO)
         assert "full_batch_size" in sig.parameters
 
     def test_get_onnx_path_has_local_model_dir(self):
         from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
+
         sig = inspect.signature(get_onnx_path_and_setup_customIO)
         assert "local_model_dir" in sig.parameters
 
     def test_get_onnx_path_has_mxint8_kv_cache(self):
         from QEfficient.cloud.export import get_onnx_path_and_setup_customIO
+
         sig = inspect.signature(get_onnx_path_and_setup_customIO)
         assert "mxint8_kv_cache" in sig.parameters
 
     def test_export_main_exists(self):
         from QEfficient.cloud.export import main
+
         assert callable(main)
 
     def test_export_main_has_model_name(self):
         from QEfficient.cloud.export import main
+
         sig = inspect.signature(main)
         assert "model_name" in sig.parameters
 
     def test_export_main_has_cache_dir(self):
         from QEfficient.cloud.export import main
+
         sig = inspect.signature(main)
         assert "cache_dir" in sig.parameters
 
     def test_export_main_has_hf_token(self):
         from QEfficient.cloud.export import main
+
         sig = inspect.signature(main)
         assert "hf_token" in sig.parameters
 
     def test_export_main_has_local_model_dir(self):
         from QEfficient.cloud.export import main
+
         sig = inspect.signature(main)
         assert "local_model_dir" in sig.parameters
 
     def test_export_main_has_full_batch_size(self):
         from QEfficient.cloud.export import main
+
         sig = inspect.signature(main)
         assert "full_batch_size" in sig.parameters
 
     def test_export_main_has_mxint8_kv_cache(self):
         from QEfficient.cloud.export import main
+
         sig = inspect.signature(main)
         assert "mxint8_kv_cache" in sig.parameters
 
@@ -149,50 +169,60 @@ class TestExecuteFunctionSignatures:
 
     def test_main_exists(self):
         from QEfficient.cloud.execute import main
+
         assert callable(main)
 
     def test_main_has_model_name(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "model_name" in sig.parameters
 
     def test_main_has_qpc_path(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "qpc_path" in sig.parameters
 
     def test_main_has_device_group(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "device_group" in sig.parameters
 
     def test_main_has_prompt(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "prompt" in sig.parameters
 
     def test_main_has_prompts_txt_file_path(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "prompts_txt_file_path" in sig.parameters
 
     def test_main_has_generation_len(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "generation_len" in sig.parameters
 
     def test_main_has_cache_dir(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "cache_dir" in sig.parameters
 
     def test_main_has_hf_token(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "hf_token" in sig.parameters
 
     def test_main_has_local_model_dir(self):
         from QEfficient.cloud.execute import main
+
         sig = inspect.signature(main)
         assert "local_model_dir" in sig.parameters
 
@@ -207,109 +237,131 @@ class TestInferFunctionSignatures:
 
     def test_main_exists(self):
         from QEfficient.cloud.infer import main
+
         assert callable(main)
 
     def test_main_has_model_name(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "model_name" in sig.parameters
 
     def test_main_has_num_cores(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "num_cores" in sig.parameters
 
     def test_main_has_device_group(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "device_group" in sig.parameters
 
     def test_main_has_prompt(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "prompt" in sig.parameters
 
     def test_main_has_batch_size(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "batch_size" in sig.parameters
 
     def test_main_has_ctx_len(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "ctx_len" in sig.parameters
 
     def test_main_has_prompt_len(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "prompt_len" in sig.parameters
 
     def test_main_has_mxfp6(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "mxfp6" in sig.parameters
 
     def test_main_has_mxint8(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "mxint8" in sig.parameters
 
     def test_main_has_generation_len(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "generation_len" in sig.parameters
 
     def test_main_has_full_batch_size(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "full_batch_size" in sig.parameters
 
     def test_main_has_enable_qnn(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "enable_qnn" in sig.parameters
 
     def test_main_has_cache_dir(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "cache_dir" in sig.parameters
 
     def test_main_has_hf_token(self):
         from QEfficient.cloud.infer import main
+
         sig = inspect.signature(main)
         assert "hf_token" in sig.parameters
 
     def test_execute_vlm_model_exists(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         assert callable(execute_vlm_model)
 
     def test_execute_vlm_model_has_qeff_model(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         sig = inspect.signature(execute_vlm_model)
         assert "qeff_model" in sig.parameters
 
     def test_execute_vlm_model_has_model_name(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         sig = inspect.signature(execute_vlm_model)
         assert "model_name" in sig.parameters
 
     def test_execute_vlm_model_has_image_url(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         sig = inspect.signature(execute_vlm_model)
         assert "image_url" in sig.parameters
 
     def test_execute_vlm_model_has_image_path(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         sig = inspect.signature(execute_vlm_model)
         assert "image_path" in sig.parameters
 
     def test_execute_vlm_model_has_prompt(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         sig = inspect.signature(execute_vlm_model)
         assert "prompt" in sig.parameters
 
     def test_execute_vlm_model_has_generation_len(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         sig = inspect.signature(execute_vlm_model)
         assert "generation_len" in sig.parameters
 
@@ -324,6 +376,7 @@ class TestExecuteVlmModelErrorHandling:
 
     def test_raises_without_image_url_or_path(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         with pytest.raises(ValueError, match="Neither Image URL nor Image Path"):
             execute_vlm_model(
                 qeff_model=MagicMock(),
@@ -335,6 +388,7 @@ class TestExecuteVlmModelErrorHandling:
 
     def test_raises_with_empty_image_url_and_no_path(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         with pytest.raises(ValueError):
             execute_vlm_model(
                 qeff_model=MagicMock(),
@@ -346,6 +400,7 @@ class TestExecuteVlmModelErrorHandling:
 
     def test_raises_with_empty_image_path_and_no_url(self):
         from QEfficient.cloud.infer import execute_vlm_model
+
         with pytest.raises(ValueError):
             execute_vlm_model(
                 qeff_model=MagicMock(),
@@ -366,71 +421,86 @@ class TestFinetuneFunctionSignatures:
 
     def test_setup_distributed_training_exists(self):
         from QEfficient.cloud.finetune import setup_distributed_training
+
         assert callable(setup_distributed_training)
 
     def test_setup_distributed_training_has_train_config(self):
         from QEfficient.cloud.finetune import setup_distributed_training
+
         sig = inspect.signature(setup_distributed_training)
         assert "train_config" in sig.parameters
 
     def test_setup_seeds_exists(self):
         from QEfficient.cloud.finetune import setup_seeds
+
         assert callable(setup_seeds)
 
     def test_setup_seeds_has_seed(self):
         from QEfficient.cloud.finetune import setup_seeds
+
         sig = inspect.signature(setup_seeds)
         assert "seed" in sig.parameters
 
     def test_load_model_and_tokenizer_exists(self):
         from QEfficient.cloud.finetune import load_model_and_tokenizer
+
         assert callable(load_model_and_tokenizer)
 
     def test_load_model_and_tokenizer_has_train_config(self):
         from QEfficient.cloud.finetune import load_model_and_tokenizer
+
         sig = inspect.signature(load_model_and_tokenizer)
         assert "train_config" in sig.parameters
 
     def test_load_model_and_tokenizer_has_dataset_config(self):
         from QEfficient.cloud.finetune import load_model_and_tokenizer
+
         sig = inspect.signature(load_model_and_tokenizer)
         assert "dataset_config" in sig.parameters
 
     def test_apply_peft_exists(self):
         from QEfficient.cloud.finetune import apply_peft
+
         assert callable(apply_peft)
 
     def test_apply_peft_has_model(self):
         from QEfficient.cloud.finetune import apply_peft
+
         sig = inspect.signature(apply_peft)
         assert "model" in sig.parameters
 
     def test_apply_peft_has_train_config(self):
         from QEfficient.cloud.finetune import apply_peft
+
         sig = inspect.signature(apply_peft)
         assert "train_config" in sig.parameters
 
     def test_setup_dataloaders_exists(self):
         from QEfficient.cloud.finetune import setup_dataloaders
+
         assert callable(setup_dataloaders)
 
     def test_setup_dataloaders_has_train_config(self):
         from QEfficient.cloud.finetune import setup_dataloaders
+
         sig = inspect.signature(setup_dataloaders)
         assert "train_config" in sig.parameters
 
     def test_setup_dataloaders_has_dataset_config(self):
         from QEfficient.cloud.finetune import setup_dataloaders
+
         sig = inspect.signature(setup_dataloaders)
         assert "dataset_config" in sig.parameters
 
     def test_setup_dataloaders_has_tokenizer(self):
         from QEfficient.cloud.finetune import setup_dataloaders
+
         sig = inspect.signature(setup_dataloaders)
         assert "tokenizer" in sig.parameters
 
     def test_main_exists(self):
         from QEfficient.cloud.finetune import main
+
         assert callable(main)
 
 
@@ -444,16 +514,20 @@ class TestSetupSeeds:
 
     def test_setup_seeds_does_not_crash(self):
         from QEfficient.cloud.finetune import setup_seeds
+
         setup_seeds(42)
 
     def test_setup_seeds_with_different_values(self):
         from QEfficient.cloud.finetune import setup_seeds
+
         for seed in [0, 1, 42, 100, 9999]:
             setup_seeds(seed)
 
     def test_setup_seeds_torch_reproducibility(self):
         import torch
+
         from QEfficient.cloud.finetune import setup_seeds
+
         setup_seeds(42)
         torch.manual_seed(42)
         a = torch.rand(5).tolist()
@@ -463,7 +537,9 @@ class TestSetupSeeds:
 
     def test_setup_seeds_numpy_reproducibility(self):
         import numpy as np
+
         from QEfficient.cloud.finetune import setup_seeds
+
         setup_seeds(42)
         np.random.seed(42)
         a = np.random.rand(5).tolist()
@@ -523,7 +599,9 @@ class TestCompileArgumentParsing:
         parser.add_argument("--mxint8", action="store_true")
         parser.add_argument("--num_cores", "--num-cores", required=True, type=int)
         parser.add_argument(
-            "--device_group", "--device-group", required=True,
+            "--device_group",
+            "--device-group",
+            required=True,
             type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         )
         parser.add_argument("--aic_enable_depth_first", "--aic-enable-depth-first", action="store_true")
@@ -544,126 +622,190 @@ class TestCompileArgumentParsing:
     def test_parser_requires_device_group(self):
         parser = self._get_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args([
-                "--onnx_path", "/path/to/model.onnx",
-                "--qpc-path", "/path/to/qpc",
-                "--num-cores", "16"
-            ])
+            parser.parse_args(["--onnx_path", "/path/to/model.onnx", "--qpc-path", "/path/to/qpc", "--num-cores", "16"])
 
     def test_parser_accepts_all_required_args(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+            ]
+        )
         assert args.onnx_path == "/path/to/model.onnx"
         assert args.num_cores == 16
 
     def test_parser_default_batch_size_is_1(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+            ]
+        )
         assert args.batch_size == 1
 
     def test_parser_default_prompt_len_is_32(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+            ]
+        )
         assert args.prompt_len == 32
 
     def test_parser_default_ctx_len_is_128(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+            ]
+        )
         assert args.ctx_len == 128
 
     def test_parser_accepts_batch_size(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]",
-            "--batch-size", "4"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+                "--batch-size",
+                "4",
+            ]
+        )
         assert args.batch_size == 4
 
     def test_parser_accepts_multi_device_group(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0,1,2,3]"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0,1,2,3]",
+            ]
+        )
         assert args.device_group == [0, 1, 2, 3]
 
     def test_parser_accepts_mxfp6_flag(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]",
-            "--mxfp6"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+                "--mxfp6",
+            ]
+        )
         assert args.mxfp6 is True
 
     def test_parser_accepts_mxint8_flag(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]",
-            "--mxint8"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+                "--mxint8",
+            ]
+        )
         assert args.mxint8 is True
 
     def test_parser_accepts_aic_enable_depth_first(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]",
-            "--aic-enable-depth-first"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+                "--aic-enable-depth-first",
+            ]
+        )
         assert args.aic_enable_depth_first is True
 
     def test_parser_accepts_full_batch_size(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]",
-            "--full-batch-size", "8"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+                "--full-batch-size",
+                "8",
+            ]
+        )
         assert args.full_batch_size == 8
 
     def test_parser_default_full_batch_size_is_none(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--onnx_path", "/path/to/model.onnx",
-            "--qpc-path", "/path/to/qpc",
-            "--num-cores", "16",
-            "--device-group", "[0]"
-        ])
+        args = parser.parse_args(
+            [
+                "--onnx_path",
+                "/path/to/model.onnx",
+                "--qpc-path",
+                "/path/to/qpc",
+                "--num-cores",
+                "16",
+                "--device-group",
+                "[0]",
+            ]
+        )
         assert args.full_batch_size is None
 
 
@@ -680,7 +822,8 @@ class TestExecuteArgumentParsing:
         parser.add_argument("--model_name", "--model-name", required=False, type=str)
         parser.add_argument("--qpc_path", "--qpc-path", required=True)
         parser.add_argument(
-            "--device_group", "--device-group",
+            "--device_group",
+            "--device-group",
             type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         )
         parser.add_argument("--prompt", type=lambda prompt: prompt.split("|"))
@@ -704,42 +847,27 @@ class TestExecuteArgumentParsing:
 
     def test_parser_accepts_model_name(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--qpc_path", "/path/to/qpc",
-            "--model_name", "gpt2"
-        ])
+        args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--model_name", "gpt2"])
         assert args.model_name == "gpt2"
 
     def test_parser_accepts_prompt_with_pipe(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--qpc_path", "/path/to/qpc",
-            "--prompt", "Hello|World|Test"
-        ])
+        args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--prompt", "Hello|World|Test"])
         assert args.prompt == ["Hello", "World", "Test"]
 
     def test_parser_accepts_single_prompt(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--qpc_path", "/path/to/qpc",
-            "--prompt", "Hello world"
-        ])
+        args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--prompt", "Hello world"])
         assert args.prompt == ["Hello world"]
 
     def test_parser_accepts_generation_len(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--qpc_path", "/path/to/qpc",
-            "--generation-len", "100"
-        ])
+        args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--generation-len", "100"])
         assert args.generation_len == 100
 
     def test_parser_accepts_device_group(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--qpc_path", "/path/to/qpc",
-            "--device-group", "[0,1]"
-        ])
+        args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--device-group", "[0,1]"])
         assert args.device_group == [0, 1]
 
     def test_parser_default_generation_len_is_none(self):
@@ -749,10 +877,7 @@ class TestExecuteArgumentParsing:
 
     def test_parser_accepts_hf_token(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--qpc_path", "/path/to/qpc",
-            "--hf-token", "hf_abc123"
-        ])
+        args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--hf-token", "hf_abc123"])
         assert args.hf_token == "hf_abc123"
 
 
@@ -786,26 +911,17 @@ class TestExportArgumentParsing:
 
     def test_parser_accepts_cache_dir(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model_name", "gpt2",
-            "--cache-dir", "/path/to/cache"
-        ])
+        args = parser.parse_args(["--model_name", "gpt2", "--cache-dir", "/path/to/cache"])
         assert args.cache_dir == "/path/to/cache"
 
     def test_parser_accepts_hf_token(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model_name", "gpt2",
-            "--hf-token", "hf_token123"
-        ])
+        args = parser.parse_args(["--model_name", "gpt2", "--hf-token", "hf_token123"])
         assert args.hf_token == "hf_token123"
 
     def test_parser_accepts_full_batch_size(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model_name", "gpt2",
-            "--full-batch-size", "4"
-        ])
+        args = parser.parse_args(["--model_name", "gpt2", "--full-batch-size", "4"])
         assert args.full_batch_size == 4
 
     def test_parser_default_full_batch_size_is_none(self):
@@ -830,7 +946,8 @@ class TestInferArgumentParsing:
         parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int)
         parser.add_argument("--num_cores", "--num-cores", type=int, required=True)
         parser.add_argument(
-            "--device_group", "--device-group",
+            "--device_group",
+            "--device-group",
             type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         )
         parser.add_argument("--prompt", type=lambda prompt: prompt.split("|"))
@@ -857,10 +974,7 @@ class TestInferArgumentParsing:
 
     def test_parser_accepts_all_required_args(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model-name", "gpt2",
-            "--num-cores", "16"
-        ])
+        args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16"])
         assert args.model_name == "gpt2"
         assert args.num_cores == 16
 
@@ -891,26 +1005,17 @@ class TestInferArgumentParsing:
 
     def test_parser_accepts_aic_enable_depth_first(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model-name", "gpt2", "--num-cores", "16",
-            "--aic-enable-depth-first"
-        ])
+        args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16", "--aic-enable-depth-first"])
         assert args.aic_enable_depth_first is True
 
     def test_parser_accepts_full_batch_size(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model-name", "gpt2", "--num-cores", "16",
-            "--full-batch-size", "8"
-        ])
+        args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16", "--full-batch-size", "8"])
         assert args.full_batch_size == 8
 
     def test_parser_accepts_trust_remote_code(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model-name", "gpt2", "--num-cores", "16",
-            "--trust_remote_code"
-        ])
+        args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16", "--trust_remote_code"])
         assert args.trust_remote_code is True
 
     def test_parser_default_trust_remote_code_is_false(self):
@@ -920,18 +1025,12 @@ class TestInferArgumentParsing:
 
     def test_parser_accepts_prompt_with_pipe(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model-name", "gpt2", "--num-cores", "16",
-            "--prompt", "Hello|World"
-        ])
+        args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16", "--prompt", "Hello|World"])
         assert args.prompt == ["Hello", "World"]
 
     def test_parser_accepts_device_group(self):
         parser = self._get_parser()
-        args = parser.parse_args([
-            "--model-name", "gpt2", "--num-cores", "16",
-            "--device-group", "[0,1]"
-        ])
+        args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16", "--device-group", "[0,1]"])
         assert args.device_group == [0, 1]
 
 
@@ -1009,55 +1108,66 @@ class TestTrainConfig:
 
     def test_train_config_importable(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         assert TrainConfig is not None
 
     def test_train_config_instantiable(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert cfg is not None
 
     def test_train_config_has_model_name(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert hasattr(cfg, "model_name")
 
     def test_train_config_has_use_peft(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert hasattr(cfg, "use_peft")
 
     def test_train_config_has_seed(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert hasattr(cfg, "seed")
 
     def test_train_config_has_device(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert hasattr(cfg, "device")
 
     def test_train_config_has_enable_ddp(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert hasattr(cfg, "enable_ddp")
 
     def test_train_config_has_lr(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert hasattr(cfg, "lr")
 
     def test_train_config_has_gradient_checkpointing(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert hasattr(cfg, "gradient_checkpointing")
 
     def test_train_config_use_peft_default_is_true(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert cfg.use_peft is True
 
     def test_train_config_enable_ddp_default_is_false(self):
         from QEfficient.finetune.configs.training import TrainConfig
+
         cfg = TrainConfig()
         assert cfg.enable_ddp is False
 
@@ -1101,20 +1211,24 @@ class TestCheckAndAssignCacheDir:
 
     def test_function_importable(self):
         from QEfficient.utils import check_and_assign_cache_dir
+
         assert callable(check_and_assign_cache_dir)
 
     def test_returns_cache_dir_when_provided(self):
         from QEfficient.utils import check_and_assign_cache_dir
+
         result = check_and_assign_cache_dir(local_model_dir=None, cache_dir="/my/cache")
         assert result == "/my/cache"
 
     def test_returns_default_when_local_model_dir_provided(self):
         from QEfficient.utils import check_and_assign_cache_dir
+
         result = check_and_assign_cache_dir(local_model_dir="/local/model", cache_dir=None)
         # When local_model_dir is provided, cache_dir should be None or default
         assert result is None or isinstance(result, str)
 
     def test_returns_string_or_none(self):
         from QEfficient.utils import check_and_assign_cache_dir
+
         result = check_and_assign_cache_dir(local_model_dir=None, cache_dir=None)
         assert result is None or isinstance(result, str)

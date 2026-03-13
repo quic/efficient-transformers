@@ -24,7 +24,6 @@ import pytest
 import torch
 from transformers import GPT2Config, GPT2LMHeadModel
 
-
 # ---------------------------------------------------------------------------
 # Tiny model factories
 # ---------------------------------------------------------------------------
@@ -150,89 +149,67 @@ class TestQEFFAutoModelForCausalLMSpecializations:
     def test_build_prefill_specialization_returns_dict(self):
         """build_prefill_specialization must return a dict."""
         qeff = self._make_qeff()
-        result = qeff.build_prefill_specialization(
-            prefill_seq_len=8, ctx_len=32, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_prefill_specialization(prefill_seq_len=8, ctx_len=32, batch_size=1, full_batch_size=None)
         assert isinstance(result, dict), f"Expected dict, got {type(result)}"
 
     def test_build_prefill_specialization_has_seq_len_key(self):
         """build_prefill_specialization dict must contain 'seq_len'."""
         qeff = self._make_qeff()
-        result = qeff.build_prefill_specialization(
-            prefill_seq_len=8, ctx_len=32, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_prefill_specialization(prefill_seq_len=8, ctx_len=32, batch_size=1, full_batch_size=None)
         assert "seq_len" in result, f"'seq_len' not in prefill spec: {result}"
 
     def test_build_prefill_specialization_has_ctx_len_key(self):
         """build_prefill_specialization dict must contain 'ctx_len'."""
         qeff = self._make_qeff()
-        result = qeff.build_prefill_specialization(
-            prefill_seq_len=8, ctx_len=32, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_prefill_specialization(prefill_seq_len=8, ctx_len=32, batch_size=1, full_batch_size=None)
         assert "ctx_len" in result, f"'ctx_len' not in prefill spec: {result}"
 
     def test_build_prefill_specialization_seq_len_matches_input(self):
         """build_prefill_specialization seq_len must match the input prefill_seq_len."""
         qeff = self._make_qeff()
-        result = qeff.build_prefill_specialization(
-            prefill_seq_len=16, ctx_len=64, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_prefill_specialization(prefill_seq_len=16, ctx_len=64, batch_size=1, full_batch_size=None)
         assert result["seq_len"] == 16, f"Expected seq_len=16, got {result['seq_len']}"
 
     def test_build_prefill_specialization_ctx_len_matches_input(self):
         """build_prefill_specialization ctx_len must match the input ctx_len."""
         qeff = self._make_qeff()
-        result = qeff.build_prefill_specialization(
-            prefill_seq_len=8, ctx_len=64, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_prefill_specialization(prefill_seq_len=8, ctx_len=64, batch_size=1, full_batch_size=None)
         assert result["ctx_len"] == 64, f"Expected ctx_len=64, got {result['ctx_len']}"
 
     def test_build_decode_specialization_returns_dict(self):
         """build_decode_specialization must return a dict."""
         qeff = self._make_qeff()
-        result = qeff.build_decode_specialization(
-            ctx_len=32, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_decode_specialization(ctx_len=32, batch_size=1, full_batch_size=None)
         assert isinstance(result, dict), f"Expected dict, got {type(result)}"
 
     def test_build_decode_specialization_has_seq_len_key(self):
         """build_decode_specialization dict must contain 'seq_len'."""
         qeff = self._make_qeff()
-        result = qeff.build_decode_specialization(
-            ctx_len=32, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_decode_specialization(ctx_len=32, batch_size=1, full_batch_size=None)
         assert "seq_len" in result, f"'seq_len' not in decode spec: {result}"
 
     def test_build_decode_specialization_has_ctx_len_key(self):
         """build_decode_specialization dict must contain 'ctx_len'."""
         qeff = self._make_qeff()
-        result = qeff.build_decode_specialization(
-            ctx_len=32, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_decode_specialization(ctx_len=32, batch_size=1, full_batch_size=None)
         assert "ctx_len" in result, f"'ctx_len' not in decode spec: {result}"
 
     def test_build_decode_specialization_seq_len_is_1(self):
         """build_decode_specialization seq_len must be 1 (decode step)."""
         qeff = self._make_qeff()
-        result = qeff.build_decode_specialization(
-            ctx_len=32, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_decode_specialization(ctx_len=32, batch_size=1, full_batch_size=None)
         assert result["seq_len"] == 1, f"Expected seq_len=1 for decode, got {result['seq_len']}"
 
     def test_build_decode_specialization_ctx_len_matches_input(self):
         """build_decode_specialization ctx_len must match the input ctx_len."""
         qeff = self._make_qeff()
-        result = qeff.build_decode_specialization(
-            ctx_len=64, batch_size=1, full_batch_size=None
-        )
+        result = qeff.build_decode_specialization(ctx_len=64, batch_size=1, full_batch_size=None)
         assert result["ctx_len"] == 64, f"Expected ctx_len=64, got {result['ctx_len']}"
 
     def test_check_and_get_num_speculative_tokens_returns_none_for_non_tlm(self):
         """For non-TLM model, check_and_get_num_speculative_tokens must return None."""
         qeff = self._make_qeff()
-        result = qeff.check_and_get_num_speculative_tokens(
-            num_speculative_tokens=None, prefill_seq_len=1
-        )
+        result = qeff.check_and_get_num_speculative_tokens(num_speculative_tokens=None, prefill_seq_len=1)
         assert result is None, f"Expected None for non-TLM, got {result}"
 
     def test_build_decode_specialization_with_num_speculative_tokens(self):
@@ -268,9 +245,7 @@ class TestQEFFAutoModelForCausalLMPrefillToggle:
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
         sig = inspect.signature(QEFFAutoModelForCausalLM.prefill)
-        assert "enable" in sig.parameters, (
-            f"prefill() must have 'enable' parameter, got: {list(sig.parameters.keys())}"
-        )
+        assert "enable" in sig.parameters, f"prefill() must have 'enable' parameter, got: {list(sig.parameters.keys())}"
 
     def test_prefill_method_accepts_enable_chunking_parameter(self):
         """prefill() must accept an 'enable_chunking' parameter."""
@@ -327,9 +302,7 @@ class TestQEFFAutoModelEncoder:
         with torch.no_grad():
             output = qeff.model(input_ids=input_ids, attention_mask=attention_mask)
 
-        assert torch.isfinite(output.last_hidden_state).all(), (
-            "QEFFAutoModel forward must produce finite hidden states"
-        )
+        assert torch.isfinite(output.last_hidden_state).all(), "QEFFAutoModel forward must produce finite hidden states"
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +459,7 @@ class TestQEFFAutoModelForCausalLMCCL:
 
     def _make_qeff(self):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         return QEFFAutoModelForCausalLM(make_tiny_gpt2())
 
     def test_build_prefill_specialization_with_ccl_returns_dict(self):
@@ -498,9 +472,7 @@ class TestQEFFAutoModelForCausalLMCCL:
             full_batch_size=None,
             comp_ctx_lengths=[16, 32],
         )
-        assert isinstance(result, dict), (
-            f"build_prefill_specialization with CCL must return dict, got {type(result)}"
-        )
+        assert isinstance(result, dict), f"build_prefill_specialization with CCL must return dict, got {type(result)}"
 
     def test_build_decode_specialization_with_ccl_returns_dict(self):
         """build_decode_specialization with comp_ctx_lengths must return a dict."""
@@ -511,9 +483,7 @@ class TestQEFFAutoModelForCausalLMCCL:
             full_batch_size=None,
             comp_ctx_lengths=[16, 32],
         )
-        assert isinstance(result, dict), (
-            f"build_decode_specialization with CCL must return dict, got {type(result)}"
-        )
+        assert isinstance(result, dict), f"build_decode_specialization with CCL must return dict, got {type(result)}"
 
     def test_build_prefill_specialization_ccl_result_has_comp_ctx_lengths_key(self):
         """build_prefill_specialization with CCL must include 'comp_ctx_lengths' in result."""
@@ -525,9 +495,7 @@ class TestQEFFAutoModelForCausalLMCCL:
             full_batch_size=None,
             comp_ctx_lengths=[16, 32],
         )
-        assert "comp_ctx_lengths" in result, (
-            f"CCL prefill spec must have 'comp_ctx_lengths' key: {result}"
-        )
+        assert "comp_ctx_lengths" in result, f"CCL prefill spec must have 'comp_ctx_lengths' key: {result}"
 
     def test_build_decode_specialization_ccl_result_has_comp_ctx_lengths_key(self):
         """build_decode_specialization with CCL must include 'comp_ctx_lengths' in result."""
@@ -538,9 +506,7 @@ class TestQEFFAutoModelForCausalLMCCL:
             full_batch_size=None,
             comp_ctx_lengths=[16, 32],
         )
-        assert "comp_ctx_lengths" in result, (
-            f"CCL decode spec must have 'comp_ctx_lengths' key: {result}"
-        )
+        assert "comp_ctx_lengths" in result, f"CCL decode spec must have 'comp_ctx_lengths' key: {result}"
 
     def test_build_prefill_specialization_ccl_preserves_comp_ctx_lengths_values(self):
         """build_prefill_specialization must preserve the comp_ctx_lengths values."""
@@ -606,6 +572,7 @@ class TestQEFFAutoModelForCausalLMPrefillStateChange:
 
     def _make_qeff(self):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         return QEFFAutoModelForCausalLM(make_tiny_gpt2())
 
     def test_prefill_method_is_callable(self):
@@ -616,32 +583,40 @@ class TestQEFFAutoModelForCausalLMPrefillStateChange:
     def test_prefill_method_accepts_enable_parameter(self):
         """prefill() must accept an 'enable' parameter."""
         import inspect
+
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         sig = inspect.signature(QEFFAutoModelForCausalLM.prefill)
         assert "enable" in sig.parameters
 
     def test_prefill_method_accepts_enable_chunking_parameter(self):
         """prefill() must accept an 'enable_chunking' parameter."""
         import inspect
+
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         sig = inspect.signature(QEFFAutoModelForCausalLM.prefill)
         assert "enable_chunking" in sig.parameters
 
     def test_prefill_method_accepts_retain_full_kv_parameter(self):
         """prefill() must accept a 'retain_full_kv' parameter."""
         import inspect
+
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         sig = inspect.signature(QEFFAutoModelForCausalLM.prefill)
         assert "retain_full_kv" in sig.parameters
 
     def test_prefill_only_transform_importable(self):
         """PrefillOnlyTransform must be importable."""
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+
         assert PrefillOnlyTransform is not None
 
     def test_prefill_only_transform_has_module_mapping(self):
         """PrefillOnlyTransform must have a _module_mapping."""
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+
         assert hasattr(PrefillOnlyTransform, "_module_mapping")
         assert isinstance(PrefillOnlyTransform._module_mapping, dict)
         assert len(PrefillOnlyTransform._module_mapping) > 0
@@ -649,11 +624,13 @@ class TestQEFFAutoModelForCausalLMPrefillStateChange:
     def test_revert_prefill_only_transform_importable(self):
         """RevertPrefillOnlyTransform must be importable."""
         from QEfficient.transformers.models.pytorch_transforms import RevertPrefillOnlyTransform
+
         assert RevertPrefillOnlyTransform is not None
 
     def test_revert_prefill_only_transform_has_module_mapping(self):
         """RevertPrefillOnlyTransform must have a _module_mapping."""
         from QEfficient.transformers.models.pytorch_transforms import RevertPrefillOnlyTransform
+
         assert hasattr(RevertPrefillOnlyTransform, "_module_mapping")
         assert isinstance(RevertPrefillOnlyTransform._module_mapping, dict)
         assert len(RevertPrefillOnlyTransform._module_mapping) > 0
@@ -661,6 +638,7 @@ class TestQEFFAutoModelForCausalLMPrefillStateChange:
     def test_prefill_only_transform_maps_to_prefill_variants(self):
         """PrefillOnlyTransform _module_mapping values must be prefill-only variants."""
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+
         for src_cls, dst_cls in PrefillOnlyTransform._module_mapping.items():
             dst_name = dst_cls.__name__
             assert "Prefill" in dst_name or "prefill" in dst_name.lower(), (
@@ -671,10 +649,12 @@ class TestQEFFAutoModelForCausalLMPrefillStateChange:
     def test_prefill_only_chunked_transform_importable(self):
         """PrefillOnlyChunkedTransform must be importable."""
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyChunkedTransform
+
         assert PrefillOnlyChunkedTransform is not None
 
     def test_prefill_only_chunked_transform_has_module_mapping(self):
         """PrefillOnlyChunkedTransform must have a _module_mapping."""
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyChunkedTransform
+
         assert hasattr(PrefillOnlyChunkedTransform, "_module_mapping")
         assert isinstance(PrefillOnlyChunkedTransform._module_mapping, dict)

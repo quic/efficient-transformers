@@ -26,7 +26,6 @@ from QEfficient.transformers.cache_utils import (
     QEffSlidingWindowCache,
 )
 
-
 # ---------------------------------------------------------------------------
 # Minimal config stub (no HF model needed)
 # ---------------------------------------------------------------------------
@@ -96,7 +95,9 @@ class TestQEffSlidingWindowCache:
         cache.update(k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=4), "is_sliding": False})
         assert len(cache) == 1
 
-        cache.update(k.clone(), v.clone(), layer_idx=1, cache_kwargs={"position_ids": pos_ids(seq=4), "is_sliding": True})
+        cache.update(
+            k.clone(), v.clone(), layer_idx=1, cache_kwargs={"position_ids": pos_ids(seq=4), "is_sliding": True}
+        )
         assert len(cache) == 2
 
     def test_first_update_non_sliding_stores_tensors(self):
@@ -104,7 +105,9 @@ class TestQEffSlidingWindowCache:
         cfg = _FakeConfig()
         cache = QEffSlidingWindowCache(cfg, batch_size=1, max_cache_len=16, sliding_window_len=4)
         k, v = make_kv_4d(seq=8)
-        k_out, v_out = cache.update(k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=8), "is_sliding": False})
+        k_out, v_out = cache.update(
+            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=8), "is_sliding": False}
+        )
         assert len(cache.key_cache) == 1
         assert k_out is not None
         assert v_out is not None
@@ -114,7 +117,9 @@ class TestQEffSlidingWindowCache:
         cfg = _FakeConfig()
         cache = QEffSlidingWindowCache(cfg, batch_size=1, max_cache_len=16, sliding_window_len=4)
         k, v = make_kv_4d(seq=8)
-        k_out, v_out = cache.update(k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=8), "is_sliding": False})
+        k_out, v_out = cache.update(
+            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=8), "is_sliding": False}
+        )
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
@@ -127,14 +132,15 @@ class TestQEffSlidingWindowCache:
         # Prefill with zeros
         k_init = torch.zeros(1, 2, ctx_len, 8)
         v_init = torch.zeros(1, 2, ctx_len, 8)
-        cache.update(k_init, v_init, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=ctx_len), "is_sliding": False})
+        cache.update(
+            k_init, v_init, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=ctx_len), "is_sliding": False}
+        )
 
         # Decode: write known value at position 5
         k_dec = torch.ones(1, 2, 1, 8) * 7.0
         v_dec = torch.ones(1, 2, 1, 8) * 7.0
         k_out, v_out = cache.update(
-            k_dec, v_dec, layer_idx=0,
-            cache_kwargs={"position_ids": torch.tensor([[5]]), "is_sliding": False}
+            k_dec, v_dec, layer_idx=0, cache_kwargs={"position_ids": torch.tensor([[5]]), "is_sliding": False}
         )
         assert k_out[0, 0, 5, 0].item() == pytest.approx(7.0, abs=1e-5)
 
@@ -147,14 +153,18 @@ class TestQEffSlidingWindowCache:
         # Prefill sliding layer with zeros
         k_init = torch.zeros(1, 2, sliding_window_len, 8)
         v_init = torch.zeros(1, 2, sliding_window_len, 8)
-        cache.update(k_init, v_init, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=sliding_window_len), "is_sliding": True})
+        cache.update(
+            k_init,
+            v_init,
+            layer_idx=0,
+            cache_kwargs={"position_ids": pos_ids(seq=sliding_window_len), "is_sliding": True},
+        )
 
         # Decode at position 5: slot = 5 % 4 = 1
         k_dec = torch.ones(1, 2, 1, 8) * 99.0
         v_dec = torch.ones(1, 2, 1, 8) * 99.0
         k_out, v_out = cache.update(
-            k_dec, v_dec, layer_idx=0,
-            cache_kwargs={"position_ids": torch.tensor([[5]]), "is_sliding": True}
+            k_dec, v_dec, layer_idx=0, cache_kwargs={"position_ids": torch.tensor([[5]]), "is_sliding": True}
         )
         # The output shape should be sliding_window_len
         assert k_out.shape[2] == sliding_window_len
@@ -166,7 +176,9 @@ class TestQEffSlidingWindowCache:
         ctx_len = 16
         cache = QEffSlidingWindowCache(cfg, batch_size=1, max_cache_len=ctx_len, sliding_window_len=4)
         k, v = make_kv_4d(seq=ctx_len)
-        k_out, v_out = cache.update(k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=ctx_len), "is_sliding": False})
+        k_out, v_out = cache.update(
+            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=ctx_len), "is_sliding": False}
+        )
         assert k_out.shape[2] == ctx_len
 
     def test_output_shape_sliding_equals_window_size(self):
@@ -175,7 +187,9 @@ class TestQEffSlidingWindowCache:
         sliding_window_len = 4
         cache = QEffSlidingWindowCache(cfg, batch_size=1, max_cache_len=16, sliding_window_len=sliding_window_len)
         k, v = make_kv_4d(seq=sliding_window_len)
-        k_out, v_out = cache.update(k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=sliding_window_len), "is_sliding": True})
+        k_out, v_out = cache.update(
+            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=sliding_window_len), "is_sliding": True}
+        )
         assert k_out.shape[2] == sliding_window_len
 
     def test_multi_layer_independence(self):
@@ -235,8 +249,7 @@ class TestQEffSlidingWindowCache:
         k_dec = torch.randn(1, 2, 1, 16)
         v_dec = torch.randn(1, 2, 1, 16)
         k_out, v_out = cache.update(
-            k_dec, v_dec, layer_idx=0,
-            cache_kwargs={"position_ids": torch.tensor([[ctx_len - 1]]), "is_sliding": False}
+            k_dec, v_dec, layer_idx=0, cache_kwargs={"position_ids": torch.tensor([[ctx_len - 1]]), "is_sliding": False}
         )
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
@@ -302,7 +315,9 @@ class TestQEffDynamicCache3D:
         batch, ctx_len, kv_dim = 1, 16, 4
 
         # Prefill with sequential values
-        k_init = torch.arange(ctx_len, dtype=torch.float32).reshape(1, ctx_len, 1).expand(batch, ctx_len, kv_dim).clone()
+        k_init = (
+            torch.arange(ctx_len, dtype=torch.float32).reshape(1, ctx_len, 1).expand(batch, ctx_len, kv_dim).clone()
+        )
         v_init = k_init.clone()
         layer.update3D(k_init, v_init, cache_kwargs={"position_ids": pos_ids(seq=ctx_len)})
 
@@ -363,9 +378,7 @@ class TestQEffHybridCacheForGPTOSSChunked:
     def _make_sliding_cache_with_layer(self, batch=1, heads=2, sliding_window_len=4, head_dim=8):
         """Create a cache with one pre-initialized sliding window layer."""
         cfg = _FakeConfig()
-        cache = QEffHybridCacheForGPTOSS(
-            cfg, batch_size=batch, max_cache_len=16, sliding_window_len=sliding_window_len
-        )
+        cache = QEffHybridCacheForGPTOSS(cfg, batch_size=batch, max_cache_len=16, sliding_window_len=sliding_window_len)
         # Initialize layer 0 (sliding window)
         k = torch.zeros(batch, heads, sliding_window_len, head_dim)
         v = torch.zeros(batch, heads, sliding_window_len, head_dim)
@@ -380,8 +393,7 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.randn(batch, heads, seq_len, head_dim)
         v = torch.randn(batch, heads, seq_len, head_dim)
         k_out, v_out = cache.full_cache_update_chunked(
-            k, v, layer_idx=0,
-            cache_kwargs={"position_ids": pos_ids(seq=seq_len), "batch_index": None}
+            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=seq_len), "batch_index": None}
         )
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
@@ -395,8 +407,7 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.ones(batch, heads, 4, head_dim) * 5.0
         v = torch.ones(batch, heads, 4, head_dim) * 5.0
         k_out, v_out = cache.full_cache_update_chunked(
-            k, v, layer_idx=0,
-            cache_kwargs={"position_ids": pos_ids(seq=4), "batch_index": None}
+            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=4), "batch_index": None}
         )
         # Positions 0-3 should have value 5.0
         assert k_out[0, 0, 0, 0].item() == pytest.approx(5.0, abs=1e-5)
@@ -410,8 +421,7 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.randn(batch, heads, seq_len, head_dim)
         v = torch.randn(batch, heads, seq_len, head_dim)
         k_out, v_out = cache.full_cache_update_chunked(
-            k, v, layer_idx=0,
-            cache_kwargs={"position_ids": pos_ids(seq=seq_len), "batch_index": None}
+            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=seq_len), "batch_index": None}
         )
         assert k_out.shape[2] == ctx_len
 
@@ -423,12 +433,14 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.randn(batch, heads, seq_len, head_dim)
         v = torch.randn(batch, heads, seq_len, head_dim)
         k_out, v_out = cache.sliding_window_update_chunked(
-            k, v, layer_idx=0,
+            k,
+            v,
+            layer_idx=0,
             cache_kwargs={
                 "position_ids": pos_ids(seq=seq_len),
                 "batch_index": None,
                 "sliding_window": sliding_window_len,
-            }
+            },
         )
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
@@ -442,12 +454,14 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.randn(batch, heads, seq_len, head_dim)
         v = torch.randn(batch, heads, seq_len, head_dim)
         k_out, v_out = cache.sliding_window_update_chunked(
-            k, v, layer_idx=0,
+            k,
+            v,
+            layer_idx=0,
             cache_kwargs={
                 "position_ids": pos_ids(seq=seq_len),
                 "batch_index": None,
                 "sliding_window": sliding_window_len,
-            }
+            },
         )
         # Output shape: seq_len + sliding_window_len
         expected_ctx = seq_len + sliding_window_len
@@ -462,12 +476,14 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.randn(batch, heads, seq_len, head_dim)
         v = torch.randn(batch, heads, seq_len, head_dim)
         k_out, v_out = cache.sliding_window_update_chunked(
-            k, v, layer_idx=0,
+            k,
+            v,
+            layer_idx=0,
             cache_kwargs={
                 "position_ids": pos_ids(seq=seq_len),
                 "batch_index": None,
                 "sliding_window": sliding_window_len,
-            }
+            },
         )
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
@@ -498,8 +514,7 @@ class TestCCLCachePath:
         k_dec = torch.randn(batch, heads, 1, head_dim)
         v_dec = torch.randn(batch, heads, 1, head_dim)
         k_out, v_out = cache.update(
-            k_dec, v_dec, layer_idx=0,
-            cache_kwargs={"position_ids": torch.tensor([[8]]), "CCL": 8}
+            k_dec, v_dec, layer_idx=0, cache_kwargs={"position_ids": torch.tensor([[8]]), "CCL": 8}
         )
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
@@ -521,8 +536,7 @@ class TestCCLCachePath:
         k_dec = torch.randn(batch, heads, 1, head_dim)
         v_dec = torch.randn(batch, heads, 1, head_dim)
         k_out, v_out = cache.update(
-            k_dec, v_dec, layer_idx=0,
-            cache_kwargs={"position_ids": torch.tensor([[4]]), "CCL": ccl}
+            k_dec, v_dec, layer_idx=0, cache_kwargs={"position_ids": torch.tensor([[4]]), "CCL": ccl}
         )
         assert k_out.shape[2] == ccl
         assert v_out.shape[2] == ccl

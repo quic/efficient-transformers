@@ -18,7 +18,6 @@ All tests run on CPU only.
 import pytest
 import torch
 from transformers import (
-    FalconConfig,
     GPT2Config,
     LlamaConfig,
     MistralConfig,
@@ -27,7 +26,6 @@ from transformers import (
 from QEfficient.utils.constants import HASH_HEXDIGEST_STR_LEN
 from QEfficient.utils.hash_utils import hash_dict_params
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
-
 
 # ---------------------------------------------------------------------------
 # Helpers: get_padding_shape_from_config
@@ -63,8 +61,8 @@ class TestGetPaddingShapeFromConfig:
         )
         shape = _get_padding_shape(cfg, batch_size=1, seq_len=32)
         assert len(shape) == 4, f"Expected 4D shape, got {len(shape)}D: {shape}"
-        assert shape[0] == 1   # batch_size
-        assert shape[1] == 4   # n_kv_heads
+        assert shape[0] == 1  # batch_size
+        assert shape[1] == 4  # n_kv_heads
         assert shape[2] == 32  # seq_len
         assert shape[3] == 16  # head_dim = hidden_size / num_attention_heads = 64/4
 
@@ -383,9 +381,7 @@ class TestHashUtils:
     def test_hash_is_hexadecimal(self):
         """Hash must consist of hexadecimal characters only."""
         result = hash_dict_params({"key": "value", "num": 42})
-        assert all(c in "0123456789abcdef" for c in result), (
-            f"Hash must be hexadecimal, got: {result}"
-        )
+        assert all(c in "0123456789abcdef" for c in result), f"Hash must be hexadecimal, got: {result}"
 
     def test_empty_dict_produces_valid_hash(self):
         """Empty dict must produce a valid hash."""
@@ -426,30 +422,30 @@ class TestCheckCCLSpecializations:
     def test_process_ccl_specializations_returns_three_values(self):
         """process_ccl_specializations must return (ccl_prefill, ccl_decode, ctx_len)."""
         from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+
         result = process_ccl_specializations(None, None, ctx_len=4096, prefill_seq_len=128)
         assert len(result) == 3
 
     def test_process_ccl_specializations_returns_lists(self):
         """process_ccl_specializations must return lists for prefill and decode."""
         from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
-        ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(
-            None, None, ctx_len=4096, prefill_seq_len=128
-        )
+
+        ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(None, None, ctx_len=4096, prefill_seq_len=128)
         assert isinstance(ccl_prefill, list)
         assert isinstance(ccl_decode, list)
 
     def test_process_ccl_specializations_lists_not_empty(self):
         """process_ccl_specializations must return non-empty lists."""
         from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
-        ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(
-            None, None, ctx_len=4096, prefill_seq_len=128
-        )
+
+        ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(None, None, ctx_len=4096, prefill_seq_len=128)
         assert len(ccl_prefill) > 0
         assert len(ccl_decode) > 0
 
     def test_process_ccl_specializations_last_element_leq_ctx_len(self):
         """Last element of CCL lists must be <= ctx_len."""
         from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+
         ctx_len = 4096
         ccl_prefill, ccl_decode, returned_ctx_len = process_ccl_specializations(
             None, None, ctx_len=ctx_len, prefill_seq_len=128
@@ -460,6 +456,7 @@ class TestCheckCCLSpecializations:
     def test_process_ccl_specializations_with_explicit_lists(self):
         """process_ccl_specializations with explicit lists must validate and return them."""
         from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+
         ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(
             [512, 1024], [1024, 2048], ctx_len=4096, prefill_seq_len=128
         )
@@ -469,6 +466,7 @@ class TestCheckCCLSpecializations:
     def test_process_ccl_specializations_with_only_prefill(self):
         """process_ccl_specializations with only prefill list must fill decode with ctx_len."""
         from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+
         ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(
             [512, 1024], None, ctx_len=4096, prefill_seq_len=128
         )
@@ -479,6 +477,7 @@ class TestCheckCCLSpecializations:
     def test_process_ccl_specializations_with_only_decode(self):
         """process_ccl_specializations with only decode list must fill prefill with ctx_len."""
         from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+
         ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(
             None, [1024, 2048], ctx_len=4096, prefill_seq_len=128
         )
@@ -489,12 +488,9 @@ class TestCheckCCLSpecializations:
     def test_process_ccl_specializations_prefill_seq_len_1(self):
         """With prefill_seq_len=1, prefill and decode lists must be identical."""
         from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
-        ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(
-            None, None, ctx_len=4096, prefill_seq_len=1
-        )
-        assert ccl_prefill == ccl_decode, (
-            "With prefill_seq_len=1, prefill and decode CCL lists must be identical"
-        )
+
+        ccl_prefill, ccl_decode, ctx_len = process_ccl_specializations(None, None, ctx_len=4096, prefill_seq_len=1)
+        assert ccl_prefill == ccl_decode, "With prefill_seq_len=1, prefill and decode CCL lists must be identical"
 
 
 @pytest.mark.cpu_only
@@ -504,12 +500,14 @@ class TestAutomaticCCLGeneration:
     def test_automatic_ccl_generation_returns_three_values(self):
         """automatic_ccl_generation must return (prefill_list, decode_list, mapped_cl)."""
         from QEfficient.utils.check_ccl_specializations import automatic_ccl_generation
+
         result = automatic_ccl_generation(ctx_len=4096, prefill_seq_len=128)
         assert len(result) == 3
 
     def test_automatic_ccl_generation_returns_lists(self):
         """automatic_ccl_generation must return lists."""
         from QEfficient.utils.check_ccl_specializations import automatic_ccl_generation
+
         prefill_list, decode_list, mapped_cl = automatic_ccl_generation(ctx_len=4096, prefill_seq_len=128)
         assert isinstance(prefill_list, list)
         assert isinstance(decode_list, list)
@@ -517,12 +515,14 @@ class TestAutomaticCCLGeneration:
     def test_automatic_ccl_generation_mapped_cl_is_multiple_of_1024(self):
         """mapped_cl must be a multiple of 1024."""
         from QEfficient.utils.check_ccl_specializations import automatic_ccl_generation
+
         _, _, mapped_cl = automatic_ccl_generation(ctx_len=3000, prefill_seq_len=128)
         assert mapped_cl % 1024 == 0, f"mapped_cl={mapped_cl} must be a multiple of 1024"
 
     def test_automatic_ccl_generation_small_ctx_len(self):
         """automatic_ccl_generation with small ctx_len must return valid lists."""
         from QEfficient.utils.check_ccl_specializations import automatic_ccl_generation
+
         prefill_list, decode_list, mapped_cl = automatic_ccl_generation(ctx_len=512, prefill_seq_len=128)
         assert len(prefill_list) > 0
         assert len(decode_list) > 0
@@ -530,6 +530,7 @@ class TestAutomaticCCLGeneration:
     def test_automatic_ccl_generation_zero_ctx_len(self):
         """automatic_ccl_generation with ctx_len=0 must return valid lists."""
         from QEfficient.utils.check_ccl_specializations import automatic_ccl_generation
+
         prefill_list, decode_list, mapped_cl = automatic_ccl_generation(ctx_len=0, prefill_seq_len=128)
         assert len(prefill_list) > 0
         assert len(decode_list) > 0
@@ -542,6 +543,7 @@ class TestCCLHelperFunctions:
     def test_next_multiple_of_1024_rounds_up(self):
         """next_multiple_of_1024 must round up to the next multiple of 1024."""
         from QEfficient.utils.check_ccl_specializations import next_multiple_of_1024
+
         assert next_multiple_of_1024(1) == 1024
         assert next_multiple_of_1024(1024) == 1024
         assert next_multiple_of_1024(1025) == 2048
@@ -551,12 +553,14 @@ class TestCCLHelperFunctions:
     def test_next_multiple_of_1024_zero_or_negative(self):
         """next_multiple_of_1024 with n<=0 must return 0."""
         from QEfficient.utils.check_ccl_specializations import next_multiple_of_1024
+
         assert next_multiple_of_1024(0) == 0
         assert next_multiple_of_1024(-1) == 0
 
     def test_build_doubling_list_basic(self):
         """build_doubling_list must return a doubling sequence."""
         from QEfficient.utils.check_ccl_specializations import build_doubling_list
+
         result = build_doubling_list(start=1024, limit=8192, max_elements=5)
         assert result[0] == 1024
         # Each element must be double the previous
@@ -566,12 +570,14 @@ class TestCCLHelperFunctions:
     def test_build_doubling_list_respects_max_elements(self):
         """build_doubling_list must not exceed max_elements."""
         from QEfficient.utils.check_ccl_specializations import build_doubling_list
+
         result = build_doubling_list(start=1024, limit=1024 * 1024, max_elements=4)
         assert len(result) <= 4
 
     def test_build_doubling_list_respects_limit(self):
         """build_doubling_list must not exceed limit."""
         from QEfficient.utils.check_ccl_specializations import build_doubling_list
+
         limit = 4096
         result = build_doubling_list(start=1024, limit=limit, max_elements=10)
         for val in result:
@@ -580,12 +586,14 @@ class TestCCLHelperFunctions:
     def test_build_doubling_list_with_last_value(self):
         """build_doubling_list with last_value must end with that value."""
         from QEfficient.utils.check_ccl_specializations import build_doubling_list
+
         result = build_doubling_list(start=1024, limit=8192, max_elements=5, last_value=8192)
         assert result[-1] == 8192
 
     def test_is_power_of_two(self):
         """is_power_of_two must correctly identify powers of two."""
         from QEfficient.utils.check_ccl_specializations import is_power_of_two
+
         assert is_power_of_two(1)
         assert is_power_of_two(2)
         assert is_power_of_two(4)
@@ -599,6 +607,7 @@ class TestCCLHelperFunctions:
     def test_floor_to_1000(self):
         """floor_to_1000 must floor to the nearest lower multiple of 1000."""
         from QEfficient.utils.check_ccl_specializations import floor_to_1000
+
         assert floor_to_1000(1500) == 1000
         assert floor_to_1000(2000) == 2000
         assert floor_to_1000(999) == 0

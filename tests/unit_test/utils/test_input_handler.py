@@ -26,6 +26,7 @@ VOCAB_SIZE = 500
 def _get_tokenizer():
     try:
         from transformers import AutoTokenizer
+
         tok = AutoTokenizer.from_pretrained("gpt2")
         tok.pad_token = tok.eos_token
         return tok
@@ -35,8 +36,12 @@ def _get_tokenizer():
 
 def _make_tiny_gpt2_config(tokenizer):
     return GPT2Config(
-        n_layer=2, n_head=2, n_embd=64,
-        vocab_size=tokenizer.vocab_size, n_positions=CTX_LEN, n_ctx=CTX_LEN,
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        vocab_size=tokenizer.vocab_size,
+        n_positions=CTX_LEN,
+        n_ctx=CTX_LEN,
     )
 
 
@@ -44,8 +49,13 @@ def _make_handler(tokenizer, config, prompt=None, prompt_len=8, ctx_len=CTX_LEN)
     if prompt is None:
         prompt = ["Hello world"]
     return InputHandler(
-        batch_size=1, tokenizer=tokenizer, config=config,
-        prompt=prompt, prompt_len=prompt_len, ctx_len=ctx_len, full_batch_size=None,
+        batch_size=1,
+        tokenizer=tokenizer,
+        config=config,
+        prompt=prompt,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        full_batch_size=None,
     )
 
 
@@ -60,9 +70,13 @@ class TestInputHandlerConstruction:
         tok = _get_tokenizer()
         cfg = _make_tiny_gpt2_config(tok)
         handler = InputHandler(
-            batch_size=2, tokenizer=tok, config=cfg,
+            batch_size=2,
+            tokenizer=tok,
+            config=cfg,
             prompt=["Hello world", "The capital of France"],
-            prompt_len=8, ctx_len=CTX_LEN, full_batch_size=None,
+            prompt_len=8,
+            ctx_len=CTX_LEN,
+            full_batch_size=None,
         )
         assert handler is not None
 
@@ -158,6 +172,7 @@ class TestPreparePytorchInputs:
 class TestUpdatePytorchInputs:
     def _run_prefill(self, tok, cfg, prompt_len=8):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         model = GPT2LMHeadModel(cfg).eval()
         qeff_model = QEFFAutoModelForCausalLM(model)
         handler = _make_handler(tok, cfg, prompt_len=prompt_len)
@@ -314,12 +329,8 @@ class TestUpdateOrtInputsOutputs:
             "logits": np.random.randn(1, prompt_len, cfg.vocab_size).astype(np.float32),
         }
         for i in range(n_layers):
-            outputs[f"past_key.{i}_RetainedState"] = np.zeros(
-                (1, n_heads, CTX_LEN, head_dim), dtype=np.float32
-            )
-            outputs[f"past_value.{i}_RetainedState"] = np.zeros(
-                (1, n_heads, CTX_LEN, head_dim), dtype=np.float32
-            )
+            outputs[f"past_key.{i}_RetainedState"] = np.zeros((1, n_heads, CTX_LEN, head_dim), dtype=np.float32)
+            outputs[f"past_value.{i}_RetainedState"] = np.zeros((1, n_heads, CTX_LEN, head_dim), dtype=np.float32)
         return outputs
 
     def test_update_ort_outputs_returns_dict(self):

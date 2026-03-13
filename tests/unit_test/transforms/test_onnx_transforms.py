@@ -18,7 +18,6 @@ All tests run on CPU only, using tiny in-memory models.
 """
 
 import pytest
-import torch
 from transformers import GPT2Config, GPT2LMHeadModel, LlamaConfig, LlamaForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -35,8 +34,13 @@ def make_tiny_gpt2():
 
 def make_tiny_llama():
     cfg = LlamaConfig(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=CTX_LEN,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
     )
     return LlamaForCausalLM(cfg).eval(), cfg
 
@@ -46,33 +50,40 @@ class TestONNXTransformsModuleStructure:
 
     def test_fp16_clip_transform_importable(self):
         from QEfficient.base.onnx_transforms import FP16ClipTransform
+
         assert FP16ClipTransform is not None
 
     def test_split_tensors_transform_importable(self):
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
+
         assert SplitTensorsTransform is not None
 
     def test_custom_op_transform_importable(self):
         from QEfficient.base.onnx_transforms import CustomOpTransform
+
         assert CustomOpTransform is not None
 
     def test_fp16_clip_has_apply_method(self):
         from QEfficient.base.onnx_transforms import FP16ClipTransform
+
         assert hasattr(FP16ClipTransform, "apply")
         assert callable(FP16ClipTransform.apply)
 
     def test_split_tensors_has_apply_method(self):
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
+
         assert hasattr(SplitTensorsTransform, "apply")
         assert callable(SplitTensorsTransform.apply)
 
     def test_custom_op_transform_has_apply_method(self):
         from QEfficient.base.onnx_transforms import CustomOpTransform
+
         assert hasattr(CustomOpTransform, "apply")
         assert callable(CustomOpTransform.apply)
 
     def test_base_onnx_transform_importable(self):
         from QEfficient.base.onnx_transforms import BaseOnnxTransform
+
         assert BaseOnnxTransform is not None
 
     def test_qeff_auto_model_has_onnx_transforms_list(self):
@@ -82,25 +93,27 @@ class TestONNXTransformsModuleStructure:
 
     def test_onnx_transforms_list_contains_fp16_clip(self):
         from QEfficient.base.onnx_transforms import FP16ClipTransform
+
         assert FP16ClipTransform in QEFFAutoModelForCausalLM._onnx_transforms, (
             f"FP16ClipTransform not in _onnx_transforms: {QEFFAutoModelForCausalLM._onnx_transforms}"
         )
 
     def test_onnx_transforms_list_contains_split_tensors(self):
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
+
         assert SplitTensorsTransform in QEFFAutoModelForCausalLM._onnx_transforms, (
             f"SplitTensorsTransform not in _onnx_transforms: {QEFFAutoModelForCausalLM._onnx_transforms}"
         )
 
     def test_all_onnx_transforms_are_subclasses_of_base(self):
         from QEfficient.base.onnx_transforms import BaseOnnxTransform
+
         for transform in QEFFAutoModelForCausalLM._onnx_transforms:
-            assert issubclass(transform, BaseOnnxTransform), (
-                f"{transform} is not a subclass of BaseOnnxTransform"
-            )
+            assert issubclass(transform, BaseOnnxTransform), f"{transform} is not a subclass of BaseOnnxTransform"
 
     def test_rename_function_outputs_transform_importable(self):
         from QEfficient.base.onnx_transforms import RenameFunctionOutputsTransform
+
         assert RenameFunctionOutputsTransform is not None
         assert hasattr(RenameFunctionOutputsTransform, "apply")
 
@@ -113,6 +126,7 @@ class TestONNXTransformApplication:
     def test_gpt2_onnx_export_applies_ctx_scatter_gather(self, tmp_export_dir):
         """After export, ONNX graph must contain CtxScatter/CtxGather custom ops."""
         import onnx
+
         model, cfg = make_tiny_gpt2()
         qeff_model = QEFFAutoModelForCausalLM(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -120,13 +134,13 @@ class TestONNXTransformApplication:
         node_op_types = {node.op_type for node in onnx_model.graph.node}
         has_custom_ops = "CtxScatter" in node_op_types or "CtxGather" in node_op_types
         assert has_custom_ops, (
-            f"Expected CtxScatter/CtxGather custom ops in ONNX graph. "
-            f"Found op types: {node_op_types}"
+            f"Expected CtxScatter/CtxGather custom ops in ONNX graph. Found op types: {node_op_types}"
         )
 
     def test_llama_onnx_export_applies_ctx_scatter_gather(self, tmp_export_dir):
         """Llama ONNX graph must contain CtxScatter/CtxGather custom ops."""
         import onnx
+
         model, cfg = make_tiny_llama()
         qeff_model = QEFFAutoModelForCausalLM(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -134,13 +148,13 @@ class TestONNXTransformApplication:
         node_op_types = {node.op_type for node in onnx_model.graph.node}
         has_custom_ops = "CtxScatter" in node_op_types or "CtxGather" in node_op_types
         assert has_custom_ops, (
-            f"Expected CtxScatter/CtxGather custom ops in Llama ONNX graph. "
-            f"Found op types: {node_op_types}"
+            f"Expected CtxScatter/CtxGather custom ops in Llama ONNX graph. Found op types: {node_op_types}"
         )
 
     def test_gpt2_onnx_position_ids_are_int64(self, tmp_export_dir):
         """The ONNX graph must accept int64 position_ids input."""
         import onnx
+
         model, cfg = make_tiny_gpt2()
         qeff_model = QEFFAutoModelForCausalLM(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -156,6 +170,7 @@ class TestONNXTransformApplication:
     def test_gpt2_onnx_graph_has_no_dangling_nodes(self, tmp_export_dir):
         """All ONNX graph nodes must have valid inputs/outputs."""
         import onnx
+
         model, cfg = make_tiny_gpt2()
         qeff_model = QEFFAutoModelForCausalLM(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -167,13 +182,12 @@ class TestONNXTransformApplication:
         for node in onnx_model.graph.node:
             for inp in node.input:
                 if inp:
-                    assert inp in defined, (
-                        f"Node '{node.op_type}' has undefined input '{inp}'"
-                    )
+                    assert inp in defined, f"Node '{node.op_type}' has undefined input '{inp}'"
 
     def test_gpt2_onnx_retained_state_count_matches_layers(self, tmp_export_dir):
         """Number of RetainedState outputs must equal 2 * n_layers."""
         import onnx
+
         n_layers = 2
         model, cfg = make_tiny_gpt2()
         qeff_model = QEFFAutoModelForCausalLM(model)
@@ -187,19 +201,19 @@ class TestONNXTransformApplication:
     def test_llama_onnx_retained_state_count_matches_layers(self, tmp_export_dir):
         """Llama RetainedState outputs must equal 2 * n_layers."""
         import onnx
+
         n_layers = 2
         model, cfg = make_tiny_llama()
         qeff_model = QEFFAutoModelForCausalLM(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
         onnx_model = onnx.load(str(onnx_path))
         retained = [out.name for out in onnx_model.graph.output if "RetainedState" in out.name]
-        assert len(retained) == 2 * n_layers, (
-            f"Expected {2 * n_layers} RetainedState outputs, got {len(retained)}"
-        )
+        assert len(retained) == 2 * n_layers, f"Expected {2 * n_layers} RetainedState outputs, got {len(retained)}"
 
     def test_gpt2_onnx_input_ids_are_int64(self, tmp_export_dir):
         """input_ids must be INT64 in the ONNX graph."""
         import onnx
+
         model, cfg = make_tiny_gpt2()
         qeff_model = QEFFAutoModelForCausalLM(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -214,6 +228,7 @@ class TestONNXTransformApplication:
     def test_gpt2_onnx_kv_cache_inputs_are_float32(self, tmp_export_dir):
         """KV cache inputs must be FLOAT32 in the ONNX graph."""
         import onnx
+
         model, cfg = make_tiny_gpt2()
         qeff_model = QEFFAutoModelForCausalLM(model)
         onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
@@ -332,9 +347,7 @@ class TestFP16ClipTransformFunctional:
         for init in onnx_model.graph.initializer:
             if init.name == "large_weight":
                 values = numpy_helper.to_array(init)
-                assert np.all(values >= fp16_min - 1), (
-                    f"Negative values must be clipped to >= {fp16_min}"
-                )
+                assert np.all(values >= fp16_min - 1), f"Negative values must be clipped to >= {fp16_min}"
 
 
 # ---------------------------------------------------------------------------
@@ -394,12 +407,15 @@ class TestSplitTensorsTransformFunctional:
     def test_split_tensors_transform_importable(self):
         """SplitTensorsTransform must be importable."""
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
+
         assert SplitTensorsTransform is not None
 
     def test_split_tensors_transform_has_apply_classmethod(self):
         """SplitTensorsTransform.apply must be a classmethod."""
         import inspect
+
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
+
         assert isinstance(
             inspect.getattr_static(SplitTensorsTransform, "apply"),
             classmethod,
@@ -438,9 +454,7 @@ class TestSplitTensorsTransformFunctional:
 
         assert "weight_tensor" in mapping
         _, file_name = mapping["weight_tensor"]
-        assert file_name == "mymodel_3.onnx.data", (
-            f"Expected 'mymodel_3.onnx.data', got '{file_name}'"
-        )
+        assert file_name == "mymodel_3.onnx.data", f"Expected 'mymodel_3.onnx.data', got '{file_name}'"
 
     def test_split_tensors_apply_stores_tensor_in_mapping(self):
         """SplitTensorsTransform.apply must store the tensor proto in mapping."""
@@ -487,11 +501,13 @@ class TestCustomOpTransformStructure:
     def test_custom_op_transform_importable(self):
         """CustomOpTransform must be importable."""
         from QEfficient.base.onnx_transforms import CustomOpTransform
+
         assert CustomOpTransform is not None
 
     def test_custom_op_transform_has_custom_ops_dict(self):
         """CustomOpTransform must have a _custom_ops dict."""
         from QEfficient.base.onnx_transforms import CustomOpTransform
+
         assert hasattr(CustomOpTransform, "_custom_ops")
         assert isinstance(CustomOpTransform._custom_ops, dict)
         assert len(CustomOpTransform._custom_ops) > 0
@@ -499,6 +515,7 @@ class TestCustomOpTransformStructure:
     def test_custom_op_transform_contains_rms_norm(self):
         """CustomOpTransform._custom_ops must contain 'CustomRMSNormFunc'."""
         from QEfficient.base.onnx_transforms import CustomOpTransform
+
         assert "CustomRMSNormFunc" in CustomOpTransform._custom_ops, (
             f"CustomRMSNormFunc not in _custom_ops: {list(CustomOpTransform._custom_ops.keys())}"
         )
@@ -506,25 +523,27 @@ class TestCustomOpTransformStructure:
     def test_custom_op_transform_contains_ctx_scatter(self):
         """CustomOpTransform._custom_ops must contain 'CtxScatterFunc'."""
         from QEfficient.base.onnx_transforms import CustomOpTransform
+
         assert "CtxScatterFunc" in CustomOpTransform._custom_ops
 
     def test_custom_op_transform_contains_ctx_gather(self):
         """CustomOpTransform._custom_ops must contain 'CtxGatherFunc'."""
         from QEfficient.base.onnx_transforms import CustomOpTransform
+
         assert "CtxGatherFunc" in CustomOpTransform._custom_ops
 
     def test_custom_op_transform_rms_norm_maps_to_custom_rms_norm(self):
         """CustomRMSNormFunc must map to CustomRMSNorm class."""
         from QEfficient.base.onnx_transforms import CustomOpTransform
         from QEfficient.customop.rms_norm import CustomRMSNorm
+
         _, onnxscript_func = CustomOpTransform._custom_ops["CustomRMSNormFunc"]
-        assert onnxscript_func is CustomRMSNorm, (
-            f"CustomRMSNormFunc must map to CustomRMSNorm, got {onnxscript_func}"
-        )
+        assert onnxscript_func is CustomRMSNorm, f"CustomRMSNormFunc must map to CustomRMSNorm, got {onnxscript_func}"
 
     def test_custom_op_transform_all_ops_have_to_function_proto(self):
         """All custom ops in CustomOpTransform must have to_function_proto method."""
         from QEfficient.base.onnx_transforms import CustomOpTransform
+
         for op_name, (_, onnxscript_func) in CustomOpTransform._custom_ops.items():
             assert hasattr(onnxscript_func, "to_function_proto"), (
                 f"Custom op '{op_name}' onnxscript_func must have to_function_proto method"
@@ -550,8 +569,7 @@ class TestCustomOpTransformStructure:
         # Check that CustomRMSNorm is in model.functions
         function_names = {f.name for f in onnx_model.functions}
         assert "CustomRMSNorm" in function_names, (
-            f"CustomRMSNorm not in model.functions after CustomOpTransform.apply. "
-            f"Found: {function_names}"
+            f"CustomRMSNorm not in model.functions after CustomOpTransform.apply. Found: {function_names}"
         )
 
     @pytest.mark.onnx

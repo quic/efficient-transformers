@@ -26,7 +26,6 @@ from QEfficient.transformers.cache_utils import (
     QEffEncoderDecoderCache,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -134,8 +133,9 @@ class TestQEffDynamicLayerCorrectness:
         k_out, v_out = layer.update(k_new, v_new, cache_kwargs={"position_ids": pos_decode})
 
         assert k_out.shape[2] == ctx_len
-        assert k_out[0, 0, 5, 0].item() == pytest.approx(7.0, abs=1e-5), \
+        assert k_out[0, 0, 5, 0].item() == pytest.approx(7.0, abs=1e-5), (
             f"Expected 7.0 at position 5, got {k_out[0, 0, 5, 0].item()}"
+        )
 
     def test_update_output_is_finite(self):
         layer = QEffDynamicLayer()
@@ -224,8 +224,9 @@ class TestQEffDynamicCacheCorrectness:
 
         k_out, v_out = cache.update(k_decode, v_decode, layer_idx=0, cache_kwargs={"position_ids": pos_decode})
 
-        assert k_out[0, 0, 3, 0].item() == pytest.approx(42.0, abs=1e-5), \
+        assert k_out[0, 0, 3, 0].item() == pytest.approx(42.0, abs=1e-5), (
             f"Expected 42.0 at position 3, got {k_out[0, 0, 3, 0].item()}"
+        )
 
     def test_ddp_cache_data_populates_layers(self):
         """QEffDynamicCache with ddp_cache_data must populate layers."""
@@ -244,10 +245,7 @@ class TestQEffDynamicCacheCorrectness:
         pids = pos_ids(batch=batch, seq=ctx_len)
         batch_index = torch.arange(batch).view(-1, 1)
 
-        k_out, v_out = cache.update(
-            k, v, layer_idx=0,
-            cache_kwargs={"position_ids": pids, "batch_index": batch_index}
-        )
+        k_out, v_out = cache.update(k, v, layer_idx=0, cache_kwargs={"position_ids": pids, "batch_index": batch_index})
         assert k_out is not None
         assert v_out is not None
         assert torch.isfinite(k_out).all()
@@ -365,8 +363,9 @@ class TestCacheScatterGatherNumericalCorrectness:
         for layer_idx in range(3):
             k_out, v_out = cache.read_only(layer_idx=layer_idx, cache_kwargs={"position_ids": pos_ids(seq=ctx_len)})
             expected_val = float(layer_idx + 1)
-            assert k_out[0, 0, 0, 0].item() == pytest.approx(expected_val, abs=1e-5), \
+            assert k_out[0, 0, 0, 0].item() == pytest.approx(expected_val, abs=1e-5), (
                 f"Layer {layer_idx} key value mismatch: expected {expected_val}, got {k_out[0, 0, 0, 0].item()}"
+            )
 
     def test_decode_does_not_corrupt_prior_positions(self):
         """A decode write at position N must not corrupt positions 0..N-1.
@@ -379,9 +378,12 @@ class TestCacheScatterGatherNumericalCorrectness:
         batch, heads, ctx_len, head_dim = 1, 1, 8, 4
 
         # Prefill with known sequential values
-        k_prefill = torch.arange(ctx_len, dtype=torch.float32).reshape(1, 1, ctx_len, 1).expand(
-            batch, heads, ctx_len, head_dim
-        ).clone()
+        k_prefill = (
+            torch.arange(ctx_len, dtype=torch.float32)
+            .reshape(1, 1, ctx_len, 1)
+            .expand(batch, heads, ctx_len, head_dim)
+            .clone()
+        )
         v_prefill = k_prefill.clone()
         cache.update(k_prefill, v_prefill, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=ctx_len)})
 

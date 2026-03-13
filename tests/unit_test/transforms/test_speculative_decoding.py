@@ -60,6 +60,7 @@ class TestSpDTransformStructure:
 
     def test_spd_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import SpDTransform
+
         assert SpDTransform is not None
 
     def test_module_mapping_is_set(self):
@@ -68,10 +69,12 @@ class TestSpDTransformStructure:
 
     def test_module_mapping_contains_llama(self):
         from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaForCausalLM
+
         assert QEffLlamaForCausalLM in SpDTransform._module_mapping
 
     def test_module_mapping_contains_qwen2(self):
         from QEfficient.transformers.models.qwen2.modeling_qwen2 import QEffQwen2ForCausalLM
+
         assert QEffQwen2ForCausalLM in SpDTransform._module_mapping
 
     def test_apply_classmethod_exists(self):
@@ -130,18 +133,14 @@ class TestSpDTransformTLMApply:
     def test_spd_transform_applies_to_llama_with_target_type(self):
         """SpDTransform must apply successfully to QEffLlamaForCausalLM with target type."""
         model, _ = make_kv_transformed_llama()
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied, "SpDTransform must apply when speculative_model_type='target'"
 
     def test_spd_transform_forward_is_replaced(self):
         """After SpDTransform, model.forward must be replaced with a SpD-specific forward."""
         model, _ = make_kv_transformed_llama()
         original_forward = model.forward
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied
         assert hasattr(transformed, "forward")
         # The forward must have been replaced (different from original)
@@ -152,9 +151,7 @@ class TestSpDTransformTLMApply:
     def test_spd_transform_returns_model_instance(self):
         """SpDTransform must return the same model instance (in-place modification)."""
         model, _ = make_kv_transformed_llama()
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied
         assert transformed is model, "SpDTransform must modify model in-place"
 
@@ -162,18 +159,14 @@ class TestSpDTransformTLMApply:
         """SpDTransform must not change the model's training mode."""
         model, _ = make_kv_transformed_llama()
         assert not model.training
-        transformed, _ = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, _ = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert not transformed.training, "SpDTransform must not change model to training mode"
 
     def test_spd_transform_model_still_has_parameters(self):
         """After SpDTransform, model must still have its parameters."""
         model, _ = make_kv_transformed_llama()
         param_count_before = sum(p.numel() for p in model.parameters())
-        transformed, _ = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, _ = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         param_count_after = sum(p.numel() for p in transformed.parameters())
         assert param_count_before == param_count_after, (
             f"SpDTransform changed parameter count: {param_count_before} → {param_count_after}"
@@ -191,16 +184,19 @@ class TestQEFFAutoModelSpDMethods:
 
     def test_has_check_and_get_num_speculative_tokens(self):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         assert hasattr(QEFFAutoModelForCausalLM, "check_and_get_num_speculative_tokens")
         assert callable(QEFFAutoModelForCausalLM.check_and_get_num_speculative_tokens)
 
     def test_has_build_prefill_specialization(self):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         assert hasattr(QEFFAutoModelForCausalLM, "build_prefill_specialization")
         assert callable(QEFFAutoModelForCausalLM.build_prefill_specialization)
 
     def test_has_build_decode_specialization(self):
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
         assert hasattr(QEFFAutoModelForCausalLM, "build_decode_specialization")
         assert callable(QEFFAutoModelForCausalLM.build_decode_specialization)
 
@@ -236,12 +232,8 @@ class TestQEFFAutoModelSpDMethods:
         model = GPT2LMHeadModel(cfg)
         qeff = QEFFAutoModelForCausalLM(model)
         # For non-TLM, is_tlm=False; method accepts num_speculative_tokens and prefill_seq_len
-        result = qeff.check_and_get_num_speculative_tokens(
-            num_speculative_tokens=None, prefill_seq_len=1
-        )
-        assert result is None, (
-            f"check_and_get_num_speculative_tokens must return None for non-TLM, got {result}"
-        )
+        result = qeff.check_and_get_num_speculative_tokens(num_speculative_tokens=None, prefill_seq_len=1)
+        assert result is None, f"check_and_get_num_speculative_tokens must return None for non-TLM, got {result}"
 
     def test_build_prefill_specialization_returns_dict(self):
         """build_prefill_specialization must return a dict-like object."""
@@ -252,12 +244,8 @@ class TestQEFFAutoModelSpDMethods:
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
         model = GPT2LMHeadModel(cfg)
         qeff = QEFFAutoModelForCausalLM(model)
-        result = qeff.build_prefill_specialization(
-            prefill_seq_len=8, ctx_len=32, batch_size=1, full_batch_size=None
-        )
-        assert isinstance(result, dict), (
-            f"build_prefill_specialization must return dict, got {type(result)}"
-        )
+        result = qeff.build_prefill_specialization(prefill_seq_len=8, ctx_len=32, batch_size=1, full_batch_size=None)
+        assert isinstance(result, dict), f"build_prefill_specialization must return dict, got {type(result)}"
 
     def test_build_decode_specialization_returns_dict(self):
         """build_decode_specialization must return a dict-like object."""
@@ -268,12 +256,8 @@ class TestQEFFAutoModelSpDMethods:
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
         model = GPT2LMHeadModel(cfg)
         qeff = QEFFAutoModelForCausalLM(model)
-        result = qeff.build_decode_specialization(
-            ctx_len=32, batch_size=1, full_batch_size=None
-        )
-        assert isinstance(result, dict), (
-            f"build_decode_specialization must return dict, got {type(result)}"
-        )
+        result = qeff.build_decode_specialization(ctx_len=32, batch_size=1, full_batch_size=None)
+        assert isinstance(result, dict), f"build_decode_specialization must return dict, got {type(result)}"
 
 
 # ---------------------------------------------------------------------------
@@ -303,15 +287,15 @@ class TestTLMForwardExecution:
     def test_tlm_forward_returns_logits(self):
         """tlm_forward must return an object with logits attribute."""
         model, cfg = make_kv_transformed_llama()
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied
 
         batch, num_spec_tokens = 1, 3
         # n_kv=2, head_dim=64//2=32 for tiny llama
         # num_logits_to_keep must be a tensor (as expected by spd_transform_forward)
-        input_ids, position_ids, past_kv = self._make_tlm_inputs(batch, num_spec_tokens, n_layers=2, n_kv=2, head_dim=32)
+        input_ids, position_ids, past_kv = self._make_tlm_inputs(
+            batch, num_spec_tokens, n_layers=2, n_kv=2, head_dim=32
+        )
         num_logits_tensor = torch.tensor([num_spec_tokens], dtype=torch.int64)
 
         with torch.no_grad():
@@ -326,13 +310,13 @@ class TestTLMForwardExecution:
     def test_tlm_forward_logits_are_finite(self):
         """tlm_forward logits must be finite (no NaN/Inf)."""
         model, cfg = make_kv_transformed_llama()
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied
 
         batch, num_spec_tokens = 1, 3
-        input_ids, position_ids, past_kv = self._make_tlm_inputs(batch, num_spec_tokens, n_layers=2, n_kv=2, head_dim=32)
+        input_ids, position_ids, past_kv = self._make_tlm_inputs(
+            batch, num_spec_tokens, n_layers=2, n_kv=2, head_dim=32
+        )
         num_logits_tensor = torch.tensor([num_spec_tokens], dtype=torch.int64)
 
         with torch.no_grad():
@@ -349,13 +333,13 @@ class TestTLMForwardExecution:
         num_logits_to_keep is a 1D tensor of shape [1] containing the count,
         so the output has shape[1] == num_logits_to_keep.shape[0] == 1."""
         model, cfg = make_kv_transformed_llama()
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied
 
         batch, num_spec_tokens = 1, 3
-        input_ids, position_ids, past_kv = self._make_tlm_inputs(batch, num_spec_tokens, n_layers=2, n_kv=2, head_dim=32)
+        input_ids, position_ids, past_kv = self._make_tlm_inputs(
+            batch, num_spec_tokens, n_layers=2, n_kv=2, head_dim=32
+        )
         # num_logits_to_keep is a 1D tensor; shape[0] determines how many logits are kept
         num_logits_tensor = torch.tensor([num_spec_tokens], dtype=torch.int64)
 
@@ -376,13 +360,13 @@ class TestTLMForwardExecution:
     def test_tlm_forward_greedy_tokens_in_valid_range(self):
         """Greedy tokens from tlm_forward must be in [0, vocab_size)."""
         model, cfg = make_kv_transformed_llama()
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied
 
         batch, num_spec_tokens = 1, 3
-        input_ids, position_ids, past_kv = self._make_tlm_inputs(batch, num_spec_tokens, n_layers=2, n_kv=2, head_dim=32)
+        input_ids, position_ids, past_kv = self._make_tlm_inputs(
+            batch, num_spec_tokens, n_layers=2, n_kv=2, head_dim=32
+        )
         num_logits_tensor = torch.tensor([num_spec_tokens], dtype=torch.int64)
 
         with torch.no_grad():
@@ -427,29 +411,22 @@ class TestSpDTransformQwen2:
     def test_spd_transform_applies_to_qwen2_with_target_type(self):
         """SpDTransform must apply successfully to QEffQwen2ForCausalLM."""
         model, _ = self._make_kv_transformed_qwen2()
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied, "SpDTransform must apply to Qwen2 with target type"
 
     def test_spd_transform_qwen2_forward_is_replaced(self):
         """After SpDTransform, Qwen2 model.forward must be replaced."""
         model, _ = self._make_kv_transformed_qwen2()
         original_forward = model.forward
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied
         assert transformed.forward is not original_forward
 
     def test_spd_transform_qwen2_produces_finite_logits(self):
         """After SpDTransform, Qwen2 forward must produce finite logits."""
-        from QEfficient.transformers.cache_utils import QEffDynamicCache
 
         model, _ = self._make_kv_transformed_qwen2()
-        transformed, applied = SpDTransform.apply(
-            model, qaic_config={"speculative_model_type": "target"}
-        )
+        transformed, applied = SpDTransform.apply(model, qaic_config={"speculative_model_type": "target"})
         assert applied
 
         batch, num_spec_tokens = 1, 2
@@ -524,35 +501,43 @@ class TestSpDONNXStructure:
     def test_build_and_attach_mlp_importable(self):
         """build_and_attach_mlp must be importable from post_processing."""
         from QEfficient.transformers.post_processing import build_and_attach_mlp
+
         assert build_and_attach_mlp is not None
 
     def test_build_and_attach_mlp_is_callable(self):
         """build_and_attach_mlp must be callable."""
         from QEfficient.transformers.post_processing import build_and_attach_mlp
+
         assert callable(build_and_attach_mlp)
 
     def test_build_and_attach_mlp_accepts_model_parameter(self):
         """build_and_attach_mlp must accept 'model' as first parameter."""
         import inspect
+
         from QEfficient.transformers.post_processing import build_and_attach_mlp
+
         sig = inspect.signature(build_and_attach_mlp)
         assert "model" in sig.parameters
 
     def test_build_and_attach_mlp_accepts_speculative_model_type(self):
         """build_and_attach_mlp must accept 'speculative_model_type' parameter."""
         import inspect
+
         from QEfficient.transformers.post_processing import build_and_attach_mlp
+
         sig = inspect.signature(build_and_attach_mlp)
         assert "speculative_model_type" in sig.parameters
 
     def test_model_type_registry_has_turbo(self):
         """model_type_registry must contain 'turbo' key."""
         from QEfficient.transformers.post_processing import model_type_registry
+
         assert "turbo" in model_type_registry
 
     def test_build_and_attach_turbo_importable(self):
         """build_and_attach_turbo must be importable from spd.turbo."""
         from QEfficient.transformers.spd.turbo import build_and_attach_turbo
+
         assert build_and_attach_turbo is not None
 
     @pytest.mark.onnx
@@ -560,6 +545,7 @@ class TestSpDONNXStructure:
     def test_tlm_onnx_has_num_logits_to_keep_input(self, tmp_export_dir):
         """TLM ONNX export must include 'num_logits_to_keep' as an input."""
         import onnx
+
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
         model, cfg = make_tiny_llama()
@@ -580,6 +566,7 @@ class TestSpDONNXStructure:
     def test_tlm_onnx_logits_output_is_present(self, tmp_export_dir):
         """TLM ONNX export must include 'logits' as an output."""
         import onnx
+
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
         model, cfg = make_tiny_llama()
@@ -591,6 +578,4 @@ class TestSpDONNXStructure:
         onnx_model = onnx.load(str(onnx_path))
 
         output_names = [out.name for out in onnx_model.graph.output]
-        assert "logits" in output_names, (
-            f"TLM ONNX must have 'logits' output. Found: {output_names}"
-        )
+        assert "logits" in output_names, f"TLM ONNX must have 'logits' output. Found: {output_names}"

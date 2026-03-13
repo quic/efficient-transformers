@@ -27,12 +27,12 @@ import torch.nn.functional as F
 from transformers import (
     FalconConfig,
     FalconForCausalLM,
-    GPT2Config,
-    GPT2LMHeadModel,
-    GemmaConfig,
-    GemmaForCausalLM,
     Gemma2Config,
     Gemma2ForCausalLM,
+    GemmaConfig,
+    GemmaForCausalLM,
+    GPT2Config,
+    GPT2LMHeadModel,
     LlamaConfig,
     LlamaForCausalLM,
     MistralConfig,
@@ -68,51 +68,81 @@ def make_tiny_gpt2():
 
 def make_tiny_llama():
     cfg = LlamaConfig(
-        num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=CTX_LEN,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
     )
     return LlamaForCausalLM(cfg).eval()
 
 
 def make_tiny_mistral():
     cfg = MistralConfig(
-        num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=CTX_LEN,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
     )
     return MistralForCausalLM(cfg).eval()
 
 
 def make_tiny_qwen2():
     cfg = Qwen2Config(
-        num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE, max_position_embeddings=CTX_LEN,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
     )
     return Qwen2ForCausalLM(cfg).eval()
 
 
 def make_tiny_phi3():
     cfg = Phi3Config(
-        num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
-        max_position_embeddings=CTX_LEN, pad_token_id=0,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
+        pad_token_id=0,
     )
     return Phi3ForCausalLM(cfg).eval()
 
 
 def make_tiny_gemma():
     cfg = GemmaConfig(
-        num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
-        max_position_embeddings=CTX_LEN, head_dim=32,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
+        head_dim=32,
     )
     return GemmaForCausalLM(cfg).eval()
 
 
 def make_tiny_gemma2():
     cfg = Gemma2Config(
-        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=2,
-        hidden_size=64, intermediate_size=128, vocab_size=VOCAB_SIZE,
-        max_position_embeddings=CTX_LEN, head_dim=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
+        head_dim=32,
         sliding_window=CTX_LEN,
     )
     return Gemma2ForCausalLM(cfg).eval()
@@ -120,8 +150,10 @@ def make_tiny_gemma2():
 
 def make_tiny_falcon():
     cfg = FalconConfig(
-        num_hidden_layers=1, num_attention_heads=2,
-        hidden_size=64, vocab_size=VOCAB_SIZE,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        hidden_size=64,
+        vocab_size=VOCAB_SIZE,
         max_position_embeddings=CTX_LEN,
         new_decoder_architecture=False,
         multi_query=True,
@@ -179,6 +211,7 @@ class TestCustomOpsTransformReplacement:
 
     def test_llama_rms_norm_replaced_with_custom_rms_norm(self):
         from transformers.models.llama.modeling_llama import LlamaRMSNorm
+
         from QEfficient.customop import CustomRMSNormAIC
 
         model = make_tiny_llama()
@@ -195,6 +228,7 @@ class TestCustomOpsTransformReplacement:
 
     def test_mistral_rms_norm_replaced(self):
         from QEfficient.customop import CustomRMSNormAIC
+
         model = make_tiny_mistral()
         transformed, applied = CustomOpsTransform.apply(model)
         assert applied
@@ -202,6 +236,7 @@ class TestCustomOpsTransformReplacement:
 
     def test_qwen2_rms_norm_replaced(self):
         from QEfficient.customop import CustomRMSNormAIC
+
         model = make_tiny_qwen2()
         transformed, applied = CustomOpsTransform.apply(model)
         assert applied
@@ -209,6 +244,7 @@ class TestCustomOpsTransformReplacement:
 
     def test_phi3_rms_norm_replaced(self):
         from QEfficient.customop import CustomRMSNormAIC
+
         model = make_tiny_phi3()
         transformed, applied = CustomOpsTransform.apply(model)
         assert applied
@@ -216,6 +252,7 @@ class TestCustomOpsTransformReplacement:
 
     def test_gemma_rms_norm_replaced(self):
         from QEfficient.customop import GemmaCustomRMSNormAIC
+
         model = make_tiny_gemma()
         transformed, applied = CustomOpsTransform.apply(model)
         assert applied
@@ -223,6 +260,7 @@ class TestCustomOpsTransformReplacement:
 
     def test_gemma2_rms_norm_replaced(self):
         from QEfficient.customop import GemmaCustomRMSNormAIC
+
         model = make_tiny_gemma2()
         transformed, applied = CustomOpsTransform.apply(model)
         assert applied
@@ -235,12 +273,12 @@ class TestCustomOpsTransformReplacement:
         assert not applied, "CustomOpsTransform must not apply to GPT2 (no RMSNorm)"
 
     def test_module_mapping_contains_expected_types(self):
-        from transformers.models.llama.modeling_llama import LlamaRMSNorm
-        from transformers.models.mistral.modeling_mistral import MistralRMSNorm
-        from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
-        from transformers.models.phi3.modeling_phi3 import Phi3RMSNorm
         from transformers.models.gemma.modeling_gemma import GemmaRMSNorm
         from transformers.models.gemma2.modeling_gemma2 import Gemma2RMSNorm
+        from transformers.models.llama.modeling_llama import LlamaRMSNorm
+        from transformers.models.mistral.modeling_mistral import MistralRMSNorm
+        from transformers.models.phi3.modeling_phi3 import Phi3RMSNorm
+        from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
 
         mapping = CustomOpsTransform._module_mapping
         assert LlamaRMSNorm in mapping
@@ -341,7 +379,6 @@ class TestCustomOpsTransformAccuracy:
 
     def test_custom_rms_norm_forward_is_finite(self):
         """CustomRMSNormAIC forward must produce finite outputs."""
-        from QEfficient.customop import CustomRMSNormAIC
         model = make_tiny_llama()
         transformed, _ = CustomOpsTransform.apply(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
@@ -361,6 +398,7 @@ class TestKVCacheTransformReplacement:
 
     def test_gpt2_attention_replaced(self):
         from transformers.models.gpt2.modeling_gpt2 import GPT2Attention
+
         from QEfficient.transformers.models.gpt2.modeling_gpt2 import QEffGPT2Attention
 
         model = make_tiny_gpt2()
@@ -373,12 +411,14 @@ class TestKVCacheTransformReplacement:
 
     def test_gpt2_lm_head_model_replaced(self):
         from QEfficient.transformers.models.gpt2.modeling_gpt2 import QEffGPT2LMHeadModel
+
         model = make_tiny_gpt2()
         transformed, _ = KVCacheTransform.apply(model)
         assert isinstance(transformed, QEffGPT2LMHeadModel)
 
     def test_llama_attention_replaced(self):
         from transformers.models.llama.modeling_llama import LlamaAttention
+
         from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaAttention
 
         model = make_tiny_llama()
@@ -391,12 +431,14 @@ class TestKVCacheTransformReplacement:
 
     def test_llama_for_causal_lm_replaced(self):
         from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaForCausalLM
+
         model = make_tiny_llama()
         transformed, _ = KVCacheTransform.apply(model)
         assert isinstance(transformed, QEffLlamaForCausalLM)
 
     def test_mistral_attention_replaced(self):
         from transformers.models.mistral.modeling_mistral import MistralAttention
+
         from QEfficient.transformers.models.mistral.modeling_mistral import QEffMistralAttention
 
         model = make_tiny_mistral()
@@ -409,6 +451,7 @@ class TestKVCacheTransformReplacement:
 
     def test_qwen2_attention_replaced(self):
         from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention
+
         from QEfficient.transformers.models.qwen2.modeling_qwen2 import QEffQwen2Attention
 
         model = make_tiny_qwen2()
@@ -421,6 +464,7 @@ class TestKVCacheTransformReplacement:
 
     def test_phi3_attention_replaced(self):
         from transformers.models.phi3.modeling_phi3 import Phi3Attention
+
         from QEfficient.transformers.models.phi3.modeling_phi3 import QEffPhi3Attention
 
         model = make_tiny_phi3()
@@ -433,6 +477,7 @@ class TestKVCacheTransformReplacement:
 
     def test_gemma_attention_replaced(self):
         from transformers.models.gemma.modeling_gemma import GemmaAttention
+
         from QEfficient.transformers.models.gemma.modeling_gemma import QEffGemmaAttention
 
         model = make_tiny_gemma()
@@ -445,6 +490,7 @@ class TestKVCacheTransformReplacement:
 
     def test_falcon_attention_replaced(self):
         from transformers.models.falcon.modeling_falcon import FalconAttention
+
         from QEfficient.transformers.models.falcon.modeling_falcon import QEffFalconAttention
 
         model = make_tiny_falcon()
@@ -456,14 +502,14 @@ class TestKVCacheTransformReplacement:
                 assert isinstance(m, QEffFalconAttention)
 
     def test_module_mapping_covers_major_architectures(self):
+        from transformers.models.falcon.modeling_falcon import FalconForCausalLM
+        from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
         from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
         from transformers.models.llama.modeling_llama import LlamaForCausalLM
         from transformers.models.mistral.modeling_mistral import MistralForCausalLM
         from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
-        from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
         from transformers.models.phi3.modeling_phi3 import Phi3ForCausalLM
-        from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
-        from transformers.models.falcon.modeling_falcon import FalconForCausalLM
+        from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
 
         mapping = KVCacheTransform._module_mapping
         assert GPT2LMHeadModel in mapping
@@ -544,9 +590,7 @@ class TestKVCacheTransformAccuracy:
         hf_probs = F.softmax(before_logits, dim=-1)
         qeff_probs = F.softmax(after_logits, dim=-1)
         max_diff = (hf_probs - qeff_probs).abs().max().item()
-        assert max_diff < 1e-3, (
-            f"KVCacheTransform changed GPT2 probability distribution: max_diff={max_diff:.2e}"
-        )
+        assert max_diff < 1e-3, f"KVCacheTransform changed GPT2 probability distribution: max_diff={max_diff:.2e}"
 
     def test_llama_logits_numerically_close_after_kv_transform(self):
         model = make_tiny_llama()
@@ -564,9 +608,7 @@ class TestKVCacheTransformAccuracy:
         hf_probs = F.softmax(before_logits, dim=-1)
         qeff_probs = F.softmax(after_logits, dim=-1)
         max_diff = (hf_probs - qeff_probs).abs().max().item()
-        assert max_diff < 1e-3, (
-            f"KVCacheTransform changed Llama probability distribution: max_diff={max_diff:.2e}"
-        )
+        assert max_diff < 1e-3, f"KVCacheTransform changed Llama probability distribution: max_diff={max_diff:.2e}"
 
     def test_phi3_logits_numerically_close_after_kv_transform(self):
         model = make_tiny_phi3()
@@ -584,9 +626,7 @@ class TestKVCacheTransformAccuracy:
         hf_probs = F.softmax(before_logits, dim=-1)
         qeff_probs = F.softmax(after_logits, dim=-1)
         max_diff = (hf_probs - qeff_probs).abs().max().item()
-        assert max_diff < 1e-3, (
-            f"KVCacheTransform changed Phi3 probability distribution: max_diff={max_diff:.2e}"
-        )
+        assert max_diff < 1e-3, f"KVCacheTransform changed Phi3 probability distribution: max_diff={max_diff:.2e}"
 
 
 # ---------------------------------------------------------------------------
@@ -653,8 +693,7 @@ class TestCombinedTransformsAccuracy:
             qeff_inputs = _make_qeff_inputs(input_ids, cfg)
             with torch.no_grad():
                 out = model(**qeff_inputs)
-            assert torch.isfinite(out.logits).all(), \
-                f"{label} combined transforms produce NaN/Inf"
+            assert torch.isfinite(out.logits).all(), f"{label} combined transforms produce NaN/Inf"
 
     def test_gpt2_kv_transform_then_custom_ops_no_crash(self):
         """Applying KVCacheTransform then CustomOpsTransform to GPT2 must not crash."""
@@ -675,20 +714,34 @@ class TestPoolingTransformCorrectness:
 
     def test_mean_pooling_wraps_model(self):
         from transformers import BertConfig, BertModel
+
         from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 
-        cfg = BertConfig(num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-                         intermediate_size=128, vocab_size=500, max_position_embeddings=64)
+        cfg = BertConfig(
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
+        )
         model = BertModel(cfg).eval()
         pooled, applied = PoolingTransform.apply(model, pooling="mean")
         assert isinstance(pooled, PooledModel)
 
     def test_cls_pooling_wraps_model(self):
         from transformers import BertConfig, BertModel
+
         from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 
-        cfg = BertConfig(num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-                         intermediate_size=128, vocab_size=500, max_position_embeddings=64)
+        cfg = BertConfig(
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
+        )
         model = BertModel(cfg).eval()
         pooled, applied = PoolingTransform.apply(model, pooling="cls")
         assert isinstance(pooled, PooledModel)
@@ -696,8 +749,14 @@ class TestPoolingTransformCorrectness:
     def test_invalid_pooling_raises_error(self):
         from transformers import BertConfig, BertModel
 
-        cfg = BertConfig(num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-                         intermediate_size=128, vocab_size=500, max_position_embeddings=64)
+        cfg = BertConfig(
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
+        )
         model = BertModel(cfg).eval()
         with pytest.raises((ValueError, KeyError, TypeError)):
             PoolingTransform.apply(model, pooling="invalid_pooling_xyz")
@@ -706,8 +765,14 @@ class TestPoolingTransformCorrectness:
         """PooledModel mean output must match manually computed mean pooling."""
         from transformers import BertConfig, BertModel
 
-        cfg = BertConfig(num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-                         intermediate_size=128, vocab_size=500, max_position_embeddings=64)
+        cfg = BertConfig(
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
+        )
         model = BertModel(cfg).eval()
         inputs = {
             "input_ids": torch.randint(0, 500, (1, 16)),
@@ -733,8 +798,12 @@ class TestPoolingTransformCorrectness:
         from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
         )
         model = BertModel(cfg).eval()
         pooled, _ = PoolingTransform.apply(model, pooling="max")
@@ -746,8 +815,12 @@ class TestPoolingTransformCorrectness:
         from transformers import BertConfig, BertModel
 
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
         )
         model = BertModel(cfg).eval()
         inputs = {
@@ -774,8 +847,12 @@ class TestPoolingTransformCorrectness:
         from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
         )
         model = BertModel(cfg).eval()
         # 'avg' is supported in POOLING_MAP
@@ -789,8 +866,12 @@ class TestPoolingTransformCorrectness:
         from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
         )
         model = BertModel(cfg).eval()
 
@@ -810,8 +891,12 @@ class TestPoolingTransformCorrectness:
         from transformers import BertConfig, BertModel
 
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
         )
         model = BertModel(cfg).eval()
         inputs = {
@@ -824,9 +909,7 @@ class TestPoolingTransformCorrectness:
                 pooled, _ = PoolingTransform.apply(model, pooling=pooling_type)
                 with torch.no_grad():
                     output = pooled(**inputs)
-                assert torch.isfinite(output).all(), (
-                    f"Pooled output for '{pooling_type}' must be finite"
-                )
+                assert torch.isfinite(output).all(), f"Pooled output for '{pooling_type}' must be finite"
             except (ValueError, KeyError):
                 pass  # Skip unsupported pooling types
 
@@ -935,9 +1018,7 @@ class TestSamplerTransformActualApply:
         original_forward = kv_model.forward
         SamplerTransform.apply(kv_model, qaic_config={"include_sampler": True})
         assert hasattr(kv_model, "old_forward"), "SamplerTransform must save old_forward"
-        assert kv_model.old_forward == original_forward, (
-            "old_forward must be the original forward method"
-        )
+        assert kv_model.old_forward == original_forward, "old_forward must be the original forward method"
 
     def test_sampler_transform_replaces_forward_with_sampler_forward(self):
         """After SamplerTransform, model.forward must be replaced."""
@@ -946,9 +1027,7 @@ class TestSamplerTransformActualApply:
         original_forward = kv_model.forward
         SamplerTransform.apply(kv_model, qaic_config={"include_sampler": True})
         # The forward must have been replaced
-        assert kv_model.forward is not original_forward, (
-            "SamplerTransform must replace model.forward"
-        )
+        assert kv_model.forward is not original_forward, "SamplerTransform must replace model.forward"
 
     def test_sampler_transform_returns_same_model_instance(self):
         """SamplerTransform must modify model in-place."""
@@ -1076,10 +1155,12 @@ class TestT5ModelTransform:
 
     def test_t5_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import T5ModelTransform
+
         assert T5ModelTransform is not None
 
     def test_t5_transform_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import T5ModelTransform
+
         assert hasattr(T5ModelTransform, "_module_mapping")
         assert len(T5ModelTransform._module_mapping) > 0
 
@@ -1132,6 +1213,7 @@ class TestT5ModelTransform:
 
     def test_t5_transform_has_apply_method(self):
         from QEfficient.transformers.models.pytorch_transforms import T5ModelTransform
+
         assert hasattr(T5ModelTransform, "apply")
         assert callable(T5ModelTransform.apply)
 
@@ -1163,10 +1245,12 @@ class TestTextClassificationTransformDirect:
 
     def test_text_classification_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import TextClassificationTransform
+
         assert TextClassificationTransform is not None
 
     def test_text_classification_transform_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import TextClassificationTransform
+
         assert hasattr(TextClassificationTransform, "_module_mapping")
         assert len(TextClassificationTransform._module_mapping) > 0
 
@@ -1203,6 +1287,7 @@ class TestTextClassificationTransformDirect:
 
     def test_text_classification_transform_has_apply_method(self):
         from QEfficient.transformers.models.pytorch_transforms import TextClassificationTransform
+
         assert hasattr(TextClassificationTransform, "apply")
         assert callable(TextClassificationTransform.apply)
 
@@ -1218,21 +1303,24 @@ class TestBlockedKVAttentionTransform:
 
     def test_blocked_kv_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+
         assert BlockedKVAttentionTransform is not None
 
     def test_blocked_kv_transform_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+
         assert hasattr(BlockedKVAttentionTransform, "_module_mapping")
         assert len(BlockedKVAttentionTransform._module_mapping) > 0
 
     def test_blocked_kv_transform_contains_llama_attention(self):
         from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaAttention
-
         from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+
         assert QEffLlamaAttention in BlockedKVAttentionTransform._module_mapping
 
     def test_blocked_kv_transform_has_apply_method(self):
         from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+
         assert hasattr(BlockedKVAttentionTransform, "apply")
         assert callable(BlockedKVAttentionTransform.apply)
 
@@ -1291,32 +1379,39 @@ class TestPrefillOnlyTransformStructure:
 
     def test_prefill_only_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+
         assert PrefillOnlyTransform is not None
 
     def test_prefill_only_chunked_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyChunkedTransform
+
         assert PrefillOnlyChunkedTransform is not None
 
     def test_revert_prefill_only_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import RevertPrefillOnlyTransform
+
         assert RevertPrefillOnlyTransform is not None
 
     def test_revert_prefill_keep_attention_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import RevertPrefillKeepAttentionTransform
+
         assert RevertPrefillKeepAttentionTransform is not None
 
     def test_prefill_only_transform_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+
         assert hasattr(PrefillOnlyTransform, "_module_mapping")
         assert len(PrefillOnlyTransform._module_mapping) > 0
 
     def test_prefill_only_chunked_transform_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyChunkedTransform
+
         assert hasattr(PrefillOnlyChunkedTransform, "_module_mapping")
         assert len(PrefillOnlyChunkedTransform._module_mapping) > 0
 
     def test_revert_prefill_only_transform_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import RevertPrefillOnlyTransform
+
         assert hasattr(RevertPrefillOnlyTransform, "_module_mapping")
         assert len(RevertPrefillOnlyTransform._module_mapping) > 0
 
@@ -1338,10 +1433,7 @@ class TestPrefillOnlyTransformStructure:
         from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
 
         assert QEffGptOssAttention in PrefillOnlyTransform._module_mapping
-        assert (
-            PrefillOnlyTransform._module_mapping[QEffGptOssAttention]
-            is QEffPrefillOnlyGptOssAttention
-        )
+        assert PrefillOnlyTransform._module_mapping[QEffGptOssAttention] is QEffPrefillOnlyGptOssAttention
 
     def test_revert_prefill_only_is_inverse_of_prefill_only(self):
         """RevertPrefillOnlyTransform must be the inverse of PrefillOnlyTransform for non-identity mappings."""
@@ -1391,26 +1483,33 @@ class TestVlmKVOffloadTransform:
 
     def test_vlm_kv_offload_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform
+
         assert VlmKVOffloadTransform is not None
 
     def test_vlm_kv_offload_transform_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform
+
         assert hasattr(VlmKVOffloadTransform, "_module_mapping")
         assert len(VlmKVOffloadTransform._module_mapping) > 0
 
     def test_vlm_kv_offload_transform_maps_mllama_cross_attention(self):
         from transformers.models.mllama.modeling_mllama import MllamaTextCrossAttention
+
         from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform
+
         assert MllamaTextCrossAttention in VlmKVOffloadTransform._module_mapping
 
     def test_vlm_kv_offload_transform_maps_to_two_qpc_variant(self):
         from transformers.models.mllama.modeling_mllama import MllamaTextCrossAttention
+
         from QEfficient.transformers.models.mllama.modeling_mllama import QEffMllamaTextCrossAttentionTwoQPC
         from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform
+
         assert VlmKVOffloadTransform._module_mapping[MllamaTextCrossAttention] is QEffMllamaTextCrossAttentionTwoQPC
 
     def test_vlm_kv_offload_transform_has_apply_method(self):
         from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform
+
         assert hasattr(VlmKVOffloadTransform, "apply")
         assert callable(VlmKVOffloadTransform.apply)
 
@@ -1426,36 +1525,47 @@ class TestVlmNoKVOffloadTransform:
 
     def test_vlm_no_kv_offload_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
+
         assert VlmNoKVOffloadTransform is not None
 
     def test_vlm_no_kv_offload_transform_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
+
         assert hasattr(VlmNoKVOffloadTransform, "_module_mapping")
         assert len(VlmNoKVOffloadTransform._module_mapping) > 0
 
     def test_vlm_no_kv_offload_transform_maps_mllama_cross_attention(self):
         from transformers.models.mllama.modeling_mllama import MllamaTextCrossAttention
+
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
+
         assert MllamaTextCrossAttention in VlmNoKVOffloadTransform._module_mapping
 
     def test_vlm_no_kv_offload_transform_maps_to_single_qpc_variant(self):
         from transformers.models.mllama.modeling_mllama import MllamaTextCrossAttention
+
         from QEfficient.transformers.models.mllama.modeling_mllama import QEffMllamaTextCrossAttentionSingleQPC
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
-        assert VlmNoKVOffloadTransform._module_mapping[MllamaTextCrossAttention] is QEffMllamaTextCrossAttentionSingleQPC
+
+        assert (
+            VlmNoKVOffloadTransform._module_mapping[MllamaTextCrossAttention] is QEffMllamaTextCrossAttentionSingleQPC
+        )
 
     def test_vlm_no_kv_offload_transform_has_apply_method(self):
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
+
         assert hasattr(VlmNoKVOffloadTransform, "apply")
         assert callable(VlmNoKVOffloadTransform.apply)
 
     def test_vlm_offload_and_no_offload_map_to_different_classes(self):
         """VlmKVOffloadTransform and VlmNoKVOffloadTransform must map to different QEff classes."""
         from transformers.models.mllama.modeling_mllama import MllamaTextCrossAttention
+
         from QEfficient.transformers.models.pytorch_transforms import (
             VlmKVOffloadTransform,
             VlmNoKVOffloadTransform,
         )
+
         offload_cls = VlmKVOffloadTransform._module_mapping[MllamaTextCrossAttention]
         no_offload_cls = VlmNoKVOffloadTransform._module_mapping[MllamaTextCrossAttention]
         assert offload_cls is not no_offload_cls, (
@@ -1474,58 +1584,69 @@ class TestKVCacheExternalModuleMapperTransform:
 
     def test_external_mapper_transform_importable(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         assert KVCacheExternalModuleMapperTransform is not None
 
     def test_external_mapper_has_match_string_replace_method(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         assert hasattr(KVCacheExternalModuleMapperTransform, "_match_string_replace_method")
         assert isinstance(KVCacheExternalModuleMapperTransform._match_string_replace_method, dict)
 
     def test_external_mapper_contains_internvl(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         assert "InternVLChatModel" in KVCacheExternalModuleMapperTransform._match_string_replace_method
 
     def test_external_mapper_contains_molmo(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         assert "MolmoForCausalLM" in KVCacheExternalModuleMapperTransform._match_string_replace_method
 
     def test_external_mapper_contains_grok1(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         assert "Grok1ModelForCausalLM" in KVCacheExternalModuleMapperTransform._match_string_replace_method
 
     def test_external_mapper_internvl_has_forward(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         internvl_mapping = KVCacheExternalModuleMapperTransform._match_string_replace_method["InternVLChatModel"]
         assert "forward" in internvl_mapping
         assert callable(internvl_mapping["forward"])
 
     def test_external_mapper_molmo_has_forward(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         molmo_mapping = KVCacheExternalModuleMapperTransform._match_string_replace_method["MolmoForCausalLM"]
         assert "forward" in molmo_mapping
         assert callable(molmo_mapping["forward"])
 
     def test_external_mapper_grok1_has_forward(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         grok1_mapping = KVCacheExternalModuleMapperTransform._match_string_replace_method["Grok1ModelForCausalLM"]
         assert "forward" in grok1_mapping
         assert callable(grok1_mapping["forward"])
 
     def test_external_mapper_has_apply_method(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         assert hasattr(KVCacheExternalModuleMapperTransform, "apply")
         assert callable(KVCacheExternalModuleMapperTransform.apply)
 
     def test_external_mapper_internvl_has_get_dummy_inputs(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         internvl_mapping = KVCacheExternalModuleMapperTransform._match_string_replace_method["InternVLChatModel"]
         assert "get_dummy_inputs" in internvl_mapping
         assert callable(internvl_mapping["get_dummy_inputs"])
 
     def test_external_mapper_rms_norm_has_forward(self):
         """RMSLayerNorm must be mapped to CustomRMSNormAIC.forward."""
-        from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
         from QEfficient.customop import CustomRMSNormAIC
+        from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+
         assert "RMSLayerNorm" in KVCacheExternalModuleMapperTransform._match_string_replace_method
         rms_mapping = KVCacheExternalModuleMapperTransform._match_string_replace_method["RMSLayerNorm"]
         assert rms_mapping["forward"] is CustomRMSNormAIC.forward

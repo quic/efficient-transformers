@@ -36,7 +36,6 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModelForSpeechSeq2Seq,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tests: qeff_supported_architectures
 # ---------------------------------------------------------------------------
@@ -109,6 +108,7 @@ class TestTransformersToQEffModulesDict:
 
     def test_gpt2_maps_to_qeff_gpt2(self):
         from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
+
         from QEfficient.transformers.models.gpt2.modeling_gpt2 import QEffGPT2LMHeadModel
 
         assert GPT2LMHeadModel in TransformersToQEffModulesDict
@@ -116,6 +116,7 @@ class TestTransformersToQEffModulesDict:
 
     def test_llama_maps_to_qeff_llama(self):
         from transformers.models.llama.modeling_llama import LlamaForCausalLM
+
         from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaForCausalLM
 
         assert LlamaForCausalLM in TransformersToQEffModulesDict
@@ -123,46 +124,52 @@ class TestTransformersToQEffModulesDict:
 
     def test_mistral_maps_to_qeff_mistral(self):
         from transformers.models.mistral.modeling_mistral import MistralForCausalLM
+
         assert MistralForCausalLM in TransformersToQEffModulesDict
 
     def test_mixtral_maps_to_qeff_mixtral(self):
         from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
+
         assert MixtralForCausalLM in TransformersToQEffModulesDict
 
     def test_qwen2_maps_to_qeff_qwen2(self):
         from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
+
         assert Qwen2ForCausalLM in TransformersToQEffModulesDict
 
     def test_gemma_maps_to_qeff_gemma(self):
         from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
+
         assert GemmaForCausalLM in TransformersToQEffModulesDict
 
     def test_gemma2_maps_to_qeff_gemma2(self):
         from transformers.models.gemma2.modeling_gemma2 import Gemma2ForCausalLM
+
         assert Gemma2ForCausalLM in TransformersToQEffModulesDict
 
     def test_falcon_maps_to_qeff_falcon(self):
         from transformers.models.falcon.modeling_falcon import FalconForCausalLM
+
         assert FalconForCausalLM in TransformersToQEffModulesDict
 
     def test_phi3_maps_to_qeff_phi3(self):
         from transformers.models.phi3.modeling_phi3 import Phi3ForCausalLM
+
         assert Phi3ForCausalLM in TransformersToQEffModulesDict
 
     def test_whisper_maps_to_qeff_whisper(self):
         from transformers.models.whisper.modeling_whisper import WhisperForConditionalGeneration
+
         assert WhisperForConditionalGeneration in TransformersToQEffModulesDict
 
     def test_all_values_are_different_from_keys(self):
         """QEff classes must be different from original HF classes."""
         for hf_cls, qeff_cls in TransformersToQEffModulesDict.items():
-            assert hf_cls is not qeff_cls, \
-                f"{hf_cls} maps to itself - must map to a different QEff class"
+            assert hf_cls is not qeff_cls, f"{hf_cls} maps to itself - must map to a different QEff class"
 
     def test_all_values_are_classes(self):
         for hf_cls, qeff_cls in TransformersToQEffModulesDict.items():
-            assert isinstance(qeff_cls, type), \
-                f"Expected class, got {type(qeff_cls)} for key {hf_cls}"
+            assert isinstance(qeff_cls, type), f"Expected class, got {type(qeff_cls)} for key {hf_cls}"
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +207,7 @@ class TestModelClassMapping:
     def test_all_values_are_qeff_class_name_strings(self):
         for key, value in MODEL_CLASS_MAPPING.items():
             assert isinstance(value, str), f"Expected string value, got {type(value)}"
-            assert "QEFF" in value or "QEff" in value, \
-                f"Expected QEff class name, got: {value}"
+            assert "QEFF" in value or "QEff" in value, f"Expected QEff class name, got: {value}"
 
     def test_all_keys_are_config_class_name_strings(self):
         for key in MODEL_CLASS_MAPPING.keys():
@@ -219,10 +225,12 @@ class TestExternalModelClassMapping:
 
     def test_external_mapping_exists_and_is_dict(self):
         from QEfficient.transformers.modeling_utils import EXTERNAL_MODEL_CLASS_MAPPING
+
         assert isinstance(EXTERNAL_MODEL_CLASS_MAPPING, dict)
 
     def test_contains_grok1(self):
         from QEfficient.transformers.modeling_utils import EXTERNAL_MODEL_CLASS_MAPPING
+
         assert "Grok1Config" in EXTERNAL_MODEL_CLASS_MAPPING
 
 
@@ -278,8 +286,7 @@ class TestCreateCausalMask:
         for i in range(seq):
             for j in range(seq):
                 if j > i:
-                    assert mask[0, 0, i, j].item() is True, \
-                        f"Expected mask[{i},{j}]=True (future), got False"
+                    assert mask[0, 0, i, j].item() is True, f"Expected mask[{i},{j}]=True (future), got False"
 
     def test_past_positions_are_not_masked(self):
         """mask[i, j] must be False when j <= i (past/current token = not masked)."""
@@ -288,8 +295,7 @@ class TestCreateCausalMask:
         mask = _create_causal_mask(position_ids, target_length=seq)
         for i in range(seq):
             for j in range(i + 1):
-                assert mask[0, 0, i, j].item() is False, \
-                    f"Expected mask[{i},{j}]=False (past), got True"
+                assert mask[0, 0, i, j].item() is False, f"Expected mask[{i},{j}]=False (past), got True"
 
     def test_batch_size_2_works(self):
         batch, seq, target_len = 2, 4, 8
@@ -312,12 +318,10 @@ class TestCreateCausalMask:
         mask = _create_causal_mask(position_ids, target_length=target_len)
         # Positions 0..decode_pos must be unmasked (False)
         for j in range(decode_pos + 1):
-            assert mask[0, 0, 0, j].item() is False, \
-                f"Position {j} should be unmasked at decode_pos={decode_pos}"
+            assert mask[0, 0, 0, j].item() is False, f"Position {j} should be unmasked at decode_pos={decode_pos}"
         # Positions decode_pos+1..target_len-1 must be masked (True)
         for j in range(decode_pos + 1, target_len):
-            assert mask[0, 0, 0, j].item() is True, \
-                f"Position {j} should be masked at decode_pos={decode_pos}"
+            assert mask[0, 0, 0, j].item() is True, f"Position {j} should be masked at decode_pos={decode_pos}"
 
     def test_sliding_window_shape_correct(self):
         batch, seq, target_len = 1, 4, 8
@@ -342,8 +346,9 @@ class TestCreateCausalMask:
             for j in range(seq):
                 expected_masked = j > i
                 actual_masked = mask[0, 0, i, j].item()
-                assert actual_masked == expected_masked, \
+                assert actual_masked == expected_masked, (
                     f"mask[{i},{j}]: expected {expected_masked}, got {actual_masked}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -356,12 +361,14 @@ class TestBuildModelClassMapping:
 
     def test_returns_non_empty_dict(self):
         import transformers.models.auto.modeling_auto as mapping
+
         result = build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM")
         assert isinstance(result, dict)
         assert len(result) > 0
 
     def test_all_values_are_the_provided_class_name(self):
         import transformers.models.auto.modeling_auto as mapping
+
         class_name = "QEFFAutoModelForCausalLM"
         result = build_model_class_mapping(mapping.AutoModelForCausalLM, class_name)
         for key, value in result.items():
@@ -369,6 +376,7 @@ class TestBuildModelClassMapping:
 
     def test_all_keys_are_config_class_name_strings(self):
         import transformers.models.auto.modeling_auto as mapping
+
         result = build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM")
         for key in result.keys():
             assert isinstance(key, str)
@@ -376,21 +384,25 @@ class TestBuildModelClassMapping:
 
     def test_contains_llama_config(self):
         import transformers.models.auto.modeling_auto as mapping
+
         result = build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM")
         assert "LlamaConfig" in result
 
     def test_contains_gpt2_config(self):
         import transformers.models.auto.modeling_auto as mapping
+
         result = build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM")
         assert "GPT2Config" in result
 
     def test_contains_mistral_config(self):
         import transformers.models.auto.modeling_auto as mapping
+
         result = build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM")
         assert "MistralConfig" in result
 
     def test_contains_qwen2_config(self):
         import transformers.models.auto.modeling_auto as mapping
+
         result = build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM")
         assert "Qwen2Config" in result
 
@@ -414,19 +426,19 @@ class TestQEFFAutoModelForCausalLMClassStructure:
 
     def test_kv_cache_transform_in_pytorch_transforms(self):
         transform_names = [
-            t.__name__ if hasattr(t, "__name__") else str(t)
-            for t in QEFFAutoModelForCausalLM._pytorch_transforms
+            t.__name__ if hasattr(t, "__name__") else str(t) for t in QEFFAutoModelForCausalLM._pytorch_transforms
         ]
-        assert any("KVCache" in name for name in transform_names), \
+        assert any("KVCache" in name for name in transform_names), (
             f"KVCacheTransform not found in _pytorch_transforms: {transform_names}"
+        )
 
     def test_custom_ops_transform_in_pytorch_transforms(self):
         transform_names = [
-            t.__name__ if hasattr(t, "__name__") else str(t)
-            for t in QEFFAutoModelForCausalLM._pytorch_transforms
+            t.__name__ if hasattr(t, "__name__") else str(t) for t in QEFFAutoModelForCausalLM._pytorch_transforms
         ]
-        assert any("CustomOps" in name for name in transform_names), \
+        assert any("CustomOps" in name for name in transform_names), (
             f"CustomOpsTransform not found in _pytorch_transforms: {transform_names}"
+        )
 
     def test_has_hf_auto_class(self):
         assert hasattr(QEFFAutoModelForCausalLM, "_hf_auto_class")
@@ -437,11 +449,13 @@ class TestQEFFAutoModelForCausalLMClassStructure:
 
     def test_importable_from_public_api(self):
         import QEfficient
+
         assert hasattr(QEfficient, "QEFFAutoModelForCausalLM")
         assert QEfficient.QEFFAutoModelForCausalLM is QEFFAutoModelForCausalLM
 
     def test_continuous_batching_flag_stored(self):
         from transformers import GPT2Config, GPT2LMHeadModel
+
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
         model = GPT2LMHeadModel(cfg)
         qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
@@ -449,6 +463,7 @@ class TestQEFFAutoModelForCausalLMClassStructure:
 
     def test_continuous_batching_defaults_to_false(self):
         from transformers import GPT2Config, GPT2LMHeadModel
+
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
         model = GPT2LMHeadModel(cfg)
         qeff = QEFFAutoModelForCausalLM(model)
@@ -456,6 +471,7 @@ class TestQEFFAutoModelForCausalLMClassStructure:
 
     def test_model_name_property_returns_string(self):
         from transformers import GPT2Config, GPT2LMHeadModel
+
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
         model = GPT2LMHeadModel(cfg)
         qeff = QEFFAutoModelForCausalLM(model)
@@ -466,21 +482,22 @@ class TestQEFFAutoModelForCausalLMClassStructure:
     def test_model_attribute_is_transformed_model(self):
         """After construction, qeff.model must be the KV-transformed model."""
         from transformers import GPT2Config, GPT2LMHeadModel
+
         from QEfficient.transformers.models.gpt2.modeling_gpt2 import QEffGPT2LMHeadModel
+
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
         model = GPT2LMHeadModel(cfg)
         qeff = QEFFAutoModelForCausalLM(model)
-        assert isinstance(qeff.model, QEffGPT2LMHeadModel), \
-            f"Expected QEffGPT2LMHeadModel, got {type(qeff.model)}"
+        assert isinstance(qeff.model, QEffGPT2LMHeadModel), f"Expected QEffGPT2LMHeadModel, got {type(qeff.model)}"
 
     def test_onnx_transforms_contain_fp16_clip(self):
         """ONNX transforms must include FP16ClipTransform."""
         transform_names = [
-            t.__name__ if hasattr(t, "__name__") else str(t)
-            for t in QEFFAutoModelForCausalLM._onnx_transforms
+            t.__name__ if hasattr(t, "__name__") else str(t) for t in QEFFAutoModelForCausalLM._onnx_transforms
         ]
-        assert any("FP16" in name or "Clip" in name for name in transform_names), \
+        assert any("FP16" in name or "Clip" in name for name in transform_names), (
             f"FP16ClipTransform not found in _onnx_transforms: {transform_names}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +544,7 @@ class TestOtherQEffAutoModelClassStructures:
             from QEfficient.transformers.models.modeling_auto import (
                 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP,
             )
+
             assert isinstance(MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP, dict)
         except ImportError:
             pytest.skip("MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP not available")
@@ -534,9 +552,15 @@ class TestOtherQEffAutoModelClassStructures:
     def test_qeff_auto_model_for_seq_classification_wraps_bert(self):
         """QEFFAutoModelForSequenceClassification must wrap BERT without error."""
         from transformers import BertConfig, BertForSequenceClassification
+
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64, num_labels=3,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
+            num_labels=3,
         )
         model = BertForSequenceClassification(cfg)
         qeff = QEFFAutoModelForSequenceClassification(model)
@@ -546,9 +570,14 @@ class TestOtherQEffAutoModelClassStructures:
     def test_qeff_auto_model_wraps_bert(self):
         """QEFFAutoModel must wrap BERT without error."""
         from transformers import BertConfig, BertModel
+
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
         )
         model = BertModel(cfg)
         qeff = QEFFAutoModel(model)
@@ -567,9 +596,15 @@ class TestQEFFAutoModelForCausalLMErrorPaths:
     def test_non_causal_lm_model_raises_assertion_error(self):
         """Passing a non-CausalLM model must raise AssertionError or TypeError."""
         from transformers import BertConfig, BertForSequenceClassification
+
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64, num_labels=3,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
+            num_labels=3,
         )
         model = BertForSequenceClassification(cfg)
         with pytest.raises((AssertionError, TypeError, ValueError)):
@@ -578,9 +613,14 @@ class TestQEFFAutoModelForCausalLMErrorPaths:
     def test_bert_model_raises_error_when_passed_to_causal_lm(self):
         """BertModel (not CausalLM) must raise an error."""
         from transformers import BertConfig, BertModel
+
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
         )
         model = BertModel(cfg)
         with pytest.raises((AssertionError, TypeError, ValueError)):
@@ -603,6 +643,7 @@ class TestQEFFAutoModelForSpeechSeq2SeqErrorPaths:
     def test_non_speech_model_raises_error(self):
         """Passing a non-speech model must raise AssertionError or TypeError."""
         from transformers import GPT2Config, GPT2LMHeadModel
+
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
         model = GPT2LMHeadModel(cfg)
         with pytest.raises((AssertionError, TypeError, ValueError)):
@@ -611,9 +652,14 @@ class TestQEFFAutoModelForSpeechSeq2SeqErrorPaths:
     def test_bert_model_raises_error_when_passed_to_speech_seq2seq(self):
         """BertModel must raise an error when passed to QEFFAutoModelForSpeechSeq2Seq."""
         from transformers import BertConfig, BertModel
+
         cfg = BertConfig(
-            num_hidden_layers=1, num_attention_heads=2, hidden_size=64,
-            intermediate_size=128, vocab_size=500, max_position_embeddings=64,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=500,
+            max_position_embeddings=64,
         )
         model = BertModel(cfg)
         with pytest.raises((AssertionError, TypeError, ValueError)):
@@ -630,26 +676,25 @@ class TestModelClassMappingCompleteness:
 
     def test_contains_llava_config(self):
         from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
+
         # LlavaConfig should map to QEFFAutoModelForImageTextToText
-        assert "LlavaConfig" in MODEL_CLASS_MAPPING, (
-            "LlavaConfig missing from MODEL_CLASS_MAPPING"
-        )
+        assert "LlavaConfig" in MODEL_CLASS_MAPPING, "LlavaConfig missing from MODEL_CLASS_MAPPING"
 
     def test_llava_config_maps_to_vlm_class(self):
         from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
+
         if "LlavaConfig" in MODEL_CLASS_MAPPING:
-            assert "ImageTextToText" in MODEL_CLASS_MAPPING["LlavaConfig"] or \
-                   "CausalLM" in MODEL_CLASS_MAPPING["LlavaConfig"], (
-                f"LlavaConfig maps to unexpected class: {MODEL_CLASS_MAPPING['LlavaConfig']}"
-            )
+            assert (
+                "ImageTextToText" in MODEL_CLASS_MAPPING["LlavaConfig"]
+                or "CausalLM" in MODEL_CLASS_MAPPING["LlavaConfig"]
+            ), f"LlavaConfig maps to unexpected class: {MODEL_CLASS_MAPPING['LlavaConfig']}"
 
     def test_all_values_are_qeff_class_names(self):
         from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
+
         for key, value in MODEL_CLASS_MAPPING.items():
             assert isinstance(value, str), f"Expected string value for key '{key}', got {type(value)}"
-            assert "QEFF" in value or "QEff" in value, (
-                f"Expected QEff class name for key '{key}', got: {value}"
-            )
+            assert "QEFF" in value or "QEff" in value, f"Expected QEff class name for key '{key}', got: {value}"
 
 
 # ---------------------------------------------------------------------------
@@ -662,13 +707,16 @@ class TestSpecializedDisaggServingModelArch:
 
     def test_exists_and_is_set_or_collection(self):
         from QEfficient.transformers.modeling_utils import SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
+
         assert hasattr(SPECIALIZED_DISAGG_SERVING_MODEL_ARCH, "__contains__")
 
     def test_contains_gpt_oss(self):
         from QEfficient.transformers.modeling_utils import SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
+
         assert "gpt_oss" in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
 
     def test_all_entries_are_strings(self):
         from QEfficient.transformers.modeling_utils import SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
+
         for arch in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             assert isinstance(arch, str), f"Expected string, got {type(arch)}: {arch}"
