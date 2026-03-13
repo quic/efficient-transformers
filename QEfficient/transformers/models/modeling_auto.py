@@ -46,7 +46,6 @@ from QEfficient.transformers.modeling_utils import (
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
-    BlockedKVAttentionTransform,
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
@@ -1029,9 +1028,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
-
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
         """
         Exports the language decoder component to ONNX format.
@@ -1337,6 +1333,33 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         return self.onnx_path
+
+    def transform(
+        self,
+        ctx_len: Optional[int] = None,
+        seq_len: Optional[int] = None,
+        bs: Optional[int] = 1,
+        num_devices: int = 1,
+        qaic_config: Optional[dict] = None,
+        **compiler_options,
+    ):
+        self.vision_model.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
+
+        self.lang_model.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
 
     def compile(
         self,
@@ -1940,9 +1963,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         if qaic_config:
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
-
-        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     @classmethod
     def from_pretrained(
@@ -2723,8 +2743,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
-        self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
-        self.is_tlm = transformed
+        self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
+        # self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
+        # self.is_tlm = transformed
+        self.is_tlm = (
+            (qaic_config is not None)
+            and (qaic_config.get("speculative_model_type") is not None)
+            and (model.__class__ in SpDTransform._module_mapping)
+        )
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = False
@@ -2737,14 +2763,29 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
-        self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
+        # self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
         # TODO : Update in qaic_config isn't updated in the hash due to SpDTransforms. Need to move
         # SpDTransforms to PytorchTransforms.
-        if self.is_tlm:
-            self.model.qaic_config["return_pdfs"] = True
+        # if self.is_tlm:
+        #     self.model.qaic_config["return_pdfs"] = True
 
-        if self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-            BlockedKVAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+        # blocking_config = None
+        # if self.model.qaic_config is not None:
+        #     blocking_config = self.model.qaic_config.get("attn_blocking_config")
+        #     if blocking_config is None and self.model.qaic_config.get("attn_blocking_auto"):
+        #         blocking_config = derive_blocking_config(
+        #             self.model.config,
+        #             device_info=self.model.qaic_config.get("device_info"),
+        #             compile_params=self.model.qaic_config.get("compile_params"),
+        #         )
+        #         self.model.qaic_config["attn_blocking_config"] = blocking_config
+
+        # if blocking_config is not None and blocking_config.mode == "kv":
+        #     KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=blocking_config.num_kv_blocks)
+        # elif blocking_config is not None and blocking_config.mode == "q":
+        #     QBlockingAttentionTransform.apply(self.model, num_q_blocks=blocking_config.num_q_blocks)
+        # elif self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
+        #     KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -2928,6 +2969,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+        # increase seq_len if using a larger number of blocks
+        if self.hash_params.get("blocking_kwargs", None):
+            max_blocks = -1
+            for num_blocks in self.hash_params.get("blocking_kwargs").values():
+                max_blocks = max(max_blocks, num_blocks)
+            block_size = -(-seq_len // max_blocks)
+            while seq_len < max_blocks or (seq_len % max_blocks > block_size):
+                seq_len = seq_len * 2
+                block_size = -(-seq_len // max_blocks)
+
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
@@ -3048,6 +3100,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
+
         return self._export(
             example_inputs,
             output_names=output_names,

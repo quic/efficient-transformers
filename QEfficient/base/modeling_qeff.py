@@ -23,16 +23,22 @@ from QEfficient.base.onnx_transforms import (
     OnnxTransformPipeline,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
+from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.models.pytorch_transforms import (
+    BlockingAttentionTransform,
+)
 from QEfficient.utils import (
     constants,
     create_json,
     create_model_params,
     dump_qconfig,
     generate_mdp_partition_config,
+    get_attr_or_key,
     hash_dict_params,
     load_json,
+    require_value,
 )
 from QEfficient.utils.export_utils import export_wrapper
 
@@ -348,6 +354,43 @@ class QEFFBaseModel(ABC):
         self.export(**kwargs)
         return self.onnx_path
 
+    def transform(
+        self,
+        ctx_len: Optional[int] = None,
+        seq_len: Optional[int] = None,
+        bs: Optional[int] = 1,
+        num_devices: int = 1,
+        qaic_config: Optional[dict] = None,
+        **compiler_options,
+    ):
+        # Apply the transformations that are dependent on compilation parameters
+
+        qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
+
+        if getattr(self.model, "config", None):
+            blocking_config = build_transformer_blocking_config_for_transform(
+                self.model.config,
+                ctx_len=ctx_len,
+                seq_len=seq_len,
+                bs=bs,
+                num_devices=num_devices,
+                qaic_config=qaic_config,
+                **compiler_options,
+            )
+        else:
+            # without a model config, this is not a model that is possible to block
+            blocking_config = None
+
+        if blocking_config is not None:
+            self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
+            blocking_kwargs = self.hash_params.setdefault("blocking_kwargs", {})
+            if blocking_config.num_kv_blocks:
+                blocking_kwargs["num_kv_blocks"] = blocking_config.num_kv_blocks
+            if blocking_config.num_q_blocks:
+                blocking_kwargs["num_q_blocks"] = blocking_config.num_q_blocks
+            if blocking_config.head_block_size:
+                blocking_kwargs["head_block_size"] = blocking_config.head_block_size
+
     @dump_qconfig
     def _compile(
         self,
@@ -366,6 +409,10 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        disable_blocking: Optional[bool] = True,
+        blocking_mode: Optional[str] = "hqkv",
+        vtcm_ratio: Optional[float] = 0.75,
+        qaic_config: Optional[dict] = None,
         **compiler_options,
     ) -> str:
         """
@@ -391,6 +438,23 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
+        # Transform before export
+        qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
+        bs = require_value(get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
+        seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
+        ctx_len = get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
+        self.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            num_devices=mdp_ts_num_devices,
+            disable_blocking=disable_blocking,
+            blocking_mode=blocking_mode,
+            vtcm_ratio=vtcm_ratio,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
+
         onnx_path = Path(
             onnx_path
             if onnx_path

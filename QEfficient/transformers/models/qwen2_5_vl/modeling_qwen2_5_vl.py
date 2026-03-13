@@ -7,7 +7,7 @@
 
 import math
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -31,6 +31,8 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     rotate_half,
 )
 
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
+from QEfficient.blocking.blocked_attention_forwards import blocked_kv_attention_forward
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 # from transformers import Qw
@@ -371,65 +373,18 @@ def eager_attention_forward_blockedKV(
     past_key_value: Optional[Cache] = None,
     **kwargs,
 ):
-    # Initialize result tensor
-    output = torch.zeros_like(query)
-
-    # Initialize Running Maximum
-    batch_size, num_heads, seq_len, _ = query.shape
-    current_max = torch.full((batch_size, num_heads, seq_len), float(MIN_MASKED_ATTENTION_VALUE))
-
-    # Initialize Denominator
-    current_denominator = torch.zeros(batch_size, num_heads, seq_len)
-
-    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
-    position_ids = cache_kwargs.get("position_ids")
-    block_size = -(-past_seen_tokens // num_kv_blocks)
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
-
-    for j in range(num_kv_blocks):
-        start_index = j * block_size
-        end_index = (j + 1) * block_size
-        K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
-        K_block_states = repeat_kv(K_block, module.num_key_value_groups)
-        V_block_states = repeat_kv(V_block, module.num_key_value_groups)
-        past_seen_tokens_start = start_index
-        past_seen_tokens_end = torch.where(
-            torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-            past_seen_tokens,
-            end_index,
-        )
-        causal_mask_block = _create_causal_mask(
-            position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start
-        )
-
-        # Compute attention scores for the block
-        attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) / math.sqrt(module.head_dim)
-        if attention_mask is not None:
-            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
-
-        # Update Running row maximum
-        prev_max = current_max
-        current_max = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
-        delta_max = prev_max - current_max
-
-        current_exp = torch.exp(
-            attn_weights_block - current_max.unsqueeze(-1)
-        )  # Subract current_max from each column of attn_weights_block
-
-        # update running denominator
-        prev_denominator = current_denominator
-        current_denominator = prev_denominator * torch.exp(delta_max) + current_exp.sum(axis=-1)
-
-        prob = current_exp / current_denominator.unsqueeze(-1)
-
-        prev_output = output
-        output = ((prev_denominator / current_denominator).unsqueeze(-1)) * prev_output * torch.exp(
-            delta_max.unsqueeze(-1)
-        ) + torch.matmul(prob, V_block_states)
-    attn_output = output.transpose(1, 2).contiguous()
-    attn_weights = None
-
-    return attn_output, attn_weights
+    return blocked_kv_attention_forward(
+        module=module,
+        query=query,
+        key=key,
+        value=value,
+        attention_mask=attention_mask,
+        scaling=1.0 / math.sqrt(module.head_dim),
+        num_kv_blocks=num_kv_blocks,
+        cache_kwargs=cache_kwargs,
+        layer_idx=layer_idx,
+        past_key_value=past_key_value,
+    )
 
 
 def eager_attention_forward_q_blocked(
@@ -579,6 +534,8 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         num_kv_blocks: Optional[torch.Tensor] = None,
+        num_q_blocks: Optional[torch.Tensor] = None,
+        head_block_size: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -601,8 +558,32 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
             query_states, key_states, cos, sin, position_ids[1:], self.rope_scaling["mrope_section"]
         )
 
-        if past_key_value is not None:
+        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
+        num_q_blocks = num_q_blocks if num_q_blocks is not None else getattr(self, "num_q_blocks", None)
+        head_block_size = head_block_size if head_block_size is not None else getattr(self, "head_block_size", None)
+        blocking_config = getattr(self, "attn_blocking_config", None)
+
+        if blocking_config is None:
+            blocking_config = AttentionBlockingConfig(mode="")
             if num_kv_blocks is not None:
+                blocking_config.mode = "kv" + blocking_config.mode
+                blocking_config.num_kv_blocks = int(num_q_blocks)
+            if num_q_blocks is not None:
+                blocking_config.mode = "q" + blocking_config.mode
+                blocking_config.num_q_blocks = int(num_q_blocks)
+            if head_block_size is not None:
+                blocking_config.mode = "h" + blocking_config.mode
+                blocking_config.head_block_size = int(head_block_size)
+            if blocking_config.mode == "":
+                blocking_config = None
+
+        use_kv_blocked = (
+            blocking_config is not None and "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
+        )
+        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
+
+        if past_key_value is not None:
+            if use_kv_blocked:
                 cache_kwargs = {
                     "sin": sin,
                     "cos": cos,
@@ -624,20 +605,33 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
                 key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        attention_interface: Callable = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            num_kv_blocks=num_kv_blocks,
-            cache_kwargs=cache_kwargs,
-            layer_idx=self.layer_idx,
-            past_key_value=past_key_value,
-            **kwargs,
-        )
+        if use_blocking:
+            strategy = get_blocking_strategy(blocking_config)
+            attn_output, attn_weights = strategy.apply(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+                config=blocking_config,
+            )
+        else:
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                num_kv_blocks=num_kv_blocks if use_kv_blocked else None,
+                cache_kwargs=cache_kwargs,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_value,
+                **kwargs,
+            )
 
         attn_output = attn_output.reshape(bsz, q_len, -1)
 
