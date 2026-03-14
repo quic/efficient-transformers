@@ -22,14 +22,6 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 def eager_attention_forward(module, query, key, value, attention_mask, head_mask=None, **kwargs):
-    def _align_mask(mask: torch.Tensor, q_len: int, k_len: int) -> torch.Tensor:
-        mask = mask[..., :q_len, :k_len]
-        pad_q = q_len - mask.shape[-2]
-        pad_k = k_len - mask.shape[-1]
-        if pad_q > 0 or pad_k > 0:
-            mask = torch.nn.functional.pad(mask, (0, max(0, pad_k), 0, max(0, pad_q)), value=True)
-        return mask
-
     attn_weights = torch.matmul(query, key.transpose(-1, -2))
     if module.scale_attn_weights:
         attn_weights = attn_weights / torch.full(
@@ -37,7 +29,6 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
         )
 
     if attention_mask is not None:
-        attention_mask = _align_mask(attention_mask, attn_weights.shape[-2], attn_weights.shape[-1])
         if attention_mask.dtype == torch.bool:
             attn_weights = torch.where(
                 attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE,  dtype=module.config.torch_dtype), attn_weights
