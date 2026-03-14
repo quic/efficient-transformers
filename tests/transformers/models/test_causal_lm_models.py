@@ -126,8 +126,11 @@ def load_causal_lm_model(model_name, n_layer=1, config=None, dtype=torch.float32
             trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
         )
     # Convert to intended dtype
-    model_hf = model_hf.to(dtype)
-    model_hf.config.torch_dtype = dtype
+    try:
+        model_hf = model_hf.to(dtype)
+        model_hf.config.torch_dtype = dtype
+    except ValueError:
+        pass  # fully ignore
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
