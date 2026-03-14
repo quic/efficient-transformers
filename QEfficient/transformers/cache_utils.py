@@ -10,7 +10,20 @@ from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache, HybridCache, HybridChunkedCache
+from transformers.cache_utils import Cache, EncoderDecoderCache
+
+try:
+    # transformers<5.3 had these hybrid cache classes
+    from transformers.cache_utils import HybridCache, HybridChunkedCache
+except ImportError:
+    # transformers>=5.3 removed/relocated hybrid cache types.
+    # Keep lightweight local bases so downstream hybrid wrappers still import.
+    class HybridCache:  # type: ignore[no-redef]
+        pass
+
+    class HybridChunkedCache:  # type: ignore[no-redef]
+        pass
+
 
 from QEfficient.customop import (
     CtxGatherFunc,
@@ -53,40 +66,33 @@ class InvalidIndexProvider:
         else:
             return 0
 
+def _match_invalid_mask(invalid_mask: torch.Tensor, target_len: int) -> torch.Tensor:
+    if invalid_mask.shape[-1] == target_len:
+        return invalid_mask
+    return invalid_mask[..., :target_len]
 
 class QEffDynamicLayer(CacheLayerMixin):
-    is_sliding = False
+    is_compileable = False
 
     def __init__(self):
-        super().__init__()
+        self.keys: Optional[torch.Tensor] = None
+        self.values: Optional[torch.Tensor] = None
+        self.is_initialized = False
+        self.device = None
 
-    def lazy_initialization(self, key_states: torch.Tensor):
-        self.dtype = key_states.dtype
-        self.device = key_states.device
-        self.keys = torch.tensor([], dtype=self.dtype, device=self.device)
-        self.values = torch.tensor([], dtype=self.dtype, device=self.device)
+    def lazy_initialization(self, key_states: torch.Tensor, value_states: torch.Tensor) -> None:
+        self.keys = key_states
+        self.values = value_states
         self.is_initialized = True
-
-    def get_mask_sizes(self, cache_position: torch.Tensor) -> tuple[int, int]:
-        kv_offset = 0
-        query_length = cache_position.shape[0]
-        kv_length = self.get_seq_length() + query_length
-        return kv_length, kv_offset
-
-    def get_seq_length(self) -> int:
-        if self.keys is None or self.keys.numel() == 0:
-            return 0
-        return self.keys.shape[-2]
-
-    def get_max_cache_shape(self) -> int:
-        return -1
+        self.device = key_states.device
 
     @classmethod
     def from_tensors(cls, key_states: torch.Tensor, value_states: torch.Tensor) -> "QEffDynamicLayer":
         layer = cls()
         layer.keys = key_states
         layer.values = value_states
-        layer._mark_initialized(key_states)
+        layer.is_initialized = True
+        layer.device = key_states.device
         return layer
 
     def _mark_initialized(self, reference_states: torch.Tensor) -> None:
@@ -94,6 +100,67 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.dtype = reference_states.dtype
             self.device = reference_states.device
             self.is_initialized = True
+
+    def get_mask_sizes(self, cache_position: torch.Tensor) -> tuple[int, int]:
+        return self.get_seq_length() + cache_position.shape[0], 0
+
+    def get_seq_length(self) -> int:
+        return self.keys.shape[-2] if self.keys is not None else 0
+
+    def get_max_cache_shape(self) -> int:
+        return -1
+
+    @property
+    def max_batch_size(self) -> int:
+        return self.keys.shape[0] if self.keys is not None else 0
+
+    @property
+    def max_cache_len(self) -> int:
+        return self.keys.shape[-2] if self.keys is not None else 0
+
+    def reset(self) -> None:
+        if self.keys is not None:
+            self.keys.zero_()
+        if self.values is not None:
+            self.values.zero_()
+
+    def offload(self) -> None:
+        if self.keys is not None and self.values is not None:
+            self.keys = self.keys.to("cpu", non_blocking=True)
+            self.values = self.values.to("cpu", non_blocking=True)
+
+    def prefetch(self) -> None:
+        if (
+            self.keys is not None
+            and self.values is not None
+            and self.device is not None
+            and self.keys.device != self.device
+        ):
+            self.keys = self.keys.to(self.device, non_blocking=True)
+            self.values = self.values.to(self.device, non_blocking=True)
+
+    def reorder_cache(self, beam_idx: torch.LongTensor) -> None:
+        if self.keys is not None and self.values is not None and self.get_seq_length() > 0:
+            self.keys = self.keys.index_select(0, beam_idx.to(self.keys.device))
+            self.values = self.values.index_select(0, beam_idx.to(self.values.device))
+
+    def crop(self, max_length: int) -> None:
+        if self.keys is not None:
+            self.keys = self.keys[:, :, :max_length, :]
+        if self.values is not None:
+            self.values = self.values[:, :, :max_length, :]
+
+    def batch_repeat_interleave(self, repeats: int) -> None:
+        if self.keys is not None:
+            self.keys = self.keys.repeat_interleave(repeats, dim=0)
+        if self.values is not None:
+            self.values = self.values.repeat_interleave(repeats, dim=0)
+
+    def batch_select_indices(self, indices: torch.Tensor) -> None:
+        if self.keys is not None:
+            self.keys = self.keys[indices, ...]
+        if self.values is not None:
+            self.values = self.values[indices, ...]
 
     def read_only(self, cache_kwargs):
         """
@@ -129,6 +196,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
             v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
 
+        invalid_mask = _match_invalid_mask(invalid_mask, v_out.shape[-2])
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
 
@@ -175,6 +243,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             k_out = CtxGatherFuncBlockedKV.apply(k_out, ctx_indices)
             v_out = CtxGatherFuncBlockedKV.apply(v_out, ctx_indices)
 
+        invalid_mask = _match_invalid_mask(invalid_mask, v_out.shape[-2])
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
 
@@ -271,6 +340,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             else:
                 k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
                 v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
+            invalid_mask = _match_invalid_mask(invalid_mask, v_out.shape[-2])
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out
@@ -338,6 +408,7 @@ class QEffDynamicLayer(CacheLayerMixin):
                 k_out = CtxGatherFunc3D.apply(k_out, ctx_indices)
                 v_out = CtxGatherFunc3D.apply(v_out, ctx_indices)
 
+            invalid_mask = _match_invalid_mask(invalid_mask, v_out.shape[-2])
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out
@@ -412,6 +483,25 @@ class QEffDynamicCache(Cache):
         """
         return self.layers[layer_idx].read_only(cache_kwargs)
 
+    def __getitem__(self, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        layer = self.layers[layer_idx]
+        return (layer.keys, layer.values)
+
+    def __iter__(self):
+        for idx in range(len(self.layers)):
+            yield self[idx]
+
+    def get_seq_length(self, layer_idx: Optional[int] = 0, *args, **kwargs) -> int:
+        if layer_idx is None:
+            layer_idx = 0
+        is_empty_layer = (
+            len(self.layers) == 0
+            or len(self.layers) <= layer_idx
+            or getattr(self.layers[layer_idx], "keys", None) is None
+            or len(self.layers[layer_idx].keys) == 0
+        )
+        return self.layers[layer_idx].keys.shape[-2] if not is_empty_layer else 0
+
     def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer `layer_idx`.
@@ -475,6 +565,28 @@ class QEffDynamicCache(Cache):
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].update3D(key_states, value_states, cache_kwargs)
 
+    def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor, torch.Tensor], ...]:
+        """
+        Compatibility helper for wrappers still expecting tuple-based caches.
+        """
+        legacy_cache = ()
+        for layer in self.layers:
+            legacy_cache += ((layer.keys, layer.values),)
+        return legacy_cache
+
+    @classmethod
+    def from_legacy_cache(
+        cls, past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None
+    ) -> "QEffDynamicCache":
+        """
+        Compatibility helper for tuple-based cache inputs used by older call sites.
+        """
+        cache = cls()
+        if past_key_values is not None:
+            for key_states, value_states in past_key_values:
+                cache.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+        return cache
+
 
 class QEffEncoderDecoderCache(EncoderDecoderCache):
     """
@@ -497,16 +609,19 @@ class QEffEncoderDecoderCache(EncoderDecoderCache):
                     cache.is_updated[layer_idx] = True
         return cache
 
-    def to_legacy_cache(self):
-        self_attn_legacy = self.self_attention_cache.to_legacy_cache()
-        cross_attn_legacy = self.cross_attention_cache.to_legacy_cache()
-
+    def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor, ...], ...]:
         legacy_cache = ()
-        for layer_idx, self_attn_layer in enumerate(self_attn_legacy):
-            if layer_idx < len(cross_attn_legacy):
-                legacy_cache += (self_attn_layer + cross_attn_legacy[layer_idx],)
+        total_layers = max(len(self.self_attention_cache.layers), len(self.cross_attention_cache.layers))
+        for layer_idx in range(total_layers):
+            self_key = self_value = cross_key = cross_value = None
+            if layer_idx < len(self.self_attention_cache.layers):
+                self_key, self_value = self.self_attention_cache[layer_idx]
+            if layer_idx < len(self.cross_attention_cache.layers):
+                cross_key, cross_value = self.cross_attention_cache[layer_idx]
+            if cross_key is None or cross_value is None:
+                legacy_cache += ((self_key, self_value),)
             else:
-                legacy_cache += (self_attn_layer,)
+                legacy_cache += ((self_key, self_value, cross_key, cross_value),)
         return legacy_cache
 
 
@@ -722,11 +837,13 @@ class QEffHybridChunkedCache(HybridChunkedCache):
 # ours are made to work with AIC
 class QEffSlidingWindowCache:
     def __init__(self, config, batch_size, max_cache_len, sliding_window_len):
+        self.config = config
         self.max_cache_len = max_cache_len
         self.batch_size = batch_size
         self.sliding_window_len = sliding_window_len
         self.key_cache: List[torch.Tensor] = []
         self.value_cache: List[torch.Tensor] = []
+        self.seen_tokens = 0
 
     @classmethod
     def from_legacy_cache(
@@ -750,6 +867,8 @@ class QEffSlidingWindowCache:
             for layer_idx in range(len(past_key_values)):
                 key_states, value_states = past_key_values[layer_idx]
                 cache.update(key_states, value_states, layer_idx)
+        # Legacy tuples are often preallocated to ctx len. Track real progression via update() calls.
+        cache.seen_tokens = 0
         return cache
 
     def __len__(self):
@@ -759,16 +878,26 @@ class QEffSlidingWindowCache:
         """
         return len(self.key_cache)
 
-    def get_seq_length(self, layer_idx: Optional[int] = 0, cache_position: Optional[torch.LongTensor] = None) -> int:
-        """Returns the sequence length of the cached states. A layer index can be optionally passed."""
-        # TODO: deprecate this function in favor of `cache_position`
-        is_empty_layer = (
-            len(self.key_cache) == 0  # no cache in any layer
-            or len(self.key_cache) <= layer_idx  # skipped `layer_idx` and hasn't run a layer with cache after it
-            or len(self.key_cache[layer_idx]) == 0  # the layer has no cache
+    def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
+        """Returns seen token length (logical sequence length)."""
+        return self.seen_tokens
+
+    def get_mask_sizes(self, cache_position: torch.Tensor, layer_idx: int) -> Tuple[int, int]:
+        query_length = cache_position.shape[0]
+        layer_types = getattr(self.config, "layer_types", None)
+        is_sliding_layer = bool(
+            layer_types is not None and layer_idx < len(layer_types) and layer_types[layer_idx] == "sliding_attention"
         )
-        layer_seq_length = self.key_cache[layer_idx].shape[-2] if not is_empty_layer else 0
-        return layer_seq_length
+
+        if is_sliding_layer:
+            kv_offset = max(self.seen_tokens - self.sliding_window_len + 1, 0)
+            if self.seen_tokens >= self.sliding_window_len:
+                kv_length = self.sliding_window_len - 1 + query_length
+            else:
+                kv_length = self.seen_tokens + query_length
+            return kv_length, kv_offset
+
+        return self.seen_tokens + query_length, 0
 
     def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor], Tuple[torch.Tensor]]:
         """Converts the `DynamicCache` instance into the its equivalent in the legacy cache format. Used for
@@ -785,13 +914,28 @@ class QEffSlidingWindowCache:
         layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        cache_kwargs = cache_kwargs or {}
+        position_ids = cache_kwargs.get("position_ids")
+        if position_ids is None and cache_kwargs.get("cache_position") is not None:
+            cache_position = cache_kwargs.get("cache_position")
+            if cache_position.dim() == 1:
+                position_ids = cache_position.unsqueeze(0).repeat(key_states.shape[0], 1)
+            else:
+                position_ids = cache_position
+        if position_ids is not None:
+            # Track logical progression independent of preallocated tensor shape.
+            self.seen_tokens = max(self.seen_tokens, int(position_ids.max().item()) + 1)
+
         if len(self.key_cache) <= layer_idx:
             self.key_cache.append(key_states)
             self.value_cache.append(value_states)
             k_out, v_out = key_states, value_states
         else:
-            position_ids = cache_kwargs.get("position_ids")
+            position_ids = position_ids
+            layer_types = getattr(self.config, "layer_types", None)
             is_sliding_layer = cache_kwargs.get("is_sliding")
+            if is_sliding_layer is None and layer_types is not None and layer_idx < len(layer_types):
+                is_sliding_layer = layer_types[layer_idx] == "sliding_attention"
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
 
             if is_sliding_layer:

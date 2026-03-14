@@ -315,11 +315,8 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         else:
             encoder_attention_mask = None
 
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x n_heads x N x N
-        # head_mask has shape n_layer x batch x n_heads x N x N
-        head_mask = self.get_head_mask(head_mask, self.config.n_layer)
+        if head_mask is None:
+            head_mask = [None] * self.config.n_layer
 
         position_ids1 = position_ids.clone()
         position_ids1[position_ids1 == -1] = 0

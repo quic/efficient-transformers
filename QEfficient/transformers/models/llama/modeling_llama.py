@@ -101,11 +101,20 @@ def eager_attention_forward(
     scaling: float,
     **kwargs,
 ):
+    def _align_mask(mask: torch.Tensor, q_len: int, k_len: int) -> torch.Tensor:
+        mask = mask[..., :q_len, :k_len]
+        pad_q = q_len - mask.shape[-2]
+        pad_k = k_len - mask.shape[-1]
+        if pad_q > 0 or pad_k > 0:
+            mask = torch.nn.functional.pad(mask, (0, max(0, pad_k), 0, max(0, pad_q)), value=True)
+        return mask
+
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
+        attention_mask = _align_mask(attention_mask, attn_weights.shape[-2], attn_weights.shape[-1])
         attn_weights = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )

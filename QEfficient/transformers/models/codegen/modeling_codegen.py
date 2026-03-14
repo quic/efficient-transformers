@@ -225,11 +225,8 @@ class QEffCodeGenModel(CodeGenModel):
             # 4d mask is passed through the layers
             attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x num_attention_heads x N x N
-        # head_mask has shape n_layer x batch x num_attention_heads x N x N
-        head_mask = self.get_head_mask(head_mask, self.config.n_layer)
+        if head_mask is None:
+            head_mask = [None] * self.config.n_layer
 
         hidden_states = inputs_embeds
 

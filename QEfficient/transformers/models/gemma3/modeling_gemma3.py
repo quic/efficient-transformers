@@ -10,7 +10,7 @@ from typing import List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
-from transformers.cache_utils import Cache
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -58,11 +58,12 @@ class QEffGemma3CustomRMSNormAIC(nn.Module):
     """
 
     def forward(self, hidden_states):
-        return GemmaRMSNormFunc.apply(
+        out = GemmaRMSNormFunc.apply(
             hidden_states,
             (self.weight).to(hidden_states.dtype) + 1.0,
             self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
         )
+        return out.to(hidden_states.dtype)
 
 
 class QEffGemma3RotaryEmbedding(nn.Module):
@@ -570,7 +571,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             attentions=outputs.attentions,
         )
 
-    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=torch.float32):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = (
@@ -587,8 +588,8 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         for i in range(config.num_hidden_layers):
             if hasattr(config, "sliding_window"):
                 cache_shape = global_cache_shape if not is_sliding[i] else sliding_cache_shape
-            new_layer_key_cache = torch.zeros(cache_shape, dtype=self.config.torch_dtype)
-            new_layer_value_cache = torch.zeros(cache_shape, dtype=self.config.torch_dtype)
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=dtype)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=dtype)
             pkv = (new_layer_key_cache, new_layer_value_cache)
             past_key_values.append(pkv)
         return past_key_values
@@ -611,6 +612,8 @@ class QEffGemma3EncoderWrapper(nn.Module):
 
     def forward(self, pixel_values):
         image_features = self.model.get_image_features(pixel_values=pixel_values)
+        if hasattr(image_features, "pooler_output"):
+            image_features = image_features.pooler_output
         return image_features
 
 
@@ -663,10 +666,23 @@ class QEffGemma3DecoderWrapper(nn.Module):
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-        return logits, vision_embeds, image_idx, outputs.past_key_values
+        present = outputs.past_key_values
+        if isinstance(present, Cache):
+            if hasattr(present, "to_legacy_cache"):
+                present = present.to_legacy_cache()
+            elif hasattr(present, "layers"):
+                legacy_cache = ()
+                for layer in present.layers:
+                    legacy_cache += ((getattr(layer, "keys", None), getattr(layer, "values", None)),)
+                present = legacy_cache
+        return logits, vision_embeds, image_idx, present
 
 
 class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
+    def __qeff_init__(self):
+        # Module mapping swaps class post-init, so set aliases here.
+        self.language_model = self.model.language_model
+
     def get_qeff_vision_encoder(self):
         return QEffGemma3EncoderWrapper(self)
 
@@ -683,6 +699,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
         image_features = self.get_image_features(pixel_values=pixel_values)
+        if hasattr(image_features, "pooler_output"):
+            image_features = image_features.pooler_output
         inputs_embeds = self.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.config.image_token_index
@@ -692,6 +710,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         image_features_expanded = image_features.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        if past_key_values is not None and not isinstance(past_key_values, Cache):
+            past_key_values = DynamicCache(tuple(past_key_values))
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
@@ -704,7 +724,16 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-        return logits, pixel_values, image_idx, outputs.past_key_values
+        present = outputs.past_key_values
+        if isinstance(present, Cache):
+            if hasattr(present, "to_legacy_cache"):
+                present = present.to_legacy_cache()
+            elif hasattr(present, "layers"):
+                legacy_cache = ()
+                for layer in present.layers:
+                    legacy_cache += ((getattr(layer, "keys", None), getattr(layer, "values", None)),)
+                present = legacy_cache
+        return logits, pixel_values, image_idx, present
 
     def get_npi_file(self, model_name: str) -> str:
         if constants.NPI_MAPPING[model_name] is not None:
@@ -884,7 +913,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             return lang_output_names
         return output_names
 
-    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=torch.float32):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = (
@@ -901,8 +930,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         for i in range(config.num_hidden_layers):
             if hasattr(config, "sliding_window"):
                 cache_shape = global_cache_shape if not is_sliding[i] else sliding_cache_shape
-            new_layer_key_cache = torch.zeros(cache_shape, dtype=self.config.torch_dtype)
-            new_layer_value_cache = torch.zeros(cache_shape, dtype=self.config.torch_dtype)
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=dtype)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=dtype)
             pkv = (new_layer_key_cache, new_layer_value_cache)
             past_key_values.append(pkv)
         return past_key_values
@@ -953,10 +982,12 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         # Add data for KV
+        pkv_dtype = next(self.language_model.parameters()).dtype if hasattr(self, "language_model") else self.config.torch_dtype
         lang_inputs["past_key_values"] = self.get_dummy_pkv_cache(
             config=self.language_model.config,
             batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            dtype=pkv_dtype,
         )
 
         if comp_ctx_lengths is not None:
