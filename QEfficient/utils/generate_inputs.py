@@ -296,15 +296,15 @@ class InputHandlerVLM:
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
                 inputs["past_key_values"].append(
                     (
-                        torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim),
-                        torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim),
+                        torch.zeros((1, num_key_value_heads, image_tokens_len, head_dim), dtype=self.dtype),
+                        torch.zeros((1, num_key_value_heads, image_tokens_len, head_dim), dtype=self.dtype),
                     )
                 )
             else:
                 inputs["past_key_values"].append(
                     (
-                        torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
-                        torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
+                        torch.zeros((1, num_key_value_heads, self.ctx_len, head_dim), dtype=self.dtype),
+                        torch.zeros((1, num_key_value_heads, self.ctx_len, head_dim), dtype=self.dtype),
                     )
                 )
 
@@ -418,7 +418,19 @@ class InputHandlerVLM:
 
 
 class InputHandlerInternVL(InputHandlerVLM):
-    def __init__(self, batch_size, config, image, processor, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
+    def __init__(
+        self,
+        batch_size,
+        config,
+        image,
+        processor,
+        prompt,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+        dtype=torch.float32,
+    ):
         self.ctx_len = ctx_len
         self.prompt_len = prompt_len
         self.max_gen_len = max_gen_len
@@ -428,6 +440,7 @@ class InputHandlerInternVL(InputHandlerVLM):
         self.batch_size = batch_size
         self.n_layer = n_layer
         self.processor = processor
+        self.dtype = dtype
 
     def prepare_pytorch_inputs(self):
         question = "<image>\n" + self.prompt
@@ -453,8 +466,8 @@ class InputHandlerInternVL(InputHandlerVLM):
         for i in range(num_hidden_layers):
             inputs["past_key_values"].append(
                 (
-                    torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
-                    torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
+                    torch.zeros((1, num_key_value_heads, self.ctx_len, head_dim), dtype=self.dtype),
+                    torch.zeros((1, num_key_value_heads, self.ctx_len, head_dim), dtype=self.dtype),
                 )
             )
 

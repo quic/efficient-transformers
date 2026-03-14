@@ -80,7 +80,7 @@ CUSTOM_IO_DTYPE_MAP = {
     torch.float16: "float16",
     torch.bfloat16: "bfloat16",
     torch.float32: "float16",  # Since compiler doesn't support fp32
-    "float32": "float16", # Since compiler doesn't support fp32
+    "float32": "float16",  # Since compiler doesn't support fp32
 }
 
 TORCH_TO_NUMPY_DTYPE_MAP = {
@@ -3870,9 +3870,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        inputs["input_features"] = (
-            inputs["input_features"].numpy().astype(TORCH_TO_NUMPY_DTYPE_MAP[self.model.config.torch_dtype])
-        )
+        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
 
         # add start token id and initial position ids to inputs
         seq_len = 1
@@ -3909,9 +3907,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if streamer:
             streamer.put(next_token)
 
-        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(
-            TORCH_TO_NUMPY_DTYPE_MAP[self.model.config.torch_dtype]
-        )
+        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float16)
 
         loop_start = perf_counter()
         for num_tokens in range(generation_len):
@@ -4219,7 +4215,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         if needed_dtype is None:
             needed_dtype = torch.float32
-        input_values = input_values.astype(CUSTOM_IO_DTYPE_MAP[needed_dtype])
+        input_values = input_values.astype(TORCH_TO_NUMPY_DTYPE_MAP[needed_dtype])
         inputs = dict(input_values=input_values)
         outputs = self.qpc_session.run(inputs)
 
