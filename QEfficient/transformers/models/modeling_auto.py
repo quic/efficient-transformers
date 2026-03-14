@@ -76,6 +76,19 @@ from QEfficient.utils.check_ccl_specializations import process_ccl_specializatio
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
+CUSTOM_IO_DTYPE_MAP = {
+    torch.float16: "float16",
+    torch.bfloat16: "bfloat16",
+    torch.float32: "float16",  # Since compiler doesn't support fp32
+    "float32": "float16",  # Since compiler doesn't support fp32
+}
+
+TORCH_TO_NUMPY_DTYPE_MAP = {
+    torch.float16: np.float16,
+    torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
+    torch.float32: np.float32,
+}
+
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -445,12 +458,15 @@ class QEFFAutoModel(QEFFTransformersBase):
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -464,6 +480,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
         write_io: bool = False,
+        dtype: Optional[torch.dtype] = torch.float32,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output by executing the compiled QPC on Cloud AI 100 hardware or using PyTorch runtime.
@@ -503,6 +520,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         self,
         inputs: torch.Tensor,
         device_ids: List[int] = [0],
+        dtype: Optional[torch.dtype] = torch.float32,
     ) -> np.ndarray:
         """
         Generate features for a batch of inputs using the Cloud AI 100 hardware runtime.
@@ -555,14 +573,16 @@ class QEFFAutoModel(QEFFTransformersBase):
         # TODO: Remove try and catch after compiler fix
         try:
             outputs = {
-                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(np.float32),
+                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(
+                    TORCH_TO_NUMPY_DTYPE_MAP[dtype]
+                ),
             }
             self.qpc_session.set_buffers(outputs)
             outputs = self.qpc_session.run(inputs)
         except Exception:
             outputs = {
                 "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
-                    np.float32
+                    TORCH_TO_NUMPY_DTYPE_MAP[dtype]
                 ),
             }
             self.qpc_session.set_buffers(outputs)
@@ -781,13 +801,15 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         specializations = [
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
-
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -1460,17 +1482,20 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         custom_io_vision = {}
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
         molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
         if molmo:
-            custom_io_vision["image_masks"] = "float16"
-        custom_io_vision["pixel_values"] = "float16"
+            custom_io_vision["image_masks"] = CUSTOM_IO_DTYPE_MAP[needed_dtype]
+        custom_io_vision["pixel_values"] = CUSTOM_IO_DTYPE_MAP[needed_dtype]
 
         for output_name in output_names["vision"]:
             if output_name.startswith("past_"):
                 custom_io_vision[output_name] = kv_cache_dtype
             else:
-                custom_io_vision[output_name] = "float16"
+                custom_io_vision[output_name] = CUSTOM_IO_DTYPE_MAP[needed_dtype]
 
         if vision_onnx_path:
             self.vision_model.onnx_path = vision_onnx_path
@@ -1493,7 +1518,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
-                convert_to_fp16=True,
+                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -1513,19 +1538,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name[: -len("_RetainedState")]] = (
-                        "float16" if "vision_embeds" in output_name else kv_cache_dtype
+                        CUSTOM_IO_DTYPE_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
                     )
 
             # outputs
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
+                    custom_io_lang[output_name] = (
+                        CUSTOM_IO_DTYPE_MAP[needed_dtype] if "vision_embeds" in output_name else kv_cache_dtype
+                    )
             self.lang_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
                 retained_state=True,
                 specializations=specializations["lang"],
-                convert_to_fp16=True,
+                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
                 mxfp6_matmul=mxfp6_matmul,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -2139,18 +2166,23 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
         custom_io = {}
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
         # inputs
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
                 custom_io[input_name[: -len("_RetainedState")]] = (
-                    "float16" if "pixel_values" in input_name else kv_cache_dtype
+                    CUSTOM_IO_DTYPE_MAP[needed_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
 
         # outputs
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
+                custom_io[output_name] = (
+                    CUSTOM_IO_DTYPE_MAP[needed_dtype] if "pixel_values" in output_name else kv_cache_dtype
+                )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
@@ -2162,7 +2194,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -3003,7 +3035,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                    )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -3026,7 +3060,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                    )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
@@ -3407,8 +3443,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kw_spec := compiler_options.pop("specializations", None):
             specializations = kw_spec
         # --- Compilation ---
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[needed_dtype]
 
         for suffix in ["", "_RetainedState"]:
             for i in range(self.num_layers):
@@ -3420,7 +3459,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -3765,7 +3804,10 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         output_names = self.model.get_output_names()
 
-        kv_cache_dtype = "float16"
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
+        kv_cache_dtype = CUSTOM_IO_DTYPE_MAP[needed_dtype]
         custom_io = {}
 
         custom_io["input_features"] = kv_cache_dtype
@@ -3786,7 +3828,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             compile_only=True,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -4043,7 +4085,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         seq_len = constants.WAV2VEC2_MAX_SEQ_LEN
 
         example_inputs = {
-            "input_values": torch.zeros((bs, seq_len), dtype=torch.float32),
+            "input_values": torch.zeros((bs, seq_len), dtype=self.model.config.torch_dtype),
         }
 
         dynamic_axes = {"input_values": {0: "batch_size", 1: "seq_len"}}
@@ -4108,12 +4150,15 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
-            convert_to_fp16=True,
+            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[needed_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -4189,6 +4234,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         input_values = np.array(
             torch.nn.functional.pad(inputs["input_values"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
+        needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if needed_dtype is None:
+            needed_dtype = torch.float32
+        input_values = input_values.astype(TORCH_TO_NUMPY_DTYPE_MAP[needed_dtype])
         inputs = dict(input_values=input_values)
         outputs = self.qpc_session.run(inputs)
 

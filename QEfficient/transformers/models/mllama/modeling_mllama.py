@@ -86,7 +86,7 @@ def eager_self_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -944,7 +944,8 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         # vision inputs
         vision_inputs = {
             "pixel_values": torch.zeros(
-                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size), dtype=torch.float32
+                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size),
+                dtype=self.config.torch_dtype,
             ),
             "aspect_ratio_ids": torch.ones((BS, MAX_NUM_IMG), dtype=torch.int64),
             "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
@@ -972,14 +973,26 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
                 lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim
+                    1,
+                    num_key_value_heads,
+                    image_tokens_len,
+                    head_dim,
+                    dtype=self.config.torch_dtype,
                 )
                 lang_inputs["past_key_values"].layers[i].values = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim
+                    1,
+                    num_key_value_heads,
+                    image_tokens_len,
+                    head_dim,
+                    dtype=self.config.torch_dtype,
                 )
             else:
-                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
-                lang_inputs["past_key_values"].layers[i].values = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
+                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
+                    1, num_key_value_heads, CTX_LEN, head_dim, dtype=self.config.torch_dtype
+                )
+                lang_inputs["past_key_values"].layers[i].values = torch.zeros(
+                    1, num_key_value_heads, CTX_LEN, head_dim, dtype=self.config.torch_dtype
+                )
 
         lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
@@ -1139,7 +1152,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         return [
             IOInfo(
                 name="pixel_values",
-                datatype=torch.float32,
+                datatype=self.config.torch_dtype,
                 shape=("batch_size", "max_num_images", 4, 3, "img_size", "img_size"),
             ),
             IOInfo(name="aspect_ratio_ids", datatype=torch.int64, shape=("batch_size", "max_num_images")),

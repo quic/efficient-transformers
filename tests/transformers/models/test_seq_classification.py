@@ -20,7 +20,9 @@ seq_classification_test_models = [
 ]
 
 
-def check_seq_classification_pytorch_vs_ai100(model_name: str, seq_len: Union[int, List[int]] = 32, n_layer: int = 1):
+def check_seq_classification_pytorch_vs_ai100(
+    model_name: str, seq_len: Union[int, List[int]] = 32, n_layer: int = 1, dtype=torch.float32
+):
     """
     Validate the PyTorch model and the Cloud AI 100 model for sequence classification.
 
@@ -44,6 +46,7 @@ def check_seq_classification_pytorch_vs_ai100(model_name: str, seq_len: Union[in
         model_name,
         num_hidden_layers=n_layer,
         attn_implementation="eager",
+        torch_dtype=dtype,
         trust_remote_code=True,
     )
     pt_model.eval()
@@ -101,6 +104,8 @@ def test_seq_classification_pytorch_vs_ai100(model_name):
         seq_len=32,
         n_layer=1,
     )
+    # Test for FP16 based model
+    check_seq_classification_pytorch_vs_ai100(model_name=model_name, seq_len=32, n_layer=1, dtype=torch.float16)
 
 
 @pytest.mark.on_qaic
