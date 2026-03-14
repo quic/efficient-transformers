@@ -609,6 +609,16 @@ class QEffEncoderDecoderCache(EncoderDecoderCache):
                     cache.is_updated[layer_idx] = True
         return cache
 
+    def check_dynamic_cache(self, method: str):
+        if not (
+            isinstance(self.self_attention_cache, QEffDynamicCache)
+            and isinstance(self.cross_attention_cache, QEffDynamicCache)
+        ):
+            raise TypeError(
+                f"`{method}` requires QEffDynamicCache objects, got "
+                f"{self.self_attention_cache.__class__.__name__} and {self.cross_attention_cache.__class__.__name__}."
+            )
+
     def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor, ...], ...]:
         legacy_cache = ()
         total_layers = max(len(self.self_attention_cache.layers), len(self.cross_attention_cache.layers))
