@@ -23,7 +23,7 @@ import torch
 from diffusers import WanPipeline
 from tqdm import tqdm
 
-from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper
+from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper, QEffWanTransformer3DModel
 from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
@@ -81,7 +81,7 @@ class QEffWanPipeline:
 
     _hf_auto_class = WanPipeline
 
-    def __init__(self, model, **kwargs):
+    def __init__(self, model, enable_first_cache: Optional[bool]=True, **kwargs):
         """
         Initialize the QEfficient WAN pipeline.
 
@@ -103,14 +103,21 @@ class QEffWanPipeline:
         self.text_encoder = model.text_encoder
 
         # Create unified transformer wrapper combining dual-stage models(high, low noise DiTs)
-        self.unified_wrapper = QEffWanUnifiedWrapper(model.transformer, model.transformer_2)
-        self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper)
+        # self.unified_wrapper = QEffWanUnifiedWrapper(model.transformer, model.transformer_2)
+        # self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper, enable_first_cache)
 
+        self.transformer_high= QEffWanUnifiedTransformer(model.transformer, enable_first_cache= enable_first_cache)
+        self.transformer_low= QEffWanUnifiedTransformer(model.transformer_2, enable_first_cache=enable_first_cache)
+        
         # VAE decoder for latent-to-video conversion
         self.vae_decoder = QEffVAE(model.vae, "decoder")
         # Store all modules in a dictionary for easy iteration during export/compile
         # TODO: add text encoder on QAIC
-        self.modules = {"transformer": self.transformer, "vae_decoder": self.vae_decoder}
+        self.modules =  {
+            "transformer_high": self.transformer_high,
+            "transformer_low": self.transformer_low,
+            "vae_decoder": self.vae_decoder
+        }
 
         # Copy tokenizers and scheduler from the original model
         self.tokenizer = model.tokenizer
@@ -123,7 +130,7 @@ class QEffWanPipeline:
 
         self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
         # Extract patch dimensions from transformer configuration
-        _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
+        _, self.patch_height, self.patch_width = self.transformer_high.model.config.patch_size
 
     @property
     def do_classifier_free_guidance(self):
@@ -139,6 +146,7 @@ class QEffWanPipeline:
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
+        enable_first_cache: Optional[bool]= True,
         **kwargs,
     ):
         """
@@ -185,6 +193,7 @@ class QEffWanPipeline:
         )
         return cls(
             model=model,
+            enable_first_cache=enable_first_cache,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
@@ -314,7 +323,8 @@ class QEffWanPipeline:
         if any(
             path is None
             for path in [
-                self.transformer.onnx_path,
+                self.transformer_high.onnx_path,
+                self.transformer_low.onnx_path, 
                 self.vae_decoder.onnx_path,
             ]
         ):
@@ -332,7 +342,7 @@ class QEffWanPipeline:
         )
         # Prepare dynamic specialization updates based on video dimensions
         specialization_updates = {
-            "transformer": [
+            "transformer_high":
                 # high noise
                 {
                     "cl": cl,  # Compressed latent dimension
@@ -340,6 +350,7 @@ class QEffWanPipeline:
                     "latent_width": latent_width,  # Latent space width
                     "latent_frames": latent_frames,  # Latent frames
                 },
+            "transformer_low":
                 # low noise
                 {
                     "cl": cl,  # Compressed latent dimension
@@ -347,11 +358,11 @@ class QEffWanPipeline:
                     "latent_width": latent_width,  # Latent space width
                     "latent_frames": latent_frames,  # Latent frames
                 },
-            ],
-            "vae_decoder": {
-                "latent_frames": latent_frames,
-                "latent_height": latent_height,
-                "latent_width": latent_width,
+            "vae_decoder": 
+            {   
+            "latent_frames": latent_frames,
+            "latent_height": latent_height,
+            "latent_width": latent_width,
             },
         }
 
@@ -384,6 +395,7 @@ class QEffWanPipeline:
         max_sequence_length: int = 512,
         custom_config_path: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        cache_threshold: Optional[float] = None,
         parallel_compile: bool = True,
     ):
         """
@@ -519,7 +531,9 @@ class QEffWanPipeline:
         )
 
         # Convert embeddings to transformer dtype for compatibility
-        transformer_dtype = self.transformer.model.transformer_high.dtype
+        # import ipdb
+        # ipdb.set_trace()
+        transformer_dtype = self.transformer_high.model.dtype
         prompt_embeds = prompt_embeds.to(transformer_dtype)
         if negative_prompt_embeds is not None:
             negative_prompt_embeds = negative_prompt_embeds.to(transformer_dtype)
@@ -529,7 +543,7 @@ class QEffWanPipeline:
         timesteps = self.scheduler.timesteps
 
         # Step 5: Prepare initial latent variables for video generation
-        num_channels_latents = self.transformer.model.config.in_channels
+        num_channels_latents = self.transformer_high.model.config.in_channels
 
         latents = self.model.prepare_latents(
             batch_size * num_videos_per_prompt,
@@ -556,10 +570,16 @@ class QEffWanPipeline:
             boundary_timestep = None
 
         # Step 7: Initialize QAIC inference session for transformer
-        if self.transformer.qpc_session is None:
-            self.transformer.qpc_session = QAICInferenceSession(
-                str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
+        if self.transformer_high.qpc_session is None:
+            self.transformer_high.qpc_session = QAICInferenceSession(
+                str(self.transformer_high.qpc_path), device_ids=self.transformer_high.device_ids
             )
+
+        if self.transformer_low.qpc_session is None:
+            self.transformer_low.qpc_session = QAICInferenceSession(
+                str(self.transformer_low.qpc_path), device_ids=self.transformer_low.device_ids
+            )
+
 
         # Calculate compressed latent dimension for transformer buffer allocation
         cl, _, _, _ = calculate_latent_dimensions_with_frames(
@@ -579,9 +599,29 @@ class QEffWanPipeline:
                 constants.WAN_DIT_OUT_CHANNELS,
             ).astype(np.int32),
         }
-        self.transformer.qpc_session.set_buffers(output_buffer)
-        transformer_perf = []
+        self.transformer_high.qpc_session.set_buffers(output_buffer)
+        self.transformer_low.qpc_session.set_buffers(output_buffer)
+        
+        
+        self.transformer_high.qpc_session.skip_buffers(
+            [
+                x
+                for x in self.transformer_high.qpc_session.input_names + self.transformer_high.qpc_session.output_names
+                if x.startswith("prev_") or x.endswith("_RetainedState")
+            ]
+        )
 
+        self.transformer_low.qpc_session.skip_buffers(
+            [
+                x
+                for x in self.transformer_low.qpc_session.input_names + self.transformer_low.qpc_session.output_names
+                if x.startswith("prev_") or x.endswith("_RetainedState")
+            ]
+        )
+
+        transformer_perf = []
+        # import ipdb
+        # ipdb.set_trace()
         # Step 8: Denoising loop with dual-stage processing
         with self.model.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -593,15 +633,17 @@ class QEffWanPipeline:
                 # Determine which model to use based on boundary timestep
                 if boundary_timestep is None or t >= boundary_timestep:
                     # High-noise stage
-                    current_model = self.transformer.model.transformer_high
+                    current_model = self.transformer_high.model
                     current_guidance_scale = guidance_scale
+                    picked_qpc_session=self.transformer_high.qpc_session
+                    
                     model_type = torch.ones(1, dtype=torch.int64)  # High-noise model indicator
                 else:
                     # Low-noise stage
-                    current_model = self.transformer.model.transformer_low
+                    current_model = self.transformer_low.model
                     current_guidance_scale = guidance_scale_2
                     model_type = torch.ones(2, dtype=torch.int64)  # Low-noise model indicator
-
+                    picked_qpc_session=self.transformer_low.qpc_session
                 # Prepare latent input with proper dtype
                 latent_model_input = latents.to(transformer_dtype)
 
@@ -655,7 +697,7 @@ class QEffWanPipeline:
                     "rotary_emb": rotary_emb.detach().numpy(),
                     "temb": temb.detach().numpy(),
                     "timestep_proj": timestep_proj.detach().numpy(),
-                    "tsp": model_type.detach().numpy(),  # Transformer stage pointer
+                    # "tsp": model_type.detach().numpy(),  # Transformer stage pointer
                 }
 
                 # Prepare negative inputs for classifier-free guidance
@@ -671,9 +713,18 @@ class QEffWanPipeline:
                 # Run conditional prediction with caching context
                 with current_model.cache_context("cond"):
                     # QAIC inference for conditional prediction
-                    start_transformer_step_time = time.perf_counter()
-                    outputs = self.transformer.qpc_session.run(inputs_aic)
-                    end_transformer_step_time = time.perf_counter()
+                    # import ipdb
+                    # ipdb.set_trace()
+                    if cache_threshold:
+                        inputs_aic['cache_threshold']= np.array(cache_threshold, dtype=np.float32)
+                        start_transformer_step_time = time.perf_counter()
+                        outputs = picked_qpc_session.run(inputs_aic)
+                        end_transformer_step_time = time.perf_counter()
+                    else: 
+                        start_transformer_step_time = time.perf_counter()
+                        outputs = picked_qpc_session.run(inputs_aic)
+                        end_transformer_step_time = time.perf_counter()
+                
                     transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
                     print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
 
@@ -692,10 +743,18 @@ class QEffWanPipeline:
                 # Run unconditional prediction for classifier-free guidance
                 if self.do_classifier_free_guidance:  # Note: CFG is False for WAN Lightning
                     with current_model.cache_context("uncond"):
+                        print(picked_qpc_session)
                         # QAIC inference for unconditional prediction
-                        start_transformer_step_time = time.perf_counter()
-                        outputs = self.transformer.qpc_session.run(inputs_aic2)
-                        end_transformer_step_time = time.perf_counter()
+                        if cache_threshold:
+                            inputs_aic2['cache_threshold']= np.array(cache_threshold, dtype=np.float32) 
+                            start_transformer_step_time = time.perf_counter()
+                            outputs = picked_qpc_session.run(inputs_aic2)
+                            end_transformer_step_time = time.perf_counter()
+                        else:
+                            start_transformer_step_time = time.perf_counter()
+                            outputs = picked_qpc_session.run(inputs_aic2)
+                            end_transformer_step_time = time.perf_counter()
+                            
                         transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
 
                         # Process unconditional output

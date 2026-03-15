@@ -32,7 +32,7 @@ from QEfficient import QEffWanPipeline
 # ============================================================================
 
 # Option 1: Basic initialization with default parameters
-pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
+pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers", enable_first_cache=True)
 
 # ============================================================================
 # LORA ADAPTER LOADING FOR LIGHTNING MODEL
@@ -40,32 +40,32 @@ pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
 # Download and load Lightning LoRA adapters for faster inference
 
 # Download the LoRAs from Hugging Face Hub
-high_noise_lora_path = hf_hub_download(
-    repo_id="lightx2v/Wan2.2-Lightning",
-    filename="Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/high_noise_model.safetensors",
-)
-low_noise_lora_path = hf_hub_download(
-    repo_id="lightx2v/Wan2.2-Lightning",
-    filename="Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/low_noise_model.safetensors",
-)
+# high_noise_lora_path = hf_hub_download(
+#     repo_id="lightx2v/Wan2.2-Lightning",
+#     filename="Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/high_noise_model.safetensors",
+# )
+# low_noise_lora_path = hf_hub_download(
+#     repo_id="lightx2v/Wan2.2-Lightning",
+#     filename="Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/low_noise_model.safetensors",
+# )
 
 
-# LoRA conversion utility function
-def load_wan_lora(path: str):
-    """Convert and load WAN LoRA weights from safetensors format."""
-    return _convert_non_diffusers_wan_lora_to_diffusers(safetensors.torch.load_file(path))
+# # LoRA conversion utility function
+# def load_wan_lora(path: str):
+#     """Convert and load WAN LoRA weights from safetensors format."""
+#     return _convert_non_diffusers_wan_lora_to_diffusers(safetensors.torch.load_file(path))
 
 
-# Load LoRA adapters into the high and low noise transformers
-pipeline.transformer.model.transformer_high.load_lora_adapter(
-    load_wan_lora(high_noise_lora_path), adapter_name="high_noise"
-)
-pipeline.transformer.model.transformer_high.set_adapters(["high_noise"], weights=[1.0])
+# # Load LoRA adapters into the high and low noise transformers
+# pipeline.transformer.model.transformer_high.load_lora_adapter(
+#     load_wan_lora(high_noise_lora_path), adapter_name="high_noise"
+# )
+# pipeline.transformer.model.transformer_high.set_adapters(["high_noise"], weights=[1.0])
 
-pipeline.transformer.model.transformer_low.load_lora_adapter(
-    load_wan_lora(low_noise_lora_path), adapter_name="low_noise"
-)
-pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
+# pipeline.transformer.model.transformer_low.load_lora_adapter(
+#     load_wan_lora(low_noise_lora_path), adapter_name="low_noise"
+# )
+# pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 
 # ============================================================================
 # OPTIONAL: CUSTOM SCHEDULER CONFIGURATION
@@ -85,19 +85,19 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # Uncomment the following lines to use only a subset of transformer layers:
 #
 # # Configure for 2-layer model (faster inference)
-# pipeline.transformer.model.transformer_high.config['num_layers'] = 2
-# pipeline.transformer.model.transformer_low.config['num_layers']= 2
-#
-# # Reduce high noise transformer blocks
-# original_blocks = pipeline.transformer.model.transformer_high.blocks
-# pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
-#     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config['num_layers'])]
+# pipeline.transformer_high.model.config['num_layers'] = 6
+# pipeline.transformer_low.model.config['num_layers']= 6
+
+# # # Reduce high noise transformer blocks
+# original_blocks = pipeline.transformer_high.model.blocks
+# pipeline.transformer_high.model.blocks = torch.nn.ModuleList(
+#     [original_blocks[i] for i in range(0, pipeline.transformer_high.model.config['num_layers'])]
 # )
-#
+
 # # Reduce low noise transformer blocks
-# org_blocks = pipeline.transformer.model.transformer_low.blocks
-# pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
-#     [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config['num_layers'])]
+# org_blocks = pipeline.transformer_low.model.blocks
+# pipeline.transformer_low.model.blocks = torch.nn.ModuleList(
+#     [org_blocks[i] for i in range(0, pipeline.transformer_low.model.config['num_layers'])]
 # )
 
 # ============================================================================
@@ -149,7 +149,10 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 #       module, so you can skip the separate pipeline.compile() step.
 
 # Custom prompt for video generation
-prompt = "A cat wearing a hat walking through a magical forest with glowing mushrooms and fireflies dancing around, cinematic lighting, high quality"
+# prompt = "A old man dancing"
+
+prompt = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
+negative_prompt = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
 
 # Alternative video dimensions for different use cases, corresponding default blocking
 # height=192, width=320    # ATTENTION_BLOCKING_MODE=kv head_block_size=16 num_kv_blocks=3 python3  examples/diffusers/wan/wan_lightning.py
@@ -158,16 +161,18 @@ prompt = "A cat wearing a hat walking through a magical forest with glowing mush
 
 output = pipeline(
     prompt=prompt,
+    negative_prompt=negative_prompt,
     num_frames=81,  # Number of video frames to generate
-    guidance_scale=1.0,  # Primary guidance scale
-    guidance_scale_2=1.0,  # Secondary guidance scale for dual guidance
-    num_inference_steps=4,  # Lightning model uses fewer steps
-    generator=torch.manual_seed(42),  # For reproducible results
-    custom_config_path="examples/diffusers/wan/wan_config.json",
-    height=480,
-    width=832,
-    use_onnx_subfunctions=True,  # Enable ONNX optimizations
+    guidance_scale=4.0,  # Primary guidance scale
+    guidance_scale_2=3.0,  # Secondary guidance scale for dual guidance
+    num_inference_steps=40,  # Lightning model uses fewer steps
+    generator=torch.Generator().manual_seed(42),  # For reproducible results
+    custom_config_path="/home/amitraj/project/first_cache/efficient-transformers/examples/diffusers/wan/wan_config.json",
+    height=96,
+    width=160,
+    use_onnx_subfunctions=False,  # Enable ONNX optimizations
     parallel_compile=False,  # Set to True for parallel compilation
+    cache_threshold=0.09,
 )
 
 # Extract generated frames and export to video

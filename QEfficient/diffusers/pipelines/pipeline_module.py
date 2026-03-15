@@ -565,7 +565,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
     _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, unified_transformer):
+    def __init__(self, unified_transformer, enable_first_cache):
         """
         Initialize the Wan unified transformer.
 
@@ -574,6 +574,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         """
         super().__init__(unified_transformer)
         self.model = unified_transformer
+        self.model.enable_first_cache=enable_first_cache
 
     @property
     def get_model_config(self) -> Dict:
@@ -598,6 +599,9 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
                 - output_names (List[str]): Names of model outputs
         """
         batch_size = constants.WAN_ONNX_EXPORT_BATCH_SIZE
+        cl = constants.WAN_ONNX_EXPORT_CL_180P
+        hidden_dim = self.model.config.hidden_size if hasattr(self.model.config, 'hidden_size') else 5120
+        
         example_inputs = {
             # hidden_states = [ bs, in_channels, frames, latent_height, latent_width]
             "hidden_states": torch.randn(
@@ -629,8 +633,11 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             "tsp": torch.ones(1, dtype=torch.int64),
         }
 
-        output_names = ["output"]
 
+        output_names = [
+            "output",
+            ]
+        
         dynamic_axes = {
             "hidden_states": {
                 0: "batch_size",
@@ -645,6 +652,68 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             "tsp": {0: "model_type"},
         }
 
+        if self.model.enable_first_cache:
+            
+            example_inputs["prev_remain_block_residuals"]= torch.randn(
+                batch_size,
+                cl,
+                hidden_dim,
+                dtype=torch.float32,
+            )
+            example_inputs["prev_first_block_residuals"]= torch.randn(
+                batch_size,
+                cl,
+                hidden_dim,
+                dtype=torch.float32,
+            )
+            # example_inputs["prev_low_hidden_state_residuals"] = torch.randn(
+            #     batch_size,
+            #     cl,
+            #     hidden_dim,
+            #     dtype=torch.float32,
+            # )
+            
+            # example_inputs["prev_low_first_block_residuals"]= torch.randn(
+            #     batch_size,
+            #     cl,
+            #     hidden_dim,
+            #     dtype=torch.float32,
+            # )
+            
+            example_inputs["cache_threshold"] = torch.tensor(0.5, dtype=torch.float32)
+            
+            # Update output names
+            output_names.extend([
+                "prev_first_block_residuals_RetainedState",
+                "prev_remain_block_residuals_RetainedState",
+                # "prev_low_first_block_residuals_RetainedState",
+                # "prev_low_hidden_state_residuals_RetainedState"
+            ])
+
+            # update dynamic axes 
+            dynamic_axes['prev_remain_block_residuals']={
+                0: "batch_size",
+                1: "cl",
+            }
+            dynamic_axes['prev_first_block_residuals']={
+                0: "batch_size",
+                1: "cl",
+            }
+            # dynamic_axes['prev_low_hidden_state_residuals']={
+            #     0: "batch_size",
+            #     1: "num_channels",
+            #     2: "latent_frames",
+            #     3: "latent_height",
+            #     4: "latent_width"
+            # }
+            # dynamic_axes['prev_low_first_block_residuals']={
+            #     0: "batch_size",
+            #     1: "num_channels",
+            #     2: "latent_frames",
+            #     3: "latent_height",
+            #     4: "latent_width"
+            # }
+            
         return example_inputs, dynamic_axes, output_names
 
     def export(
@@ -685,4 +754,6 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
-        self._compile(specializations=specializations, **compiler_options)
+        self._compile(specializations=specializations,
+                      retained_state=True,
+                      **compiler_options)
