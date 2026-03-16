@@ -9,7 +9,6 @@ from typing import Optional
 from peft import get_peft_model
 from transformers import Trainer, TrainingArguments
 
-import QEfficient.finetune.experimental.core.callbacks
 from QEfficient.finetune.experimental.core.component_registry import registry
 from QEfficient.finetune.experimental.core.config_manager import PeftConfig
 
