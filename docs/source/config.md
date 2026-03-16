@@ -63,6 +63,8 @@ If provided, this takes precedence over dataset_name.
 *   **train_batch_size**: `default = 1` → Per-device batch size during training.
 *   **eval_batch_size**: `default = 1` → Per-device batch size during evaluation.
 *   **collate_fn**: `default = "dynamic_padding"` → Collation function used to build batches (e.g., dynamic padding to match the longest sequence in the batch).
+*   **dataset_disc_style**: `default = None` →  Selects the style remix category to apply to the dataset during preprocessing; when None, no style remixing is applied and the original dataset style is preserved.
+
 *   **group_by_length**: `default = true` → Whether to group samples of similar lengths together for efficient batching.
 *   **length_column_name**: `default = "input_ids"` → Column name used to determine sequence length for grouping (commonly the token IDs field).
 *   **num_workers**: `default = 4` → Number of subprocesses to use for data loading.
@@ -159,6 +161,17 @@ dataset:
   completion_template: "{target}"
 ```
 
+#### **5. Style-Remix (hallisky/DiSC)**
+
+```yaml
+dataset:
+  dataset_type: "sft_dataset"
+  dataset_name: "hallisky/DiSC" 
+  prompt_template: "### Original:{original} \n ### Rewrite:\n" 
+  completion_template: "{generation}"     
+  dataset_disc_style: "sarcasm_more" 
+
+```
 ***
 
 ## 3. Training Configuration
