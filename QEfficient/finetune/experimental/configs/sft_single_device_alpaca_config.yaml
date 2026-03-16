@@ -46,4 +46,3 @@ callbacks:
   early_stopping:
     early_stopping_patience: 3 # Number of epochs to wait before stopping training
     early_stopping_threshold: 0.001 # Minimum change in metric to qualify as improvement
-  tensorboard:
