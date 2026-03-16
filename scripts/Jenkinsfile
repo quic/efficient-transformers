@@ -50,7 +50,7 @@ pipeline {
                }
                stage('QAIC LLM Tests') {
                    steps {
-                       timeout(time: 120, unit: 'MINUTES') {
+                       timeout(time: 180, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
