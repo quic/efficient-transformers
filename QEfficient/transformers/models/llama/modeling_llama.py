@@ -201,16 +201,20 @@ def eager_attention_forward_blockedKV(
         K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
         K_block_states = repeat_kv(K_block, module.num_key_value_groups)
         V_block_states = repeat_kv(V_block, module.num_key_value_groups)
-        past_seen_tokens_start = start_index
-        past_seen_tokens_end = min(past_seen_tokens, end_index)
-        causal_mask_block = _create_causal_mask(
-            position_ids=position_ids, target_length=past_seen_tokens_end, start_index=past_seen_tokens_start
-        )
 
         # Compute attention scores for the block
         attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
+
+        mask_block = None
         if attention_mask is not None:
-            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+            mask_block = attention_mask[..., start_index:end_index]
+            if mask_block.shape[-1] != attn_weights_block.shape[-1]:
+                mask_block = None
+
+        if mask_block is None:
+            past_seen_tokens_end = min(past_seen_tokens, end_index)
+            mask_block = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens_end, start_index=start_index)
+        attn_weights_block = torch.where(mask_block, masked_tensor, attn_weights_block)
 
         # Update Running row maximum
         prev_max = current_max
