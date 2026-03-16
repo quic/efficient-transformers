@@ -96,6 +96,7 @@ class SFTDataset(BaseDataset):
         self.completion_func_path = kwargs.get("completion_func", None)
         self.remove_samples_with_empty_columns = kwargs.get("remove_samples_with_empty_columns", True)
         self.config_name = kwargs.get("config_name", None)
+        self.dataset_disc_style = kwargs.get("dataset_disc_style", None)
 
         if self.json_file_path not in (None, ""):
             if not os.path.isfile(self.json_file_path):
@@ -149,6 +150,13 @@ class SFTDataset(BaseDataset):
                 load_split = "train"
             # FIXME: Add streaming support for larger datasets.
             self.dataset = load_dataset(self.dataset_name, split=load_split, **load_kwargs)
+            if self.dataset_disc_style:
+                available_styles = set(self.dataset["category"])
+                if self.dataset_disc_style not in available_styles:
+                    raise RuntimeError(
+                        f"For DiSC dataset the provided disc_style '{self.dataset_disc_style}' is not supported."
+                    )
+                self.dataset = self.dataset.filter(lambda example: example["category"] == self.dataset_disc_style)
 
             if len(available_splits) == 1:
                 self.dataset = apply_train_test_split(self.dataset, self.split_ratio, self.split, self.seed)
