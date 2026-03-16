@@ -91,6 +91,13 @@ class QEFFBaseModel(ABC):
         """
         top_level_dtype = getattr(self.config, "torch_dtype", torch.float32)
 
+        if top_level_dtype is None:
+            top_level_dtype = torch.float32
+        elif isinstance(top_level_dtype, str):
+            top_level_dtype = getattr(torch, top_level_dtype, torch.float32)
+
+        self.config.torch_dtype = top_level_dtype
+
         # Normalize llm_config if it exists
         if hasattr(self.config, "llm_config"):
             self.config.llm_config.torch_dtype = top_level_dtype
