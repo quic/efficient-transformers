@@ -302,10 +302,10 @@ class QEffDynamicCompressedKVRopeLayer:
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)  # TODO: add support later
 
-        self.ckv = CtxScatterFunc3D.apply(self.ckv, position_ids, compressed_kv)
+        self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
 
         ckv_out = self.ckv
-        ctx_len = ckv_out.shape[1]
+        ctx_len = ckv_out.shape[-2]
         ctx_indices = torch.arange(ctx_len)[None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values
         invalid_mask = ctx_indices > gather_limit
@@ -315,7 +315,7 @@ class QEffDynamicCompressedKVRopeLayer:
             invalid_idx_value = 0
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ckv_out = CtxGatherFunc3D.apply(ckv_out, ctx_indices)
+        ckv_out = CtxGatherFunc.apply(ckv_out, ctx_indices, ctx_len)
         ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
         return ckv_out
 

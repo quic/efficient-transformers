@@ -51,6 +51,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
+    ReplicateKVHeadTransform,
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyTransform,
     RevertPrefillOnlyExternalModuleMapperTransform,
@@ -2410,6 +2411,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
+        if self.model.config.model_type in {"kimi_k2"}:
+            self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
+            if replicate_kv_transformed:
+                self.hash_params["config"] = model.config.to_diff_dict()
+
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
@@ -2746,11 +2752,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names = [v for v in output_names if "past" not in v]
             example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
             for i in range(self.num_layers):
-                ckv = torch.zeros((bs, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32)
-                k_pe = torch.zeros((bs, 1, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32)
+                ckv = torch.zeros((bs, 4, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32)
+                k_pe = torch.zeros((bs, 4, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32)
                 example_inputs["compressed_kvs"][i].append(ckv)
                 example_inputs["compressed_kvs"][i].append(k_pe)
-                dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 1: "ctx_len"}
+                dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}
                 dynamic_axes[f"k_pe.{i}"] = {0: "batch_size", 2: "ctx_len"}
                 output_names.append(f"compressed_kv.{i}_RetainedState")
                 output_names.append(f"k_pe.{i}_RetainedState")
