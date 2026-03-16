@@ -29,6 +29,7 @@ class QuantLinearTorchFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
         if torch.onnx.is_in_onnx_export():
+            # For faster export
             return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype).float()
         fp_weight = dequantize_blockwise_bits(
             qself_qweight, qself_scales, qself_qzeros, bits, group_size, g_idx, in_features, out_features
@@ -87,20 +88,20 @@ class QuantLinearORT(nn.Module):
         q_rows = in_features // self.group_size
         self.register_buffer(
             "qweight",
-            torch.zeros((out_features, q_rows, self.group_size // (8 // bits)), dtype=torch.uint8),
+            torch.empty((out_features, q_rows, self.group_size // (8 // bits)), dtype=torch.uint8),
         )
         self.register_buffer(
             "qzeros",
-            torch.zeros((q_rows + (q_rows & 1)) * (out_features // 8 * self.bits), dtype=torch.uint8),
+            torch.empty((q_rows + (q_rows & 1)) * (out_features // 8 * self.bits), dtype=torch.uint8),
         )
         self.register_buffer(
-            "scales", torch.zeros((math.ceil(in_features / self.group_size) * out_features), dtype=torch.float16)
+            "scales", torch.empty((math.ceil(in_features / self.group_size) * out_features), dtype=torch.float16)
         )
         self.register_buffer(
             "g_idx", torch.tensor([i // self.group_size for i in range(in_features)], dtype=torch.int32)
         )
         if bias:
-            self.register_buffer("bias", torch.zeros((out_features), dtype=torch.float16))
+            self.register_buffer("bias", torch.empty((out_features), dtype=torch.float16))
         else:
             self.bias = None
 
@@ -179,3 +180,52 @@ class QuantLinearORT(nn.Module):
         )
         out = out + self.bias if self.bias is not None else out
         return out
+
+
+class QMOE(torch.autograd.Function):
+    @staticmethod
+    def symbolic(g, x, router_probs, fc1_experts_weights, fc1_scales, fc2_experts_weights, fc2_scales, fc3_experts_weights, fc3_scales,
+                 activation_type, block_size, expert_weight_bits, k):
+        return g.op(
+            "com.microsoft::QMOE",
+            input = x,
+            router_probs=router_probs,
+            fc1_experts_weights=fc1_experts_weights,
+            fc1_scales=fc1_scales,
+            fc2_experts_weights=fc2_experts_weights,
+            fc2_scales=fc2_scales,
+            fc3_experts_weights=fc3_experts_weights,
+            fc3_scales=fc3_scales,
+            outputs=1,
+            activation_type_i=activation_type,
+            block_size_i=block_size,
+            expert_weight_bits_i=expert_weight_bits,
+            k_i=k,
+        )
+
+    @staticmethod
+    def forward(ctx, x, router_probs, fc1_experts_weights, fc1_scales, fc2_experts_weights, fc2_scales, fc3_experts_weights, fc3_scales,
+                 activation_type, block_size, expert_weight_bits, k):
+        if torch.onnx.is_in_onnx_export():
+            return torch.zeros_like(x)
+        # TODO write code to gather required ones and dequantize and matmul
+        _, topk_idx = torch.topk(router_probs, k=self.top_k, dim=-1, sorted=False)
+        topk_weight = scores.gather(1, topk_idx)
+        expert_in = (
+            hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.config.hidden_size)
+        )
+        gate_out = torch.bmm(expert_in, gate_proj)
+        up_out = torch.bmm(expert_in, up_proj)
+        hidden = self.act_fn(gate_out) * up_out
+        expert_output = torch.bmm(hidden, down_proj)
+        experts_out = expert_output.view(seq_len, self.gate.top_k, self.config.hidden_size)
+        experts_out = experts_out * topk_weights.unsqueeze(-1)
+        # final_hidden_states = experts_out.sum(dim=1)
+        final_hidden_states = torch.einsum("abc->ac", experts_out)
+
+        return final_hidden_states.type(hidden_states.dtype)
+        fp_weight = dequantize_blockwise_bits(
+            qself_qweight, qself_scales, qself_qzeros, bits, group_size, g_idx, in_features, out_features
+        )[0].float()
+
+        return torch.matmul(x.float(), fp_weight.T.float())

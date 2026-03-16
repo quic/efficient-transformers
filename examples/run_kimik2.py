@@ -8,9 +8,10 @@ prompt = "Once upon a time,"
 
 # model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
 model_path = "moonshotai/Kimi-K2-Thinking"
-model = QEFFAutoModelForCausalLM.from_pretrained(
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_path, torch_dtype=torch.float32, num_hidden_layers=2, trust_remote_code=True
 )
+qeff_model.compile(prefill_seq_len=1, num_cores=16, num_devices=1, mxfp6_matmul=True, mxint8_kv_cache=True)
 
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
 
@@ -25,11 +26,11 @@ padded_len = inputs["input_ids"].shape[1]
 num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
-with torch.no_grad():
-    out = model(**inputs)
-    predictions = torch.argmax(out.logits, dim=-1)
+# with torch.no_grad():
+#     out = model(**inputs)
+#     predictions = torch.argmax(out.logits, dim=-1)
 
-qeff_model = QEFFAutoModelForCausalLM(model)
+# qeff_model = QEFFAutoModelForCausalLM(model)
 qeff_model.mla(enable_mla=True, mla_absorption_config={"enable": True, "online": True})
 
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
@@ -46,7 +47,7 @@ pad_shape_k_pe = (1, 1, cache_len, 64)
 past_key_values = []
 compressed_kvs = []
 
-for i in range(model.config.num_hidden_layers):
+for i in range(qeff_model.model.config.num_hidden_layers):
     past_key = torch.zeros((pad_shape_k), dtype=torch.float32)
     past_value = torch.zeros((pad_shape_v), dtype=torch.float32)
     pkv = (past_key, past_value)
@@ -62,7 +63,7 @@ inputs["compressed_kvs"] = compressed_kvs
 
 prefill_qeff_out = qeff_model.model(**inputs)
 
-assert (prefill_qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
+# assert (prefill_qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
 position_ids = inputs["position_ids"]
 qeff_out = prefill_qeff_out

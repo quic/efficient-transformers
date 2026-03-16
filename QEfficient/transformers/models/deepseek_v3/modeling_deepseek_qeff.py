@@ -1,4 +1,5 @@
 import math
+import os
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -7,6 +8,7 @@ from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
+from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 
 # Assuming these are imported from the original DeepseekV3 code
@@ -379,97 +381,193 @@ class QEffDeepseekV3Attention(nn.Module):
         return attn_output, attn_weights, past_key_value, value_states
 
 
+class QEffDeepseekMoEGate(nn.Module):
+
+    def forward(self, hidden_states):
+        bsz, seq_len, h = hidden_states.shape
+        ### compute gating score
+        hidden_states = hidden_states.view(-1, h)
+        logits = F.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32), None)
+        if self.scoring_func == "sigmoid":
+            scores = logits.sigmoid()
+        else:
+            raise NotImplementedError(f"insupportable scoring function for MoE gating: {self.scoring_func}")
+
+        ### select top-k experts
+        if self.topk_method == "noaux_tc":
+            assert not self.training
+            scores_for_choice = scores.view(bsz * seq_len, -1) + self.e_score_correction_bias.unsqueeze(0)
+            group_scores = (
+                scores_for_choice.view(bsz * seq_len, self.n_group, -1).topk(2, dim=-1)[0].sum(dim=-1)
+            )  # [n, n_group]
+            group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]  # [n, top_k_group]
+            group_mask = torch.zeros_like(group_scores)  # [n, n_group]
+            group_mask.scatter_(1, group_idx, 1)  # [n, n_group]
+            score_mask = (
+                group_mask.unsqueeze(-1)
+                .expand(bsz * seq_len, self.n_group, self.n_routed_experts // self.n_group)
+                .reshape(bsz * seq_len, -1)
+            )  # [n, e]
+            tmp_scores = scores_for_choice.masked_fill(~score_mask.bool(), 0.0)  # [n, e]
+            _, topk_idx = torch.topk(tmp_scores, k=self.top_k, dim=-1, sorted=False)
+            topk_weight = scores.gather(1, topk_idx)
+        else:
+            raise NotImplementedError(f"insupportable TopK function for MoE gating: {self.topk_method}")
+
+        ### norm gate to sum 1
+        if self.top_k > 1 and self.norm_topk_prob:
+            denominator = topk_weight.sum(dim=-1, keepdim=True) + 1e-20
+            topk_weight = topk_weight / denominator
+        topk_weight = topk_weight * self.routed_scaling_factor  # must multiply the scaling factor
+
+        if not tmp_scores:
+            tmp_scores = None
+
+        return topk_idx, topk_weight, tmp_scores, scores
+
+
+
 class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
-        self.all_gate_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
-        )
-        self.all_up_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
-            )
-        )
-        self.all_down_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
-        )
-        self.act_fn = self.experts[0].act_fn
+        import ipdb; ipdb.set_trace()
 
+        # Get common parameters from first expert
+        first_expert = self.experts[0]
+        self.bits = first_expert.gate_proj.bits
+        self.group_size = first_expert.gate_proj.group_size
+        self.act_fn = first_expert.act_fn
+        assert first_expert.gate_proj.act_order == first_expert.up_proj.act_order == first_expert.down_proj.act_order, "act_order mismatch"
+        self.act_order = first_expert.gate_proj.act_order
+        
+        # Store dimensions for dequantization
+        self.in_features_gate, self.out_features_gate = first_expert.gate_proj.in_features, first_expert.gate_proj.out_features
+        self.in_features_up, self.out_features_up = first_expert.up_proj.in_features, first_expert.up_proj.out_features
+        self.in_features_down, self.out_features_down = first_expert.down_proj.in_features, first_expert.down_proj.out_features
+
+        # Stack all parameters along a new dimension (expert dimension)
+        all_gate_qweight = torch.nn.Parameter(torch.stack([exp.gate_proj.qweight for exp in self.experts], dim=0), requires_grad=False)
+        all_gate_scales = torch.nn.Parameter(torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0), requires_grad=False)
+        # TODO: Since we know qzeros is always 8 -> Just embed this once into the operator as parameter -> explore this later
+        all_gate_qzeros = torch.nn.Parameter(torch.stack([exp.gate_proj.qzeros for exp in self.experts], dim=0), requires_grad=False)
+        all_gate_gidx = torch.nn.Parameter(torch.stack([exp.gate_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
+        
+        all_up_qweight = torch.nn.Parameter(torch.stack([exp.up_proj.qweight for exp in self.experts], dim=0), requires_grad=False)
+        all_up_scales = torch.nn.Parameter(torch.stack([exp.up_proj.scales for exp in self.experts], dim=0), requires_grad=False)
+        all_up_qzeros = torch.nn.Parameter(torch.stack([exp.up_proj.qzeros for exp in self.experts], dim=0), requires_grad=False)
+        all_up_gidx = torch.nn.Parameter(torch.stack([exp.up_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
+        
+        all_down_qweight = torch.nn.Parameter(torch.stack([exp.down_proj.qweight for exp in self.experts], dim=0), requires_grad=False)
+        all_down_scales = torch.nn.Parameter(torch.stack([exp.down_proj.scales for exp in self.experts], dim=0), requires_grad=False)
+        all_down_qzeros = torch.nn.Parameter(torch.stack([exp.down_proj.qzeros for exp in self.experts], dim=0), requires_grad=False)
+        all_down_gidx = torch.nn.Parameter(torch.stack([exp.down_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
+
+        self.fc1_experts_weights = torch.nn.Parameter(all_gate_qweight.view(self.config.n_routed_experts, self.out_features_gate, -1), requires_grad=False)
+        self.fc1_scales = torch.nn.Parameter(all_gate_scales.view(self.config.n_routed_experts, self.out_features_gate, -1), requires_grad=False)
+        
+        self.fc2_experts_weights = torch.nn.Parameter(all_up_qweight.view(self.config.n_routed_experts, self.out_features_up, -1), requires_grad=False)
+        self.fc2_scales = torch.nn.Parameter(all_up_scales.view(self.config.n_routed_experts, self.out_features_up, -1), requires_grad=False)
+        
+        self.fc3_experts_weights = torch.nn.Parameter(all_down_qweight.view(self.config.n_routed_experts, self.out_features_down, -1), requires_grad=False)
+        self.fc3_scales = torch.nn.Parameter(all_down_scales.view(self.config.n_routed_experts, self.out_features_down, -1), requires_grad=False)
+        
+        
+        
     def moe(
         self,
         hidden_states: torch.Tensor,
         topk_indices: torch.Tensor,
         topk_weights: torch.Tensor,
     ):
+        import ipdb; ipdb.set_trace()
         seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
 
-        gate_proj = self.all_gate_proj[topk_indices.flatten()]
-        up_proj = self.all_up_proj[topk_indices.flatten()]
-        down_proj = self.all_down_proj[topk_indices.flatten()]
-        expert_in = (
-            hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.config.hidden_size)
-        )
-        gate_out = torch.bmm(expert_in, gate_proj)
-        up_out = torch.bmm(expert_in, up_proj)
-        hidden = self.act_fn(gate_out) * up_out
-        expert_output = torch.bmm(hidden, down_proj)
-        experts_out = expert_output.view(seq_len, self.gate.top_k, self.config.hidden_size)
-        experts_out = experts_out * topk_weights.unsqueeze(-1)
-        # final_hidden_states = experts_out.sum(dim=1)
-        final_hidden_states = torch.einsum("abc->ac", experts_out)
+        for i in range(self.gate.top_k):
+            expert_idx = topk_indices[:, i]
+            curr_weight = topk_weights[:, i]
+            gate_qweight = self.all_gate_qweight[expert_idx].reshape(seq_len*self.out_features_gate, self.in_features_gate//self.group_size, (self.group_size*self.bits)//8)
+            gate_scales = self.all_gate_scales[expert_idx].reshape(seq_len*self.out_features_gate * (self.in_features_gate//self.group_size))
+            gate_qzeros = self.all_gate_qzeros[expert_idx].reshape(seq_len*self.out_features_gate, self.in_features_gate//self.group_size)
+            gate_gidx = self.all_gate_gidx[expert_idx].reshape(seq_len*self.in_features_gate)
 
-        return final_hidden_states.type(hidden_states.dtype)
+            up_qweight = self.all_up_qweight[expert_idx].reshape(seq_len*self.out_features_up, self.in_features_up//self.group_size, (self.group_size*self.bits)//8)
+            up_scales = self.all_up_scales[expert_idx].reshape(seq_len*self.out_features_up * (self.in_features_up//self.group_size))
+            up_qzeros = self.all_up_qzeros[expert_idx].reshape(seq_len*self.out_features_up, self.in_features_up//self.group_size)
+            up_gidx = self.all_up_gidx[expert_idx].reshape(seq_len*self.in_features_up)
+
+            down_qweight = self.all_down_qweight[expert_idx].reshape(seq_len*self.out_features_down, self.in_features_down//self.group_size, (self.group_size*self.bits)//8)
+            down_scales = self.all_down_scales[expert_idx].reshape(seq_len*self.out_features_down * (self.in_features_down//self.group_size))
+            down_qzeros = self.all_down_qzeros[expert_idx].reshape(seq_len*self.out_features_down, self.in_features_down//self.group_size)
+            down_gidx = self.all_down_gidx[expert_idx].reshape(seq_len*self.in_features_down)
+
+            gate_out = QuantLinearTorchFunction.apply(
+                hidden_states,
+                gate_qweight,
+                gate_scales,
+                gate_qzeros,
+                gate_gidx if self.act_order else None,
+                self.bits,
+                self.group_size,
+                self.in_features_gate,
+                self.out_features_gate * seq_len
+            )
+            
+            up_out = QuantLinearTorchFunction.apply(
+                hidden_states,
+                up_qweight,
+                up_scales,
+                up_qzeros,
+                up_gidx if self.act_order else None,
+                self.bits,
+                self.group_size,
+                self.in_features_up,
+                self.out_features_up * seq_len
+            )
+
+            hidden = self.act_fn(gate_out) * up_out
+            down_out = QuantLinearTorchFunction.apply(
+                hidden,
+                down_qweight,
+                down_scales,
+                down_qzeros,
+                down_gidx if self.act_order else None,
+                self.bits,
+                self.group_size,
+                self.in_features_down,
+                self.out_features_down
+            )
+            down_out = down_out.reshape(seq_len, self.out_features_down)
+            final_hidden_states += down_out * curr_weight.unsqueeze(1)
+        
+        return final_hidden_states
+
+    def moe_weights_as_activations(self, hidden_states, router_weights):
+        return QMOE.apply(hidden_states, router_weights, self.fc1_experts_weights, self.fc1_scales, self.fc2_experts_weights, self.fc2_scales, self.fc3_experts_weights, self.fc3_scales,
+                          self.config.hidden_act, self.group_size, self.bits, self.num_experts_per_tok, )
+    
+    def forward_weights_as_activations(self, hidden_states):
+        residuals = hidden_states
+        orig_shape = hidden_states.shape
+        topk_indices, topk_weights, router_weights = self.gate(hidden_states)
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        hidden_states = self.moe_weights_as_activations(hidden_states, router_weights).view(*orig_shape)
+        hidden_states = hidden_states + self.shared_experts(residuals)
+        return hidden_states
 
     def forward(self, hidden_states):
         residuals = hidden_states
         orig_shape = hidden_states.shape
-        topk_indices, topk_weights = self.gate(hidden_states)
+        topk_indices, topk_weights, router_weights = self.gate(hidden_states)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
 
-    # def moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
-    #     final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-    #     expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
-    #     expert_mask = expert_mask.permute(2, 0, 1)
-
-    #     for expert_idx in range(len(self.experts)):
-    #         expert = self.experts[expert_idx]
-    #         mask = expert_mask[expert_idx]
-    #         expert_output = expert(hidden_states) * (((topk_weights * mask).sum(1))[:, None])
-    #         expert_output = torch.where(
-    #             (topk_weights * mask).sum(1).to(torch.bool)[:, None],
-    #             expert_output,
-    #             torch.tensor(0.0),
-    #         )
-    #         final_hidden_states = final_hidden_states + expert_output
-    #     return final_hidden_states.type(hidden_states.dtype)
-
 
 class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
-    # def __qeff_init__(
-    #     self,
-    # ):
-    #     self.all_gate_proj = torch.nn.Parameter(
-    #         torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-    #     )
-    #     self.all_up_proj = torch.nn.Parameter(
-    #         torch.cat([exp.up_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-    #     )
-    #     self.all_down_proj = torch.nn.Parameter(
-    #         torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-    #     )
-    #     self.act_fn = self.experts[0].act_fn
 
     def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)

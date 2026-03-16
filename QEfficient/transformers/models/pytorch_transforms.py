@@ -221,6 +221,7 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenModel,
 )
 from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import (
+    QEffDeepseekMoEGate,
     QEffDeepseekV3Attention,
     QEffDeepseekV3DecoderLayer,
     QEffDeepseekV3ForCausalLM,
@@ -884,6 +885,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffDeepseekV3MoE.forward,
             "moe": QEffDeepseekV3MoE.moe,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
+            "gate.forward": QEffDeepseekMoEGate.forward,
         },
         "DeepseekV3Attention": {
             "forward": QEffDeepseekV3Attention.forward,
