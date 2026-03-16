@@ -86,6 +86,7 @@ from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
     LlamaForCausalLM,
+    LlamaMLP,
     LlamaModel,
     LlamaRMSNorm,
     LlamaRotaryEmbedding,
@@ -316,6 +317,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
+    QEffLlamaMLP,
     QEffLlamaModel,
     QEffLlamaRotaryEmbedding,
 )
@@ -511,6 +513,8 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
         LlamaRotaryEmbedding: QEffLlamaRotaryEmbedding,
+        LlamaMLP: QEffLlamaMLP,
+        
         # Llama4
         Llama4TextAttention: QEffLlama4TextAttention,
         Llama4ForCausalLM: QEffLlama4ForCausalLM,

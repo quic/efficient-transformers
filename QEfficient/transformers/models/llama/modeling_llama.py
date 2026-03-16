@@ -19,15 +19,33 @@ from transformers.models.llama.modeling_llama import (
     LlamaConfig,
     LlamaDecoderLayer,
     LlamaForCausalLM,
+    LlamaMLP,
     LlamaModel,
     LlamaRotaryEmbedding,
-    repeat_kv,
-    rotate_half,
+    LlamaRMSNorm,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
+
+
+class CustomRMSNormAIC(nn.Module):
+    """
+    RMSNorm module that works by replacing the current module with compiler known custom-op.
+    """
+
+    def __init__(self, hidden_size, eps=1e-05):
+        super(CustomRMSNormAIC, self).__init__()
+        self.variance_epsilon = eps
+        self.eps = eps  # Added to support GemmaRMSNorm
+        self.weight = torch.nn.Parameter(torch.ones(hidden_size))
+
+    def forward(self, hidden_states):
+        return CustomRMSNormFunc.apply(
+            hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+        )
 
 
 class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
@@ -64,6 +82,12 @@ class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
             self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
         )
 
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
@@ -94,6 +118,24 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
+
+
+class QEffLlamaMLP(LlamaMLP):
+    def forward(self, x):
+        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        return down_proj
+
+
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
 def eager_attention_forward(
@@ -227,12 +269,13 @@ class QEffLlamaAttention(LlamaAttention):
         value_states = self.v_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
+        cache_kwargs = {}
         if past_key_value is not None:
             if num_kv_blocks is not None:
+                past_seen_tokens = past_key_value.get_seq_length()
                 cache_kwargs = {
                     "batch_index": batch_index,
                     "position_ids": position_ids,

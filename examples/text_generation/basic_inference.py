@@ -14,10 +14,10 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 def main():
     parser = argparse.ArgumentParser(description="Basic text generation inference")
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
+    parser.add_argument("--model-name", type=str, help="HuggingFace model ID")
     parser.add_argument("--prompt", type=str, default="Hello, how are you?", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
-    parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
+    parser.add_argument("--ctx-len", type=int, default=2048, help="Context length")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
@@ -38,6 +38,8 @@ def main():
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True
     )
     print(f"Model compiled to: {qpc_path}")
 
