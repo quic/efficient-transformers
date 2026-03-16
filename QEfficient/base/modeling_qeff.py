@@ -320,7 +320,6 @@ class QEFFBaseModel(ABC):
 
         self.onnx_path = onnx_path
         logger.info("Model export is finished and saved at: %s", onnx_path)
-        self.onnx_path = onnx_path
         return onnx_path
 
     def get_onnx_path(

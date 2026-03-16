@@ -1318,6 +1318,6 @@ class TextGeneration:
             generated_ids=self._qaic_model.generated_ids,
             perf_metrics=perf_metrics,
         )
-        logger.info("Text generation finised")
+        logger.info("Text generation finished")
         QEFFLogger.print_table()
         return latency_stats

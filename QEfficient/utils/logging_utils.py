@@ -347,5 +347,5 @@ class QEFFLogger:
             ["Text Generation", max(0.0, o5 - o4)],
             ["Total Time", max(0.0, o5 - o1)],
         ]
-
+        print("\n")
         print(tabulate(timing_data, headers=["Step", "Time (s)"], tablefmt="github", floatfmt=".3f"))
