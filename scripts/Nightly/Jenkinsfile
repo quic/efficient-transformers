@@ -12,10 +12,9 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '5', daysToKeepStr: '30'))
     }
 
-    triggers {        
+    triggers {
         cron('''TZ=Asia/Kolkata
-        0 21 * * *''')
-
+        0 21 * * 6''')
     }
 
     environment {
@@ -111,7 +110,7 @@ pipeline {
                                 export QEFF_HOME=$PWD/Non_qaic_llm
                                 
                                 pytest tests \
-                                    -m '(not cli) and (on_qaic) and (llm_model) and (not regular) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
+                                    -m '(not cli) and (on_qaic) and (llm_model) and (not custom_layers) and (not dummy_model) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
                                     --ignore tests/vllm \
                                     ${PYTEST_ARGS} \
                                     --junitxml=tests/tests_log2.xml
@@ -137,7 +136,7 @@ pipeline {
                                 export QEFF_HOME=$PWD/Non_qaic_feature
                                 
                                 pytest tests \
-                                    -m '(not cli) and (on_qaic) and (feature) and (not regular) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
+                                    -m '(not cli) and (on_qaic) and (feature) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' \
                                     --ignore tests/vllm \
                                     ${PYTEST_ARGS} \
                                     --junitxml=tests/tests_log2_feature.xml

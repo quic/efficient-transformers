@@ -22,7 +22,8 @@ from QEfficient.transformers.quantizers.auto import replace_transformers_quantiz
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import create_json, load_hf_processor
 from QEfficient.utils.constants import WAV2VEC2_MAX_SEQ_LEN, QnnConstants
-from QEfficient.utils.device_utils import get_available_device_id
+
+from .check_model_results import dump_and_compare_results
 
 CONFIG_PATH = "tests/configs/embedding_model_configs.json"
 
@@ -129,9 +130,10 @@ def run_ctc_ort(onnx_path, config, processor: AutoProcessor, inputs: np.ndarray,
 
 def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
-    n_layer: int = 1,
+    n_layer: int = -1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
+    compare_results: Optional[bool] = False,
 ):
     """
     Validate the PyTorch model, the PyTorch model after ONNX model and the Cloud AI 100 model
@@ -162,10 +164,8 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
     predicted_ids = torch.argmax(ort_tokens, dim=-1)
     ort_output = processor.batch_decode(predicted_ids)
     assert pytorch_output == ort_output, "Tokens don't match for pytorch output and ORT output."
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
+
     qeff_model.compile(
-        num_cores=16,
         batch_size=batch_size,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
@@ -173,8 +173,25 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
     cloud_ai_100_output = qeff_model.generate(processor, data)
     assert pytorch_output == cloud_ai_100_output, "Tokens don't match for pytorch output and Cloud AI 100 output."
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+    if compare_results is False:
+        return
+
+    compile_params = {
+        "batch_size": batch_size,
+        "enable_qnn": enable_qnn,
+        "qnn_config": qnn_config,
+    }
+    assert dump_and_compare_results(
+        model_name,
+        compile_params,
+        "ctc_model_results.json",
+        cloud_ai_100_output,
+        pytorch_hf_tokens=pytorch_output,
+        ort_tokens=ort_output,
+    )
 
 
+@pytest.mark.custom_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
@@ -185,6 +202,22 @@ def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
     check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4)
+
+
+@pytest.mark.full_model
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model_name", test_models)
+def test_full_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model, the PyTorch model the ONNX model, and the Cloud AI 100 model.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        compare_results=True,
+    )
 
 
 @pytest.mark.on_qaic

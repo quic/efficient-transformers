@@ -229,3 +229,7 @@ class ModelConfig:
     SWIFTKV_MODELS = {
         "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
     }
+
+    FULL_MODEL_TESTS_TO_SKIP = {
+        "hpcai-tech/grok-1",
+    }

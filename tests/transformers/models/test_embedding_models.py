@@ -19,6 +19,8 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import Constants, QnnConstants
 
+from .check_model_results import dump_and_compare_results
+
 CONFIG_PATH = "tests/configs/embedding_model_configs.json"
 
 with open(CONFIG_PATH, "r") as f:
@@ -29,22 +31,31 @@ with open(CONFIG_PATH, "r") as f:
 def check_embed_pytorch_vs_ort_vs_ai100(
     model_name: str,
     seq_len: int = Constants.CTX_LEN,
-    n_layer: int = 1,
+    n_layer: int = -1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     pooling: Optional[str] = None,
+    compare_results: Optional[bool] = False,
 ):
     # Prepare input
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     inputs = tokenizer("My name is", return_tensors="pt")
 
     # Original PyTorch model
-    pt_model = AutoModel.from_pretrained(
-        model_name,
-        # num_hidden_layers=n_layer,
-        attn_implementation="eager",
-        trust_remote_code=True,
-    )
+    pt_model = None
+    if n_layer == -1:
+        pt_model = AutoModel.from_pretrained(
+            model_name,
+            attn_implementation="eager",
+            trust_remote_code=True,
+        )
+    else:
+        pt_model = AutoModel.from_pretrained(
+            model_name,
+            num_hidden_layers=n_layer,
+            attn_implementation="eager",
+            trust_remote_code=True,
+        )
 
     # Original PyTorch model output
     pt_outputs = pt_model(**inputs)
@@ -99,6 +110,20 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     assert mad <= 10**-2, f"MAD is too high for onnx and Pytorch: {mad}"
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
+    if compare_results is False:
+        return
+
+    compile_params = {"enable_qnn": enable_qnn, "qnn_config": qnn_config, "pooling": pooling, "seq_len": seq_len}
+    assert dump_and_compare_results(
+        model_name,
+        compile_params,
+        "embedding_model_results.json",
+        qeff_ai100_embeddings,
+        pytorch_hf_tokens=pt_embeddings,
+        pytorch_kv_tokens=qeff_pt_embeddings,
+        ort_tokens=onnx_outputs[0],
+    )
+
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
@@ -128,6 +153,19 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
     """
     check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=[32, 20], n_layer=1)
+
+
+@pytest.mark.full_model
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model", embed_test_models)
+def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
+    """
+    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
+    """
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model["model_name"], seq_len=32, pooling=model["pooling"], compare_results=True
+    )
 
 
 ##########  QNN TESTS ##############

@@ -25,6 +25,8 @@ from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig
 
+from .check_model_results import dump_and_compare_results
+
 CONFIG_PATH = "tests/configs/causal_model_configs.json"
 
 with open(CONFIG_PATH, "r") as f:
@@ -80,7 +82,7 @@ def get_custom_n_layers(model_name):
     return None
 
 
-def load_causal_lm_model(model_name, n_layer=1, config=None):
+def load_causal_lm_model(model_name, n_layer=None, config=None):
     """
     Function to load model from huggingface and transform to KV model
     --------
@@ -101,7 +103,7 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
             model_hf = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 use_cache=True,
-                # num_hidden_layers=n_layer,
+                num_hidden_layers=n_layer,
                 attn_implementation="eager",
                 low_cpu_mem_usage=False,
                 trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
@@ -129,6 +131,103 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
+
+
+def check_full_causal_lm_and_compare_results(model_name):
+    """
+    Function to check the full model and compare results between PyTorch, ONNX Runtime and Cloud AI 100. Compare the peformance and tokens with the previous results.
+
+    :model_name: str
+
+    :return None
+    """
+    prompt_len: int = Constants.PROMPT_LEN
+    ctx_len: int = Constants.CTX_LEN
+    prefill_only = None
+    retain_full_kv = None
+    pytorch_hf_tokens = None
+    pytorch_kv_tokens = None
+
+    model_hf, _ = load_causal_lm_model(model_name)
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
+    config = model_hf.config
+    batch_size = len(Constants.INPUT_STR)
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        config,
+        Constants.INPUT_STR,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+    )
+
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
+        pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+        print(f"HF PyTorch tokens: {pytorch_hf_tokens}")
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        pretrained_model_name_or_path=model_name,
+    )
+    pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
+    print(f"KV PyTorch tokens: {pytorch_kv_tokens}")
+
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
+        assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
+            "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
+        )
+    onnx_model_path = qeff_model.export()
+    ort_tokens = api_runner.run_kv_model_on_ort(
+        onnx_model_path,
+    )
+    print(f"ONNX tokens: {ort_tokens}")
+    gen_len = ort_tokens.shape[-1]
+
+    assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
+
+    qpc_path = qeff_model.compile(
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        num_devices=1,
+        mxfp6=False,
+        aic_enable_depth_first=False,
+        prefill_only=prefill_only,
+        retain_full_kv=retain_full_kv,
+    )
+    exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
+    print(f"exec_info: {exec_info}")
+    print(f"Cloud AI 100 tokens: {exec_info.generated_ids}")
+    cloud_ai_100_tokens = exec_info.generated_ids[0][
+        :, :gen_len
+    ]  # Because we always run for single input and single batch size
+    if prefill_only:
+        assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
+            "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
+        )
+    else:
+        assert (ort_tokens == cloud_ai_100_tokens).all(), (
+            "Tokens don't match for ONNXRT output and Cloud AI 100 output."
+        )
+        assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+
+    compile_params = {
+        "prefill_seq_len": prompt_len,
+        "ctx_len": ctx_len,
+        "num_devices": 1,
+        "mxfp6": False,
+        "aic_enable_depth_first": False,
+        "prefill_only": prefill_only,
+        "retain_full_kv": retain_full_kv,
+    }
+    assert dump_and_compare_results(
+        model_name,
+        compile_params,
+        "causal_lm_model_results.json",
+        cloud_ai_100_tokens,
+        exec_info,
+        pytorch_hf_tokens,
+        pytorch_kv_tokens,
+        ort_tokens,
+    )
 
 
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -331,8 +430,8 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     )
 
 
+@pytest.mark.dummy_model
 @pytest.mark.on_qaic
-@pytest.mark.regular
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
@@ -350,7 +449,7 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=hf_config)
 
 
-@pytest.mark.nightly
+@pytest.mark.custom_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal)
@@ -363,6 +462,16 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     n_layer = get_custom_n_layers(model_name)
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
+
+
+@pytest.mark.full_model
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model_name", test_models_causal)
+def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    if model_name in ModelConfig.FULL_MODEL_TESTS_TO_SKIP:
+        pytest.skip(f"Skipping full model test for {model_name} due to resource constraints.")
+    check_full_causal_lm_and_compare_results(model_name)
 
 
 @pytest.mark.nightly
