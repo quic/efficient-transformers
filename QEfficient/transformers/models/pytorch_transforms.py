@@ -666,7 +666,6 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
-        QEffDeepseekV3MoE: QEffPrefillOnlyDeepseekV3MoE,
     }
 
 
@@ -675,7 +674,6 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
-        QEffDeepseekV3MoE: QEffPrefillOnlyDeepseekV3MoE,
     }
 
 
@@ -686,7 +684,6 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
-        QEffPrefillOnlyDeepseekV3MoE: QEffDeepseekV3MoE,
     }
 
 
@@ -895,6 +892,29 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
     }
 
+class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
+    _match_class_replace_method = {}
+    _match_string_replace_method = {
+        "DeepseekV3MoE": {
+            "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
+            "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
+            "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
+        },
+    }
+
+class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
+    _match_class_replace_method = {}
+    _match_string_replace_method = {
+        "DeepseekV3MoE": {
+            "forward": QEffDeepseekV3MoE.forward,
+            "moe": QEffDeepseekV3MoE.moe,
+            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
+        },
+    }
+    '''_match_string_replace_method = {
+        **{v: k for k, v in PrefillOnlyExternalModuleMapperTransform._match_string_replace_method.items()},
+    }
+    '''
 
 class T5ModelTransform(ModuleMappingTransform):
     # supported architectures
