@@ -40,7 +40,7 @@ from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
+logger = QEFFLogger.get_logger("MODEL")
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqueeze_dim=1):

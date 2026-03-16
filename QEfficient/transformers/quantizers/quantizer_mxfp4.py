@@ -16,7 +16,7 @@ from transformers.utils.quantization_config import Mxfp4Config
 from QEfficient.transformers.quantizers.quantizer_utils import convert_moe_packed_tensors, get_keys_to_not_convert
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
+logger = QEFFLogger.get_logger("MODEL")
 
 
 class QEffMxfp4GptOssExperts(nn.Module):

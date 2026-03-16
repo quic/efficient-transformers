@@ -16,7 +16,7 @@ from transformers.utils.quantization_config import CompressedTensorsConfig, Quan
 from QEfficient.transformers.quantizers.quantizer_utils import get_keys_to_not_convert
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
+logger = QEFFLogger.get_logger("MODEL")
 
 FP8_DTYPE = torch.float8_e4m3fn
 

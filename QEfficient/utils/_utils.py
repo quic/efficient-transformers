@@ -30,7 +30,7 @@ from QEfficient.utils.constants import KWARGS_INCLUSION_LIST, QEFF_MODELS_DIR, C
 from QEfficient.utils.hash_utils import json_serializable
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 class LRUCache:

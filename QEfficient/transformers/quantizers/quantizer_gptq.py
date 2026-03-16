@@ -17,7 +17,7 @@ from QEfficient.transformers.quantizers.quantizer_utils import (
 )
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
+logger = QEFFLogger.get_logger("MODEL")
 
 
 class QEffGPTQConfig(GPTQConfig):

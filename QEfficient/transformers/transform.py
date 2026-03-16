@@ -15,7 +15,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def replace_module_with_qeff_layers(model: nn.Module) -> None:

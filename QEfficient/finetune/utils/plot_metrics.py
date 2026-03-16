@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("FT", loglevel="INFO")
+logger = QEFFLogger.get_logger("FT")
 
 
 def plot_metric(data, metric_name, x_label, y_label, title, colors):

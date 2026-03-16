@@ -20,7 +20,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 # 1. Data Loading

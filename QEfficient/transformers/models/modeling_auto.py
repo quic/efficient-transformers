@@ -76,7 +76,7 @@ from QEfficient.utils.check_ccl_specializations import process_ccl_specializatio
 from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
-logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
+logger = QEFFLogger.get_logger("MODEL")
 
 
 class QEFFTransformersBase(QEFFBaseModel):

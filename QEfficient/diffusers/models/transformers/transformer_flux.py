@@ -22,7 +22,7 @@ from diffusers.models.transformers.transformer_flux import (
 from QEfficient.diffusers.models.modeling_utils import compute_blocked_attention, get_attention_blocking_config
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
+logger = QEFFLogger.get_logger("MODEL")
 
 
 def qeff_apply_rotary_emb(

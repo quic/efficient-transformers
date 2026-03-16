@@ -22,7 +22,7 @@ from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 from QEfficient.finetune.utils.helper import Peft_Method
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("FT", loglevel="INFO")
+logger = QEFFLogger.get_logger("FT")
 
 
 def update_config(config, **kwargs):

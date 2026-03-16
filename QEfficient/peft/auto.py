@@ -33,7 +33,7 @@ from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.hash_utils import to_hashable
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("FT", loglevel="INFO")
+logger = QEFFLogger.get_logger("FT")
 
 
 class QEffAutoPeftModelForCausalLM(QEFFBaseModel):

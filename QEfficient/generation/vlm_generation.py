@@ -39,7 +39,7 @@ from QEfficient.utils import LRUCache
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 class VisionLanguageGeneration(QEffTextGenerationBase):

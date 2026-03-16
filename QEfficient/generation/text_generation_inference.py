@@ -22,7 +22,7 @@ from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.sampler_utils import validate_sampler_inputs
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 @dataclass

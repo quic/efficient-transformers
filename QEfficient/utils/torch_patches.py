@@ -13,7 +13,7 @@ from torch import _C
 
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map

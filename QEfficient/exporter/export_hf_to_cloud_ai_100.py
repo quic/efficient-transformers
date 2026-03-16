@@ -22,7 +22,7 @@ from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.generate_inputs import InputHandler
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def convert_to_cloud_bertstyle(

@@ -12,7 +12,7 @@ import subprocess
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def is_networks_loaded(stdout):

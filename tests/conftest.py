@@ -13,7 +13,7 @@ from transformers import logging
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def qeff_models_clean_up():

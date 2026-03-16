@@ -20,7 +20,7 @@ from QEfficient.utils.generate_qnn_network_specialization_config import (
 from QEfficient.utils.hash_utils import to_hashable
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 class QNN:

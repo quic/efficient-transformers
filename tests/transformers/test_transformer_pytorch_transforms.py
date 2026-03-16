@@ -22,7 +22,7 @@ from QEfficient.transformers.spd.turbo import ResBlock
 from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 KVCacheTransformTestConfigs = [
     ("llama", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),

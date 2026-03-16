@@ -36,7 +36,7 @@ from QEfficient.utils import (
 from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 class QEFFBaseModel(ABC):

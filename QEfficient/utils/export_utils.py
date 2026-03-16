@@ -19,7 +19,7 @@ from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 
 def export_wrapper(func):

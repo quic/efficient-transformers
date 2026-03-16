@@ -38,7 +38,7 @@ from QEfficient.transformers.transform import transform
 from QEfficient.utils import custom_format_warning
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("INFRA", loglevel="INFO")
+logger = QEFFLogger.get_logger("INFRA")
 
 # custom warning for the better logging experience
 warnings.formatwarning = custom_format_warning

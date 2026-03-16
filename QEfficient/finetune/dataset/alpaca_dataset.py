@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("FT", loglevel="INFO")
+logger = QEFFLogger.get_logger("FT")
 
 PROMPT_DICT = {
     "prompt_input": (

@@ -20,7 +20,7 @@ from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = QEFFLogger.get_logger("MODEL", loglevel="INFO")
+logger = QEFFLogger.get_logger("MODEL")
 
 BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
 FBS = constants.ONNX_EXPORT_EXAMPLE_FBS

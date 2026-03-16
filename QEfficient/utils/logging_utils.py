@@ -16,19 +16,13 @@ from typing import Any, Dict, List, Optional
 
 from tabulate import tabulate
 
+# Import centralized config
+from QEfficient.utils.constants import LoggerConfig
+
 
 class JSONNamespaceFormatter(logging.Formatter):
     """
     Custom formatter to output log records in JSON format with metadata.
-
-    Methods:
-        format(record): Formats a log record into a JSON string.
-
-    Parameters:
-        record (logging.LogRecord): The log record to format.
-
-    Returns:
-        str: JSON-formatted log string.
     """
 
     def format(self, record):
@@ -46,31 +40,25 @@ class JSONNamespaceFormatter(logging.Formatter):
 
 class QEFFLoggerThread(threading.Thread):
     """
-    Background thread to handle logging asynchronously using a queue.
+    Custom formatter to output log records in JSON format with metadata.
 
-    Attributes:
-        logger (logging.Logger): Logger instance to handle log records.
-        log_queue (queue.Queue): Queue from which log records are consumed.
-        running (bool): Flag to control thread execution.
+    Methods:
+        format(record): Formats a log record into a JSON string.
+
+    Parameters:
+        record (logging.LogRecord): The log record to format.
+
+    Returns:
+        str: JSON-formatted log string.
     """
 
     def __init__(self, logger, log_queue):
-        """
-        Initialize the logging thread.
-
-        Parameters:
-            logger (logging.Logger): Logger instance.
-            log_queue (queue.Queue): Queue for log records.
-        """
         super().__init__(daemon=True)
         self.logger = logger
         self.log_queue = log_queue
         self.running = True
 
     def run(self):
-        """
-        Continuously process log records from the queue and pass them to the logger.
-        """
         while self.running:
             try:
                 record = self.log_queue.get(timeout=1)
@@ -79,9 +67,6 @@ class QEFFLoggerThread(threading.Thread):
                 continue
 
     def stop(self):
-        """
-        Stop the logging thread gracefully.
-        """
         self.running = False
 
 
@@ -89,11 +74,9 @@ class QEFFLogger:
     """
     Singleton logger class for structured logging with namespace support.
 
-    Class Attributes:
-        _instance (Optional[logging.Logger]): Singleton logger instance.
-        _logfile (Optional[str]): Path to the log file.
-        _log_queue (queue.Queue): Queue for asynchronous logging.
-        _logger_thread (Optional[QEFFLoggerThread]): Background logging thread.
+    Project-wide behavior:
+      - A single log level is enforced using env `QEFF_LOG_LEVEL` (default = INFO).
+      - Log path resolved with priority: explicit arg > env `QEFF_LOG_PATH` > default dir + timestamp.
     """
 
     _instance: Optional[logging.Logger] = None
@@ -101,17 +84,34 @@ class QEFFLogger:
     _log_queue: queue.Queue = queue.Queue()
     _logger_thread: Optional[QEFFLoggerThread] = None
 
-    def __init__(self, loglevel: Optional[str] = "INFO", log_path: Optional[str] = None):
+    def __init__(self, loglevel: Optional[str] = None, log_path: Optional[str] = None):
         """
-        Initialize the logger instance with specified log level and path.
-
-        Parameters:
-            loglevel (str): Logging level (e.g., "INFO", "DEBUG").
-            log_path (str): Optional path to the log file.
+        Initialize the logger instance with specified path. Level is globally controlled by env.
+        Args:
+            loglevel: kept for backward compatibility, but env `QEFF_LOG_LEVEL` takes precedence.
+            log_path: optional path to the log file (highest priority).
         """
         if QEFFLogger._instance is None:
-            self.loglevel = loglevel
-            self.log_path = log_path
+            # Determine effective log level:
+            # Priority: ENV(QEFF_LOG_LEVEL) -> arg(loglevel) -> LoggerConfig.default_level
+            env_level = os.environ.get(LoggerConfig.log_level_env)
+            effective_level_name = (env_level or loglevel or LoggerConfig.default_level).upper()
+            numeric_level = getattr(logging, effective_level_name, None)
+            if not isinstance(numeric_level, int):
+                raise ValueError(f"Invalid log level: {effective_level_name}")
+            self.loglevel = effective_level_name
+
+            # Resolve log path (arg > env > default dir + timestamp)
+            env_path = os.environ.get(LoggerConfig.log_path_env)
+            self.log_path = log_path or env_path
+            if not self.log_path:
+                os.makedirs(LoggerConfig.default_log_dir, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                self.log_path = os.path.join(LoggerConfig.default_log_dir, f"QEFF_{timestamp}.log")
+            else:
+                os.makedirs(os.path.dirname(os.path.abspath(self.log_path)), exist_ok=True)
+
+            # Initialize the base logger and start background thread
             self.logger = self._initialize_logger()
             QEFFLogger._instance = self.logger
             QEFFLogger._logger_thread = QEFFLoggerThread(self.logger, QEFFLogger._log_queue)
@@ -120,27 +120,19 @@ class QEFFLogger:
     def _initialize_logger(self) -> logging.Logger:
         """
         Set up the logger with rotating file handler and JSON formatter.
-
-        Returns:
-            logging.Logger: Configured logger instance.
         """
-        if self.log_path is None:
-            log_dir = os.path.expanduser("~/.cache/qefficient_logs")
-            os.makedirs(log_dir, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.log_path = os.path.join(log_dir, f"QEFF_{timestamp}.log")
-
         QEFFLogger._logfile = self.log_path
 
-        numeric_level = getattr(logging, self.loglevel.upper(), None)
-        if not isinstance(numeric_level, int):
-            raise ValueError(f"Invalid log level: {self.loglevel}")
-
         logger = logging.getLogger("QEFF_LOGGER")
-        logger.setLevel(numeric_level)
+        logger.setLevel(getattr(logging, self.loglevel))
 
+        # Avoid duplicate handlers if reinitialized in same process
         if not logger.handlers:
-            handler = RotatingFileHandler(self.log_path, maxBytes=5 * 1024 * 1024, backupCount=10)
+            handler = RotatingFileHandler(
+                self.log_path,
+                maxBytes=LoggerConfig.max_bytes,
+                backupCount=LoggerConfig.backup_count,
+            )
             handler.setFormatter(JSONNamespaceFormatter())
             logger.addHandler(handler)
 
@@ -148,18 +140,11 @@ class QEFFLogger:
 
     @classmethod
     def get_logger(
-        cls, namespace: str, loglevel: Optional[str] = "INFO", log_path: Optional[str] = None
+        cls, namespace: str, loglevel: Optional[str] = None, log_path: Optional[str] = None
     ) -> logging.Logger:
         """
         Retrieve a logger adapter with a specific namespace.
-
-        Parameters:
-            namespace (str): Logical grouping for the log.
-            loglevel (str): Logging level.
-            log_path (str): Optional path to the log file.
-
-        Returns:
-            logging.Logger: Logger adapter with namespace.
+        Note: project-wide level comes from env `QEFF_LOG_LEVEL` (default INFO).
         """
         if cls._instance is None:
             cls(loglevel, log_path)
@@ -169,14 +154,6 @@ class QEFFLogger:
     def log(cls, level: str, namespace: str, msg: str, fn: str = "", lno: int = 0, func: str = ""):
         """
         Log a message with specified level and metadata.
-
-        Parameters:
-            level (str): Logging level (e.g., "INFO", "ERROR").
-            namespace (str): Logical grouping for the log.
-            msg (str): Log message.
-            fn (str): Filename where the log is generated.
-            lno (int): Line number in the file.
-            func (str): Function name.
         """
         if cls._instance is None:
             raise RuntimeError("Logger has not been initialized. Call get_logger() first.")
@@ -199,19 +176,20 @@ class QEFFLogger:
         cls._log_queue.put(record)
 
     @classmethod
-    def set_loglevel(cls, loglevel: Optional[str] = "INFO"):
+    def set_loglevel(cls, loglevel: Optional[str] = None):
         """
-        Update the log level of the logger.
-
-        Parameters:
-            loglevel (str): New log level to set.
+        Update the log level of the logger at runtime.
+        Priority remains ENV > arg > default.
+        If ENV is set, it will continue to override; otherwise arg/default apply.
         """
         if cls._instance is None:
             raise RuntimeError("Logger has not been initialized yet. Call get_logger() first.")
 
-        numeric_level = getattr(logging, loglevel.upper(), None)
+        env_level = os.environ.get(LoggerConfig.log_level_env)
+        effective_level_name = (env_level or loglevel or LoggerConfig.default_level).upper()
+        numeric_level = getattr(logging, effective_level_name, None)
         if not isinstance(numeric_level, int):
-            raise ValueError(f"Invalid log level: {loglevel}")
+            raise ValueError(f"Invalid log level: {effective_level_name}")
 
         cls._instance.setLevel(numeric_level)
 
@@ -241,27 +219,7 @@ class QEFFLogger:
     @classmethod
     def print_table(cls) -> None:
         """
-        Parse the line-delimited JSON log in cls._logfile and print timing table with t1 as baseline (0.0s):
-          - Model Loading     : t2 - t1
-          - Model Exporting   : t3 - t2
-          - Model Compilation : t4 - t3
-          - Text Generation   : t5 - t4
-          - Total Time        : t5 - t1
-
-        Milestones (case-insensitive):
-          START_LOAD : "Initiating the model weight loading."      -> t1 (baseline)
-          LOAD_DONE  : "Pytorch transforms applied to model"       -> t2 (end of loading)
-          ONNX_SAVED : "Transformed ONNX saved"                    -> t3
-          COMPILE_DONE: "Model compilation is finished and saved"  -> t4
-          TEXT_DONE  : "Text Generated finised"                    -> t5 candidate
-          TEXT_READY : "specialization_file_path"                  -> t5 fallback
-
-        Notes:
-          - t2 is always LOAD_DONE (no conditional fallback). If missing, falls back to t1.
-          - t3 falls back to t2 if ONNX_SAVED is absent.
-          - t4 falls back to t3 if COMPILE_DONE is absent.
-          - t5 prefers TEXT_DONE; else TEXT_READY; else t4.
-          - Timestamps are enforced to be strictly increasing by +1 ms when equal/non-monotonic.
+        Parse the line-delimited JSON log in cls._logfile and print timing table with t1 as baseline (0.0s).
         """
         path = cls._logfile
         if not path:
@@ -269,7 +227,6 @@ class QEFFLogger:
         if not os.path.exists(path):
             raise FileNotFoundError(f"Log file does not exist: {path}")
 
-        # Milestone map (case-insensitive)
         SUBSTR_TO_KEY: Dict[str, str] = {
             "initiating the model weight loading.": "START_LOAD",
             "pytorch transforms applied to model": "LOAD_DONE",
@@ -292,7 +249,6 @@ class QEFFLogger:
         last_ts: Optional[datetime] = None
         times: Dict[str, datetime] = {}
 
-        # Scan the log; enforce strictly increasing timestamps
         with open(path, "r", encoding="utf-8") as f:
             for raw in f:
                 line = raw.strip()
@@ -311,6 +267,7 @@ class QEFFLogger:
 
                 ts = cls._parse_dt(date_str, time_str)
 
+                # Enforce strictly increasing timestamps
                 if last_ts is not None and ts <= last_ts:
                     ts = last_ts + timedelta(milliseconds=1)
 
@@ -325,7 +282,6 @@ class QEFFLogger:
         if t_start is None:
             raise ValueError("Missing required milestone: 'Initiating the model weight loading.'")
 
-        # Resolve chain
         t2 = times.get("LOAD_DONE", t_start)  # end of loading
         t3 = times.get("ONNX_SAVED") or t2  # export end
         t4 = times.get("COMPILE_DONE") or t3  # compile end
