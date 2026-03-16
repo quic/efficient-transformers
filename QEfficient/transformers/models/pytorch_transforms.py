@@ -461,6 +461,7 @@ from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
 SPD_TARGET = "target"
 
 
+# Custom ops used for RMSNorms
 class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
