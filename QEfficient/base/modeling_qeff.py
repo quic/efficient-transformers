@@ -369,7 +369,9 @@ class QEFFBaseModel(ABC):
 
         if getattr(self.model, "config", None) or getattr(self.model.model, "config", None):
             blocking_config = build_transformer_blocking_config_for_transform(
-                getattr(self.model, "config", None) if getattr(self.model, "config", None) else getattr(self.model.model, "config", None),
+                getattr(self.model, "config", None)
+                if getattr(self.model, "config", None)
+                else getattr(self.model.model, "config", None),
                 ctx_len=ctx_len,
                 seq_len=seq_len,
                 bs=bs,

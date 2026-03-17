@@ -247,6 +247,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qpc_tokens = output.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
 
+
 def check_image_text_to_text_blocked_vs_nonblocked_ai100(
     model_name: str,
     img_url: str,
@@ -263,7 +264,7 @@ def check_image_text_to_text_blocked_vs_nonblocked_ai100(
     config: Optional[AutoConfig] = None,
     img_size: Optional[int] = None,
     qaic_config: Optional[dict] = None,
-    prev_nonblocked_output = None,
+    prev_nonblocked_output=None,
 ):
     """
     Unified function to test PyTorch model, PyTorch KV model, ONNX model, and Cloud AI 100 model.
@@ -379,7 +380,11 @@ def check_image_text_to_text_blocked_vs_nonblocked_ai100(
             )
 
         qeff_model_non_blocked.transform(
-            ctx_len=ctx_len, seq_len=prompt_len, batch_size=batch_size, num_devices=1, qaic_config={"enable_blocking": False}
+            ctx_len=ctx_len,
+            seq_len=prompt_len,
+            batch_size=batch_size,
+            num_devices=1,
+            qaic_config={"enable_blocking": False},
         )
         qeff_model_non_blocked.export()
 
@@ -425,7 +430,10 @@ def check_image_text_to_text_blocked_vs_nonblocked_ai100(
         qeff_model_non_blocked.compile(**compile_kwargs)
         if not is_intern_model and not is_molmo_model:
             inputs = processor(images=image, text=prompt, return_tensors="pt")
-            if hasattr(qeff_model_non_blocked.model.config, "model_type") and qeff_model_non_blocked.model.config.model_type == "qwen2_5_vl":
+            if (
+                hasattr(qeff_model_non_blocked.model.config, "model_type")
+                and qeff_model_non_blocked.model.config.model_type == "qwen2_5_vl"
+            ):
                 inputs = qeff_model_non_blocked.model.prepare_inputs_for_generation(
                     inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
                 )
@@ -433,7 +441,9 @@ def check_image_text_to_text_blocked_vs_nonblocked_ai100(
                 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 
         print("QPC Outputs (QAIC):")
-        output_non_blocked = qeff_model_non_blocked.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+        output_non_blocked = qeff_model_non_blocked.generate(
+            inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer
+        )
         qpc_tokens_non_blocked = output_non_blocked.generated_ids[:, :-1]
     else:
         qpc_tokens_non_blocked = prev_nonblocked_output
@@ -443,7 +453,10 @@ def check_image_text_to_text_blocked_vs_nonblocked_ai100(
 
     if not is_intern_model and not is_molmo_model:
         inputs = processor(images=image, text=prompt, return_tensors="pt")
-        if hasattr(qeff_model_blocked.model.config, "model_type") and qeff_model_blocked.model.config.model_type == "qwen2_5_vl":
+        if (
+            hasattr(qeff_model_blocked.model.config, "model_type")
+            and qeff_model_blocked.model.config.model_type == "qwen2_5_vl"
+        ):
             inputs = qeff_model_blocked.model.prepare_inputs_for_generation(
                 inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
             )
@@ -453,7 +466,9 @@ def check_image_text_to_text_blocked_vs_nonblocked_ai100(
     print("QPC Outputs (QAIC):")
     output_blocked = qeff_model_blocked.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens_blocked = output_blocked.generated_ids[:, :-1]
-    assert (qpc_tokens_blocked == qpc_tokens_non_blocked).all(), "Tokens don't match for QPC output between blocked and nonblocked model"
+    assert (qpc_tokens_blocked == qpc_tokens_non_blocked).all(), (
+        "Tokens don't match for QPC output between blocked and nonblocked model"
+    )
     return qpc_tokens_non_blocked
 
 
@@ -529,6 +544,7 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
         batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
     )
+
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
