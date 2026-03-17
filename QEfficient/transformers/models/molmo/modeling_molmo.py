@@ -16,9 +16,8 @@ from transformers.modeling_outputs import ModelOutput
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.modeling_utils import resolve_kv_seq_len
 from QEfficient.utils import constants
-from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config, resolve_kv_seq_len
 
 
 def _non_meta_init_device(config) -> torch.device:

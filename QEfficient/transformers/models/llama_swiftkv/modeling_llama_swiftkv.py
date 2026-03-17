@@ -24,12 +24,12 @@ from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, log
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.modeling_utils import resolve_kv_seq_len
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaDecoderLayer,
     QEffLlamaRotaryEmbedding,
     qeff_apply_rotary_pos_emb,
 )
+from QEfficient.utils._utils import resolve_kv_seq_len
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
