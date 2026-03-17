@@ -35,9 +35,8 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 # from transformers import Qw
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.modeling_utils import resolve_kv_seq_len
 from QEfficient.utils import constants
-from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config, resolve_kv_seq_len
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
