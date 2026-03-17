@@ -18,10 +18,7 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import (
-    BaseOnnxTransform,
-    OnnxTransformPipeline,
-)
+from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransformPipeline
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -245,10 +242,9 @@ class QEFFBaseModel(ABC):
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
 
-        # Setup temporary paths
-        tmp_onnx_dir = export_dir / "onnx_tmp"
-        tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
-        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
+        # Export directly into export_dir so any external data files are retained.
+        export_dir.mkdir(parents=True, exist_ok=True)
+        tmp_onnx_path = onnx_path
 
         # Create input_names from example_inputs
         input_names = []
@@ -291,7 +287,7 @@ class QEFFBaseModel(ABC):
 
             # Clear temporary references
             transform_kwargs = {
-                "onnx_base_dir": str(tmp_onnx_dir),
+                "onnx_base_dir": str(export_dir),
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
@@ -314,9 +310,6 @@ class QEFFBaseModel(ABC):
         except Exception as e:
             logger.error(f"ONNX export or transforms failed: {e}")
             raise e
-
-        finally:
-            shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         self.onnx_path = onnx_path
         return onnx_path
