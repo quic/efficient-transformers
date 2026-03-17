@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import ModelOutput
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -265,15 +265,13 @@ class QEffMolmoBlock(nn.Module):
         v = v.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads).transpose(1, 2)
 
         if self.config.use_position_ids and self.config.rope:
-            kv_seq_len = k.shape[-2]
-            kv_seq_len = layer_past.get_seq_length(self.layer_id)
+            kv_seq_len = resolve_kv_seq_len(layer_past, self.layer_id, k.shape[-2])
             # Apply rotary embeddings
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
 
         if not self.config.use_position_ids and self.config.rope:
-            kv_seq_len = k.shape[-2]
-            kv_seq_len = layer_past.get_seq_length(kv_seq_len, self.layer_id)
+            kv_seq_len = resolve_kv_seq_len(layer_past, self.layer_id, k.shape[-2])
             # Apply rotary embeddings
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)

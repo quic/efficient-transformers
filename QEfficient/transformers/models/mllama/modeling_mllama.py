@@ -35,7 +35,7 @@ from transformers.models.mllama.modeling_mllama import (
     rotate_half,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
 from QEfficient.transformers.modeling_utils import (
     _create_causal_mask,
     _prepare_aspect_ratio_attention_mask,
@@ -267,14 +267,14 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        if past_key_value is not None:
-            if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
-            kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        if past_key_value is not None and self.layer_idx is None:
+            raise ValueError(
+                f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
+                "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
+                "with a layer index."
+            )
+
+        kv_seq_len = resolve_kv_seq_len(past_key_value, self.layer_idx, key_states.shape[-2], cache_position)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
