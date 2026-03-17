@@ -25,8 +25,9 @@ from transformers.models.olmo2.modeling_olmo2 import (
     rotate_half,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.modeling_utils import resolve_kv_seq_len
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -147,8 +148,6 @@ class QEffOlmo2Attention(Olmo2Attention):
         query_states = query_states.view(hidden_shape).transpose(1, 2)
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
-
-        kv_seq_len = key_states.shape[-2]
 
         kv_seq_len = resolve_kv_seq_len(past_key_value, self.layer_idx, key_states.shape[-2], cache_position)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)

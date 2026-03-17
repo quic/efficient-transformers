@@ -14,8 +14,9 @@ import torch.nn.functional as F
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import ModelOutput
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.modeling_utils import resolve_kv_seq_len
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 

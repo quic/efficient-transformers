@@ -208,7 +208,7 @@ def _export_vlm_with_text_fallback(model_id: str, out_dir: Path) -> Path:
     try:
         config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
         model_type = getattr(config, "model_type", "")
-        use_text_only_first = model_type in {"qwen2_5_vl", "internvl_chat"}
+        use_text_only_first = model_type in {"qwen2_5_vl", "qwen2_5_vl_text", "internvl_chat"}
 
         if not use_text_only_first:
             try:
@@ -218,7 +218,7 @@ def _export_vlm_with_text_fallback(model_id: str, out_dir: Path) -> Path:
                 pass
 
         try:
-            if model_type == "qwen2_5_vl" and getattr(config, "text_config", None) is not None:
+            if model_type in {"qwen2_5_vl", "qwen2_5_vl_text"} and getattr(config, "text_config", None) is not None:
                 qwen2_cfg_dict = config.text_config.to_dict()
                 qwen2_cfg_dict["model_type"] = "qwen2"
                 qwen2_allowed_keys = set(Qwen2Config().to_dict().keys())
