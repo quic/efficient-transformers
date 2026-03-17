@@ -4199,7 +4199,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             torch.nn.functional.pad(inputs["input_values"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
         needed_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
-        input_values = input_values.astype(CUSTOM_IO_DTYPE_MAP[needed_dtype])
+        input_values = input_values.astype(TORCH_TO_NUMPY_DTYPE_MAP[needed_dtype])
         inputs = dict(input_values=input_values)
         outputs = self.qpc_session.run(inputs)
 

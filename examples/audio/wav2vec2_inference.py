@@ -7,6 +7,7 @@
 
 import argparse
 
+import torch
 from datasets import load_dataset
 from transformers import AutoProcessor
 
@@ -40,7 +41,7 @@ def main():
     processor = AutoProcessor.from_pretrained(args.model_name)
 
     ## STEP 2 -- Load the model
-    model = QEFFAutoModelForCTC.from_pretrained(args.model_name)
+    model = QEFFAutoModelForCTC.from_pretrained(args.model_name, torch_dtype=torch.float32)
 
     ## STEP 3 -- Compile the model
     model.compile(num_cores=args.num_cores)
