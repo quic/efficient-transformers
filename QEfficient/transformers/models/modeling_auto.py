@@ -3527,6 +3527,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `num_speculative_tokens` is not an integer greater than 1.
             If `prefill_seq_len` is less than `num_speculative_tokens + 1`.
         """
+        if not self.is_tlm:
+            return None
         if hasattr(self.model.config, "speculative_config"):
             num_speculative_tokens_ = self.model.config.speculative_config["num_speculative_tokens"]
             if num_speculative_tokens is not None:
