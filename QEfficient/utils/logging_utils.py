@@ -104,13 +104,13 @@ class QEFFLogger:
             # Resolve log path (arg > env > default dir + timestamp)
             env_path = os.environ.get(LoggerConfig.log_path_env)
             self.log_path = log_path or env_path
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             if not self.log_path:
                 os.makedirs(LoggerConfig.default_log_dir, exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 self.log_path = os.path.join(LoggerConfig.default_log_dir, f"QEFF_{timestamp}.log")
             else:
-                os.makedirs(os.path.dirname(os.path.abspath(self.log_path)), exist_ok=True)
-
+                os.makedirs(self.log_path, exist_ok=True)
+                self.log_path = os.path.join(self.log_path, f"QEFF_{timestamp}.log")
             # Initialize the base logger and start background thread
             self.logger = self._initialize_logger()
             QEFFLogger._instance = self.logger
@@ -223,7 +223,7 @@ class QEFFLogger:
         """
         path = cls._logfile
         if not path:
-            raise FileNotFoundError("Log file path is not set (cls._logfile is None).")
+            raise FileNotFoundError(f"Log file path is not set ({cls._logfile} is None).")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Log file does not exist: {path}")
 
