@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
 """
 Fast CPU regression coverage across the main model families supported by QEfficient.
 
