@@ -76,7 +76,7 @@ QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficie
 ```
 
 > **Note**  
-> If you’re using the `torch-qaic-env` Docker environment, `torch_qaic` and `accelerate` may already be installed.
+> If you’re using the `torch-qaic-env` from the Docker image for SDK, `torch_qaic` and `accelerate` whl are already installed.
 
 ### For CUDA Training
 
@@ -95,12 +95,14 @@ git checkout version-4.55.0 && pip install -e .
 cd .. && cd efficient-transformers
 CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_experimental --device cuda --num_epochs 1 --model_name meta-llama/Llama-3.2-3B --dataset_name  yahma/alpaca-cleaned --train_batch_size 1 --gradient_accumulation_steps 768 --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt --completion_template {output}
 ```
+
 ***
 ## Finetuning
 
 ### Sample Launch Commands
 
 **Single device using yaml file**
+
 ```bash
 QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 
@@ -109,16 +111,24 @@ QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental QEfficie
 ```
 
 **Single device using CLI flags**
+
 ```bash
 QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True --dataset_name "yahma/alpaca-cleaned" --completion_template {output} --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt
 
 ```
-**Distributed (Using TorchRun)**
+
+**Distributed (Using TorchRun) - DDP**
+### Set before running
+#### If the tokenizer was used before forking processes (for DDP), which can cause deadlocks.
+```bash
+export TOKENIZERS_PARALLELISM=false
+```
+
 ```bash
 QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
 
-**Distributed (Using Accelerate)**
+**Distributed (Using Accelerate) - DDP**
 ```bash
 QAIC_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes 4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
@@ -293,3 +303,14 @@ python -m QEfficient.cloud.finetune_experimental \
 - PP is currently verified primarily for **Llama-family** models. Other architectures with different layer naming conventions may need adjustments in `device_map_utils.py`.
 
 ***
+
+## To run the Finetune project tests
+
+Install following plugins:
+```sh
+pip install pytest pytest-mock
+```
+
+```sh
+QAIC_VISIBLE_DEVICES=0 python -m pytest QEfficient/finetune/experimental/tests/
+```

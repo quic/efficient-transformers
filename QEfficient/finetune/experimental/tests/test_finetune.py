@@ -178,7 +178,6 @@ def test_initialization(
 
 
 def test_setup_environment_called_and_output_dir_set(mocker, mock_config_manager, tmp_outdir):
-
     mocker.patch.object(FineTuningPipeline, "_setup_environment", autospec=True)
     mocker.patch.object(FineTuningPipeline, "_create_datasets", autospec=True, return_value=(None, None))
     mocker.patch.object(
@@ -261,7 +260,6 @@ def test_create_datasets_called_and_assigned(
 
 
 def test_create_model_failure_stops_pipeline(mocker, mock_config_manager):
-
     mocker.patch(f"{MODULE}.prepare_training_config", autospec=True, return_value={})
     mocker.patch.object(FineTuningPipeline, "_setup_environment", autospec=True)
     mocker.patch.object(FineTuningPipeline, "_create_datasets", autospec=True, return_value=(None, None))
