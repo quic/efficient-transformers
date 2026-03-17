@@ -31,7 +31,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     rotate_half,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
 
 # from transformers import Qw
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -592,7 +592,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         value_states = value_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
 
         kv_seq_len = key_states.shape[-2]
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        kv_seq_len = resolve_kv_seq_len(past_key_value, self.layer_idx, key_states.shape[-2], cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
