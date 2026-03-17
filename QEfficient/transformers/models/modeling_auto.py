@@ -40,10 +40,10 @@ from QEfficient.generation.text_generation_inference import (
     write_io_files,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
-from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
+    _configure_proxy_for_model,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -75,31 +75,6 @@ from QEfficient.utils import (
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
-
-_PROXY_ONLY_ONNX_TRANSFORMS = (FP16ClipTransform, SplitTensorsTransform)
-
-
-def _configure_proxy_for_model(instance: "QEFFBaseModel", enable_proxy: bool) -> None:
-    """
-    Configure per-instance transform lists based on proxy mode.
-
-    By default, clip/split ONNX transforms are disabled for production exports.
-    They are only enabled when proxy flow is explicitly requested.
-    """
-    instance._pytorch_transforms = list(instance._pytorch_transforms)
-    instance._onnx_transforms = list(instance._onnx_transforms)
-    instance._enable_proxy = enable_proxy
-
-    if enable_proxy:
-        if QeffProxyModuleTransform not in instance._pytorch_transforms:
-            instance._pytorch_transforms.append(QeffProxyModuleTransform)
-        for transform in _PROXY_ONLY_ONNX_TRANSFORMS:
-            if transform not in instance._onnx_transforms:
-                instance._onnx_transforms.append(transform)
-        logger.info("Proxy Model Enabled for QEfficient Model")
-        return
-
-    instance._onnx_transforms = [t for t in instance._onnx_transforms if t not in _PROXY_ONLY_ONNX_TRANSFORMS]
 
 
 class QEFFTransformersBase(QEFFBaseModel):
