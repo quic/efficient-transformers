@@ -48,6 +48,10 @@ _QUICKCHECK_META = {
         "Causal LM",
         "Subfunction export check (with/without QEffGPT2Block)",
     ),
+    "test_causal_subfunction_export_smoke_all_models": (
+        "Causal LM",
+        "Full parity: HF PyTorch vs QEff PyTorch vs ORT tokens (subfunctions)",
+    ),
     "test_prefix_caching_continuous_batching_export_and_ort_smoke": (
         "Prefix Caching",
         "Continuous-batching export structural checks",

@@ -482,15 +482,43 @@ def test_causal_compile_with_subfunctions_all_models(model_type, model_id, tmp_p
     ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
 )
 def test_causal_subfunction_export_smoke_all_models(model_type, model_id, tmp_path):
-    del model_type
-    try:
-        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
-    except Exception as exc:
-        _skip_on_model_fetch_error(exc, model_id)
+    if model_type == "gpt_oss":
+        pytest.skip("Subfunction runtime parity is currently excluded for gpt_oss in quickcheck.")
 
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    if hasattr(tokenizer, "model_input_names"):
+        tokenizer.model_input_names = ["input_ids", "attention_mask"]
+    prompt = ["hello world"]
+    prompt_len = 8
+    ctx_len = 12
+
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        **MODEL_KWARGS,
+        low_cpu_mem_usage=False,
+        trust_remote_code=True,
+        torch_dtype=torch.float32,
+    )
+    model_hf.eval()
+
+    api_runner = ApiRunner(
+        batch_size=1,
+        tokenizer=tokenizer,
+        config=model_hf.config,
+        prompt=prompt,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        full_batch_size=None,
+    )
+
+    hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "with-subfunctions-all", use_onnx_subfunctions=True))
-    onnx_model = onnx.load(onnx_path, load_external_data=False)
-    assert len(onnx_model.functions) > 0
+    ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
+
+    assert np.array_equal(hf_tokens, kv_tokens.squeeze(0))
+    assert np.array_equal(kv_tokens, ort_tokens)
 
 
 @pytest.mark.llm_model
