@@ -47,7 +47,6 @@ all_models = causal_lm_models + causal_lm_fp16_models
 
 # Create a dictionary mapping model names to their configs
 model_config_dict = {model["model_name"]: model for model in all_models}
-breakpoint()
 
 
 def get_hf_config_from_custom_config(model_name):
