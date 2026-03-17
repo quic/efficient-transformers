@@ -341,6 +341,8 @@ class QEffWanPipeline:
             self.patch_width,
         )
         # Prepare dynamic specialization updates based on video dimensions
+        # import ipdb
+        # ipdb.set_trace()
         specialization_updates = {
             "transformer_high":
                 # high noise
@@ -623,6 +625,8 @@ class QEffWanPipeline:
         # import ipdb
         # ipdb.set_trace()
         # Step 8: Denoising loop with dual-stage processing
+        
+        count_low=0
         with self.model.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self._interrupt:
@@ -636,14 +640,19 @@ class QEffWanPipeline:
                     current_model = self.transformer_high.model
                     current_guidance_scale = guidance_scale
                     picked_qpc_session=self.transformer_high.qpc_session
-                    
+                    cache_threshold=0.1
                     model_type = torch.ones(1, dtype=torch.int64)  # High-noise model indicator
                 else:
                     # Low-noise stage
                     current_model = self.transformer_low.model
+                    count_low=count_low+1
                     current_guidance_scale = guidance_scale_2
                     model_type = torch.ones(2, dtype=torch.int64)  # Low-noise model indicator
                     picked_qpc_session=self.transformer_low.qpc_session
+                    if count_low<3:
+                        cache_threshold=0.0
+                    else:
+                        cache_threshold=0.065
                 # Prepare latent input with proper dtype
                 latent_model_input = latents.to(transformer_dtype)
 
@@ -725,9 +734,10 @@ class QEffWanPipeline:
                         outputs = picked_qpc_session.run(inputs_aic)
                         end_transformer_step_time = time.perf_counter()
                 
-                    transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                    # transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                    t1=end_transformer_step_time-start_transformer_step_time
                     print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
-
+                    print("Current cache--->",cache_threshold)
                     # Process transformer output
                     hidden_states = torch.tensor(outputs["output"])
 
@@ -743,7 +753,11 @@ class QEffWanPipeline:
                 # Run unconditional prediction for classifier-free guidance
                 if self.do_classifier_free_guidance:  # Note: CFG is False for WAN Lightning
                     with current_model.cache_context("uncond"):
-                        print(picked_qpc_session)
+                        # print(picked_qpc_session)
+                        if picked_qpc_session == self.transformer_high.qpc_session:
+                            print("selected---> High")
+                        else:
+                            print("selected---> Low")
                         # QAIC inference for unconditional prediction
                         if cache_threshold:
                             inputs_aic2['cache_threshold']= np.array(cache_threshold, dtype=np.float32) 
@@ -754,9 +768,11 @@ class QEffWanPipeline:
                             start_transformer_step_time = time.perf_counter()
                             outputs = picked_qpc_session.run(inputs_aic2)
                             end_transformer_step_time = time.perf_counter()
-                            
-                        transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                        
+                        t2= end_transformer_step_time - start_transformer_step_time
+                        transformer_perf.append(t1+t2)
 
+                        print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
                         # Process unconditional output
                         hidden_states = torch.tensor(outputs["output"])
 

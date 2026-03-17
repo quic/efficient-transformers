@@ -754,6 +754,16 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
+        # kv_cache_dtype = "float16"
+        
+        # custom_io = {
+        #         "prev_first_block_residuals": kv_cache_dtype,
+        #         "prev_remain_block_residuals": kv_cache_dtype,
+        #         "prev_first_block_residuals_RetainedState":kv_cache_dtype,
+        #         "prev_remain_block_residuals_RetainedState": kv_cache_dtype,
+        #         }
+        
         self._compile(specializations=specializations,
                       retained_state=True,
+                    #   custom_io=custom_io,
                       **compiler_options)

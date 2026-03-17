@@ -84,21 +84,21 @@ pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers", e
 #
 # Uncomment the following lines to use only a subset of transformer layers:
 #
-# # Configure for 2-layer model (faster inference)
-# pipeline.transformer_high.model.config['num_layers'] = 6
-# pipeline.transformer_low.model.config['num_layers']= 6
+# Configure for 2-layer model (faster inference)
+pipeline.transformer_high.model.config['num_layers'] = 2
+pipeline.transformer_low.model.config['num_layers']= 2
 
-# # # Reduce high noise transformer blocks
-# original_blocks = pipeline.transformer_high.model.blocks
-# pipeline.transformer_high.model.blocks = torch.nn.ModuleList(
-#     [original_blocks[i] for i in range(0, pipeline.transformer_high.model.config['num_layers'])]
-# )
+# # Reduce high noise transformer blocks
+original_blocks = pipeline.transformer_high.model.blocks
+pipeline.transformer_high.model.blocks = torch.nn.ModuleList(
+    [original_blocks[i] for i in range(0, pipeline.transformer_high.model.config['num_layers'])]
+)
 
-# # Reduce low noise transformer blocks
-# org_blocks = pipeline.transformer_low.model.blocks
-# pipeline.transformer_low.model.blocks = torch.nn.ModuleList(
-#     [org_blocks[i] for i in range(0, pipeline.transformer_low.model.config['num_layers'])]
-# )
+# Reduce low noise transformer blocks
+org_blocks = pipeline.transformer_low.model.blocks
+pipeline.transformer_low.model.blocks = torch.nn.ModuleList(
+    [org_blocks[i] for i in range(0, pipeline.transformer_low.model.config['num_layers'])]
+)
 
 # ============================================================================
 # OPTIONAL: COMPILE WITH CUSTOM CONFIGURATION
@@ -168,10 +168,10 @@ output = pipeline(
     num_inference_steps=40,  # Lightning model uses fewer steps
     generator=torch.Generator().manual_seed(42),  # For reproducible results
     custom_config_path="/home/amitraj/project/first_cache/efficient-transformers/examples/diffusers/wan/wan_config.json",
-    height=96,
-    width=160,
+    height=480,
+    width=832,
     use_onnx_subfunctions=False,  # Enable ONNX optimizations
-    parallel_compile=False,  # Set to True for parallel compilation
+    parallel_compile=True,  # Set to True for parallel compilation
     cache_threshold=0.09,
 )
 
