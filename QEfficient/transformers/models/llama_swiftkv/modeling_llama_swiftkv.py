@@ -22,8 +22,9 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.modeling_utils import resolve_kv_seq_len
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaDecoderLayer,
     QEffLlamaRotaryEmbedding,

@@ -35,11 +35,12 @@ from transformers.models.mllama.modeling_mllama import (
     rotate_half,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_utils import (
     _create_causal_mask,
     _prepare_aspect_ratio_attention_mask,
     _prepare_cross_attention_mask,
+    resolve_kv_seq_len,
 )
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo

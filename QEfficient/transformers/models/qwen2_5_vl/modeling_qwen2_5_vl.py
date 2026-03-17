@@ -31,10 +31,11 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     rotate_half,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 # from transformers import Qw
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.modeling_utils import resolve_kv_seq_len
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -591,7 +592,6 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         key_states = key_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
         kv_seq_len = resolve_kv_seq_len(past_key_value, self.layer_idx, key_states.shape[-2], cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
 
@@ -743,13 +743,13 @@ class QEffQwen2_5_VLTextModel(Qwen2_5_VLTextModel):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-
-        if use_cache and not isinstance(past_key_values, Cache):
+        return_legacy_cache = False
+        if past_key_values is not None and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )

@@ -26,8 +26,9 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     rotate_half,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache, resolve_kv_seq_len
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.modeling_utils import resolve_kv_seq_len
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 

@@ -26,42 +26,6 @@ from QEfficient.customop import (
 )
 
 
-def resolve_kv_seq_len(
-    past_key_value: Optional[Any],
-    layer_idx: int,
-    current_seq_len: int,
-    cache_position: Optional[torch.LongTensor] = None,
-) -> int:
-    """
-    Resolve KV sequence length across cache APIs.
-
-    transformers<=4.55 accepts `get_seq_length(layer_idx, cache_position)`, while newer versions
-    use `get_seq_length(layer_idx)`.
-    """
-    resolved_seq_len = current_seq_len
-    if cache_position is not None and isinstance(cache_position, torch.Tensor) and cache_position.numel() > 0:
-        resolved_seq_len = max(resolved_seq_len, int(cache_position.max().item()) + 1)
-
-    if past_key_value is None:
-        return resolved_seq_len
-
-    get_seq_length = getattr(past_key_value, "get_seq_length", None)
-    if get_seq_length is None:
-        return resolved_seq_len
-
-    try:
-        cache_seq_len = get_seq_length(layer_idx, cache_position)
-    except TypeError:
-        try:
-            cache_seq_len = get_seq_length(layer_idx)
-        except TypeError:
-            cache_seq_len = get_seq_length()
-
-    if cache_seq_len is None:
-        return resolved_seq_len
-    return max(resolved_seq_len, int(cache_seq_len))
-
-
 class InvalidIndexProvider:
     SUBFUNC_ENABLED = False
 
