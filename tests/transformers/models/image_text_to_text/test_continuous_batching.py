@@ -107,7 +107,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
-            config=config,
+            config=model_hf.config,
             continuous_batching=True,
         )
     compile_kwargs = {
