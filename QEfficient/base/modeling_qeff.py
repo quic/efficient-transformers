@@ -538,8 +538,10 @@ class QEFFBaseModel(ABC):
             command.append(f"-network-specialization-config={specializations_json}")
 
         # Write custom_io.yaml file
-        model_in_bfloat16 = self.config.torch_dtype == torch.bfloat16
-        pkv_in_bfloat16 = any("past_" in key and "bfloat16" in value for key, value in custom_io.items())
+        model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
+        pkv_in_bfloat16 = (custom_io is not None) and any(
+            "past_" in key and "bfloat16" in value for key, value in custom_io.items()
+        )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
             with open(custom_io_yaml, "w") as fp:
