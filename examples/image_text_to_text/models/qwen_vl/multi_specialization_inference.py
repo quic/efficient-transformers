@@ -80,6 +80,7 @@ else:  # Vision + Text
     widths = [360, 320, 360, 454, 536, 640, 720, 910, 720, 1280, 1920]
     heights = [120, 180, 240, 256, 354, 360, 480, 512, 576, 720, 1080]
     num_frames = [177, 139, 78, 64, 37, 30, 20, 16, 16, 7, 7]
+    user_vision_size = 9216
 
     qeff_model.compile(
         batch_size=batch_size,
@@ -94,6 +95,7 @@ else:  # Vision + Text
             "min_pixels": 4 * 28 * 28,
             "max_pixels": 16384 * 28 * 28,
         },
+        vision_size=user_vision_size,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
