@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from qwen_vl_utils import smart_resize
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLModel
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
@@ -1044,69 +1045,31 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             logger.warning(
                 f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
+        height = [height] if isinstance(height, int) else height
+        width = [width] if isinstance(width, int) else width
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         channel = 3
         patch_size = self.config.vision_config.patch_size
         temporal_patch_size = self.config.vision_config.temporal_patch_size
 
-        # Modified from qwen_vl_utils/vision_process.py
         IMAGE_FACTOR = 28
-        MAX_RATIO = 200
         IMAGE_MIN_TOKEN_NUM = 4
         IMAGE_MAX_TOKEN_NUM = 16384
-
-        def round_by_factor(number: int, factor: int) -> int:
-            """Returns the closest integer to 'number' that is divisible by 'factor'."""
-            return round(number / factor) * factor
-
-        def ceil_by_factor(number: int, factor: int) -> int:
-            """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
-            return math.ceil(number / factor) * factor
-
-        def floor_by_factor(number: int, factor: int) -> int:
-            """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
-            return math.floor(number / factor) * factor
-
-        def smart_resize(
-            height: int,
-            width: int,
-            factor: int = IMAGE_FACTOR,
-            min_pixels: Optional[int] = None,
-            max_pixels: Optional[int] = None,
-        ) -> tuple[int, int]:
-            """
-            Rescales the image so that the following conditions are met:
-
-            1. Both dimensions (height and width) are divisible by 'factor'.
-            2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
-            3. The aspect ratio of the image is maintained as closely as possible.
-            """
-            max_pixels = max_pixels if max_pixels is not None else (IMAGE_MAX_TOKEN_NUM * factor ** 2)
-            min_pixels = min_pixels if min_pixels is not None else (IMAGE_MIN_TOKEN_NUM * factor ** 2)
-            assert max_pixels >= min_pixels, "The max_pixels of image must be greater than or equal to min_pixels."
-            if max(height, width) / min(height, width) > MAX_RATIO:
-                raise ValueError(
-                    f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
-                )
-            h_bar = max(factor, round_by_factor(height, factor))
-            w_bar = max(factor, round_by_factor(width, factor))
-            if h_bar * w_bar > max_pixels:
-                beta = math.sqrt((height * width) / max_pixels)
-                h_bar = floor_by_factor(height / beta, factor)
-                w_bar = floor_by_factor(width / beta, factor)
-            elif h_bar * w_bar < min_pixels:
-                beta = math.sqrt(min_pixels / (height * width))
-                h_bar = ceil_by_factor(height * beta, factor)
-                w_bar = ceil_by_factor(width * beta, factor)
-            return h_bar, w_bar
+        min_pixels = IMAGE_MIN_TOKEN_NUM * IMAGE_FACTOR**2
+        max_pixels = IMAGE_MAX_TOKEN_NUM * IMAGE_FACTOR**2
+        mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
+        if mm_processor_kwargs:
+            min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
+            max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
 
         vision = []
         min_vision_size = ctx_len
-        height = [height] if isinstance(height, int) else height
-        width = [width] if isinstance(width, int) else width
         for h, w in zip(height, width):
-            resized_height, resized_width = smart_resize(height=h, width=w)
+            resized_height, resized_width = smart_resize(
+                height=h, width=w, factor=IMAGE_FACTOR, min_pixels=min_pixels, max_pixels=max_pixels
+            )
             grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
             grid_height = grid_h * grid_w
             grid_width = patch_size * patch_size * temporal_patch_size * channel

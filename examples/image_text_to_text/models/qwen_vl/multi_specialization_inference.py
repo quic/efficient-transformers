@@ -80,8 +80,9 @@ if skip_vision:
 else:
     batch_size = 1
     ctx_len = 14336
-    heights = [360, 320, 360, 454, 536, 640, 720, 910, 720, 1280, 1920]
-    widths = [120, 180, 240, 256, 354, 360, 480, 512, 576, 720, 1080]
+    widths = [360, 320, 360, 454, 536, 640, 720, 910, 720, 1280, 1920]
+    heights = [120, 180, 240, 256, 354, 360, 480, 512, 576, 720, 1080]
+    num_frames = [177, 139, 78, 64, 37, 30, 20, 16, 16, 7, 7]
 
     ## Vision + Text ##
     qeff_model.compile(
@@ -92,6 +93,11 @@ else:
         num_devices=2,
         height=heights,
         width=widths,
+        num_frames=max(num_frames),
+        mm_processor_kwargs={
+            "min_pixels": 4 * 28 * 28,
+            "max_pixels": 16384 * 28 * 28,
+        },
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
@@ -100,12 +106,8 @@ else:
 
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
-
     image = Image.open(requests.get(image_url, stream=True).raw)
-
-    ## Resize to any deimnsion present in specializations ##
-    image = image.resize((360, 120))
-
+    image = image.resize((360, 120))  # Resize to any deimnsion present in specializations (width, height)
     messages_1 = [
         {
             "role": "user",
@@ -115,7 +117,6 @@ else:
             ],
         },
     ]
-
     messages_2 = [
         {
             "role": "user",
@@ -125,9 +126,7 @@ else:
             ],
         },
     ]
-
     messages = [messages_1] * batch_size
-
     texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
 
     image_inputs, video_inputs = process_vision_info(messages)
