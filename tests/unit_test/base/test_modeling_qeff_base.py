@@ -12,7 +12,6 @@ Run with: pytest tests/unit_test/base/ -n auto -v
 """
 
 import pytest
-import torch
 from transformers import GPT2Config, GPT2LMHeadModel, LlamaConfig, LlamaForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM

@@ -50,7 +50,6 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModelForCTC,
     QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
-    QEFFTransformersBase,
 )
 
 # ---------------------------------------------------------------------------
@@ -298,9 +297,7 @@ class TestQEFFAutoModelForCausalLMLogic:
         model, cfg = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
         # kv_cache_batch_size overrides batch_size in the returned spec; must be passed explicitly
-        spec = qeff.build_prefill_specialization(
-            prefill_seq_len=32, ctx_len=128, batch_size=4, kv_cache_batch_size=4
-        )
+        spec = qeff.build_prefill_specialization(prefill_seq_len=32, ctx_len=128, batch_size=4, kv_cache_batch_size=4)
         assert spec["batch_size"] == 4
 
     def test_build_prefill_specialization_continuous_batching(self):
@@ -501,9 +498,7 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
 
         model, cfg = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
-        result = qeff.get_seq_len_and_handle_specialized_prefill_model(
-            prefill_seq_len=None, enable_chunking=True
-        )
+        result = qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=None, enable_chunking=True)
         assert result == ONNX_EXPORT_EXAMPLE_SEQ_LEN
         assert qeff.hash_params.get("prefill_only") is True
         assert qeff.hash_params.get("chunking") is True
@@ -515,9 +510,7 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
         # Ensure env var is not set
         os.environ.pop("NUM_Q_BLOCKS", None)
         with pytest.raises(ValueError, match="prefill_seq_len"):
-            qeff.get_seq_len_and_handle_specialized_prefill_model(
-                prefill_seq_len=None, enable_chunking=False
-            )
+            qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=None, enable_chunking=False)
 
     def test_valid_prefill_seq_len_sets_env_var(self):
         """Valid prefill_seq_len sets NUM_Q_BLOCKS env var."""
@@ -546,9 +539,7 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
         # Use a value that is NOT divisible by block_size
         bad_seq_len = GPT_OSS_PREFILL_Q_BLOCK_SIZE + 1
         with pytest.raises(ValueError):
-            qeff.get_seq_len_and_handle_specialized_prefill_model(
-                prefill_seq_len=bad_seq_len, enable_chunking=False
-            )
+            qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=bad_seq_len, enable_chunking=False)
 
 
 # ---------------------------------------------------------------------------
@@ -961,9 +952,7 @@ class TestQEFFAutoModelForCTC:
         model, cfg = make_tiny_wav2vec2()
         qeff = QEFFAutoModelForCTC(model)
         processor = MagicMock()
-        processor.return_value = MagicMock(
-            input_values=torch.zeros((1, 100), dtype=torch.float32)
-        )
+        processor.return_value = MagicMock(input_values=torch.zeros((1, 100), dtype=torch.float32))
         # pytorch_feature_generate calls processor and model
         # We just verify it doesn't raise TypeError about compile
         try:
