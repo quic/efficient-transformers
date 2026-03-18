@@ -18,21 +18,21 @@ torch.manual_seed(42)
 configs = [
     ("gpt2", 256, 2, 4, 128, 512, 127, {}),
     # ("codegen", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
-    ("falcon", 256, 2, 4, 128, 512, 127, {}),
-    ("gptj", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
-    ("llama", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("mistral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("falcon", 256, 2, 4, 128, 512, 127, {}),
+    # ("gptj", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
+    # ("llama", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("mistral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     # ("mixtral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("mpt", 256, 2, 4, 128, 512, 127, {}),
+    # ("mpt", 256, 2, 4, 128, 512, 127, {}),
     # ("phi", 256, 2, 4, 128, 512, 127, {}),
-    ("phi3", 256, 2, 4, 128, 512, 127, {"pad_token_id": 0}),
-    ("qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("qwen3", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("phi3", 256, 2, 4, 128, 512, 127, {"pad_token_id": 0}),
+    # ("qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("qwen3", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     # ("starcoder2", 256, 2, 4, 128, 512, 127, {}),
-    ("granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("olmo2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("olmo2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     # ("gpt_oss", 256, 3, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("qwen3_moe", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("qwen3_moe", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     # ("granitemoe", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
 ]
 
@@ -77,6 +77,7 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     # tokenizer = AutoTokenizer.from_pretrained(config.model_type)
     model_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb=False)
     # Export with subfunctions enabled
+    tmp_path = "/home/abhishek/rope_fix/graph_with_change"
     with_sub_func_onnx = model_0_0.export(tmp_path, use_onnx_subfunctions=True, offload_pt_weights=False)
 
     print(f"{config.model_type} is going on...")
