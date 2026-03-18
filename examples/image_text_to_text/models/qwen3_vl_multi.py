@@ -13,9 +13,9 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
+## For AWQ model update pytorch version to 2.8.*
 model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
-
 config.vision_config.depth = 9
 config.text_config.num_hidden_layers = 1
 config.vision_config.deepstack_visual_indexes = [8]
@@ -25,7 +25,8 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
-### use skip_vision=Ture, if want to run only text, else false ###
+
+### use skip_vision=Ture, if want to run only text, ow false ###
 skip_vision = False
 
 if skip_vision:
@@ -38,14 +39,13 @@ if skip_vision:
         prefill_seq_len=128,
         ctx_len=4096,
         num_cores=16,
-        num_devices=4,
+        num_devices=8,
         height=354,
         width=536,
-        mxfp6_matmul=True,
+        mxfp6_matmul=False,
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        use_onnx_subfunctions=False,
     )
 
     messages = [
@@ -66,43 +66,67 @@ if skip_vision:
         return_dict=True,
         return_tensors="pt",
     )
+
+    import ipdb
+
+    ipdb.set_trace()
+
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
+
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
-    print(processor.tokenizer.batch_decode(output.generated_ids))
+    print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 
 else:
     batch_size = 1
+    ctx_len = 5120
+
+    ## The dimensions list stores all the height × width pairs required for compilation ##
+    # dimension [hxw]
+    dimensions = [[354, 536], [240, 360], [1024, 1024]]
+
     ## Vision + Text ##
     qeff_model.compile(
         batch_size=batch_size,
         prefill_seq_len=128,
-        ctx_len=4096,
+        ctx_len=5120,
         num_cores=16,
         num_devices=4,
-        height=354,
-        width=536,
-        # height=1024,
-        # width=1024,
+        dimensions=dimensions,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
-        use_onnx_subfunctions=False,
     )
-
+    breakpoint()
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
+
     image = Image.open(requests.get(image_url, stream=True).raw)
+
+    ## Resize to any deimnsion present in specializations ##
+    # [wxh]
+    image = image.resize((1024, 1024))
+    breakpoint()
 
     messages_1 = [
         {
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": "Descibe the image in details."},
+                {"type": "text", "text": "Describe this image."},
+            ],
+        },
+    ]
+
+    messages_2 = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": "Describe about the color of the dog."},
             ],
         },
     ]
@@ -119,9 +143,11 @@ else:
         padding=True,
         return_tensors="pt",
     )
+    breakpoint()
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
+    breakpoint()
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
-    print(processor.tokenizer.batch_decode(output.generated_ids))
+    print(tokenizer.batch_decode(output.generated_ids))
     print(output)

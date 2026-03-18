@@ -833,7 +833,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         height: int = None,
         width: int = None,
         time: int = 1,
-        # dimensions: List = None,
+        dimensions: List = None,
         num_frames: int = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
@@ -849,6 +849,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             logger.warning(
                 "Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config"
             )
+            dimensions = [[height, width]]
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         channel = 3
@@ -904,26 +905,28 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 w_bar = ceil_by_factor(width * beta, factor)
             return h_bar, w_bar
 
-        resized_height, resized_width = smart_resize(height=height, width=width)
-        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        grid_height = grid_h * grid_w
-        grid_width = patch_size * patch_size * temporal_patch_size * channel
-        vision_size = grid_height // 4
-        vision_size = vision_size * num_frames * time
-        grid_height = grid_height * time * batch_size
+        vision = []
+        max_vision_size = 0
+        for dimension in dimensions:
+            resized_height, resized_width = smart_resize(height=dimension[0], width=dimension[1])
+            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+            grid_height = grid_h * grid_w
+            grid_width = patch_size * patch_size * temporal_patch_size * channel
+            vision_size = grid_height // 4
+            vision_size = vision_size * num_frames
+            grid_height = grid_height * batch_size
 
-        vision = [
-            {
-                "batch_size": batch_size,
-                "vision_size": vision_size,
-                "grid_height": grid_height,
-                "grid_width": grid_width,
-                "time": time,
-                "grid_h": grid_h,
-                "grid_w": grid_w,
-                "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
-            }
-        ]
+            max_vision_size = max(max_vision_size, vision_size)
+            vision.append(
+                {
+                    "batch_size": batch_size,
+                    "vision_size": vision_size,
+                    "grid_height": grid_height,
+                    "grid_width": grid_width,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
+                }
+            )
 
         if comp_ctx_lengths_prefill is not None:
             lang = []
@@ -933,10 +936,9 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
-                    "vision_size": vision_size,
+                    "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "vision_batch_size": batch_size,
-                    "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
                 }
 
                 if continuous_batching:
@@ -953,10 +955,9 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "vision_size": vision_size,
+                    "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "vision_batch_size": batch_size,
-                    "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
                 }
 
                 if continuous_batching:
@@ -970,9 +971,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "vision_size": vision_size,
+                "vision_size": max_vision_size,
                 "vision_batch_size": batch_size,
-                "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
             }
 
             if continuous_batching:
@@ -986,9 +986,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
-                "vision_size": vision_size,
+                "vision_size": max_vision_size,
                 "vision_batch_size": batch_size,
-                "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
             }
 
             if continuous_batching:
