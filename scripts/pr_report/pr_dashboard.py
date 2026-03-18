@@ -22,7 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 API = "https://api.github.com"
@@ -131,7 +131,7 @@ def fetch_daily_pr_counts(owner, repo, token, days=10):
     merged_by_day = []
     closed_unmerged_by_day = []
 
-    for offset in range(days - 1, -1, -1):          # oldest → newest
+    for offset in range(days - 1, -1, -1):  # oldest → newest
         day = today - timedelta(days=offset)
         day_str = day.strftime("%Y-%m-%d")
         label = day.strftime("%b %d")
@@ -144,7 +144,7 @@ def fetch_daily_pr_counts(owner, repo, token, days=10):
         except Exception as exc:
             print(f"  Search (opened {day_str}) failed: {exc}", file=sys.stderr)
             opened_by_day.append((label, 0))
-        time.sleep(0.5)                              # stay well under 30 req/min
+        time.sleep(0.5)  # stay well under 30 req/min
 
         # PRs merged on this day
         q_merged = f"repo:{owner}/{repo} is:pr is:merged merged:{day_str}"
@@ -315,7 +315,7 @@ def classify_check_runs(check_runs):
 
 
 # ── Chart top-margin constant — keeps pie title level with trend suptitle ────
-_CHART_TOP = 0.91   # fraction of figure height used for content (title sits above)
+_CHART_TOP = 0.91  # fraction of figure height used for content (title sits above)
 
 
 def generate_pie_chart_img(author_counts):
@@ -351,9 +351,21 @@ def generate_pie_chart_img(author_counts):
 
     # Tableau-10 extended palette — industry-standard professional colours
     colors = [
-        "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F",
-        "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F", "#BAB0AC",
-        "#86BCB6", "#FFBE7D", "#8CD17D", "#B6992D", "#D37295",
+        "#4E79A7",
+        "#F28E2B",
+        "#E15759",
+        "#76B7B2",
+        "#59A14F",
+        "#EDC948",
+        "#B07AA1",
+        "#FF9DA7",
+        "#9C755F",
+        "#BAB0AC",
+        "#86BCB6",
+        "#FFBE7D",
+        "#8CD17D",
+        "#B6992D",
+        "#D37295",
     ]
     slice_colors = [colors[i % len(colors)] for i in range(len(items))]
 
@@ -374,14 +386,21 @@ def generate_pie_chart_img(author_counts):
     )
 
     # Centre label showing total
-    ax.text(0, 0, f"{total}\nPRs", ha="center", va="center",
-            fontsize=18, fontweight="bold", color="#1a1a2e",
-            linespacing=1.4)
+    ax.text(
+        0,
+        0,
+        f"{total}\nPRs",
+        ha="center",
+        va="center",
+        fontsize=18,
+        fontweight="bold",
+        color="#1a1a2e",
+        linespacing=1.4,
+    )
 
     # Legend placed below the donut in 2 columns — eliminates side whitespace
     legend_labels = [
-        f"{author}  ·  {count} PR{'s' if count != 1 else ''}  ({count / total * 100:.1f}%)"
-        for author, count in items
+        f"{author}  ·  {count} PR{'s' if count != 1 else ''}  ({count / total * 100:.1f}%)" for author, count in items
     ]
     leg = ax.legend(
         wedges,
@@ -416,8 +435,7 @@ def generate_pie_chart_img(author_counts):
 
     # Render to an in-memory PNG buffer and base64-encode it
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     b64 = base64.b64encode(buf.read()).decode("ascii")
@@ -449,6 +467,7 @@ def generate_trend_charts_img(opened_by_day, merged_by_day, closed_unmerged_by_d
 
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import matplotlib.ticker as ticker
@@ -472,23 +491,36 @@ def generate_trend_charts_img(opened_by_day, merged_by_day, closed_unmerged_by_d
         xs = list(range(len(x_labels)))
         y_max = max(y_values) if any(v > 0 for v in y_values) else 1
         ax.fill_between(xs, y_values, alpha=0.15, color=line_color)
-        ax.plot(xs, y_values, color=line_color, linewidth=2.5, marker="o",
-                markersize=7, markerfacecolor=line_color,
-                markeredgecolor="white", markeredgewidth=2, zorder=3)
+        ax.plot(
+            xs,
+            y_values,
+            color=line_color,
+            linewidth=2.5,
+            marker="o",
+            markersize=7,
+            markerfacecolor=line_color,
+            markeredgecolor="white",
+            markeredgewidth=2,
+            zorder=3,
+        )
         for xi, yi in zip(xs, y_values):
-            ax.annotate(str(yi), (xi, yi),
-                        textcoords="offset points", xytext=(0, 8),
-                        ha="center", fontsize=9, fontweight="bold",
-                        color="#333333")
+            ax.annotate(
+                str(yi),
+                (xi, yi),
+                textcoords="offset points",
+                xytext=(0, 8),
+                ha="center",
+                fontsize=9,
+                fontweight="bold",
+                color="#333333",
+            )
         ax.set_xticks(xs)
         ax.set_xticklabels(x_labels, fontsize=9.5, rotation=0, ha="center")
         ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True, nbins=5))
         ax.tick_params(axis="y", labelsize=9)
-        ax.set_title(title, fontsize=11, fontweight="bold",
-                     color="#1a1a2e", pad=10, loc="left")
+        ax.set_title(title, fontsize=11, fontweight="bold", color="#1a1a2e", pad=10, loc="left")
         ax.set_facecolor("#f9fafb")
-        ax.grid(axis="y", color="#e1e4e8", linewidth=0.9,
-                linestyle="--", zorder=0)
+        ax.grid(axis="y", color="#e1e4e8", linewidth=0.9, linestyle="--", zorder=0)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.spines["left"].set_color("#d1d5da")
@@ -498,13 +530,11 @@ def generate_trend_charts_img(opened_by_day, merged_by_day, closed_unmerged_by_d
     _style_ax(ax1, labels_o, counts_o, "#4E79A7", "PRs Opened — Last 10 Days")
     _style_ax(ax2, labels_m, counts_m, "#59A14F", "PRs Merged — Last 10 Days")
 
-    fig.suptitle("PR Activity Trend", fontsize=13, fontweight="bold",
-                 color="#1a1a2e", y=_CHART_TOP + 0.01)
+    fig.suptitle("PR Activity Trend", fontsize=13, fontweight="bold", color="#1a1a2e", y=_CHART_TOP + 0.01)
     fig.tight_layout(rect=[0, 0, 1, _CHART_TOP], pad=2.0)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     b64 = base64.b64encode(buf.read()).decode("ascii")
@@ -514,7 +544,7 @@ def generate_trend_charts_img(opened_by_day, merged_by_day, closed_unmerged_by_d
         f'  <img src="data:image/png;base64,{b64}" '
         f'alt="PR Trend — Last 10 Days" '
         f'style="max-width:100%;height:auto;">\n'
-        '</div>\n'
+        "</div>\n"
     )
 
 
@@ -549,25 +579,34 @@ def review_badge(label, users, text_color, bg_color):
     )
 
 
-def build_html(repo_full, date_str, total_open, draft_count,
-               opened_last_7, merged_last_7, closed_last_7,
-               pie_svg, trend_img, rows_html):
+def build_html(
+    repo_full,
+    date_str,
+    total_open,
+    draft_count,
+    opened_last_7,
+    merged_last_7,
+    closed_last_7,
+    pie_svg,
+    trend_img,
+    rows_html,
+):
     """Assemble the complete HTML document."""
     # Stat cards for the summary strip
     stats = [
-        ("📅 Report Date",       date_str),
-        ("📦 Repository",        repo_full),
-        ("🔓 Open PRs",          str(total_open)),
-        ("📝 Draft PRs",         str(draft_count)),
-        ("🚀 Opened (7 days)",   str(opened_last_7)),
-        ("✅ Merged (7 days)",   str(merged_last_7)),
-        ("🚫 Closed (7 days)",   str(closed_last_7)),
+        ("📅 Report Date", date_str),
+        ("📦 Repository", repo_full),
+        ("🔓 Open PRs", str(total_open)),
+        ("📝 Draft PRs", str(draft_count)),
+        ("🚀 Opened (7 days)", str(opened_last_7)),
+        ("✅ Merged (7 days)", str(merged_last_7)),
+        ("🚫 Closed (7 days)", str(closed_last_7)),
     ]
     stat_cards_html = "\n    ".join(
         f'<div class="stat-card">'
         f'<span class="stat-label">{html.escape(label)}</span>'
         f'<span class="stat-value">{html.escape(value)}</span>'
-        f'</div>'
+        f"</div>"
         for label, value in stats
     )
 
@@ -1002,9 +1041,16 @@ def main():
     html_file = script_dir / "pr_report.html"
 
     html_content = build_html(
-        repo_full, date_str, total_open, draft_count,
-        opened_last_7, merged_last_7, closed_last_7,
-        pie_svg, trend_img, rows_html,
+        repo_full,
+        date_str,
+        total_open,
+        draft_count,
+        opened_last_7,
+        merged_last_7,
+        closed_last_7,
+        pie_svg,
+        trend_img,
+        rows_html,
     )
 
     with open(html_file, "w", encoding="utf-8") as f:
