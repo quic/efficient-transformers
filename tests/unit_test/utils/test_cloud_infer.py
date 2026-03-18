@@ -23,7 +23,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Tests: QAICInferenceSession importability
 # ---------------------------------------------------------------------------
@@ -239,7 +238,6 @@ class TestQAICInferenceSessionErrorHandling:
         # This test would require mocking qaicrt, so we skip actual instantiation
         # and just verify the signature accepts Union[Path, str]
         import inspect
-        from typing import get_type_hints
 
         from QEfficient.generation.cloud_infer import QAICInferenceSession
 

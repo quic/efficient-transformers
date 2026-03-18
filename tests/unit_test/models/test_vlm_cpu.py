@@ -18,7 +18,6 @@ All tests run on CPU only. No actual model loading or QAIC hardware execution.
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Tests: QEFFAutoModelForImageTextToText structure
 # ---------------------------------------------------------------------------
