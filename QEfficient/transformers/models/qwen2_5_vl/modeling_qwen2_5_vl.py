@@ -1050,10 +1050,11 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         patch_size = self.config.vision_config.patch_size
         temporal_patch_size = self.config.vision_config.temporal_patch_size
 
+        # Modified from qwen_vl_utils/vision_process.py
         IMAGE_FACTOR = 28
-        MIN_PIXELS = 4 * 28 * 28
-        MAX_PIXELS = 16384 * 28 * 28
         MAX_RATIO = 200
+        IMAGE_MIN_TOKEN_NUM = 4
+        IMAGE_MAX_TOKEN_NUM = 16384
 
         def round_by_factor(number: int, factor: int) -> int:
             """Returns the closest integer to 'number' that is divisible by 'factor'."""
@@ -1071,18 +1072,19 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             height: int,
             width: int,
             factor: int = IMAGE_FACTOR,
-            min_pixels: int = MIN_PIXELS,
-            max_pixels: int = MAX_PIXELS,
+            min_pixels: Optional[int] = None,
+            max_pixels: Optional[int] = None,
         ) -> tuple[int, int]:
             """
             Rescales the image so that the following conditions are met:
 
             1. Both dimensions (height and width) are divisible by 'factor'.
-
             2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
-
             3. The aspect ratio of the image is maintained as closely as possible.
             """
+            max_pixels = max_pixels if max_pixels is not None else (IMAGE_MAX_TOKEN_NUM * factor ** 2)
+            min_pixels = min_pixels if min_pixels is not None else (IMAGE_MIN_TOKEN_NUM * factor ** 2)
+            assert max_pixels >= min_pixels, "The max_pixels of image must be greater than or equal to min_pixels."
             if max(height, width) / min(height, width) > MAX_RATIO:
                 raise ValueError(
                     f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
@@ -1100,21 +1102,17 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             return h_bar, w_bar
 
         vision = []
-        max_vision_size = 0
-
+        min_vision_size = ctx_len
         height = [height] if isinstance(height, int) else height
         width = [width] if isinstance(width, int) else width
-
         for h, w in zip(height, width):
             resized_height, resized_width = smart_resize(height=h, width=w)
             grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
             grid_height = grid_h * grid_w
             grid_width = patch_size * patch_size * temporal_patch_size * channel
             vision_size = grid_height // 4
-            vision_size = vision_size * num_frames
             grid_height = grid_height * batch_size
-
-            max_vision_size = max(max_vision_size, vision_size)
+            min_vision_size = min(min_vision_size, vision_size * num_frames)
 
             vision.append(
                 {
@@ -1135,7 +1133,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
-                    "vision_size": max_vision_size,
+                    "vision_size": min_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "vision_batch_size": batch_size,
                 }
@@ -1154,7 +1152,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "vision_size": max_vision_size,
+                    "vision_size": min_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "vision_batch_size": batch_size,
                 }
@@ -1170,7 +1168,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "vision_size": max_vision_size,
+                "vision_size": min_vision_size,
                 "vision_batch_size": batch_size,
             }
 
@@ -1185,7 +1183,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
-                "vision_size": max_vision_size,
+                "vision_size": min_vision_size,
                 "vision_batch_size": batch_size,
             }
 
