@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 """
 Daily PR report generator.
 
@@ -265,24 +271,36 @@ def generate_pie_chart_svg(author_counts):
 
     # 15-colour palette; cycles if there are more authors
     colors = [
-        "#4a90d9", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6",
-        "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
-        "#ff5722", "#607d8b", "#795548", "#9c27b0", "#4caf50",
+        "#4a90d9",
+        "#e74c3c",
+        "#2ecc71",
+        "#f39c12",
+        "#9b59b6",
+        "#1abc9c",
+        "#e67e22",
+        "#3498db",
+        "#e91e63",
+        "#00bcd4",
+        "#ff5722",
+        "#607d8b",
+        "#795548",
+        "#9c27b0",
+        "#4caf50",
     ]
 
-    cx, cy, r = 190, 190, 160   # pie centre and radius
-    legend_x  = cx * 2 + 30     # legend column starts here
-    row_h     = 22               # legend row height
-    svg_w     = legend_x + 260   # total SVG width
-    svg_h     = max(cy * 2, len(items) * row_h + 50)  # total SVG height
+    cx, cy, r = 190, 190, 160  # pie centre and radius
+    legend_x = cx * 2 + 30  # legend column starts here
+    row_h = 22  # legend row height
+    svg_w = legend_x + 260  # total SVG width
+    svg_h = max(cy * 2, len(items) * row_h + 50)  # total SVG height
 
     # ── Build slice paths ────────────────────────────────────────────────────
     paths_svg = ""
     legend_svg = ""
-    start_angle = -math.pi / 2   # begin at 12 o'clock
+    start_angle = -math.pi / 2  # begin at 12 o'clock
 
     for i, (author, count) in enumerate(items):
-        angle     = 2 * math.pi * count / total
+        angle = 2 * math.pi * count / total
         end_angle = start_angle + angle
 
         x1 = cx + r * math.cos(start_angle)
@@ -291,20 +309,16 @@ def generate_pie_chart_svg(author_counts):
         y2 = cy + r * math.sin(end_angle)
 
         large_arc = 1 if angle > math.pi else 0
-        color     = colors[i % len(colors)]
-        pct       = count / total * 100
+        color = colors[i % len(colors)]
+        pct = count / total * 100
 
         # SVG arc path: move to centre → line to arc start → arc → close
-        path = (
-            f"M {cx},{cy} "
-            f"L {x1:.2f},{y1:.2f} "
-            f"A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
-        )
+        path = f"M {cx},{cy} L {x1:.2f},{y1:.2f} A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
         paths_svg += (
             f'  <path d="{path}" fill="{color}" '
             f'stroke="white" stroke-width="2">\n'
-            f'    <title>{html.escape(author)}: {count} PR{"s" if count != 1 else ""} ({pct:.1f}%)</title>\n'
-            f'  </path>\n'
+            f"    <title>{html.escape(author)}: {count} PR{'s' if count != 1 else ''} ({pct:.1f}%)</title>\n"
+            f"  </path>\n"
         )
 
         # Legend row
@@ -314,8 +328,8 @@ def generate_pie_chart_svg(author_counts):
             f'fill="{color}" rx="2"/>\n'
             f'  <text x="{legend_x + 20}" y="{ly + 11}" '
             f'font-size="12" font-family="Arial, sans-serif" fill="#333">'
-            f'{html.escape(author)}  {count} PR{"s" if count != 1 else ""}  ({pct:.1f}%)'
-            f'</text>\n'
+            f"{html.escape(author)}  {count} PR{'s' if count != 1 else ''}  ({pct:.1f}%)"
+            f"</text>\n"
         )
 
         start_angle = end_angle
@@ -329,15 +343,14 @@ def generate_pie_chart_svg(author_counts):
         # Chart title
         f'  <text x="{cx}" y="20" text-anchor="middle" '
         f'font-size="14" font-weight="bold" fill="#1a1a2e">'
-        f'PR Distribution by Author (Total: {total})</text>\n'
+        f"PR Distribution by Author (Total: {total})</text>\n"
         # Slices
         + paths_svg
         # Legend header
         + f'  <text x="{legend_x}" y="22" font-size="13" '
         f'font-weight="bold" fill="#1a1a2e">Author</text>\n'
         # Legend rows
-        + legend_svg
-        + '</svg>\n</div>\n'
+         + legend_svg + "</svg>\n</div>\n"
     )
     return svg
 
@@ -348,17 +361,14 @@ def generate_pie_chart_svg(author_counts):
 def ci_badge(name, state):
     """Return an HTML badge <span> for a single CI check run."""
     colors = {
-        "PASS":    ("#1a7f37", "#dafbe1"),   # dark-green text, light-green bg
-        "FAIL":    ("#cf222e", "#ffebe9"),   # red text, light-red bg
-        "PENDING": ("#9a6700", "#fff8c5"),   # amber text, light-yellow bg
+        "PASS": ("#1a7f37", "#dafbe1"),  # dark-green text, light-green bg
+        "FAIL": ("#cf222e", "#ffebe9"),  # red text, light-red bg
+        "PENDING": ("#9a6700", "#fff8c5"),  # amber text, light-yellow bg
     }
     text_color, bg_color = colors.get(state, ("#24292e", "#f6f8fa"))
     safe_name = html.escape(name)
     safe_state = html.escape(state)
-    return (
-        f'<span class="badge" style="color:{text_color};background:{bg_color};">'
-        f'{safe_name}: {safe_state}</span>'
-    )
+    return f'<span class="badge" style="color:{text_color};background:{bg_color};">{safe_name}: {safe_state}</span>'
 
 
 def review_badge(label, users, text_color, bg_color):
@@ -370,9 +380,9 @@ def review_badge(label, users, text_color, bg_color):
     return (
         f'<div class="review-group">'
         f'<span class="badge" style="color:{text_color};background:{bg_color};">'
-        f'{safe_label}</span> '
+        f"{safe_label}</span> "
         f'<span class="review-users">{safe_users}</span>'
-        f'</div>'
+        f"</div>"
     )
 
 
@@ -605,8 +615,7 @@ def load_github_usernames():
         if isinstance(email_map, list):
             # Old format: just emails, no usernames available
             print(
-                "Warning: email_map.json is in old format (list). "
-                "Please update to dict format: {email: username}",
+                "Warning: email_map.json is in old format (list). Please update to dict format: {email: username}",
                 file=sys.stderr,
             )
             return []
@@ -701,8 +710,7 @@ def main():
         labels = [lbl["name"] for lbl in pr.get("labels") or []]
         labels_html = (
             " ".join(
-                f'<span class="badge" style="color:#24292e;background:#e1e4e8;">'
-                f'{html.escape(lbl)}</span>'
+                f'<span class="badge" style="color:#24292e;background:#e1e4e8;">{html.escape(lbl)}</span>'
                 for lbl in labels
             )
             if labels
@@ -721,27 +729,15 @@ def main():
         rs = summarize_reviews(reviews)
 
         review_html_parts = []
-        review_html_parts.append(
-            review_badge("Changes Requested", rs["changes_requested"], "#cf222e", "#ffebe9")
-        )
-        review_html_parts.append(
-            review_badge("Approved", rs["approvers"], "#1a7f37", "#dafbe1")
-        )
-        review_html_parts.append(
-            review_badge("Commented", rs["commenters"], "#0550ae", "#ddf4ff")
-        )
-        review_html_parts.append(
-            review_badge("Dismissed", rs["dismissed"], "#57606a", "#f6f8fa")
-        )
+        review_html_parts.append(review_badge("Changes Requested", rs["changes_requested"], "#cf222e", "#ffebe9"))
+        review_html_parts.append(review_badge("Approved", rs["approvers"], "#1a7f37", "#dafbe1"))
+        review_html_parts.append(review_badge("Commented", rs["commenters"], "#0550ae", "#ddf4ff"))
+        review_html_parts.append(review_badge("Dismissed", rs["dismissed"], "#57606a", "#f6f8fa"))
         review_html_parts = [p for p in review_html_parts if p]
-        review_summary_html = (
-            "\n".join(review_html_parts) if review_html_parts else '<em>No reviews yet</em>'
-        )
+        review_summary_html = "\n".join(review_html_parts) if review_html_parts else "<em>No reviews yet</em>"
 
         # Pending With — smart assignment based on PR state
-        pending_with_str = html.escape(
-            determine_pending_with(pr, reviews, rs, requested_reviewers)
-        )
+        pending_with_str = html.escape(determine_pending_with(pr, reviews, rs, requested_reviewers))
 
         # 4) Individual CI check runs — fully paginated
         ci_html = '<span style="color:#57606a;">UNKNOWN</span>'
