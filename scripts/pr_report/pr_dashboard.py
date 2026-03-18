@@ -601,13 +601,13 @@ def build_html(
     # Stat cards — built as <td> cells inside a single-row table so they sit
     # side-by-side in every email client (flexbox is not supported in email).
     stats = [
-        ("📅 Report Date", date_str),
-        ("📦 Repository", repo_full),
-        ("🔓 Open PRs", str(total_open)),
-        ("📝 Draft PRs", str(draft_count)),
-        ("🚀 Opened (7 days)", str(opened_last_7)),
-        ("✅ Merged (7 days)", str(merged_last_7)),
-        ("🚫 Closed (7 days)", str(closed_last_7)),
+        ("Report Date", date_str),
+        ("Repository", repo_full),
+        ("Open PRs", str(total_open)),
+        ("Draft PRs", str(draft_count)),
+        ("Opened (7 days)", str(opened_last_7)),
+        ("Merged (7 days)", str(merged_last_7)),
+        ("Closed (7 days)", str(closed_last_7)),
     ]
     stat_cells_html = "\n      ".join(
         f'<td style="padding:0 6px 0 0;vertical-align:top;">'
