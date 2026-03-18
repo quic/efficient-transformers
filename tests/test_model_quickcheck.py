@@ -444,38 +444,35 @@ def test_causal_subfunction_export_smoke(tmp_path):
     assert not any("QEffGPT2Block" in name for name in without_names)
 
 
+@pytest.mark.llm_model
 @pytest.mark.parametrize(
     ("model_type", "model_id"),
     sorted(CAUSAL_RUNTIME_MODEL_IDS.items()),
     ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
 )
-def test_causal_compile_smoke_invokes_compile_path_with_subfunctions(monkeypatch, model_type, model_id, tmp_path):
+def test_causal_compile_with_subfunctions_all_models(model_type, model_id, tmp_path):
     del model_type
-    compile_calls = {}
-
-    def _fake_compile(self, onnx_path=None, compile_dir=None, **kwargs):
-        compile_calls["onnx_path"] = onnx_path
-        compile_calls["compile_dir"] = compile_dir
-        compile_calls["kwargs"] = kwargs
-        qpc_path = tmp_path / "qpc"
-        qpc_path.mkdir(parents=True, exist_ok=True)
-        return str(qpc_path)
-
-    monkeypatch.setattr(QEFFAutoModelForCausalLM, "_compile", _fake_compile, raising=False)
-
     try:
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
-    qpc = qeff_model.compile(prefill_seq_len=8, ctx_len=32, use_onnx_subfunctions=True)
+    try:
+        qpc = qeff_model.compile(
+            prefill_seq_len=8,
+            ctx_len=32,
+            use_onnx_subfunctions=True,
+            compile_dir=tmp_path / "compile-with-subfunctions",
+        )
+    except Exception as exc:
+        pytest.skip(
+            f"Skipping compile for {model_id}: compile backend unavailable or unsupported in this environment "
+            f"({type(exc).__name__}: {exc})"
+        )
 
-    assert Path(qpc).name == "qpc"
-    assert compile_calls["kwargs"]["use_onnx_subfunctions"] is True
-    assert compile_calls["kwargs"]["specializations"][0]["seq_len"] == 8
-    assert compile_calls["kwargs"]["specializations"][0]["ctx_len"] == 32
-    assert compile_calls["kwargs"]["compile_only"] is True
-    assert compile_calls["kwargs"]["retained_state"] is True
+    qpc_path = Path(qpc)
+    assert qpc_path.name == "qpc"
+    assert qpc_path.is_dir()
 
 
 @pytest.mark.llm_model

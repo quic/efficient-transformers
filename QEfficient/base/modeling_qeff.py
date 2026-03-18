@@ -240,13 +240,8 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-            try:
-                _ = onnx.load(onnx_path, load_external_data=False)
-                self.onnx_path = onnx_path
-                return onnx_path
-            except Exception as e:
-                logger.warning(f"Invalid cached ONNX found at {onnx_path}, re-exporting: {e}")
-                onnx_path.unlink(missing_ok=True)
+            self.onnx_path = onnx_path
+            return onnx_path
 
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
