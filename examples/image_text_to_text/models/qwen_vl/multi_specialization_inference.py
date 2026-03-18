@@ -13,7 +13,7 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-## For AWQ model update pytorch version to 2.8.*
+# For AWQ model update pytorch version to 2.8.*
 model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 2
@@ -24,13 +24,10 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-### use skip_vision=Ture, if want to run only text, ow false ###
+# use skip_vision=True, if want to run only text
 skip_vision = False
 
-if skip_vision:
-    ## Only Text ##
-
-    ## Set Batch_Size ##
+if skip_vision:  # Only Text
     batch_size = 1
     qeff_model.compile(
         batch_size=batch_size,
@@ -77,14 +74,13 @@ if skip_vision:
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 
-else:
+else:  # Vision + Text
     batch_size = 1
     ctx_len = 14336
     widths = [360, 320, 360, 454, 536, 640, 720, 910, 720, 1280, 1920]
     heights = [120, 180, 240, 256, 354, 360, 480, 512, 576, 720, 1080]
     num_frames = [177, 139, 78, 64, 37, 30, 20, 16, 16, 7, 7]
 
-    ## Vision + Text ##
     qeff_model.compile(
         batch_size=batch_size,
         prefill_seq_len=128,
@@ -104,10 +100,9 @@ else:
         mos=1,
     )
 
-    ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
     image = Image.open(requests.get(image_url, stream=True).raw)
-    image = image.resize((360, 120))  # Resize to any deimnsion present in specializations (width, height)
+    image = image.resize((360, 120))  # Resize to any dimension (width, height) present in specializations
     messages_1 = [
         {
             "role": "user",
