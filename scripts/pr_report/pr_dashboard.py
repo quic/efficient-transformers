@@ -8,10 +8,11 @@
 """
 Daily PR report generator.
 
-Outputs a Markdown table to stdout and writes
-scripts/git_workflow/recipients.txt with resolved email addresses.
+Writes scripts/pr_report/pr_report.html with a styled HTML dashboard and
+scripts/pr_report/github_mentions.txt with GitHub usernames for @mentions.
 """
 
+import html
 import json
 import math
 import os
@@ -21,6 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 API = "https://api.github.com"
 ACCEPT = "application/vnd.github+json"
@@ -224,13 +226,13 @@ def determine_pending_with(pr, reviews, reviews_summary, requested_reviewers):
     return author
 
 
-def format_check_runs(check_runs):
+def classify_check_runs(check_runs):
     """
-    Return each individual check run name and its status.
-    Format: "job-name: PASS / job-name2: FAIL / ..."
+    Return a list of (name, state) tuples for each check run.
+    state is one of: PASS, FAIL, PENDING, or the raw conclusion uppercased.
     """
     if not check_runs:
-        return "NONE"
+        return []
 
     results = []
     for cr in sorted(check_runs, key=lambda x: x.get("name", "")):
@@ -247,9 +249,9 @@ def format_check_runs(check_runs):
         else:
             state = conclusion.upper()
 
-        results.append(f"{name}: {state}")
+        results.append((name, state))
 
-    return " / ".join(results)
+    return results
 
 
 # ── Pie chart helper ──────────────────────────────────────────────────────────
@@ -258,9 +260,7 @@ def format_check_runs(check_runs):
 def generate_pie_chart_svg(author_counts):
     """
     Generate a self-contained inline SVG pie chart showing PR distribution
-    by author.  Returns an HTML string (a <div> wrapping an <svg>) that can
-    be embedded directly in Markdown — the markdown library passes raw HTML
-    blocks through unchanged.
+    by author.  Returns an HTML string (a <div> wrapping an <svg>).
     """
     if not author_counts:
         return ""
@@ -317,7 +317,7 @@ def generate_pie_chart_svg(author_counts):
         paths_svg += (
             f'  <path d="{path}" fill="{color}" '
             f'stroke="white" stroke-width="2">\n'
-            f"    <title>{author}: {count} PR{'s' if count != 1 else ''} ({pct:.1f}%)</title>\n"
+            f"    <title>{html.escape(author)}: {count} PR{'s' if count != 1 else ''} ({pct:.1f}%)</title>\n"
             f"  </path>\n"
         )
 
@@ -328,7 +328,7 @@ def generate_pie_chart_svg(author_counts):
             f'fill="{color}" rx="2"/>\n'
             f'  <text x="{legend_x + 20}" y="{ly + 11}" '
             f'font-size="12" font-family="Arial, sans-serif" fill="#333">'
-            f"{author}  {count} PR{'s' if count != 1 else ''}  ({pct:.1f}%)"
+            f"{html.escape(author)}  {count} PR{'s' if count != 1 else ''}  ({pct:.1f}%)"
             f"</text>\n"
         )
 
@@ -336,7 +336,7 @@ def generate_pie_chart_svg(author_counts):
 
     # ── Assemble SVG ─────────────────────────────────────────────────────────
     svg = (
-        f'<div style="margin:24px 0;">\n'
+        f'<div class="chart-container">\n'
         f'<svg width="{svg_w}" height="{svg_h}" '
         f'xmlns="http://www.w3.org/2000/svg" '
         f'style="font-family:Arial,sans-serif;">\n'
@@ -355,24 +355,305 @@ def generate_pie_chart_svg(author_counts):
     return svg
 
 
-# ── Email list helper ─────────────────────────────────────────────────────────
+# ── HTML rendering helpers ────────────────────────────────────────────────────
 
 
-def load_email_list(path):
+def ci_badge(name, state):
+    """Return an HTML badge <span> for a single CI check run."""
+    colors = {
+        "PASS": ("#1a7f37", "#dafbe1"),  # dark-green text, light-green bg
+        "FAIL": ("#cf222e", "#ffebe9"),  # red text, light-red bg
+        "PENDING": ("#9a6700", "#fff8c5"),  # amber text, light-yellow bg
+    }
+    text_color, bg_color = colors.get(state, ("#24292e", "#f6f8fa"))
+    safe_name = html.escape(name)
+    safe_state = html.escape(state)
+    return f'<span class="badge" style="color:{text_color};background:{bg_color};">{safe_name}: {safe_state}</span>'
+
+
+def review_badge(label, users, text_color, bg_color):
+    """Return an HTML badge group for a review category."""
+    if not users:
+        return ""
+    safe_label = html.escape(label)
+    safe_users = html.escape(", ".join(users))
+    return (
+        f'<div class="review-group">'
+        f'<span class="badge" style="color:{text_color};background:{bg_color};">'
+        f"{safe_label}</span> "
+        f'<span class="review-users">{safe_users}</span>'
+        f"</div>"
+    )
+
+
+def build_html(repo_full, date_str, total_open, pie_svg, rows_html):
+    """Assemble the complete HTML document."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Open PR Dashboard — {html.escape(repo_full)}</title>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+                   Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+      line-height: 1.6;
+      color: #24292e;
+      background: #f6f8fa;
+      padding: 24px;
+    }}
+
+    .container {{
+      max-width: 1500px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 32px 36px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.12);
+    }}
+
+    h1 {{
+      font-size: 1.75em;
+      color: #1a1a2e;
+      border-bottom: 3px solid #0366d6;
+      padding-bottom: 10px;
+      margin-bottom: 20px;
+    }}
+
+    /* ── Summary table ── */
+    .summary-table {{
+      border-collapse: collapse;
+      margin-bottom: 24px;
+    }}
+    .summary-table td {{
+      padding: 6px 16px 6px 0;
+      font-size: 0.95em;
+    }}
+    .summary-table td:first-child {{
+      font-weight: 600;
+      color: #586069;
+      padding-right: 12px;
+    }}
+
+    /* ── Pie chart ── */
+    .chart-container {{
+      margin: 24px 0;
+      overflow-x: auto;
+    }}
+
+    /* ── PR table ── */
+    .pr-table-wrapper {{
+      overflow-x: auto;
+      margin-top: 24px;
+    }}
+
+    table.pr-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875em;
+    }}
+
+    table.pr-table thead {{
+      background: #f6f8fa;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }}
+
+    table.pr-table th {{
+      padding: 10px 10px;
+      text-align: left;
+      font-weight: 600;
+      color: #24292e;
+      border-bottom: 2px solid #d1d5da;
+      white-space: nowrap;
+    }}
+
+    table.pr-table th.num {{ text-align: right; }}
+
+    table.pr-table td {{
+      padding: 9px 10px;
+      border-bottom: 1px solid #e1e4e8;
+      vertical-align: top;
+    }}
+
+    table.pr-table tbody tr:hover {{ background: #f6f8fa; }}
+
+    td.age {{ text-align: right; font-variant-numeric: tabular-nums; }}
+
+    td.draft-yes {{ color: #9a6700; font-weight: 600; }}
+    td.draft-no  {{ color: #57606a; }}
+
+    a {{ color: #0366d6; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+
+    .pr-link {{ font-weight: 600; }}
+
+    /* ── Badges ── */
+    .badge {{
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 12px;
+      font-size: 0.78em;
+      font-weight: 600;
+      white-space: nowrap;
+      margin: 1px 2px 1px 0;
+    }}
+
+    /* ── CI checks cell ── */
+    td.ci-cell {{
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 0.8em;
+    }}
+    td.ci-cell .badge {{ font-family: inherit; }}
+
+    /* ── Review summary cell ── */
+    .review-group {{
+      margin-bottom: 3px;
+    }}
+    .review-users {{
+      font-size: 0.9em;
+      color: #57606a;
+    }}
+
+    /* ── No-data row ── */
+    .no-data {{
+      text-align: center;
+      color: #57606a;
+      padding: 24px;
+      font-style: italic;
+    }}
+
+    /* ── Footer ── */
+    .footer {{
+      margin-top: 32px;
+      font-size: 0.8em;
+      color: #8b949e;
+      text-align: right;
+    }}
+
+    @media (max-width: 900px) {{
+      .container {{ padding: 16px; }}
+      table.pr-table {{ font-size: 0.8em; }}
+      table.pr-table th, table.pr-table td {{ padding: 7px 6px; }}
+    }}
+
+    @media print {{
+      body {{ background: #fff; }}
+      .container {{ box-shadow: none; }}
+      table.pr-table {{ page-break-inside: auto; }}
+      tr {{ page-break-inside: avoid; }}
+    }}
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Open PR Dashboard — {html.escape(repo_full)}</h1>
+
+  <table class="summary-table">
+    <tr>
+      <td>Report Date</td>
+      <td>{html.escape(date_str)}</td>
+    </tr>
+    <tr>
+      <td>Open PRs</td>
+      <td><strong>{total_open}</strong></td>
+    </tr>
+  </table>
+
+  {pie_svg}
+
+  <div class="pr-table-wrapper">
+    <table class="pr-table">
+      <thead>
+        <tr>
+          <th>PR</th>
+          <th>Author</th>
+          <th>Assignee</th>
+          <th class="num">Age (days)</th>
+          <th>Draft</th>
+          <th>Labels</th>
+          <th>Reviewers</th>
+          <th>Pending With</th>
+          <th>Review Summary</th>
+          <th>CI Checks</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html if rows_html else '<tr><td colspan="10" class="no-data">No open pull requests.</td></tr>'}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">Generated by pr_dashboard.py · {html.escape(date_str)}</div>
+
+</div>
+</body>
+</html>"""
+
+
+# ── Email/Username mapping ───────────────────────────────────────────────────
+
+
+def load_github_usernames():
     """
-    Load email_map.json — a plain JSON array of email addresses.
-    Returns a list of strings.
+    Load email-to-GitHub-username mapping from email_map.json.
+    Returns a list of GitHub usernames to @mention in the issue.
     """
+    script_dir = Path(__file__).parent
+    email_map_file = os.environ.get("EMAIL_MAP_FILE", script_dir / "email_map.json")
+
     try:
-        with open(path) as f:
-            data = json.load(f)
-        if not isinstance(data, list):
-            print(f"Warning: {path} should be a JSON array of email addresses.", file=sys.stderr)
+        with open(email_map_file, "r") as f:
+            email_map = json.load(f)
+
+        # Handle both list format (old) and dict format (new)
+        if isinstance(email_map, list):
+            # Old format: just emails, no usernames available
+            print(
+                "Warning: email_map.json is in old format (list). Please update to dict format: {email: username}",
+                file=sys.stderr,
+            )
             return []
-        return [e for e in data if isinstance(e, str) and e.strip()]
+        elif isinstance(email_map, dict):
+            # New format: {email: username}
+            usernames = [username for username in email_map.values() if username]
+            return usernames
+        else:
+            print(
+                f"Warning: email_map.json has unexpected format: {type(email_map)}",
+                file=sys.stderr,
+            )
+            return []
     except FileNotFoundError:
-        print(f"Warning: email list not found at {path}", file=sys.stderr)
+        print(
+            f"Warning: {email_map_file} not found. No @mentions will be added.",
+            file=sys.stderr,
+        )
         return []
+    except json.JSONDecodeError as e:
+        print(f"Warning: Failed to parse {email_map_file}: {e}", file=sys.stderr)
+        return []
+
+
+def write_mentions_file(usernames):
+    """
+    Write GitHub usernames to a file for the workflow to consume.
+    """
+    script_dir = Path(__file__).parent
+    mentions_file = script_dir / "github_mentions.txt"
+
+    try:
+        with open(mentions_file, "w") as f:
+            for username in usernames:
+                f.write(f"@{username}\n")
+        print(f"Wrote {len(usernames)} username(s) to {mentions_file}", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: Failed to write mentions file: {e}", file=sys.stderr)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -393,24 +674,11 @@ def main():
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%B %d, %Y  %H:%M UTC")
 
-    # Load recipient email list (path configurable via EMAIL_MAP_FILE env var)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_map = os.path.join(script_dir, "email_map.json")
-    email_map_path = os.environ.get("EMAIL_MAP_FILE", default_map)
-    recipients = load_email_list(email_map_path)
-
     # 1) Fetch all open PRs (correctly paginated via Link header)
     pulls = paginate(f"/repos/{owner}/{repo}/pulls", token, params={"state": "open"})
     total_open = len(pulls)
 
-    # -- Header ---------------------------------------------------------------
-    print(f"# Open PR Dashboard — {owner}/{repo}")
-    print()
-    print("| | |")
-    print("|---|---|")
-    print(f"| Report Date | {date_str} |")
-    print(f"| Open PRs | **{total_open}** |")
-    print()
+    print(f"Fetched {total_open} open PR(s) for {repo_full}", file=sys.stderr)
 
     # -- Pie chart (author distribution) — collected in first pass ------------
     author_counts: dict = {}
@@ -419,79 +687,110 @@ def main():
         if not is_bot(author):
             author_counts[author] = author_counts.get(author, 0) + 1
 
-    print(generate_pie_chart_svg(author_counts))
+    pie_svg = generate_pie_chart_svg(author_counts)
 
-    # -- Table ----------------------------------------------------------------
-    print(
-        "| PR | Author | Assignee | Age (days) | Draft | Labels | Reviewers | Pending With | Review Summary | CI Checks |"
-    )
-    print("|---|---|---|---:|:---:|---|---|---|---|---|")
+    # -- Build PR table rows --------------------------------------------------
+    row_parts = []
 
     for pr in pulls:
         number = pr["number"]
-        title = pr.get("title", "").replace("|", "\\|")
+        title = pr.get("title", "")
         url = pr.get("html_url", "")
         author = (pr.get("user") or {}).get("login", "unknown")
-        draft = "Yes" if pr.get("draft") else "No"
+        is_draft = pr.get("draft", False)
         created_at = parse_iso(pr["created_at"])
         age_days = (now - created_at).days
         head_sha = (pr.get("head") or {}).get("sha")
 
         # Assignees (already in PR payload — no extra API call)
         assignees = [u["login"] for u in pr.get("assignees") or [] if not is_bot(u["login"])]
-        assignee_str = ", ".join(assignees) if assignees else "—"
+        assignee_str = html.escape(", ".join(assignees)) if assignees else "—"
 
         # Labels (already in PR payload — no extra API call)
-        labels = [lbl["name"].replace("|", "\\|") for lbl in pr.get("labels") or []]
-        labels_str = ", ".join(labels) if labels else "—"
+        labels = [lbl["name"] for lbl in pr.get("labels") or []]
+        labels_html = (
+            " ".join(
+                f'<span class="badge" style="color:#24292e;background:#e1e4e8;">{html.escape(lbl)}</span>'
+                for lbl in labels
+            )
+            if labels
+            else "—"
+        )
 
         # 2) Requested reviewers
         rr, _ = gh_request(f"/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", token)
         users = [u["login"] for u in rr.get("users", []) if not is_bot(u["login"])]
         teams = [t["name"] for t in rr.get("teams", [])]
         requested_reviewers = users + [f"team:{t}" for t in teams]
-        reviewers_str = ", ".join(requested_reviewers) if requested_reviewers else "—"
+        reviewers_str = html.escape(", ".join(requested_reviewers)) if requested_reviewers else "—"
 
         # 3) Reviews submitted (paginated, bots excluded)
         reviews = paginate(f"/repos/{owner}/{repo}/pulls/{number}/reviews", token)
         rs = summarize_reviews(reviews)
-        parts = []
-        if rs["changes_requested"]:
-            parts.append("Changes Requested: " + ", ".join(rs["changes_requested"]))
-        if rs["approvers"]:
-            parts.append("Approved: " + ", ".join(rs["approvers"]))
-        if rs["commenters"]:
-            parts.append("Commented: " + ", ".join(rs["commenters"]))
-        if rs["dismissed"]:
-            parts.append("Dismissed: " + ", ".join(rs["dismissed"]))
-        if not parts:
-            parts.append("No reviews yet")
-        review_summary = " / ".join(parts)
+
+        review_html_parts = []
+        review_html_parts.append(review_badge("Changes Requested", rs["changes_requested"], "#cf222e", "#ffebe9"))
+        review_html_parts.append(review_badge("Approved", rs["approvers"], "#1a7f37", "#dafbe1"))
+        review_html_parts.append(review_badge("Commented", rs["commenters"], "#0550ae", "#ddf4ff"))
+        review_html_parts.append(review_badge("Dismissed", rs["dismissed"], "#57606a", "#f6f8fa"))
+        review_html_parts = [p for p in review_html_parts if p]
+        review_summary_html = "\n".join(review_html_parts) if review_html_parts else "<em>No reviews yet</em>"
 
         # Pending With — smart assignment based on PR state
-        pending_with_str = determine_pending_with(pr, reviews, rs, requested_reviewers)
+        pending_with_str = html.escape(determine_pending_with(pr, reviews, rs, requested_reviewers))
 
         # 4) Individual CI check runs — fully paginated
-        ci_str = "UNKNOWN"
+        ci_html = '<span style="color:#57606a;">UNKNOWN</span>'
         if head_sha:
             check_runs = paginate_check_runs(
                 f"/repos/{owner}/{repo}/commits/{head_sha}/check-runs",
                 token,
                 params={"filter": "latest"},
             )
-            ci_str = format_check_runs(check_runs)
+            classified = classify_check_runs(check_runs)
+            if classified:
+                ci_html = " ".join(ci_badge(name, state) for name, state in classified)
+            else:
+                ci_html = '<span style="color:#57606a;">NONE</span>'
 
-        pr_label = f"[#{number}]({url}) {title}"
-        print(
-            f"| {pr_label} | {author} | {assignee_str} | {age_days} | {draft} | {labels_str} | {reviewers_str} | {pending_with_str} | {review_summary} | {ci_str} |"
+        # Draft styling
+        draft_class = "draft-yes" if is_draft else "draft-no"
+        draft_text = "Yes" if is_draft else "No"
+
+        row_parts.append(
+            f"<tr>"
+            f'<td><a class="pr-link" href="{html.escape(url)}">#{number}</a>'
+            f" {html.escape(title)}</td>"
+            f"<td>{html.escape(author)}</td>"
+            f"<td>{assignee_str}</td>"
+            f'<td class="age">{age_days}</td>'
+            f'<td class="{draft_class}">{draft_text}</td>'
+            f"<td>{labels_html}</td>"
+            f"<td>{reviewers_str}</td>"
+            f"<td>{pending_with_str}</td>"
+            f"<td>{review_summary_html}</td>"
+            f'<td class="ci-cell">{ci_html}</td>'
+            f"</tr>"
         )
 
-    # -- Write recipients.txt -------------------------------------------------
-    recipients_path = os.path.join(script_dir, "recipients.txt")
-    with open(recipients_path, "w") as f:
-        f.write(", ".join(recipients))
+        print(f"  Processed PR #{number}", file=sys.stderr)
 
-    print(f"recipients written to {recipients_path} ({len(recipients)} addresses)", file=sys.stderr)
+    rows_html = "\n        ".join(row_parts)
+
+    # -- Write HTML file ------------------------------------------------------
+    script_dir = Path(__file__).parent
+    html_file = script_dir / "pr_report.html"
+
+    html_content = build_html(repo_full, date_str, total_open, pie_svg, rows_html)
+
+    with open(html_file, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    print(f"Wrote HTML report to {html_file}", file=sys.stderr)
+
+    # -- Write mentions file --------------------------------------------------
+    usernames = load_github_usernames()
+    write_mentions_file(usernames)
 
 
 if __name__ == "__main__":
