@@ -243,6 +243,8 @@ def main(
 
     qaic_config = {"ccl_enabled": True} if ccl_enabled else None
 
+    qaic_config = {"ccl_enabled": True} if ccl_enabled else None
+
     qeff_model = QEFFCommonLoader.from_pretrained(
         pretrained_model_name_or_path=model_name,
         cache_dir=cache_dir,
