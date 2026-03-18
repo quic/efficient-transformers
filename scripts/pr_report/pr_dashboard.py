@@ -591,8 +591,15 @@ def build_html(
     trend_img,
     rows_html,
 ):
-    """Assemble the complete HTML document."""
-    # Stat cards for the summary strip
+    """Assemble the complete HTML document.
+
+    Uses table-based layout for the stat strip and charts row so the email
+    renders correctly in clients (Gmail, Outlook, etc.) that strip CSS
+    flexbox / grid.  Inline styles are applied to every layout-critical
+    element so the report looks right even when the <style> block is ignored.
+    """
+    # Stat cards — built as <td> cells inside a single-row table so they sit
+    # side-by-side in every email client (flexbox is not supported in email).
     stats = [
         ("📅 Report Date", date_str),
         ("📦 Repository", repo_full),
@@ -602,12 +609,31 @@ def build_html(
         ("✅ Merged (7 days)", str(merged_last_7)),
         ("🚫 Closed (7 days)", str(closed_last_7)),
     ]
-    stat_cards_html = "\n    ".join(
-        f'<div class="stat-card">'
-        f'<span class="stat-label">{html.escape(label)}</span>'
-        f'<span class="stat-value">{html.escape(value)}</span>'
-        f"</div>"
+    stat_cells_html = "\n      ".join(
+        f'<td style="padding:0 6px 0 0;vertical-align:top;">'
+        f'<div style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;'
+        f'padding:10px 18px;min-width:130px;">'
+        f'<div style="font-size:0.78em;font-weight:600;color:#586069;text-transform:uppercase;'
+        f'letter-spacing:0.04em;margin-bottom:4px;">{html.escape(label)}</div>'
+        f'<div style="font-size:1.15em;font-weight:700;color:#1a1a2e;">{html.escape(value)}</div>'
+        f"</div></td>"
         for label, value in stats
+    )
+
+    # Charts row — two-column table so pie and trend sit side-by-side.
+    # Falls back gracefully to stacked layout on narrow screens.
+    charts_row_html = (
+        '<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="margin:24px 0;border-collapse:collapse;">\n'
+        "  <tr>\n"
+        '    <td width="40%" style="vertical-align:top;padding-right:14px;">\n'
+        f"      {pie_svg}\n"
+        "    </td>\n"
+        '    <td width="60%" style="vertical-align:top;">\n'
+        f"      {trend_img}\n"
+        "    </td>\n"
+        "  </tr>\n"
+        "</table>"
     )
 
     return f"""<!DOCTYPE html>
@@ -643,57 +669,6 @@ def build_html(
       border-bottom: 3px solid #0366d6;
       padding-bottom: 10px;
       margin-bottom: 20px;
-    }}
-
-    /* ── Summary stat cards ── */
-    .stat-strip {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-bottom: 28px;
-    }}
-    .stat-card {{
-      background: #f6f8fa;
-      border: 1px solid #e1e4e8;
-      border-radius: 8px;
-      padding: 10px 18px;
-      display: flex;
-      flex-direction: column;
-      min-width: 140px;
-    }}
-    .stat-label {{
-      font-size: 0.78em;
-      font-weight: 600;
-      color: #586069;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      margin-bottom: 4px;
-    }}
-    .stat-value {{
-      font-size: 1.15em;
-      font-weight: 700;
-      color: #1a1a2e;
-    }}
-
-    /* ── Charts layout: pie top-left, trends full-width below ── */
-    .charts-row {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 28px;
-      align-items: flex-start;
-      margin: 24px 0;
-    }}
-    .chart-left {{
-      flex: 1 1 520px;
-      min-width: 0;
-    }}
-    .chart-right {{
-      flex: 2 1 640px;
-      min-width: 0;
-    }}
-    .chart-container,
-    .trend-charts {{
-      overflow-x: auto;
     }}
 
     /* ── PR table ── */
@@ -806,14 +781,17 @@ def build_html(
 
   <h1>Open PR Dashboard — {html.escape(repo_full)}</h1>
 
-  <div class="stat-strip">
-    {stat_cards_html}
-  </div>
+  <!-- Stat strip: table-based so it renders correctly in email clients
+       that do not support CSS flexbox. -->
+  <table cellpadding="0" cellspacing="0" border="0"
+         style="border-collapse:collapse;margin-bottom:28px;">
+    <tr>
+      {stat_cells_html}
+    </tr>
+  </table>
 
-  <div class="charts-row">
-    <div class="chart-left">{pie_svg}</div>
-    <div class="chart-right">{trend_img}</div>
-  </div>
+  <!-- Charts: two-column table layout (email-safe, no flexbox). -->
+  {charts_row_html}
 
   <div class="pr-table-wrapper">
     <table class="pr-table">
