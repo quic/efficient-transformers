@@ -79,19 +79,19 @@ if skip_vision:
 
 else:
     batch_size = 1
-    ctx_len = 5120
-
-    ## The dimensions list stores all the height × width pairs required for compilation ##
-    dimensions = [[354, 536], [180, 320], [240, 360], [120, 360]]
+    ctx_len = 14336
+    heights = [360, 320, 360, 454, 536, 640, 720, 910, 720, 1280, 1920]
+    widths = [120, 180, 240, 256, 354, 360, 480, 512, 576, 720, 1080]
 
     ## Vision + Text ##
     qeff_model.compile(
         batch_size=batch_size,
         prefill_seq_len=128,
-        ctx_len=5120,
+        ctx_len=ctx_len,
         num_cores=16,
-        num_devices=8,
-        dimensions=dimensions,
+        num_devices=2,
+        height=heights,
+        width=widths,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
