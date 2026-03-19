@@ -7,7 +7,6 @@
 
 import logging
 import os
-import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -213,8 +212,6 @@ class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
     def __init__(self, transforms: List[Type[BaseOnnxTransform]]):
-        if not transforms:
-            warnings.warn("Transform list is empty. No transformations will be applied.")
         self.transforms = transforms
 
     def apply(
