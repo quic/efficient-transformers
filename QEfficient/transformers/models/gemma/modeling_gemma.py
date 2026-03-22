@@ -297,6 +297,7 @@ class QEffGemmaModel(GemmaModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
 
+        rotary_emb = QEffGemmaRotaryEmbedding(config=self.config)
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -310,6 +311,7 @@ class QEffGemmaModel(GemmaModel):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                rotary_emb=rotary_emb,
                 **kwargs,
             )
 
@@ -322,13 +324,10 @@ class QEffGemmaModel(GemmaModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
-        rotary_emb = QEffGemmaRotaryEmbedding(config=self.config)
-
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
-            rotary_emb=rotary_emb,
         )
 
 

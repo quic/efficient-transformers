@@ -34,6 +34,8 @@ configs = [
     # ("gpt_oss", 256, 3, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("qwen3_moe", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     # ("granitemoe", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("gemma", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("gemma2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
 ]
 
 configs = [
@@ -74,14 +76,8 @@ def get_function(onnx_path):
 @pytest.mark.feature
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_subfunction_vs_nonsubfunction(config, tmp_path):
-    # tokenizer = AutoTokenizer.from_pretrained(config.model_type)
     model_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb=False)
-    # Export with subfunctions enabled
-    tmp_path = "/home/abhishek/rope_fix/graph_with_change"
     with_sub_func_onnx = model_0_0.export(tmp_path, use_onnx_subfunctions=True, offload_pt_weights=False)
-
-    print(f"{config.model_type} is going on...")
-    # Verify that the model with subfunctions has QEffGPT2Block function definition
 
     functions_names = get_function(with_sub_func_onnx)
     print(functions_names)
