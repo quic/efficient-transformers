@@ -29,6 +29,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaRotaryEmbedding,
     qeff_apply_rotary_pos_emb,
 )
+from QEfficient.utils._utils import resolve_kv_seq_len
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -110,7 +111,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
+            kv_seq_len = resolve_kv_seq_len(past_key_value, self.layer_idx, query_states.shape[-2])
         key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
@@ -370,7 +371,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
                         "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                         "with a layer index."
                     )
-                kv_seq_len = past_key_values.get_seq_length(self_attn.layer_idx)
+                kv_seq_len = resolve_kv_seq_len(past_key_values, self_attn.layer_idx, key_states.shape[-2])
 
             cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
             _, key_states = qeff_apply_rotary_pos_emb(torch.empty_like(key_states), key_states, cos, sin, position_ids)
