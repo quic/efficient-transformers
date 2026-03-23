@@ -12,7 +12,9 @@ Writes scripts/pr_report/pr_report.html with a styled HTML dashboard and
 scripts/pr_report/github_mentions.txt with GitHub usernames for @mentions.
 """
 
+import base64
 import html
+import io
 import json
 import os
 import sys
@@ -20,8 +22,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")  # Non-interactive backend — must be set before importing pyplot
+import matplotlib.pyplot as plt
 
 API = "https://api.github.com"
 ACCEPT = "application/vnd.github+json"
@@ -253,94 +260,247 @@ def classify_check_runs(check_runs):
     return results
 
 
+# ── Fetch recently closed/merged PRs ─────────────────────────────────────────
+
+
+def fetch_recent_closed_prs(owner, repo, token, days=10):
+    """
+    Fetch PRs that were closed (merged or not) within the last `days` days.
+    Uses the GitHub search API to find PRs closed in the date range.
+    Returns a list of PR dicts (lightweight — only fields available in list endpoint).
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    out = []
+    page = 1
+    while True:
+        params = {
+            "state": "closed",
+            "sort": "updated",
+            "direction": "desc",
+            "per_page": 100,
+            "page": page,
+        }
+        chunk, headers = gh_request(f"/repos/{owner}/{repo}/pulls", token, params)
+        if not chunk:
+            break
+
+        stop_after_page = False
+        for pr in chunk:
+            closed_at_str = pr.get("closed_at")
+            if closed_at_str and parse_iso(closed_at_str) >= cutoff:
+                out.append(pr)
+
+        # If the oldest `updated_at` in this page is before the cutoff, no
+        # further pages can contain recently-closed PRs.
+        if chunk:
+            oldest_updated = min(parse_iso(pr["updated_at"]) for pr in chunk if pr.get("updated_at"))
+            if oldest_updated < cutoff:
+                stop_after_page = True
+
+        if stop_after_page or 'rel="next"' not in (headers.get("Link") or ""):
+            break
+        page += 1
+
+    return out
+
+
+# ── Trend chart helper ────────────────────────────────────────────────────────
+
+
+def generate_trend_chart_png(pulls_open, pulls_closed, now, days=10, png_path=None):
+    """
+    Generate two stacked line charts:
+      - Top subplot:    PRs Opened — Last N Days  (blue, area fill)
+      - Bottom subplot: PRs Merged — Last N Days  (green, area fill)
+
+    Each data point is annotated with its count.
+    Saves the PNG to png_path if provided.
+    Returns an HTML string with the chart embedded as a base64 data URI.
+    """
+    # Build the date range: oldest → today
+    dates = [(now - timedelta(days=i)).date() for i in range(days - 1, -1, -1)]
+    date_set = set(dates)
+
+    opened_counts = {d: 0 for d in dates}
+    merged_counts = {d: 0 for d in dates}
+
+    # Opened: count from ALL PRs (open + recently closed) by created_at
+    for pr in list(pulls_open) + list(pulls_closed):
+        created_str = pr.get("created_at")
+        if created_str:
+            d = parse_iso(created_str).date()
+            if d in date_set:
+                opened_counts[d] += 1
+
+    # Merged: from closed PRs only
+    for pr in pulls_closed:
+        merged_at_str = pr.get("merged_at")
+        if merged_at_str:
+            d = parse_iso(merged_at_str).date()
+            if d in date_set:
+                merged_counts[d] += 1
+
+    x_labels = [d.strftime("%b %d") for d in dates]
+    opened_vals = [opened_counts[d] for d in dates]
+    merged_vals = [merged_counts[d] for d in dates]
+
+    # ── Shared style helpers ──────────────────────────────────────────────────
+    def _style_ax(ax, title, vals, line_color, fill_color):
+        """Draw a single styled subplot with area fill and data labels."""
+        x_idx = range(len(x_labels))
+        ax.plot(x_idx, vals, marker="o", color=line_color, linewidth=2, markersize=5, zorder=3)
+        ax.fill_between(x_idx, vals, alpha=0.15, color=fill_color)
+
+        # Data labels above each point
+        for xi, v in enumerate(vals):
+            ax.annotate(
+                str(v),
+                xy=(xi, v),
+                xytext=(0, 7),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                fontweight="bold",
+                color="#1a1a2e",
+            )
+
+        ax.set_title(title, fontsize=11, fontweight="bold", color="#1a1a2e", loc="left", pad=10)
+        ax.set_xticks(list(x_idx))
+        ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=8)
+        ax.set_ylim(bottom=0, top=max(max(vals) * 1.35, 1))
+        ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        ax.grid(True, axis="y", linestyle="--", alpha=0.4)
+        ax.set_facecolor("#f8f9fb")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    fig, (ax_open, ax_merge) = plt.subplots(2, 1, figsize=(12, 8), sharex=False)
+    fig.suptitle("PR Activity Trend", fontsize=14, fontweight="bold", color="#1a1a2e", y=0.98)
+
+    _style_ax(ax_open, f"PRs Opened — Last {days} Days", opened_vals, "#0366d6", "#0366d6")
+    _style_ax(ax_merge, f"PRs Merged — Last {days} Days", merged_vals, "#2ecc71", "#2ecc71")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+    # ── Save PNG file ─────────────────────────────────────────────────────────
+    if png_path is not None:
+        fig.savefig(str(png_path), dpi=150, bbox_inches="tight")
+        print(f"Saved trend chart PNG to {png_path}", file=sys.stderr)
+
+    # ── Encode as base64 for inline embedding ─────────────────────────────────
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode("utf-8")
+
+    return (
+        f'<div class="trend-charts">\n'
+        f'<img src="data:image/png;base64,{img_b64}" '
+        f'alt="PR Activity Trend — Last {days} Days" '
+        f'style="max-width:100%;height:auto;">\n'
+        f"</div>\n"
+    )
+
+
 # ── Pie chart helper ──────────────────────────────────────────────────────────
 
 
 def generate_pie_chart_png(author_counts, png_path=None):
     """
-    Generate a self-contained inline SVG pie chart showing PR distribution
-    by author.  Returns an HTML string (a <div> wrapping an <svg>).
+    Generate a pie chart as a PNG using matplotlib.
+
+    Saves the PNG to png_path (a Path or str) if provided.
+    Returns an HTML string: a <div> wrapping an <img> with the chart
+    embedded as a base64 data URI — supported by all major email clients
+    (Gmail, Outlook web, Apple Mail, etc.), unlike inline SVG which is
+    stripped by email clients for security reasons.
     """
     if not author_counts:
         return ""
 
     # Sort by count descending so the largest slice starts at the top
     items = sorted(author_counts.items(), key=lambda x: -x[1])
-    labels = [author for author, _ in items]
     sizes = [count for _, count in items]
     total = sum(sizes)
 
     # 15-colour palette; cycles if there are more authors
     colors = [
-        "#4a90d9", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6",
-        "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
-        "#ff5722", "#607d8b", "#795548", "#9c27b0", "#4caf50",
+        "#4a90d9",
+        "#e74c3c",
+        "#2ecc71",
+        "#f39c12",
+        "#9b59b6",
+        "#1abc9c",
+        "#e67e22",
+        "#3498db",
+        "#e91e63",
+        "#00bcd4",
+        "#ff5722",
+        "#607d8b",
+        "#795548",
+        "#9c27b0",
+        "#4caf50",
     ]
     chart_colors = [colors[i % len(colors)] for i in range(len(items))]
 
-    cx, cy, r = 190, 190, 160  # pie centre and radius
-    legend_x = cx * 2 + 30  # legend column starts here
-    row_h = 22  # legend row height
-    svg_w = legend_x + 260  # total SVG width
-    svg_h = max(cy * 2, len(items) * row_h + 50)  # total SVG height
+    fig, ax = plt.subplots(figsize=(13, 7))
 
-    # ── Build slice paths ────────────────────────────────────────────────────
-    paths_svg = ""
-    legend_svg = ""
-    start_angle = -math.pi / 2  # begin at 12 o'clock
+    wedges, _, autotexts = ax.pie(
+        sizes,
+        colors=chart_colors,
+        autopct=lambda pct: f"{pct:.1f}%" if pct >= 3 else "",
+        startangle=90,
+        wedgeprops={"edgecolor": "white", "linewidth": 2},
+        pctdistance=0.78,
+    )
+    for at in autotexts:
+        at.set_fontsize(8)
+        at.set_color("white")
+        at.set_fontweight("bold")
 
-    for i, (author, count) in enumerate(items):
-        angle = 2 * math.pi * count / total
-        end_angle = start_angle + angle
+    ax.set_title(
+        f"PR Distribution by Author (Total: {total})",
+        fontsize=14,
+        fontweight="bold",
+        pad=20,
+        color="#1a1a2e",
+    )
 
-        x1 = cx + r * math.cos(start_angle)
-        y1 = cy + r * math.sin(start_angle)
-        x2 = cx + r * math.cos(end_angle)
-        y2 = cy + r * math.sin(end_angle)
+    legend_labels = [
+        f"{author}  {count} PR{'s' if count != 1 else ''}  ({count / total * 100:.1f}%)" for author, count in items
+    ]
+    ax.legend(
+        wedges,
+        legend_labels,
+        title="Author",
+        loc="center left",
+        bbox_to_anchor=(1.05, 0.5),
+        fontsize=9,
+        title_fontsize=10,
+    )
 
-        large_arc = 1 if angle > math.pi else 0
-        color = colors[i % len(colors)]
-        pct = count / total * 100
+    plt.tight_layout()
 
-        # SVG arc path: move to centre → line to arc start → arc → close
-        path = f"M {cx},{cy} L {x1:.2f},{y1:.2f} A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
-        paths_svg += (
-            f'  <path d="{path}" fill="{color}" '
-            f'stroke="white" stroke-width="2">\n'
-            f"    <title>{html.escape(author)}: {count} PR{'s' if count != 1 else ''} ({pct:.1f}%)</title>\n"
-            f"  </path>\n"
-        )
+    # ── Save PNG file (used by Jenkins archiveArtifacts) ─────────────────────
+    if png_path is not None:
+        fig.savefig(str(png_path), dpi=150, bbox_inches="tight")
+        print(f"Saved pie chart PNG to {png_path}", file=sys.stderr)
 
-        # Legend row
-        ly = 40 + i * row_h
-        legend_svg += (
-            f'  <rect x="{legend_x}" y="{ly}" width="14" height="14" '
-            f'fill="{color}" rx="2"/>\n'
-            f'  <text x="{legend_x + 20}" y="{ly + 11}" '
-            f'font-size="12" font-family="Arial, sans-serif" fill="#333">'
-            f"{html.escape(author)}  {count} PR{'s' if count != 1 else ''}  ({pct:.1f}%)"
-            f"</text>\n"
-        )
+    # ── Encode as base64 for inline embedding in HTML ────────────────────────
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode("utf-8")
 
-        start_angle = end_angle
-
-    # ── Assemble SVG ─────────────────────────────────────────────────────────
-    svg = (
+    return (
         f'<div class="chart-container">\n'
-        f'<svg width="{svg_w}" height="{svg_h}" '
-        f'xmlns="http://www.w3.org/2000/svg" '
-        f'style="font-family:Arial,sans-serif;">\n'
-        # Chart title
-        f'  <text x="{cx}" y="20" text-anchor="middle" '
-        f'font-size="14" font-weight="bold" fill="#1a1a2e">'
-        f"PR Distribution by Author (Total: {total})</text>\n"
-        # Slices
-        + paths_svg
-        # Legend header
-        + f'  <text x="{legend_x}" y="22" font-size="13" '
-        f'font-weight="bold" fill="#1a1a2e">Author</text>\n'
-        # Legend rows
-         + legend_svg + "</svg>\n</div>\n"
+        f'<img src="data:image/png;base64,{img_b64}" '
+        f'alt="PR Distribution by Author" '
+        f'style="max-width:100%;height:auto;">\n'
+        f"</div>\n"
     )
 
 
@@ -375,7 +535,18 @@ def review_badge(label, users, text_color, bg_color):
     )
 
 
-def build_html(repo_full, date_str, total_open, pie_svg, rows_html):
+def build_html(
+    repo_full,
+    date_str,
+    total_open,
+    pie_chart_html,
+    trend_chart_html,
+    rows_html,
+    draft_count=0,
+    opened_7d=0,
+    merged_7d=0,
+    closed_7d=0,
+):
     """Assemble the complete HTML document."""
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -412,24 +583,54 @@ def build_html(repo_full, date_str, total_open, pie_svg, rows_html):
       margin-bottom: 20px;
     }}
 
-    /* ── Summary table ── */
-    .summary-table {{
-      border-collapse: collapse;
-      margin-bottom: 24px;
+    /* ── Summary stat cards ── */
+    .stat-strip {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 28px;
     }}
-    .summary-table td {{
-      padding: 6px 16px 6px 0;
-      font-size: 0.95em;
+    .stat-card {{
+      background: #f6f8fa;
+      border: 1px solid #e1e4e8;
+      border-radius: 8px;
+      padding: 10px 18px;
+      display: flex;
+      flex-direction: column;
+      min-width: 140px;
     }}
-    .summary-table td:first-child {{
+    .stat-label {{
+      font-size: 0.78em;
       font-weight: 600;
       color: #586069;
-      padding-right: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }}
+    .stat-value {{
+      font-size: 1.15em;
+      font-weight: 700;
+      color: #1a1a2e;
     }}
 
-    /* ── Pie chart ── */
-    .chart-container {{
+    /* ── Charts layout: pie left, trend right ── */
+    .charts-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 28px;
+      align-items: flex-start;
       margin: 24px 0;
+    }}
+    .chart-left {{
+      flex: 1 1 520px;
+      min-width: 0;
+    }}
+    .chart-right {{
+      flex: 2 1 640px;
+      min-width: 0;
+    }}
+    .chart-container,
+    .trend-charts {{
       overflow-x: auto;
     }}
 
@@ -543,18 +744,54 @@ def build_html(repo_full, date_str, total_open, pie_svg, rows_html):
 
   <h1>Open PR Dashboard — {html.escape(repo_full)}</h1>
 
-  <table class="summary-table">
+  <!-- Stat cards — table layout for email-client compatibility (flex is stripped) -->
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
     <tr>
-      <td>Report Date</td>
-      <td>{html.escape(date_str)}</td>
-    </tr>
-    <tr>
-      <td>Open PRs</td>
-      <td><strong>{total_open}</strong></td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128197; Report Date</span><br><span class="stat-value">{html.escape(date_str)}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128230; Repository</span><br><span class="stat-value">{html.escape(repo_full)}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128275; Open PRs</span><br><span class="stat-value">{total_open}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128221; Draft PRs</span><br><span class="stat-value">{draft_count}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128640; Opened (7 days)</span><br><span class="stat-value">{opened_7d}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#9989; Merged (7 days)</span><br><span class="stat-value">{merged_7d}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128683; Closed (7 days)</span><br><span class="stat-value">{closed_7d}</span></td></tr>
+        </table>
+      </td>
     </tr>
   </table>
 
-  {pie_svg}
+  <!-- Charts row — table layout for email-client compatibility (flex is stripped) -->
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;">
+    <tr>
+      <td width="40%" valign="top" style="padding-right:14px;">{pie_chart_html}</td>
+      <td width="60%" valign="top">{trend_chart_html}</td>
+    </tr>
+  </table>
 
   <div class="pr-table-wrapper">
     <table class="pr-table">
@@ -627,25 +864,6 @@ def load_github_usernames():
     except json.JSONDecodeError as e:
         print(f"Warning: Failed to parse {email_map_file}: {e}", file=sys.stderr)
         return []
-    except json.JSONDecodeError as e:
-        print(f"Warning: Failed to parse {email_map_file}: {e}", file=sys.stderr)
-        return []
-
-
-def write_mentions_file(usernames):
-    """
-    Write GitHub usernames to a file for the workflow to consume.
-    """
-    script_dir = Path(__file__).parent
-    mentions_file = script_dir / "github_mentions.txt"
-
-    try:
-        with open(mentions_file, "w") as f:
-            for username in usernames:
-                f.write(f"@{username}\n")
-        print(f"Wrote {len(usernames)} username(s) to {mentions_file}", file=sys.stderr)
-    except Exception as e:
-        print(f"Warning: Failed to write mentions file: {e}", file=sys.stderr)
 
 
 def write_mentions_file(usernames):
@@ -688,6 +906,44 @@ def main():
 
     print(f"Fetched {total_open} open PR(s) for {repo_full}", file=sys.stderr)
 
+    script_dir = Path(__file__).parent
+
+    # -- Fetch recently closed/merged PRs (needed for trend chart + stat cards)
+    print("Fetching recently closed/merged PRs …", file=sys.stderr)
+    pulls_closed = fetch_recent_closed_prs(owner, repo, token, days=10)
+    print(f"Fetched {len(pulls_closed)} recently closed PR(s)", file=sys.stderr)
+
+    # -- Compute stat-card values ---------------------------------------------
+    cutoff_7d = now - timedelta(days=7)
+
+    draft_count = sum(1 for pr in pulls if pr.get("draft", False))
+
+    # Opened in last 7 days: from both open PRs and recently closed PRs
+    opened_7d = sum(
+        1
+        for pr in list(pulls) + list(pulls_closed)
+        if pr.get("created_at") and parse_iso(pr["created_at"]) >= cutoff_7d
+    )
+    # Deduplicate (a PR could appear in both lists if it was opened and closed
+    # within the last 7 days AND is still in the open list — shouldn't happen,
+    # but guard with a set of PR numbers)
+    seen_opened: set = set()
+    opened_7d = 0
+    for pr in list(pulls) + list(pulls_closed):
+        num = pr.get("number")
+        if num in seen_opened:
+            continue
+        seen_opened.add(num)
+        if pr.get("created_at") and parse_iso(pr["created_at"]) >= cutoff_7d:
+            opened_7d += 1
+
+    merged_7d = sum(1 for pr in pulls_closed if pr.get("merged_at") and parse_iso(pr["merged_at"]) >= cutoff_7d)
+    closed_7d = sum(
+        1
+        for pr in pulls_closed
+        if not pr.get("merged_at") and pr.get("closed_at") and parse_iso(pr["closed_at"]) >= cutoff_7d
+    )
+
     # -- Pie chart (author distribution) — collected in first pass ------------
     author_counts: dict = {}
     for pr in pulls:
@@ -695,7 +951,19 @@ def main():
         if not is_bot(author):
             author_counts[author] = author_counts.get(author, 0) + 1
 
-    pie_svg = generate_pie_chart_svg(author_counts)
+    # Generate PNG chart — saved as pie_chart.png AND embedded as base64 <img>
+    png_file = script_dir / "pie_chart.png"
+    pie_chart_html = generate_pie_chart_png(author_counts, png_path=png_file)
+
+    # -- Trend chart (opened / merged / closed per day) -----------------------
+    trend_png_file = script_dir / "trend_chart.png"
+    trend_chart_html = generate_trend_chart_png(
+        pulls_open=pulls,
+        pulls_closed=pulls_closed,
+        now=now,
+        days=10,
+        png_path=trend_png_file,
+    )
 
     # -- Build PR table rows --------------------------------------------------
     row_parts = []
@@ -786,10 +1054,20 @@ def main():
     rows_html = "\n        ".join(row_parts)
 
     # -- Write HTML file ------------------------------------------------------
-    script_dir = Path(__file__).parent
     html_file = script_dir / "pr_report.html"
 
-    html_content = build_html(repo_full, date_str, total_open, pie_svg, rows_html)
+    html_content = build_html(
+        repo_full=repo_full,
+        date_str=date_str,
+        total_open=total_open,
+        pie_chart_html=pie_chart_html,
+        trend_chart_html=trend_chart_html,
+        rows_html=rows_html,
+        draft_count=draft_count,
+        opened_7d=opened_7d,
+        merged_7d=merged_7d,
+        closed_7d=closed_7d,
+    )
 
     with open(html_file, "w", encoding="utf-8") as f:
         f.write(html_content)
