@@ -146,22 +146,9 @@ dataset:
   completion_template: "{answer}"
 
 ```
-
 ***
-#### **4. grammar (grammar_dataset)**
 
-```yaml
-dataset:
-  tokenizer_name: "meta-llama/Llama-3.2-1B"
-  dataset_type: "sft_dataset"
-  dataset_name: "grammar"
-  train_split: "train"
-  split_ratio: 0.8
-  prompt_template: f"Correct the grammar in the following sentence:\n\n{'input'}\n\nCorrected:\n"
-  completion_template: "{target}"
-```
-
-#### **5. Style-Remix (hallisky/DiSC)**
+#### **4. Style-Remix (hallisky/DiSC)**
 
 ```yaml
 dataset:

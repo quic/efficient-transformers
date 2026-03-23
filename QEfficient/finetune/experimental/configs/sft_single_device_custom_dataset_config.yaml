@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+# Dataset: Style-Remix (hallisky/DiSC)
 # Model configuration
 model:
   model_type: "hf"  # Hugging Face model
