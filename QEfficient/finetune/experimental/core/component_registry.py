@@ -209,7 +209,10 @@ class ComponentFactory:
         model_instance = model_class.create(model_name, **kwargs)
         return model_instance
 
+<<<<<<< HEAD
     @staticmethod
+=======
+>>>>>>> d072a9c ([QEff.finetuning] Adding sample config and ReadMe file (#692))
     def create_trainer_config(name: str, **dependencies) -> tuple:
         """
         Create trainer configuration based on registered trainer modules.
@@ -237,6 +240,7 @@ class ComponentFactory:
                 raise ValueError(f"Required argument '{kwarg}' not provided for trainer '{name}'")
 
         return config["trainer_cls"], config["args_cls"], additional_kwargs
+<<<<<<< HEAD
 
     @staticmethod
     def create_dataset(dataset_type: str, dataset_name: str, split: str, seed: int = 42, **kwargs) -> Any:
@@ -275,3 +279,5 @@ class ComponentFactory:
         if callback_class is None:
             raise ValueError(f"Unknown callback: {name}. Available: {registry.list_callbacks()}")
         return callback_class(**kwargs)
+=======
+>>>>>>> d072a9c ([QEff.finetuning] Adding sample config and ReadMe file (#692))
