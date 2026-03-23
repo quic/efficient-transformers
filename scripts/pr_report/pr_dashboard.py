@@ -6,9 +6,10 @@ Writes scripts/pr_report/pr_report.html with a styled HTML dashboard and
 scripts/pr_report/github_mentions.txt with GitHub usernames for @mentions.
 """
 
+import base64
 import html
+import io
 import json
-import math
 import os
 import sys
 import time
@@ -17,6 +18,11 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")  # Non-interactive backend — must be set before importing pyplot
+import matplotlib.pyplot as plt
 
 API = "https://api.github.com"
 ACCEPT = "application/vnd.github+json"
@@ -251,17 +257,24 @@ def classify_check_runs(check_runs):
 # ── Pie chart helper ──────────────────────────────────────────────────────────
 
 
-def generate_pie_chart_svg(author_counts):
+def generate_pie_chart_png(author_counts, png_path=None):
     """
-    Generate a self-contained inline SVG pie chart showing PR distribution
-    by author.  Returns an HTML string (a <div> wrapping an <svg>).
+    Generate a pie chart as a PNG using matplotlib.
+
+    Saves the PNG to png_path (a Path or str) if provided.
+    Returns an HTML string: a <div> wrapping an <img> with the chart
+    embedded as a base64 data URI — supported by all major email clients
+    (Gmail, Outlook web, Apple Mail, etc.), unlike inline SVG which is
+    stripped by email clients for security reasons.
     """
     if not author_counts:
         return ""
 
     # Sort by count descending so the largest slice starts at the top
     items = sorted(author_counts.items(), key=lambda x: -x[1])
-    total = sum(v for _, v in items)
+    labels = [author for author, _ in items]
+    sizes = [count for _, count in items]
+    total = sum(sizes)
 
     # 15-colour palette; cycles if there are more authors
     colors = [
@@ -269,77 +282,66 @@ def generate_pie_chart_svg(author_counts):
         "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
         "#ff5722", "#607d8b", "#795548", "#9c27b0", "#4caf50",
     ]
+    chart_colors = [colors[i % len(colors)] for i in range(len(items))]
 
-    cx, cy, r = 190, 190, 160   # pie centre and radius
-    legend_x  = cx * 2 + 30     # legend column starts here
-    row_h     = 22               # legend row height
-    svg_w     = legend_x + 260   # total SVG width
-    svg_h     = max(cy * 2, len(items) * row_h + 50)  # total SVG height
+    fig, ax = plt.subplots(figsize=(13, 7))
 
-    # ── Build slice paths ────────────────────────────────────────────────────
-    paths_svg = ""
-    legend_svg = ""
-    start_angle = -math.pi / 2   # begin at 12 o'clock
-
-    for i, (author, count) in enumerate(items):
-        angle     = 2 * math.pi * count / total
-        end_angle = start_angle + angle
-
-        x1 = cx + r * math.cos(start_angle)
-        y1 = cy + r * math.sin(start_angle)
-        x2 = cx + r * math.cos(end_angle)
-        y2 = cy + r * math.sin(end_angle)
-
-        large_arc = 1 if angle > math.pi else 0
-        color     = colors[i % len(colors)]
-        pct       = count / total * 100
-
-        # SVG arc path: move to centre → line to arc start → arc → close
-        path = (
-            f"M {cx},{cy} "
-            f"L {x1:.2f},{y1:.2f} "
-            f"A {r},{r} 0 {large_arc},1 {x2:.2f},{y2:.2f} Z"
-        )
-        paths_svg += (
-            f'  <path d="{path}" fill="{color}" '
-            f'stroke="white" stroke-width="2">\n'
-            f'    <title>{html.escape(author)}: {count} PR{"s" if count != 1 else ""} ({pct:.1f}%)</title>\n'
-            f'  </path>\n'
-        )
-
-        # Legend row
-        ly = 40 + i * row_h
-        legend_svg += (
-            f'  <rect x="{legend_x}" y="{ly}" width="14" height="14" '
-            f'fill="{color}" rx="2"/>\n'
-            f'  <text x="{legend_x + 20}" y="{ly + 11}" '
-            f'font-size="12" font-family="Arial, sans-serif" fill="#333">'
-            f'{html.escape(author)}  {count} PR{"s" if count != 1 else ""}  ({pct:.1f}%)'
-            f'</text>\n'
-        )
-
-        start_angle = end_angle
-
-    # ── Assemble SVG ─────────────────────────────────────────────────────────
-    svg = (
-        f'<div class="chart-container">\n'
-        f'<svg width="{svg_w}" height="{svg_h}" '
-        f'xmlns="http://www.w3.org/2000/svg" '
-        f'style="font-family:Arial,sans-serif;">\n'
-        # Chart title
-        f'  <text x="{cx}" y="20" text-anchor="middle" '
-        f'font-size="14" font-weight="bold" fill="#1a1a2e">'
-        f'PR Distribution by Author (Total: {total})</text>\n'
-        # Slices
-        + paths_svg
-        # Legend header
-        + f'  <text x="{legend_x}" y="22" font-size="13" '
-        f'font-weight="bold" fill="#1a1a2e">Author</text>\n'
-        # Legend rows
-        + legend_svg
-        + '</svg>\n</div>\n'
+    wedges, _, autotexts = ax.pie(
+        sizes,
+        colors=chart_colors,
+        autopct=lambda pct: f"{pct:.1f}%" if pct >= 3 else "",
+        startangle=90,
+        wedgeprops={"edgecolor": "white", "linewidth": 2},
+        pctdistance=0.78,
     )
-    return svg
+    for at in autotexts:
+        at.set_fontsize(8)
+        at.set_color("white")
+        at.set_fontweight("bold")
+
+    ax.set_title(
+        f"PR Distribution by Author (Total: {total})",
+        fontsize=14,
+        fontweight="bold",
+        pad=20,
+        color="#1a1a2e",
+    )
+
+    legend_labels = [
+        f"{author}  {count} PR{'s' if count != 1 else ''}  ({count / total * 100:.1f}%)"
+        for author, count in items
+    ]
+    ax.legend(
+        wedges,
+        legend_labels,
+        title="Author",
+        loc="center left",
+        bbox_to_anchor=(1.05, 0.5),
+        fontsize=9,
+        title_fontsize=10,
+    )
+
+    plt.tight_layout()
+
+    # ── Save PNG file (used by Jenkins archiveArtifacts) ─────────────────────
+    if png_path is not None:
+        fig.savefig(str(png_path), dpi=150, bbox_inches="tight")
+        print(f"Saved pie chart PNG to {png_path}", file=sys.stderr)
+
+    # ── Encode as base64 for inline embedding in HTML ────────────────────────
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode("utf-8")
+
+    return (
+        f'<div class="chart-container">\n'
+        f'<img src="data:image/png;base64,{img_b64}" '
+        f'alt="PR Distribution by Author" '
+        f'style="max-width:100%;height:auto;">\n'
+        f'</div>\n'
+    )
 
 
 # ── HTML rendering helpers ────────────────────────────────────────────────────
@@ -376,7 +378,7 @@ def review_badge(label, users, text_color, bg_color):
     )
 
 
-def build_html(repo_full, date_str, total_open, pie_svg, rows_html):
+def build_html(repo_full, date_str, total_open, pie_chart_html, rows_html):
     """Assemble the complete HTML document."""
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -555,7 +557,7 @@ def build_html(repo_full, date_str, total_open, pie_svg, rows_html):
     </tr>
   </table>
 
-  {pie_svg}
+  {pie_chart_html}
 
   <div class="pr-table-wrapper">
     <table class="pr-table">
@@ -671,6 +673,8 @@ def main():
 
     print(f"Fetched {total_open} open PR(s) for {repo_full}", file=sys.stderr)
 
+    script_dir = Path(__file__).parent
+
     # -- Pie chart (author distribution) — collected in first pass ------------
     author_counts: dict = {}
     for pr in pulls:
@@ -678,7 +682,9 @@ def main():
         if not is_bot(author):
             author_counts[author] = author_counts.get(author, 0) + 1
 
-    pie_svg = generate_pie_chart_svg(author_counts)
+    # Generate PNG chart — saved as pie_chart.png AND embedded as base64 <img>
+    png_file = script_dir / "pie_chart.png"
+    pie_chart_html = generate_pie_chart_png(author_counts, png_path=png_file)
 
     # -- Build PR table rows --------------------------------------------------
     row_parts = []
@@ -782,10 +788,9 @@ def main():
     rows_html = "\n        ".join(row_parts)
 
     # -- Write HTML file ------------------------------------------------------
-    script_dir = Path(__file__).parent
     html_file = script_dir / "pr_report.html"
 
-    html_content = build_html(repo_full, date_str, total_open, pie_svg, rows_html)
+    html_content = build_html(repo_full, date_str, total_open, pie_chart_html, rows_html)
 
     with open(html_file, "w", encoding="utf-8") as f:
         f.write(html_content)
