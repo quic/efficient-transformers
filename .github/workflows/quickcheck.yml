@@ -29,4 +29,4 @@ jobs:
           python -m pip install pytest-xdist
 
       - name: Run Quickcheck
-        run: python -m pytest -q tests/test_model_quickcheck.py -n auto
+        run: python -m pytest -q tests/unit_test/models/test_model_quickcheck.py -n auto
