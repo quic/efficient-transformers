@@ -131,11 +131,9 @@ def _scatter_gather_expert_forward_qwen3vl(
     H: int,
     hmx_block: int = HMX_BLOCK,
 ) -> torch.Tensor:
-    # 1) compact indices
     scatter_idx = torch.cumsum(T2Ei.long(), dim=0) - 1
     safe_idx = torch.where(T2Ei, scatter_idx, torch.full_like(scatter_idx, T))
 
-    # 2) scatter to compact buffer (row T = trash)
     x_prime = torch.zeros(T + 1, H, dtype=x.dtype, device=x.device)
     x_prime = x_prime.scatter(0, safe_idx.unsqueeze(-1).expand(-1, H), x)
 
@@ -146,21 +144,16 @@ def _scatter_gather_expert_forward_qwen3vl(
     for blk in range(num_blocks):
         s = blk * hmx_block
         e_b = min(s + hmx_block, T)
-        x_blk = x_prime[s:e_b]  # [<=hmx_block, H]
+        x_blk = x_prime[s:e_b]
 
         gate = x_blk @ W_g
         up = x_blk @ W_u
-        blk_out = (up * act_fn(gate)) @ W_d  # [<=hmx_block, H]
-
-        # block-level predicate gate (HW/runtime can lower this)
+        blk_out = (up * act_fn(gate)) @ W_d
         block_active = T2Ei[s:e_b].long().sum() > 0
         delta_prime[s:e_b] = torch.where(block_active, blk_out, torch.zeros_like(blk_out))
 
-    # 4) inverse gather
     gather_idx = scatter_idx.clamp(0, T - 1)
     delta_out = delta_prime[gather_idx]
-
-    # 5) zero inactive rows
     mask = T2Ei.unsqueeze(-1).expand(-1, H)
     return torch.where(mask, delta_out, torch.zeros_like(x))
 
@@ -202,7 +195,6 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         T = B * S
         x = hidden_states.view(T, H)
 
-        # router (match original semantics)
         router_logits = self.gate(x)  # [T, E]
         prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
         top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
