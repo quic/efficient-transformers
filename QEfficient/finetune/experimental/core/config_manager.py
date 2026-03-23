@@ -182,10 +182,7 @@ class DatasetConfig:
         default="default",
         metadata={"help": "Name of the hf configuration file."},
     )
-<<<<<<< HEAD
     json_file_path: str = field(default=None, metadata={"help": "Path to a JSON file containing data."})
-=======
->>>>>>> b78efe6 (['QEff.finetuning'] Changing some params from training config to model config (#747))
 
 
 @dataclass
