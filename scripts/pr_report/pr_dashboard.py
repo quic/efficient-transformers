@@ -742,20 +742,54 @@ def build_html(
 
   <h1>Open PR Dashboard — {html.escape(repo_full)}</h1>
 
-  <div class="stat-strip">
-    <div class="stat-card"><span class="stat-label">&#128197; Report Date</span><span class="stat-value">{html.escape(date_str)}</span></div>
-    <div class="stat-card"><span class="stat-label">&#128230; Repository</span><span class="stat-value">{html.escape(repo_full)}</span></div>
-    <div class="stat-card"><span class="stat-label">&#128275; Open PRs</span><span class="stat-value">{total_open}</span></div>
-    <div class="stat-card"><span class="stat-label">&#128221; Draft PRs</span><span class="stat-value">{draft_count}</span></div>
-    <div class="stat-card"><span class="stat-label">&#128640; Opened (7 days)</span><span class="stat-value">{opened_7d}</span></div>
-    <div class="stat-card"><span class="stat-label">&#9989; Merged (7 days)</span><span class="stat-value">{merged_7d}</span></div>
-    <div class="stat-card"><span class="stat-label">&#128683; Closed (7 days)</span><span class="stat-value">{closed_7d}</span></div>
-  </div>
+  <!-- Stat cards — table layout for email-client compatibility (flex is stripped) -->
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+    <tr>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128197; Report Date</span><br><span class="stat-value">{html.escape(date_str)}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128230; Repository</span><br><span class="stat-value">{html.escape(repo_full)}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128275; Open PRs</span><br><span class="stat-value">{total_open}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128221; Draft PRs</span><br><span class="stat-value">{draft_count}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128640; Opened (7 days)</span><br><span class="stat-value">{opened_7d}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#9989; Merged (7 days)</span><br><span class="stat-value">{merged_7d}</span></td></tr>
+        </table>
+      </td>
+      <td style="padding:4px;">
+        <table cellpadding="10" cellspacing="0" border="0" style="background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;min-width:130px;">
+          <tr><td><span class="stat-label">&#128683; Closed (7 days)</span><br><span class="stat-value">{closed_7d}</span></td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 
-  <div class="charts-row">
-    <div class="chart-left">{pie_chart_html}</div>
-    <div class="chart-right">{trend_chart_html}</div>
-  </div>
+  <!-- Charts row — table layout for email-client compatibility (flex is stripped) -->
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;">
+    <tr>
+      <td width="40%" valign="top" style="padding-right:14px;">{pie_chart_html}</td>
+      <td width="60%" valign="top">{trend_chart_html}</td>
+    </tr>
+  </table>
 
   <div class="pr-table-wrapper">
     <table class="pr-table">
