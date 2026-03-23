@@ -478,7 +478,6 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             cache_position=cache_position,
-            rotary_emb=rotary_emb,
         )
         hidden_states = residual + self.cross_attn_attn_gate.tanh() * hidden_states
 

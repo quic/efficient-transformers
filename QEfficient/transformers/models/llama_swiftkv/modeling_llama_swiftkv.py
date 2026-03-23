@@ -375,7 +375,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
                     )
                 kv_seq_len = past_key_values.get_seq_length(self_attn.layer_idx)
 
-            cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
+            cos, sin = rotary_emb(value_states, seq_len=kv_seq_len)
             _, key_states = qeff_apply_rotary_pos_emb(torch.empty_like(key_states), key_states, cos, sin, position_ids)
             cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             past_key_values.write_only(key_states, value_states, self_attn.layer_idx, cache_kwargs)
