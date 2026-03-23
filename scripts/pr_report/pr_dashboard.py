@@ -307,9 +307,11 @@ def fetch_recent_closed_prs(owner, repo, token, days=10):
 
 def generate_trend_chart_png(pulls_open, pulls_closed, now, days=10, png_path=None):
     """
-    Generate a line chart showing PR activity (opened / merged / closed) over
-    the last `days` days.
+    Generate two stacked line charts:
+      - Top subplot:    PRs Opened — Last N Days  (blue, area fill)
+      - Bottom subplot: PRs Merged — Last N Days  (green, area fill)
 
+    Each data point is annotated with its count.
     Saves the PNG to png_path if provided.
     Returns an HTML string with the chart embedded as a base64 data URI.
     """
@@ -319,7 +321,6 @@ def generate_trend_chart_png(pulls_open, pulls_closed, now, days=10, png_path=No
 
     opened_counts = {d: 0 for d in dates}
     merged_counts = {d: 0 for d in dates}
-    closed_counts = {d: 0 for d in dates}
 
     # Opened: count from ALL PRs (open + recently closed) by created_at
     for pr in list(pulls_open) + list(pulls_closed):
@@ -329,46 +330,63 @@ def generate_trend_chart_png(pulls_open, pulls_closed, now, days=10, png_path=No
             if d in date_set:
                 opened_counts[d] += 1
 
-    # Merged / closed-not-merged: from closed PRs only
+    # Merged: from closed PRs only
     for pr in pulls_closed:
         merged_at_str = pr.get("merged_at")
-        closed_at_str = pr.get("closed_at")
         if merged_at_str:
             d = parse_iso(merged_at_str).date()
             if d in date_set:
                 merged_counts[d] += 1
-        elif closed_at_str:
-            d = parse_iso(closed_at_str).date()
-            if d in date_set:
-                closed_counts[d] += 1
 
     x_labels = [d.strftime("%b %d") for d in dates]
     opened_vals = [opened_counts[d] for d in dates]
     merged_vals = [merged_counts[d] for d in dates]
-    closed_vals = [closed_counts[d] for d in dates]
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+    # ── Shared style helpers ──────────────────────────────────────────────────
+    def _style_ax(ax, title, vals, line_color, fill_color):
+        """Draw a single styled subplot with area fill and data labels."""
+        x_idx = range(len(x_labels))
+        ax.plot(x_idx, vals, marker="o", color=line_color, linewidth=2,
+                markersize=5, zorder=3)
+        ax.fill_between(x_idx, vals, alpha=0.15, color=fill_color)
 
-    ax.plot(x_labels, opened_vals, marker="o", color="#0366d6", linewidth=2,
-            label="Opened", markersize=5)
-    ax.plot(x_labels, merged_vals, marker="s", color="#2ecc71", linewidth=2,
-            label="Merged", markersize=5)
-    ax.plot(x_labels, closed_vals, marker="^", color="#e74c3c", linewidth=2,
-            label="Closed (not merged)", markersize=5)
+        # Data labels above each point
+        for xi, v in enumerate(vals):
+            ax.annotate(
+                str(v),
+                xy=(xi, v),
+                xytext=(0, 7),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                fontweight="bold",
+                color="#1a1a2e",
+            )
 
-    ax.set_title(
-        f"PR Trend — Last {days} Days",
-        fontsize=13,
-        fontweight="bold",
-        color="#1a1a2e",
-        pad=15,
+        ax.set_title(title, fontsize=11, fontweight="bold", color="#1a1a2e",
+                     loc="left", pad=10)
+        ax.set_xticks(list(x_idx))
+        ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=8)
+        ax.set_ylim(bottom=0, top=max(max(vals) * 1.35, 1))
+        ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        ax.grid(True, axis="y", linestyle="--", alpha=0.4)
+        ax.set_facecolor("#f8f9fb")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    fig, (ax_open, ax_merge) = plt.subplots(
+        2, 1, figsize=(12, 8), sharex=False
     )
-    ax.set_ylabel("Count", fontsize=10)
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim(bottom=0)
-    plt.xticks(rotation=30, ha="right", fontsize=8)
-    plt.tight_layout()
+    fig.suptitle("PR Activity Trend", fontsize=14, fontweight="bold",
+                 color="#1a1a2e", y=0.98)
+
+    _style_ax(ax_open,  f"PRs Opened — Last {days} Days",
+              opened_vals, "#0366d6", "#0366d6")
+    _style_ax(ax_merge, f"PRs Merged — Last {days} Days",
+              merged_vals, "#2ecc71", "#2ecc71")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     # ── Save PNG file ─────────────────────────────────────────────────────────
     if png_path is not None:
@@ -385,7 +403,7 @@ def generate_trend_chart_png(pulls_open, pulls_closed, now, days=10, png_path=No
     return (
         f'<div class="trend-charts">\n'
         f'<img src="data:image/png;base64,{img_b64}" '
-        f'alt="PR Trend — Last {days} Days" '
+        f'alt="PR Activity Trend — Last {days} Days" '
         f'style="max-width:100%;height:auto;">\n'
         f'</div>\n'
     )
