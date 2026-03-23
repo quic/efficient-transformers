@@ -40,10 +40,10 @@ from QEfficient.generation.text_generation_inference import (
     write_io_files,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
-from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
+    _configure_proxy_for_model,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockedKVAttentionTransform,
@@ -89,9 +89,7 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module, **kwargs) -> None:
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
+        _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
 
         if (
             hasattr(model, "config")
@@ -248,10 +246,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling
@@ -666,6 +660,8 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         QEFFAutoModelForSequenceClassification
             An instance initialized with the pretrained weights.
         """
+        enable_proxy = kwargs.pop("enable_proxy", False)
+
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -675,6 +671,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
     @property
@@ -875,10 +872,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
+        _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1020,10 +1014,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
+        _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
@@ -1917,10 +1908,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         if qaic_config is not None and qaic_config.pop("include_sampler", False):
             raise NotImplementedError("On-device sampling is not supported for single QPC multimodal models yet.")
 
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         super().__init__(model, **kwargs)
 
         self.model.qaic_config = qaic_config
@@ -2698,10 +2685,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model_class_name = model.__class__.__name__
         if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
             raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
-
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
+        _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
 
         # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
@@ -3527,6 +3511,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `num_speculative_tokens` is not an integer greater than 1.
             If `prefill_seq_len` is less than `num_speculative_tokens + 1`.
         """
+        if not self.is_tlm:
+            return None
         if hasattr(self.model.config, "speculative_config"):
             num_speculative_tokens_ = self.model.config.speculative_config["num_speculative_tokens"]
             if num_speculative_tokens is not None:
@@ -3608,10 +3594,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             If the model is not a supported speech-to-text model (i.e., not a `ForConditionalGeneration` model).
         """
         model_class_name = model.__class__.__name__
-
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
 
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
@@ -3955,10 +3937,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
-        if kwargs.pop("enable_proxy", False):
-            self._pytorch_transforms.append(QeffProxyModuleTransform)
-            logger.info("Proxy Model Enabled for QEfficient Model")
-
         super().__init__(model, **kwargs)
         self.model.base_model.config.use_cache = True
 

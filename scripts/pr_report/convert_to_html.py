@@ -9,22 +9,21 @@ try:
 except ImportError:
     print("Installing markdown library...", file=sys.stderr)
     import subprocess
+
     subprocess.check_call([sys.executable, "-m", "pip", "install", "markdown"])
     import markdown
 
+
 def convert_md_to_html(md_file, html_file):
     """Convert markdown to HTML with styling."""
-    
+
     # Read markdown content
-    with open(md_file, 'r', encoding='utf-8') as f:
+    with open(md_file, "r", encoding="utf-8") as f:
         md_content = f.read()
-    
+
     # Convert markdown to HTML
-    html_body = markdown.markdown(
-        md_content,
-        extensions=['tables', 'fenced_code']
-    )
-    
+    html_body = markdown.markdown(md_content, extensions=["tables", "fenced_code"])
+
     # Create full HTML document with styling
     html_template = f"""<!DOCTYPE html>
 <html lang="en">
@@ -195,16 +194,17 @@ def convert_md_to_html(md_file, html_file):
     </div>
 </body>
 </html>"""
-    
+
     # Write HTML file
-    with open(html_file, 'w', encoding='utf-8') as f:
+    with open(html_file, "w", encoding="utf-8") as f:
         f.write(html_template)
-    
+
     print(f"✓ Converted {md_file} to {html_file}")
+
 
 if __name__ == "__main__":
     script_dir = Path(__file__).parent
     md_file = script_dir / "pr_report.md"
     html_file = script_dir / "pr_report.html"
-    
+
     convert_md_to_html(md_file, html_file)
