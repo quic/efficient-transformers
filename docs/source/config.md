@@ -90,7 +90,7 @@ dataset:
   train_split: "train"
   test_split: "test"
   max_seq_length: 512
-  prompt_func: "preprocess/alpaca_func:create_alpaca_prompt"
+  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt"
   completion_template: "{output}"
 
 ```
