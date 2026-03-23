@@ -117,8 +117,56 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
+HMX_BLOCK = 32
+
+
+def _scatter_gather_expert_forward_qwen3vl(
+    x: torch.Tensor,  # [T, H]
+    T2Ei: torch.Tensor,  # [T] bool
+    W_g: torch.Tensor,  # [H, I]
+    W_u: torch.Tensor,  # [H, I]
+    W_d: torch.Tensor,  # [I, H]
+    act_fn,
+    T: int,
+    H: int,
+    hmx_block: int = HMX_BLOCK,
+) -> torch.Tensor:
+    # 1) compact indices
+    scatter_idx = torch.cumsum(T2Ei.long(), dim=0) - 1
+    safe_idx = torch.where(T2Ei, scatter_idx, torch.full_like(scatter_idx, T))
+
+    # 2) scatter to compact buffer (row T = trash)
+    x_prime = torch.zeros(T + 1, H, dtype=x.dtype, device=x.device)
+    x_prime = x_prime.scatter(0, safe_idx.unsqueeze(-1).expand(-1, H), x)
+
+    # 3) blocked FFN compute
+    delta_prime = torch.zeros(T, H, dtype=x.dtype, device=x.device)
+    num_blocks = (T + hmx_block - 1) // hmx_block
+
+    for blk in range(num_blocks):
+        s = blk * hmx_block
+        e_b = min(s + hmx_block, T)
+        x_blk = x_prime[s:e_b]  # [<=hmx_block, H]
+
+        gate = x_blk @ W_g
+        up = x_blk @ W_u
+        blk_out = (up * act_fn(gate)) @ W_d  # [<=hmx_block, H]
+
+        # block-level predicate gate (HW/runtime can lower this)
+        block_active = T2Ei[s:e_b].long().sum() > 0
+        delta_prime[s:e_b] = torch.where(block_active, blk_out, torch.zeros_like(blk_out))
+
+    # 4) inverse gather
+    gather_idx = scatter_idx.clamp(0, T - 1)
+    delta_out = delta_prime[gather_idx]
+
+    # 5) zero inactive rows
+    mask = T2Ei.unsqueeze(-1).expand(-1, H)
+    return torch.where(mask, delta_out, torch.zeros_like(x))
+
+
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
@@ -144,6 +192,60 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             down = (up * self.experts[e].act_fn(gate)) @ W_d  # [T, H]
             masked_down = down * routing_weight
             expert_out += masked_down
+        return expert_out.view(B, S, H), router_logits
+
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # orig_exp, orig_rout = self.orig_forward(hidden_states)
+        # return orig_exp, orig_rout
+
+        B, S, H = hidden_states.shape
+        T = B * S
+        x = hidden_states.view(T, H)
+
+        # router (match original semantics)
+        router_logits = self.gate(x)  # [T, E]
+        prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
+        if self.norm_topk_prob:
+            top_w = top_w / top_w.sum(dim=-1, keepdim=True)
+        top_w = top_w.to(hidden_states.dtype)
+
+        routing_weights = torch.zeros_like(router_logits, dtype=x.dtype, device=x.device)  # [T, E]
+        routing_weights.scatter_(1, top_i, top_w)
+
+        T2E = routing_weights > 0
+        expert_out = x.new_zeros((T, H))
+
+        for e in range(self.num_experts):
+            T2Ei = T2E[:, e]  # [T] bool
+            expert = self.experts[e]
+
+            # weights in same layout as original forward
+            W_g = expert.gate_proj.weight.T  # [H, I]
+            W_u = expert.up_proj.weight.T  # [H, I]
+            W_d = expert.down_proj.weight.T  # [I, H]
+
+            delta = _scatter_gather_expert_forward_qwen3vl(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=W_g,
+                W_u=W_u,
+                W_d=W_d,
+                act_fn=expert.act_fn,
+                T=T,
+                H=H,
+                hmx_block=HMX_BLOCK,
+            )
+
+            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+            update = delta * routing_weight
+
+            expert_out = torch.where(
+                T2Ei.unsqueeze(-1).expand(-1, H),
+                expert_out + update,
+                expert_out,
+            )
+
         return expert_out.view(B, S, H), router_logits
 
 
@@ -209,7 +311,7 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        kv_seq_len = key_states.shape[-2]  # past_key_value.get_seq_length(self.layer_idx, cache_position)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
