@@ -3333,8 +3333,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 ccl_lengths = self.comp_ctx_lengths_decode if prefill_seq_len == 1 else self.comp_ctx_lengths_prefill
                 # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
                 for i in range(0, len(ccl_lengths)):
-                    # if prefill_only or enable_chunking:
-                    #     raise NotImplementedError("prefill_only or enable_chunking is not supported with CCL")
                     specializations.append(
                         self.build_prefill_specialization(
                             prefill_seq_len=prefill_seq_len,
