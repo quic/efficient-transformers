@@ -348,16 +348,6 @@ class QEffQwen2_5_VLRotaryEmbedding(Qwen2_5_VLRotaryEmbedding):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
-
 
 def eager_attention_forward_blockedKV(
     module: nn.Module,
@@ -564,9 +554,6 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
     and "Generating Long Sequences with Sparse Transformers".
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffQwen2_5_VLRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -579,6 +566,8 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         num_kv_blocks: Optional[torch.Tensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -591,11 +580,13 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         key_states = key_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        # kv_seq_len = key_states.shape[-2]
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
 
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
+        sin_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
+        cos, sin = cos_cached, sin_cached
 
         query_states, key_states = qeff_apply_rotary_pos_emb(
             query_states, key_states, cos, sin, position_ids[1:], self.rope_scaling["mrope_section"]
@@ -661,6 +652,8 @@ class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         # position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
@@ -701,6 +694,8 @@ class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -723,6 +718,14 @@ class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
 
 
 class QEffQwen2_5_VLTextModel(Qwen2_5_VLTextModel):
+    def __qeff_init__(self):
+        self.rotary_emb = QEffQwen2_5_VLRotaryEmbedding(config=self.config)
+        self.rotary_emb._set_cos_sin_cache(
+            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
+        )
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -785,6 +788,8 @@ class QEffQwen2_5_VLTextModel(Qwen2_5_VLTextModel):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
                 **kwargs,
             )
 

@@ -59,16 +59,6 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
-
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
@@ -108,9 +98,6 @@ class QEffFalconAttention(FalconAttention):
     - add new args position idx for the cache_kwargs for kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -125,6 +112,8 @@ class QEffFalconAttention(FalconAttention):
         use_cache: bool = False,
         output_attentions: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
     ):
         fused_qkv = self.query_key_value(hidden_states)  # [batch_size, seq_length, 3 x hidden_size]
         num_kv_heads = self.num_heads if self.new_decoder_architecture else self.num_kv_heads
@@ -137,8 +126,10 @@ class QEffFalconAttention(FalconAttention):
         key_layer = key_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_layer, seq_len=kv_seq_len)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        cos_cached[: hidden_states.shape[1]].to(dtype=value_layer.dtype)
+        sin_cached[: hidden_states.shape[1]].to(dtype=value_layer.dtype)
+        cos, sin = cos_cached, sin_cached
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
 
         if layer_past is not None:
@@ -184,6 +175,8 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
         use_cache: bool = False,
         output_attentions: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ):
         residual = hidden_states
@@ -208,6 +201,8 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
             use_cache=use_cache,
             output_attentions=output_attentions,
             cache_position=cache_position,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
 
         if not self.config.new_decoder_architecture:
@@ -244,6 +239,14 @@ class QEffFalconModel(FalconModel):
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
     """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
+        self.rotary_emb._set_cos_sin_cache(
+            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
+        )
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def forward(
         self,
@@ -322,6 +325,8 @@ class QEffFalconModel(FalconModel):
                 output_attentions=output_attentions,
                 alibi=alibi,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
             hidden_states = outputs[0]

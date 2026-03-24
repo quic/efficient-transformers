@@ -53,16 +53,6 @@ class QEffGraniteRotaryEmbedding(GraniteRotaryEmbedding):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
-
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
@@ -121,9 +111,6 @@ def eager_attention_forward(
 
 
 class QEffGraniteAttention(GraniteAttention):
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGraniteRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -133,6 +120,8 @@ class QEffGraniteAttention(GraniteAttention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -142,8 +131,10 @@ class QEffGraniteAttention(GraniteAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        cos_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
+        sin_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
+        cos, sin = cos_cached, sin_cached
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -192,6 +183,8 @@ class QEffGraniteDecoderLayer(GraniteDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -230,6 +223,8 @@ class QEffGraniteDecoderLayer(GraniteDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
         hidden_states = residual + hidden_states * self.residual_multiplier
@@ -249,6 +244,14 @@ class QEffGraniteDecoderLayer(GraniteDecoderLayer):
 
 
 class QEffGraniteModel(GraniteModel):
+    def __qeff_init__(self):
+        self.rotary_emb = QEffGraniteRotaryEmbedding(config=self.config)
+        self.rotary_emb._set_cos_sin_cache(
+            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
+        )
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -316,6 +319,8 @@ class QEffGraniteModel(GraniteModel):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
                 **kwargs,
             )
 
