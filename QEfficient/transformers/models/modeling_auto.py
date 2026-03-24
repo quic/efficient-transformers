@@ -230,6 +230,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     _hf_auto_class = AutoModel
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _always_on_onnx_transforms = (FP16ClipTransform,)
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
         """
