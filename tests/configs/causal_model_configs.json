@@ -481,6 +481,32 @@
       }
     },
     {
+      "model_name": "unsloth/gemma-2b",
+      "model_type": "gemma",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 256000,
+        "num_key_value_heads": 1
+      }
+    },
+    {
+      "model_name": "unsloth/gemma-2-2b",
+      "model_type": "gemma2",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 256000,
+        "num_key_value_heads": 1
+      }
+    },
+    {
       "model_name": "Felladrin/Minueza-32M-Base",
       "model_type": "mistral",
       "additional_params": {
@@ -511,6 +537,49 @@
           "original_max_position_embeddings": 8192,
           "rope_type": "llama3"
         }
+      }
+    },
+    {
+      "model_name": "ibm-granite/granite-3.1-2b-instruct",
+      "model_type": "granite",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 49155,
+        "num_key_value_heads": 1
+      }
+    },
+    {
+      "model_name": "ibm-granite/granite-20b-code-base",
+      "model_type": "gpt_bigcode",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 49152,
+        "num_key_value_heads": 1,
+        "activation_function": "gelu",
+        "architectures": [
+          "GPTBigCodeForCausalLM"
+        ]
+      }
+    },
+    {
+      "model_name": "ibm-granite/granite-3.1-1b-a400m-base",
+      "model_type": "granitemoe",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 49155,
+        "num_key_value_heads": 1
       }
     }
   ]
