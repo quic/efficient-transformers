@@ -11,35 +11,36 @@ The **QEfficient Fine-Tune Module** is a component of the QEfficient project foc
 *   **Component Registry**: plug-and-play registries for models, tokenizers, datasets, trainers, optimizers, and callbacks.
 *   **Dataset support**: JSON/JSONL, CSV, and HF Hub datasets; supports instruction–response based chat schemas.
 *   **Parallelism**: This stack currently supports `Data Parallelism (DDP)` for single and multi node devices and `Pipeline Parallelism (PP)`. 
+*   **Multi-Node Finetuning**: Supports Multi node finetuning, which can be scaled across multiple servers.
 *   **Reproducibility**: experiment tracking hooks, seed control, and deterministic data loaders (where supported).
 
 ***
 
 ## Getting Started
 
-### Installation
+### Installation (ENV set up)
 
-Install the same prerequisites as **QEfficient**, plus **QAIC PyTorch Eager mode** as needed.
+Install the same prerequisites as **QEfficient**, additionally **QAIC PyTorch Eager mode** as needed.
 
 *   QEfficient Library: <https://github.com/quic/efficient-transformers/>
 
 If QEfficient is already installed, install `torch_qaic`, `transformers` and (optionally) `accelerate` for QAIC:
 
 ```bash
-# torch_qaic (example wheel path — adjust to your environment)
+# torch_qaic (example wheel path for python 3.10 — adjust to your environment)
 pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
 
 # Install transformers with QAIC backend support
-# TODO : Create transformer.whl
+# Note: Upstream changes to transformer library
 git clone https://github.com/quic-swatia/transformers.git
 cd transformers 
 git checkout version-4.55.0 && pip install -e .
 
-# accelerate 
+# accelerate (example wheel path for python 3.10)
 pip install /opt/qti-aic/integrations/accelerate/py310/accelerate-1.10.0-py3-none-any.whl
 ```
 
-Before training, export environment variables commonly used in HF and QAIC environments:
+Before training, set environment variables commonly used in HF and QAIC environments:
 
 ```bash
 # Allow remote code in datasets that require it (use only if you trust the source)
@@ -55,45 +56,57 @@ export TMPDIR=$HOME/tmp
 
 ### Step-by-Step Guide to run a fine-tuning job
 
-### For QAIC Training
-For Docker-based environments, use the provided `torch-qaic-env` environment.
+> **Note**  
+> If you’re using the pre-built `torch-qaic-env` from the Docker image for QAIC SDK, `torch_qaic` and `accelerate` whl are already installed inside it.
+
+#### For QAIC Training
+For Docker-based environments, use the pre-built `torch-qaic-env` environment.
 
 ```bash
 python -m venv finetune_env
 source finetune_env/bin/activate
 git clone https://github.com/quic/efficient-transformers.git
 cd efficient-transformers
-git checkout ft_experimental
+git checkout ft_experimental      #Can remove this once merged to mainline
 pip install -e .
-pip install   --index-url https://download.pytorch.org/whl/cpu   --extra-index-url     https://devpi.qualcomm.com/qcom/dev/+simple   --trusted-host devpi.qualcomm.com   "torch==2.9.1+cpu"   "torchvision==0.24.1+cpu"   "torchaudio==2.9.1+cpu"
+pip install   --index-url https://download.pytorch.org/whl/cpu \
+--extra-index-url     https://devpi.qualcomm.com/qcom/dev/+simple \
+--trusted-host devpi.qualcomm.com   "torch==2.9.1+cpu"  \
+"torchvision==0.24.1+cpu"   "torchaudio==2.9.1+cpu"
 pip install trl==0.22.0
 cd .. && git clone https://github.com/quic-swatia/transformers.git
 cd transformers 
 git checkout version-4.55.0 && pip install -e .
 cd .. && cd efficient-transformers
-QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
+QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py \
+QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 
 ```
 
-> **Note**  
-> If you’re using the `torch-qaic-env` from the Docker image for SDK, `torch_qaic` and `accelerate` whl are already installed.
 
-### For CUDA Training
+
+#### For CUDA Training
 
 ```bash
 python -m venv finetune_env
 source finetune_env/bin/activate
 git clone https://github.com/quic/efficient-transformers.git
 cd efficient-transformers
-git checkout ft_experimental
+git checkout ft_experimental   #Can remove this once merged to mainline
 pip install -e .
-pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
+pip install torch==2.9.1 torchvision==0.24.1 \
+torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 pip install trl==0.22.0
 cd .. && git clone https://github.com/quic-swatia/transformers.git
 cd transformers 
 git checkout version-4.55.0 && pip install -e .
 cd .. && cd efficient-transformers
-CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_experimental --device cuda --num_epochs 1 --model_name meta-llama/Llama-3.2-3B --dataset_name  yahma/alpaca-cleaned --train_batch_size 1 --gradient_accumulation_steps 768 --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt --completion_template {output}
+CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_experimental \
+--device cuda --num_epochs 1 --model_name meta-llama/Llama-3.2-3B \
+--dataset_name  yahma/alpaca-cleaned --train_batch_size 1 \
+--gradient_accumulation_steps 768 \
+--prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt \
+--completion_template {output}
 ```
 
 ***
@@ -101,7 +114,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_
 
 ### Sample Launch Commands
 
-**Single device using yaml file**
+**Single device (via YAML file)**
 
 ```bash
 QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
@@ -110,15 +123,14 @@ QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficie
 QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 ```
 
-**Single device using CLI flags**
+**Single device (via CLI flags)**
 
 ```bash
 QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True --dataset_name "yahma/alpaca-cleaned" --completion_template {output} --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt
 
 ```
 
-**Distributed (Using TorchRun) - DDP**
-### Set before running
+**Distributed Data Parallelism (Using TorchRun)**
 #### If the tokenizer was used before forking processes (for DDP), which can cause deadlocks.
 ```bash
 export TOKENIZERS_PARALLELISM=false
@@ -128,7 +140,7 @@ export TOKENIZERS_PARALLELISM=false
 QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
 
-**Distributed (Using Accelerate) - DDP**
+**Distributed Data Parallelism(Using Accelerate)**
 ```bash
 QAIC_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes 4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
@@ -137,8 +149,8 @@ QAIC_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes 4 -m QEfficient.c
 ## Component Registry
 The training script uses a component registry to manage different components like models, optimizers, and datasets. This allows for easy swapping of components without modifying core logic.
 
-To register a new component, use the `@registery` decorator.
-See `Experimental/core/component_registry.py` for more details on how to register components and their usage in the training pipeline. 
+To register a new component, use the `@registry` decorator.
+See `QEfficient/finetune/experimental/core/component_registry.py` for more details on how to register components and their usage in the training pipeline. 
 
 ***
 ## Configuration
@@ -148,10 +160,11 @@ The configuration system uses YAML files with typed validation. It supports:
 *   **Profiles**: Inherit from base profiles and override specific settings.
 *   **Validation**: Ensures all required fields are present and types match.
 
-See `experimental/core/config_manger.py` for more details on configuration management.
+See `QEfficient/finetune/experimental/core/config_manager.py` for more details on configuration management.
 Detailed configuration documentation is available in 
 [Training Configuration](#training-configuration).
 
+***
 ## Prepare Data
 
 This module supports both custom dataset loaders and Hugging Face datasets. You can also define prompt templates or formatting functions in your configuration. Examples of prompt function in [Prompt Function Examples](#example-prompt-functions).
@@ -199,9 +212,9 @@ Notes:
 
 The training script supports multiple parallelism strategies:
 
-## Data Parallelism
+### Data Parallelism (DDP)
 Distribute batches across devices.Configure this via `ddp` in the config.
- ```bash
+ ```yaml
    ddp_config:
     ddp_backend: "qccl"
     ddp_find_unused_parameters: False
@@ -209,7 +222,7 @@ Distribute batches across devices.Configure this via `ddp` in the config.
     ddp_broadcast_buffers: null
     ddp_timeout: 1800
  ```
-With the same sft_ddp_config.yaml, we can perform single node multi-device DDP and multimode DDP by changing the torchrun command
+With the same sft_ddp_config.yaml, we can perform single node multi-device DDP and multinode DDP by changing the torchrun command
  
 **For DDP in a single server**:
 ```bash
@@ -217,7 +230,7 @@ QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.fin
 ``` 
 where nproc-per-node is number of workers(QAIC devices) running locally.
 
-**For DDP across multiple servers(MULTINODE DDP for RACK LEVEL Finetuning)**:
+**DDP across multiple servers(MULTINODE DDP for RACK LEVEL Finetuning)**:
 
 This enables scaling training across multiple nodes.
 
@@ -248,11 +261,11 @@ And supported only for linux servers now. Use servers connected to same switch f
 
 ***
 
-## Pipeline Parallelism (PP)
+### Pipeline Parallelism (PP)
 
 Pipeline Parallelism splits a model's layers across multiple devices so that a model too large to fit on a single device can still be trained. 
 
-### How it works
+#### How it works
 
 PP is controlled by a single parameter: **`pp_degree`**.
 
@@ -267,7 +280,7 @@ When `pp_degree > 1` the framework:
 3. Pins the embedding (`model.embed_tokens`) to the first stage and the final norm (`model.norm`) to the last stage.
 4. When `pp_degree == num_available_devices`, uses HuggingFace's `device_map="auto"` for automatic placement. Otherwise a custom per-layer dict is built.
 
-### Configuration parameter
+#### Configuration parameter
 
 Add `pp_degree` under the `training` section of your YAML config or pass it as a CLI flag.
 
@@ -277,10 +290,9 @@ training:
   device: "qaic"       # or "cuda"
   pp_degree: 2         # split model into 2 pipeline stages
 ```
+> **Note:** `pp_degree` must be ≤ the number of locally available devices. The total devices consumed per node is `pp_degree` (for PP-only) or `LOCAL_WORLD_SIZE × pp_degree` (for PP + DDP). Where LOCAL_WORLD_SIZE = number of processes per node. For example, add 'pp_degree: 2' as explained above in the existing yaml file: sft_single_device_gsm8k_config.yaml and use below commands. 
 
-> **Note:** `pp_degree` must be ≤ the number of locally available devices. The total devices consumed per node is `pp_degree` (for PP-only) or `LOCAL_WORLD_SIZE × pp_degree` (for PP + DDP). For example, add 'pp_degree: 2' as explained above in the existing yaml file: sft_single_device_gsm8k_config.yaml and use below commands. 
-
-### Launch commands
+#### Launch commands
 
 **PP only — single process, 2 stages (via YAML)**
 ```bash
@@ -298,7 +310,7 @@ python -m QEfficient.cloud.finetune_experimental \
 
 
 
-### Notes
+#### Notes
 
 - PP is currently verified primarily for **Llama-family** models. Other architectures with different layer naming conventions may need adjustments in `device_map_utils.py`.
 
@@ -307,10 +319,10 @@ python -m QEfficient.cloud.finetune_experimental \
 ## To run the Finetune project tests
 
 Install following plugins:
-```sh
+```bash
 pip install pytest pytest-mock
 ```
 
-```sh
+```bash
 QAIC_VISIBLE_DEVICES=0 python -m pytest QEfficient/finetune/experimental/tests/
 ```
