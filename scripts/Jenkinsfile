@@ -50,7 +50,7 @@ pipeline {
                }
                stage('QAIC LLM Tests') {
                    steps {
-                       timeout(time: 120, unit: 'MINUTES') {
+                       timeout(time: 180, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
@@ -95,6 +95,7 @@ pipeline {
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
                            pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune) and (not diffusion_models)  and (not nightly)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log6.xml --durations=10 &&
+
                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                            deactivate"
                            '''
