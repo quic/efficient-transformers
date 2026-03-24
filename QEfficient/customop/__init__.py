@@ -7,10 +7,12 @@
 
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc,
+    CtxGatherFunc2DAxis0,
     CtxGatherFunc3D,
     CtxGatherFuncBlockedKV,
     CtxScatterFunc,
     CtxScatterFunc3D,
+    CtxScatterFunc3DAxis0,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxGatherFuncBlockedKVCB,
@@ -27,6 +29,8 @@ __all__ = [
     "CtxScatterFunc",
     "CtxGatherFunc3D",
     "CtxScatterFunc3D",
+    "CtxGatherFunc2DAxis0",
+    "CtxScatterFunc3DAxis0",
     "CustomRMSNormAIC",
     "GemmaCustomRMSNormAIC",
     "CtxGatherFuncCB",

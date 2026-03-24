@@ -172,3 +172,83 @@ class CtxGatherFuncBlockedKV(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGatherBlockedKV, data, ctx_indices).setTypeAs(data)
+
+
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxGather2DAxis0(data: onnxscript.FLOAT, indices: onnxscript.INT32) -> onnxscript.FLOAT:
+    """Gather rows from a 2D tensor [T, H] along axis=0 using 1D indices [T].
+
+    Each output row i is data[indices[i]].
+    """
+    indices_nd = ops.Unsqueeze(indices, [-1])  # [T, 1]
+    return ops.GatherND(data, indices_nd, batch_dims=0)  # [T, H]
+
+
+class CtxGatherFunc2DAxis0(torch.autograd.Function):
+    """Gather rows from a 2D tensor [T, H] along axis=0 using 1D indices [T].
+
+    Invalid indices (INT32_MAX) are clamped to 0 in the PyTorch forward pass.
+    In ONNX export the hardware handles out-of-range indices natively.
+    """
+
+    @staticmethod
+    def forward(data: torch.Tensor, indices: torch.Tensor):
+        # data: [T, H], indices: [T]
+        safe_indices = torch.where(
+            indices == torch.iinfo(torch.int32).max,
+            torch.zeros_like(indices),
+            indices,
+        ).long()
+        return data[safe_indices]  # [T, H]
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, indices: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxGather2DAxis0, data, indices).setTypeAs(data)
+
+
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxScatter3DAxis0(
+    data: onnxscript.FLOAT, indices: onnxscript.INT32, updates: onnxscript.FLOAT
+) -> onnxscript.FLOAT:
+    """Scatter updates [T, H] into data [T, H] along axis=0 using 1D indices [T].
+
+    output[indices[i]] = updates[i] for each i.
+    Invalid indices (INT32_MAX) are ignored by the hardware.
+    """
+    indices_nd = ops.Unsqueeze(indices, [-1])  # [T, 1]
+    return ops.ScatterND(data, indices_nd, updates)  # [T, H]
+
+
+class CtxScatterFunc3DAxis0(torch.autograd.Function):
+    """Scatter updates [T, H] into data [T, H] along axis=0 using 1D indices [T].
+
+    Only positions where indices < T are scattered (invalid indices are skipped)
+    so that the invalid_idx=0 sentinel used in non-ONNX mode does not corrupt
+    position 0 when it holds a valid token contribution.
+    """
+
+    @staticmethod
+    def forward(data: torch.Tensor, indices: torch.Tensor, updates: torch.Tensor):
+        # data: [T, H], indices: [T], updates: [T, H]
+        T = data.shape[0]
+        data = data.clone()
+        # Only scatter positions with a valid index (< T)
+        valid_mask = (indices >= 0) & (indices < T)  # [T]
+        valid_indices = indices[valid_mask].long()
+        valid_updates = updates[valid_mask]
+        data[valid_indices] = valid_updates
+        return data
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(
+        g: torch.Graph, data: torch.Value, indices: torch.Value, updates: torch.Value
+    ) -> torch.Value:
+        return g.onnxscript_op(CtxScatter3DAxis0, data, indices, updates).setTypeAs(data)

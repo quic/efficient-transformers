@@ -30,7 +30,8 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
-from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
+from QEfficient.customop import CtxGatherFunc2DAxis0, CtxScatterFunc3DAxis0
+from QEfficient.transformers.cache_utils import InvalidIndexProvider, QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
@@ -45,11 +46,12 @@ class QEffGptOssExperts(GptOssExperts):
 
 
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
-    def forward(self, hidden: torch.Tensor):
+
+    def new_forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
         T = B * S
         hidden = hidden.view(T, H)
-
+        import ipdb; ipdb.set_trace()
         # Router computation
         router_logits = F.linear(hidden, self.router.weight, self.router.bias)
 
@@ -92,6 +94,88 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
 
             # Apply routing weights and accumulate
             expert_out += down_out * routing_weight
+
+        # original shape [B, S, H]
+        return expert_out.view(B, S, H), router_logits
+
+    def forward(self, hidden: torch.Tensor):
+        
+        new_out = self.new_forward(hidden)
+        B, S, H = hidden.shape
+        T = B * S
+        hidden = hidden.view(T, H)
+
+        # Router computation
+        router_logits = F.linear(hidden, self.router.weight, self.router.bias)
+
+        # Top-k selection
+        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
+        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
+
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, top_i, top_w)
+
+        # Routing weights for each expert [T, E]
+        routing_weights = masked_logits
+
+        # ────────────────── allocate the output tensor ─────
+        expert_out = hidden.new_zeros((T, H))  # accumulation buffer
+
+        invalid_idx = InvalidIndexProvider._get_invalid_idx_value()
+    
+        # ───────────────────────── Expert computation loop ─────────────────────────────
+        for e in range(self.experts.num_experts):
+            # Routing weight for this expert in original token order [T, 1]
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
+
+            # ── Build gather indices ──────────────────────────────────────────────────
+            # Sort tokens by routing weight (descending) so that the tokens actually
+            # routed to expert e appear at the beginning of the indices tensor.
+            expert_weights = masked_logits[:, e]  # [T]
+            sorted_indices = torch.argsort(expert_weights, descending=True)  # [T]
+            sorted_weights = expert_weights[sorted_indices]  # [T]
+
+            # Replace trailing zero-weight positions with the invalid sentinel so the
+            # hardware can skip them during GatherND / ScatterND.
+            indices = torch.where(
+                sorted_weights > 0,
+                sorted_indices.to(torch.int32),
+                torch.full((T,), invalid_idx, dtype=torch.int32, device=hidden.device),
+            )  # [T]
+
+            # ── GatherND: make expert-token hidden states contiguous ──────────────────
+            gathered_hidden = CtxGatherFunc2DAxis0.apply(hidden, indices)  # [T, H]
+
+            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]  # [H, I], [H, I]
+            b_g, b_u = self.experts.gate_proj_bias[e], self.experts.up_proj_bias[e]  # [I], [I]
+            W_d = self.experts.down_proj[e]  # [I, H]
+            b_d = self.experts.down_proj_bias[e]  # [H]
+
+            
+            # Gate and Up projections on gathered hidden states
+            gate = torch.where(sorted_weights > 0, (gathered_hidden @ W_g) + b_g, hidden.new_zeros(T, self.experts.intermediate_size))  # [T, I]
+            up = torch.where(sorted_weights > 0, (gathered_hidden @ W_u) + b_u, hidden.new_zeros(T, self.experts.intermediate_size))  # [T, I]
+
+            # Apply GptOss activation with clamping
+            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+
+            # GLU activation
+            glu = gate * torch.sigmoid(gate * self.experts.alpha)
+            intermediate = (up + 1) * glu  # [T, I]
+
+            # Down projection
+            down_out_gathered = torch.where(sorted_weights>0, (intermediate @ W_d) + b_d, hidden.new_zeros(T, H))  # [T, H]
+
+            down_out_gathered = down_out_gathered * sorted_weights
+            
+            # ── ScatterND: put results back in original token order ───────────────────
+            down_out_original = CtxScatterFunc3DAxis0.apply(
+                hidden.new_zeros((T, H)), indices, down_out_gathered
+            )  # [T, H]
+
+            # accumulate
+            expert_out += down_out_original
 
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits

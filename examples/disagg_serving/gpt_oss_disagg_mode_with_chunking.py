@@ -34,23 +34,23 @@ tokenizer = AutoTokenizer.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 8192
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
 
-decode_qpc_path = qeff_model.compile(
-    prefill_seq_len=1,
-    ctx_len=CTX_LEN,
-    num_cores=16,
-    mxfp6_matmul=True,
-    mxint8_kv_cache=True,
-    num_devices=1,
-    mos=1,
-    aic_enable_depth_first=True,
-    num_speculative_tokens=None,
-    offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
-    retain_full_kv=True,
-    # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
-    node_precision_info=non_subfunc_npi_file_path,
-)
+# decode_qpc_path = qeff_model.compile(
+#     prefill_seq_len=1,
+#     ctx_len=CTX_LEN,
+#     num_cores=16,
+#     mxfp6_matmul=True,
+#     mxint8_kv_cache=True,
+#     num_devices=1,
+#     mos=1,
+#     aic_enable_depth_first=True,
+#     num_speculative_tokens=None,
+#     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
+#     retain_full_kv=True,
+#     # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
+#     node_precision_info=non_subfunc_npi_file_path,
+# )
 
 
 # Following command errors out by default, the user is supposed to run the printed command and provide the generated qpc path as prefill_qpc_path commenting out lines 55-68
@@ -72,7 +72,7 @@ prefill_qpc_path = qeff_model.compile(
     node_precision_info=subfunc_npi_file_path,
 )
 
-
+exit()
 inputs = tokenizer(prompt, return_tensors="np", padding=True)
 position_ids = inputs["attention_mask"].sum(1, keepdims=True)
 generation_len = CTX_LEN - position_ids.max()
