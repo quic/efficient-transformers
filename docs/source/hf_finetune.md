@@ -84,7 +84,6 @@ QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 ```
 
 
-
 #### For CUDA Training
 
 ```bash
@@ -110,23 +109,29 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_
 ```
 
 ***
-## Finetuning
+## Finetuning Guide
 
 ### Sample Launch Commands
 
 **Single device (via YAML file)**
 
 ```bash
-QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
+QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py \
+QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 
 #As Module
-QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
+QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental \
+QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 ```
 
 **Single device (via CLI flags)**
 
 ```bash
-QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental --device qaic --lora_r 16 --target_modules q_proj, v_proj --gradient_checkpointing True --dataset_name "yahma/alpaca-cleaned" --completion_template {output} --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt
+QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental \
+--device qaic --lora_r 16 --target_modules q_proj, v_proj \
+--gradient_checkpointing True --dataset_name "yahma/alpaca-cleaned" \
+--completion_template {output} \
+--prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt
 
 ```
 
@@ -168,7 +173,7 @@ Detailed configuration documentation is available in
 ## Prepare Data
 
 This module supports both custom dataset loaders and Hugging Face datasets. You can also define prompt templates or formatting functions in your configuration. Examples of prompt function in [Prompt Function Examples](#example-prompt-functions).
-See `experimental/examples` for more details on how to register our own custom dataset
+See `QEfficient/finetune/experimental/examples` for more details on how to register our own custom dataset
 
 #### Using a Hugging Face Dataset with a Prompt Function/ Prompt Template
 
@@ -182,13 +187,12 @@ dataset:
   completion_template: "{output}" # Template for completion field in dataset
 ```
 
-Define the function (e.g., in `preprocess/alpaca_func.py`):
+Define the function (e.g., in `QEfficient/finetune/experimental/preprocessing/alpaca_func.py`):
 
 ```python
-#preprocess/alpaca_func.py
-def format_alpaca(example):
-    # Expect keys: 'instruction' and 'output'
-    return f"### Instruction:\n{example['instruction']}\n### Response:\n{example['output']}"
+#preprocessing/alpaca_func.py
+def create_alpaca_prompt(row):
+    return prompt_no_input(row) if row["input"] == "" else prompt_input(row)
 ```
 
 In your config, reference an HF dataset and a prompt template:
