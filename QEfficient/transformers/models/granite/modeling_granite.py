@@ -25,7 +25,7 @@ from transformers.models.granite.modeling_granite import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, generic_blocked_attention_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -160,30 +160,6 @@ class QEffGraniteAttention(GraniteAttention):
             else:
                 key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        if use_blocked_kv:
-            strategy = get_blocking_strategy(blocking_config)
-            attn_output, attn_weights = strategy.apply(
-                module=self,
-                query=query_states,
-                key=key_states,
-                value=value_states,
-                attention_mask=attention_mask,
-                scaling=self.scaling,
-                cache_kwargs=cache_kwargs,
-                layer_idx=self.layer_idx,
-                past_key_value=past_key_value,
-                config=blocking_config,
-            )
-        else:
-            attn_output, attn_weights = eager_attention_forward(
-                self,
-                query_states,
-                key_states,
-                value_states,
-                attention_mask,
-                scaling=self.scaling,
-                **kwargs,
-            )
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
