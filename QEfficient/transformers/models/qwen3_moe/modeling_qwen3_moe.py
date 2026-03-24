@@ -120,7 +120,7 @@ def eager_attention_forward(
 HMX_BLOCK = 32
 
 
-def _scatter_gather_expert_forward_qwen3vl(
+def _scatter_gather_qwen3_expert_where_before_reorder(
     x: torch.Tensor,  # [T, H]
     T2Ei: torch.Tensor,  # [T] bool
     W_g: torch.Tensor,  # [H, I]
@@ -129,33 +129,29 @@ def _scatter_gather_expert_forward_qwen3vl(
     act_fn,
     T: int,
     H: int,
-    hmx_block: int = HMX_BLOCK,
 ) -> torch.Tensor:
+    # 1. Running-sum
     scatter_idx = torch.cumsum(T2Ei.long(), dim=0) - 1
     safe_idx = torch.where(T2Ei, scatter_idx, torch.full_like(scatter_idx, T))
-
     x_prime = torch.zeros(T + 1, H, dtype=x.dtype, device=x.device)
     x_prime = x_prime.scatter(0, safe_idx.unsqueeze(-1).expand(-1, H), x)
 
-    # 3) blocked FFN compute
-    delta_prime = torch.zeros(T, H, dtype=x.dtype, device=x.device)
-    num_blocks = (T + hmx_block - 1) // hmx_block
+    gate_prime = x_prime[:T] @ W_g
+    up_prime = x_prime[:T] @ W_u
+    down_prime = (up_prime * act_fn(gate_prime)) @ W_d  # [T, H]
 
-    for blk in range(num_blocks):
-        s = blk * hmx_block
-        e_b = min(s + hmx_block, T)
-        x_blk = x_prime[s:e_b]
+    # 2. WHERE and then reorder
+    # keep only first num_active compact rows and zero the rest
+    num_active = T2Ei.long().sum()
+    compact_rows = torch.arange(T, device=x.device)
+    compact_mask = compact_rows < num_active
+    down_prime = torch.where(compact_mask.unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
 
-        gate = x_blk @ W_g
-        up = x_blk @ W_u
-        blk_out = (up * act_fn(gate)) @ W_d
-        block_active = T2Ei[s:e_b].long().sum() > 0
-        delta_prime[s:e_b] = torch.where(block_active, blk_out, torch.zeros_like(blk_out))
+    down_prime_ext = torch.zeros(T + 1, H, dtype=x.dtype, device=x.device)
+    down_prime_ext[:T] = down_prime
+    delta = down_prime_ext[safe_idx]  # [T, H]
 
-    gather_idx = scatter_idx.clamp(0, T - 1)
-    delta_out = delta_prime[gather_idx]
-    mask = T2Ei.unsqueeze(-1).expand(-1, H)
-    return torch.where(mask, delta_out, torch.zeros_like(x))
+    return delta
 
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
@@ -195,6 +191,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         T = B * S
         x = hidden_states.view(T, H)
 
+        # Router
         router_logits = self.gate(x)  # [T, E]
         prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
         top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
@@ -204,20 +201,19 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
 
         routing_weights = torch.zeros_like(router_logits, dtype=x.dtype, device=x.device)  # [T, E]
         routing_weights.scatter_(1, top_i, top_w)
-
         T2E = routing_weights > 0
+
         expert_out = x.new_zeros((T, H))
 
         for e in range(self.num_experts):
             T2Ei = T2E[:, e]  # [T] bool
             expert = self.experts[e]
 
-            # weights in same layout as original forward
             W_g = expert.gate_proj.weight.T  # [H, I]
             W_u = expert.up_proj.weight.T  # [H, I]
             W_d = expert.down_proj.weight.T  # [I, H]
 
-            delta = _scatter_gather_expert_forward_qwen3vl(
+            delta = _scatter_gather_qwen3_expert_where_before_reorder(
                 x=x,
                 T2Ei=T2Ei,
                 W_g=W_g,
@@ -226,12 +222,12 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
                 act_fn=expert.act_fn,
                 T=T,
                 H=H,
-                hmx_block=HMX_BLOCK,
             )
 
             routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
             update = delta * routing_weight
 
+            # Conditional row-wise accumulation
             expert_out = torch.where(
                 T2Ei.unsqueeze(-1).expand(-1, H),
                 expert_out + update,
