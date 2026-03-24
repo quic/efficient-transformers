@@ -84,15 +84,13 @@ pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[
 # Uncomment the following lines to use only a subset of transformer layers:
 #
 # # Configure for 2-layer model (faster inference)
-# pipeline.transformer.model.transformer_high.config['num_layers'] = 2
-# pipeline.transformer.model.transformer_low.config['num_layers']= 2
-#
+# pipeline.transformer.model.transformer_high.config['num_layers'] = 1
+# pipeline.transformer.model.transformer_low.config['num_layers']= 1
 # # Reduce high noise transformer blocks
 # original_blocks = pipeline.transformer.model.transformer_high.blocks
 # pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
 #     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config['num_layers'])]
 # )
-#
 # # Reduce low noise transformer blocks
 # org_blocks = pipeline.transformer.model.transformer_low.blocks
 # pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
@@ -160,7 +158,7 @@ image = load_image(image_url)
 # Calculate optimal dimensions based on image aspect ratio and target resolution
 
 # Choose target resolution preset
-max_area = 190 * 320  # 180p - ATTENTION_BLOCKING_MODE=kv head_block_size=16 num_kv_blocks=3 python3 wan_i2v_custom.py
+max_area = 192 * 320  # 180p - ATTENTION_BLOCKING_MODE=kv head_block_size=16 num_kv_blocks=3 python3 wan_i2v_custom.py
 # max_area = 480 * 832    # 480p - ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=21 num_q_blocks=2 python3 wan_i2v_custom.py
 # max_area = 720 * 1280   # 720p - ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=48 num_q_blocks=5 python3 wan_i2v_custom.py
 
@@ -173,7 +171,7 @@ width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
 # Resize image to calculated dimensions
 image = image.resize((width, height))
 
-print(f"Image resized to: {width}x{height} (aspect ratio: {aspect_ratio:.2f})")
+print(f"Image resized to: {width} x {height}")
 
 # ============================================================================
 # IMAGE-TO-VIDEO GENERATION WITH CUSTOM RUNTIME CONFIGURATION
@@ -264,7 +262,6 @@ print(output)
 #         video = pipeline.vae_decoder.qpc_session.run(inputs)
 #         video_tensor = torch.from_numpy(video["sample"])
 #         video = pipeline.model.video_processor.postprocess_video(video_tensor)
-
 #         # Save intermediate draft video
 #         export_to_video(video[0], f"draft_i2v_step_{step}.mp4", fps=16)
 #         print(f"Saved intermediate draft: draft_i2v_step_{step}.mp4")

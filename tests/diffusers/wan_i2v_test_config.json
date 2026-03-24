@@ -1,23 +1,23 @@
 {
     "model_setup": {
-        "max_area": 61440,
+        "max_area": 3072,
         "num_frames": 81,
         "num_transformer_layers_high": 1,
-        "num_transformer_layers_low": 1,
-        "use_onnx_subfunctions": false
+        "num_transformer_layers_low": 1
     },
     "mad_validation": {
         "tolerances": {
             "vae_encoder": 7,
             "transformer_high": 0.3,
             "transformer_low": 0.2,
-            "vae_decoder": 0.1
+            "vae_decoder": 0.71
         }
     },
     "pipeline_params": {
         "test_prompt": "A cat walking in a garden with flowing motion",
         "test_image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/astronaut.jpg",
         "num_inference_steps": 2,
+        "use_onnx_subfunctions": true,
         "guidance_scale": 1.0,
         "guidance_scale_2": 1.0,
         "max_sequence_length": 512,

@@ -188,7 +188,7 @@ class QEffWanImageToVideoPipeline:
             >>>
             >>> # Load with custom cache directory
             >>> pipeline = QEffWanImageToVideoPipeline.from_pretrained(
-            ...     "wan-i2v-model-id",
+            ...     "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
             ...     cache_dir="/custom/cache/dir"
             ... )
         """
@@ -289,8 +289,8 @@ class QEffWanImageToVideoPipeline:
         self,
         compile_config: Optional[str] = None,
         parallel: bool = False,
-        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
-        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
+        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_45P,
+        width: int = constants.WAN_ONNX_EXPORT_WIDTH_45P,
         num_frames: int = constants.WAN_ONNX_EXPORT_FRAMES,
         use_onnx_subfunctions: bool = False,
     ) -> str:
@@ -334,7 +334,7 @@ class QEffWanImageToVideoPipeline:
             ... )
         """
         # Load compilation configuration
-        config_manager(self, config_source=compile_config)
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Set device IDs, qpc path if precompiled qpc exist
         set_execute_params(self)
@@ -776,7 +776,6 @@ class QEffWanImageToVideoPipeline:
 
         # Step 7: Initialize QAIC inference session for transformer
         if self.transformer.qpc_session is None:
-            # self.transformer.qpc_path = "/home/vtirumal/imp_qpcs/wani2v_480p/"
             qpc_load_start = time.perf_counter()
             self.transformer.qpc_session = QAICInferenceSession(
                 str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
@@ -799,7 +798,7 @@ class QEffWanImageToVideoPipeline:
             "output": np.random.rand(
                 batch_size,
                 cl,  # Compressed latent dimension
-                constants.WAN_DIT_OUT_CHANNELS,  # TODO ; check once
+                constants.WAN_DIT_OUT_CHANNELS,
             ).astype(np.int32),
         }
         self.transformer.qpc_session.set_buffers(output_buffer)
@@ -942,13 +941,12 @@ class QEffWanImageToVideoPipeline:
                 # Update latents using scheduler (x_t -> x_t-1)
                 latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
-                # Execute callback if provided #TODO: verify and optimize to run DIT and vae in parallel
+                # Execute callback if provided # TODO: optimize to run DIT and vae in parallel
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
                         callback_kwargs[k] = locals()[k]
-                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
-
+                    callback_outputs = callback_on_step_end(self, i, callback_kwargs, num_frames=num_frames)
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
                     negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
@@ -961,43 +959,39 @@ class QEffWanImageToVideoPipeline:
         if self.model.config.expand_timesteps:
             latents = (1 - first_frame_mask) * condition + first_frame_mask * latents
 
-        # Step 9: Decode latents to video #TODO: if callbacks not needed if else here then remove
-        if not output_type == "latent":
-            # Prepare latents for VAE decoding
-            latents = latents.to(self.vae_decoder.model.dtype)
+        # Prepare latents for VAE decoding
+        latents = latents.to(self.vae_decoder.model.dtype)
 
-            # Apply VAE normalization (denormalization)
-            latents_mean = (
-                torch.tensor(self.vae_decoder.model.config.latents_mean)
-                .view(1, self.vae_decoder.model.config.z_dim, 1, 1, 1)
-                .to(latents.device, latents.dtype)
+        # Apply VAE normalization (denormalization)
+        latents_mean = (
+            torch.tensor(self.vae_decoder.model.config.latents_mean)
+            .view(1, self.vae_decoder.model.config.z_dim, 1, 1, 1)
+            .to(latents.device, latents.dtype)
+        )
+        latents_std = 1.0 / torch.tensor(self.vae_decoder.model.config.latents_std).view(
+            1, self.vae_decoder.model.config.z_dim, 1, 1, 1
+        ).to(latents.device, latents.dtype)
+        latents = latents / latents_std + latents_mean
+
+        # Initialize VAE decoder inference session
+        if self.vae_decoder.qpc_session is None:
+            self.vae_decoder.qpc_session = QAICInferenceSession(
+                str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
             )
-            latents_std = 1.0 / torch.tensor(self.vae_decoder.model.config.latents_std).view(
-                1, self.vae_decoder.model.config.z_dim, 1, 1, 1
-            ).to(latents.device, latents.dtype)
-            latents = latents / latents_std + latents_mean
 
-            # Initialize VAE decoder inference session
-            if self.vae_decoder.qpc_session is None:
-                self.vae_decoder.qpc_session = QAICInferenceSession(
-                    str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
-                )
+        # # Allocate output buffer for VAE decoder
+        output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
+        self.vae_decoder.qpc_session.set_buffers(output_buffer)
+        inputs = {"latent_sample": latents.numpy()}
 
-            # # Allocate output buffer for VAE decoder
-            output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
-            self.vae_decoder.qpc_session.set_buffers(output_buffer)
-            inputs = {"latent_sample": latents.numpy()}
+        start_decode_time = time.perf_counter()
+        video = self.vae_decoder.qpc_session.run(inputs)
+        end_decode_time = time.perf_counter()
+        vae_decoder_perf = end_decode_time - start_decode_time
 
-            start_decode_time = time.perf_counter()
-            video = self.vae_decoder.qpc_session.run(inputs)
-            end_decode_time = time.perf_counter()
-            vae_decoder_perf = end_decode_time - start_decode_time
-
-            # Post-process video for output
-            video_tensor = torch.from_numpy(video["sample"])
-            video = self.model.video_processor.postprocess_video(video_tensor)
-        else:
-            video = latents
+        # Post-process video for output
+        video_tensor = torch.from_numpy(video["sample"])
+        video = self.model.video_processor.postprocess_video(video_tensor)
 
         # Step 10: Collect performance metrics
         perf_data = {

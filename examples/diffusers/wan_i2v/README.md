@@ -16,17 +16,13 @@ WAN 2.2 Image-to-Video (I2V) is a diffusion model that transforms static images 
 
 ## Files
 
-- **`wan_lightning_i2v.py`** - Basic I2V example with Lightning LoRA and simple progress callback
+- **`wan_lightning_i2v.py`** - Basic I2V example with Lightning LoRA
 - **`wan_i2v_custom.py`** - Enhanced example with customization options
-- **`wan_i2v_config.json`** - Configuration file for I2V pipeline compilation
-
-**Note**: Update compilation configuration for desired configurations
+- **`wan_i2v_config.json`** - Configuration file for I2V pipeline compilation. Customize compilation parameters by modifying this file.
 
 ## Quick Start
 
 ### 1. Basic Image-to-Video Generation
-
-The simplest way to generate videos from images:
 
 ```python
 from QEfficient import QEffWanImageToVideoPipeline
@@ -44,8 +40,8 @@ output = pipeline(
     image=image,
     prompt="A beautiful scene with gentle motion",
     num_frames=81,
-    height=480,
-    width=832,
+    height=544,
+    width=720,
     guidance_scale=1.0,
     num_inference_steps=4,
     generator=torch.manual_seed(42),
@@ -154,6 +150,58 @@ ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=21 num_q_blocks=2 p
 ATTENTION_BLOCKING_MODE=qkv head_block_size=16 num_kv_blocks=48 num_q_blocks=5 python wan_lightning_i2v.py
 ```
 
+
+## Configuration File
+
+The `wan_i2v_config.json` file controls compilation settings for the transformer module:
+
+### Module Structure
+
+The configuration includes dual specializations for WAN's high and low noise models:
+
+```json
+{
+  "transformer": {
+    "specializations":[
+        {
+            "batch_size": "1",
+            "num_channels": "36",
+            "steps": "1",
+            "sequence_length": "512",
+            "model_type": "1"
+        },
+        {
+            "batch_size": "1",
+            "num_channels": "36",
+            "steps": "1",
+            "sequence_length": "512",
+            "model_type": "2"
+        }
+    ]
+}
+}
+```
+
+### Configuration Parameters
+
+#### Specializations
+- `batch_size`: Batch size for inference
+- `num_channels`: Number of latent channels (36 for WAN I2V)
+- `sequence_length` : Sequence length of text encoder 512
+- `model_type`: 1 for high noise model, 2 for low noise model
+
+#### Compilation
+- `mdp_ts_num_devices`: Number of devices for model parallelism (16 recommended)
+- `mxfp6_matmul`: Enable MXFP6 quantization for matrix multiplication
+- `convert_to_fp16`: Convert model to FP16 precision
+- `aic_num_cores`: Number of AI cores to use (16 recommended)
+- `mos`: Degree of weight splitting done across cores (1 is recommended)
+- `mdts_mos`: Degree of weight splitting done across multi-device tensor slices (1 is recommended)
+
+#### Execute
+- `device_ids`: List of device IDs to use (null for auto-selection)
+- `qpc_path` : compiled qpc path, to skip recompilation (null by default)
+
 ## Key Parameters
 
 #### Generation Parameters
@@ -241,7 +289,7 @@ Update custom config with qpc in execute of corresponding module.
 Monitor generation progress and save intermediate drafts - refer **save_draft_callback** in wan I2V custom.py
 
 ```python
-def save_draft_callback(pipeline, step, timestep, callback_kwargs):
+def save_draft_callback(pipeline, step, callback_kwargs, num_frames):
     # Refer wan I2V custom.py script
 
 # Use callback in pipeline

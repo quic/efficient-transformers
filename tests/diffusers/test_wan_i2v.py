@@ -8,7 +8,6 @@
 Test for WAN Image-to-Video pipeline
 # TODO : 1. Add pytest for call method
          2. See if we reduce height and width
-        3. Keep test for Sub fn as default once sdk supports
 """
 
 import time
@@ -386,50 +385,46 @@ def wan_i2v_pipeline_call_with_mad_validation(
         latents = (1 - first_frame_mask) * condition + first_frame_mask * latents
 
     # Step 9: Decode latents to video QAIC VAE decoder
-    if not output_type == "latent":
-        latents = latents.to(pipeline.vae_decoder.model.dtype)
-        latents_mean = (
-            torch.tensor(pipeline.vae_decoder.model.config.latents_mean)
-            .view(1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1)
-            .to(latents.device, latents.dtype)
-        )
-        latents_std = 1.0 / torch.tensor(pipeline.vae_decoder.model.latents_std).view(
-            1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1
-        ).to(latents.device, latents.dtype)
-        latents = latents / latents_std + latents_mean
+    latents = latents.to(pipeline.vae_decoder.model.dtype)
+    latents_mean = (
+        torch.tensor(pipeline.vae_decoder.model.config.latents_mean)
+        .view(1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1)
+        .to(latents.device, latents.dtype)
+    )
+    latents_std = 1.0 / torch.tensor(pipeline.vae_decoder.model.latents_std).view(
+        1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1
+    ).to(latents.device, latents.dtype)
+    latents = latents / latents_std + latents_mean
 
-        # Initialize VAE decoder inference session
-        if pipeline.vae_decoder.qpc_session is None:
-            pipeline.vae_decoder.qpc_session = QAICInferenceSession(
-                str(pipeline.vae_decoder.qpc_path), device_ids=pipeline.vae_decoder.device_ids
-            )
-
-        # MAD Validation for VAE decoder - PyTorch reference inference
-        video_torch = pytorch_pipeline.vae.decode(latents, return_dict=False)[0]
-
-        # Allocate output buffer for VAE decoder
-        output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
-        pipeline.vae_decoder.qpc_session.set_buffers(output_buffer)
-
-        # Run VAE decoder inference and measure time
-        inputs = {"latent_sample": latents.numpy()}
-        start_decode_time = time.perf_counter()
-        video = pipeline.vae_decoder.qpc_session.run(inputs)
-        end_decode_time = time.perf_counter()
-        vae_decoder_perf = end_decode_time - start_decode_time
-
-        # VAE decoder MAD validation
-        print(" Performing MAD validation for VAE decoder...")
-        mad_validator.validate_module_mad(
-            video_torch.detach().cpu().numpy(), video["sample"], "vae_decoder", "video decoding"
+    # Initialize VAE decoder inference session
+    if pipeline.vae_decoder.qpc_session is None:
+        pipeline.vae_decoder.qpc_session = QAICInferenceSession(
+            str(pipeline.vae_decoder.qpc_path), device_ids=pipeline.vae_decoder.device_ids
         )
 
-        # Post-process video for output
-        video_tensor = torch.from_numpy(video["sample"])
-        video = pipeline.model.video_processor.postprocess_video(video_tensor)
-    else:
-        video = latents
-        vae_decoder_perf = 0.0
+    # MAD Validation for VAE decoder - PyTorch reference inference
+    video_torch = pytorch_pipeline.vae.decode(latents, return_dict=False)[0]
+
+    # Allocate output buffer for VAE decoder
+    output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
+    pipeline.vae_decoder.qpc_session.set_buffers(output_buffer)
+
+    # Run VAE decoder inference and measure time
+    inputs = {"latent_sample": latents.numpy()}
+    start_decode_time = time.perf_counter()
+    video = pipeline.vae_decoder.qpc_session.run(inputs)
+    end_decode_time = time.perf_counter()
+    vae_decoder_perf = end_decode_time - start_decode_time
+
+    # VAE decoder MAD validation
+    print(" Performing MAD validation for VAE decoder...")
+    mad_validator.validate_module_mad(
+        video_torch.detach().cpu().numpy(), video["sample"], "vae_decoder", "video decoding"
+    )
+
+    # Post-process video for output
+    video_tensor = torch.from_numpy(video["sample"])
+    video = pipeline.model.video_processor.postprocess_video(video_tensor)
 
     # Build performance metrics
     perf_data = {
@@ -476,15 +471,15 @@ def wan_i2v_pipeline():
     pytorch_pipeline.transformer_2.set_adapters(["low_noise"], weights=[1.0])
 
     # Reduce to 2 layers for testing (1 high + 1 low)
-    pytorch_pipeline.transformer.config.num_layers = config["num_transformer_layers_high"]
-    pytorch_pipeline.transformer_2.config.num_layers = config["num_transformer_layers_low"]
+    pytorch_pipeline.transformer.config["num_layers"] = config["num_transformer_layers_high"]
+    pytorch_pipeline.transformer_2.config["num_layers"] = config["num_transformer_layers_low"]
     original_blocks = pytorch_pipeline.transformer.blocks
     org_blocks = pytorch_pipeline.transformer_2.blocks
     pytorch_pipeline.transformer.blocks = torch.nn.ModuleList(
-        [original_blocks[i] for i in range(0, pytorch_pipeline.transformer.config.num_layers)]
+        [original_blocks[i] for i in range(0, pytorch_pipeline.transformer.config["num_layers"])]
     )
     pytorch_pipeline.transformer_2.blocks = torch.nn.ModuleList(
-        [org_blocks[i] for i in range(0, pytorch_pipeline.transformer_2.config.num_layers)]
+        [org_blocks[i] for i in range(0, pytorch_pipeline.transformer_2.config["num_layers"])]
     )
 
     # Load QEff WAN I2V pipeline
@@ -501,8 +496,8 @@ def wan_i2v_pipeline():
     pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
 
     # Reduce to 2 layers for testing (1 high + 1 low)
-    pipeline.transformer.model.transformer_high.config.num_layers = config["num_transformer_layers_high"]
-    pipeline.transformer.model.transformer_low.config.num_layers = config["num_transformer_layers_low"]
+    pipeline.transformer.model.transformer_high.config["num_layers"] = config["num_transformer_layers_high"]
+    pipeline.transformer.model.transformer_low.config["num_layers"] = config["num_transformer_layers_low"]
 
     original_blocks_high = pipeline.transformer.model.transformer_high.blocks
     original_blocks_low = pipeline.transformer.model.transformer_low.blocks
@@ -571,6 +566,7 @@ def test_wan_i2v_pipeline(wan_i2v_pipeline):
             custom_config_path=CONFIG_PATH,
             generator=generator,
             mad_tolerances=config["mad_validation"]["tolerances"],
+            use_onnx_subfunctions=config["pipeline_params"]["use_onnx_subfunctions"],
             parallel_compile=True,
             return_dict=True,
         )
