@@ -7,7 +7,7 @@
                     },
     "mad_validation": {
                         "tolerances": {
-                            "clip_text_encoder": 0.1,
+                            "clip_text_encoder": 0.01,
                             "t5_text_encoder": 5,
                             "transformer": 0.1,
                             "vae_decoder": 0.01

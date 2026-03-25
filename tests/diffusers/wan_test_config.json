@@ -2,7 +2,7 @@
     "model_setup": {
                         "height": 48,
                         "width": 64,
-                        "num_frames": 61,
+                        "num_frames": 81,
                         "num_transformer_layers_high": 1,
                         "num_transformer_layers_low": 1
                     },
@@ -10,7 +10,7 @@
                          "tolerances": {
                                 "transformer_high": 0.1,
                                 "transformer_low": 0.1,
-                                "vae_decoder" : 1.5
+                                "vae_decoder" : 1
                             }
                         },
     "pipeline_params": {
