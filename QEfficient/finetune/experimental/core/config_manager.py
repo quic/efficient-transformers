@@ -188,6 +188,7 @@ class DatasetConfig:
         metadata={"help": "Name of the hf configuration file."},
     )
     json_file_path: str = field(default=None, metadata={"help": "Path to a JSON file containing data."})
+    data_seed: int = field(default=42, metadata={"help": "Seed for data shuffling and sampling."})
 
 
 @dataclass

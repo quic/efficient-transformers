@@ -26,6 +26,7 @@ dataset:
   prompt_template: "### Original:{original} \n ### Rewrite:\n" # function to create prompt from dataset fields
   completion_template: "{generation}"    # Model will be trained on this part. 
   dataset_disc_style: "sarcasm_more" # Style of dataset to use
+  data_seed: 42 # Random seed for dataset shuffling
 
 # Training configuration
 training:
