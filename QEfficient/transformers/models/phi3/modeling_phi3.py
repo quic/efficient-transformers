@@ -148,16 +148,11 @@ class QEffPhi3Attention(Phi3Attention):
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        if kv_seq_len > QEffPhi3RotaryEmbedding._max_seq_len_cached:
-            QEffPhi3RotaryEmbedding._set_cos_sin_cache(
-                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
-            )
-        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        cos, sin = cos_cached, sin_cached
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
         if past_key_value is not None:
             cache_kwargs = {

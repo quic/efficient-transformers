@@ -37,8 +37,6 @@ class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    _max_seq_len_cached = 0
-
     def __init__(self, config: LlamaConfig, device=None):
         super().__init__(config=config)
 
@@ -217,16 +215,11 @@ class QEffLlamaAttention(LlamaAttention):
         key_states = self.k_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-        if kv_seq_len > QEffLlamaRotaryEmbedding._max_seq_len_cached:
-            QEffLlamaRotaryEmbedding._set_cos_sin_cache(
-                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
-            )
-        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        cos, sin = cos_cached, sin_cached
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
         if past_key_value is not None:
             if num_kv_blocks is not None:
@@ -324,10 +317,6 @@ class QEffLlamaModel(LlamaModel):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
-        QEffLlamaRotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
-        self.rotary_emb._set_cos_sin_cache(
-            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
-        )
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
         self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 

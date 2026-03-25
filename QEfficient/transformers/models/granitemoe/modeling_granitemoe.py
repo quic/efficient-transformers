@@ -38,8 +38,6 @@ class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    _max_seq_len_cached = 0
-
     def __init__(
         self,
         config: Optional[GraniteMoeConfig] = None,
@@ -128,20 +126,15 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        if kv_seq_len > QEffGraniteMoeRotaryEmbedding._max_seq_len_cached:
-            QEffGraniteMoeRotaryEmbedding._set_cos_sin_cache(
-                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
-            )
-        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        cos, sin = cos_cached, sin_cached
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
+                "sin": sin_cached,
+                "cos": cos_cached,
                 "cache_position": cache_position,
                 "batch_index": batch_index,
                 "position_ids": position_ids,

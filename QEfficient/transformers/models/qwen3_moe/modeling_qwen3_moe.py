@@ -32,8 +32,6 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
-    _max_seq_len_cached = 0
-
     def __init__(self, config: Qwen3MoeConfig, device=None):
         super().__init__(config=config)
 
@@ -200,15 +198,10 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        if kv_seq_len > QEffQwen3MoeRotaryEmbedding._max_seq_len_cached:
-            QEffQwen3MoeRotaryEmbedding._set_cos_sin_cache(
-                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
-            )
-        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        cos, sin = cos_cached, sin_cached
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
         if past_key_value is not None:
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}

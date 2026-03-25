@@ -42,8 +42,6 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    _max_seq_len_cached = 0
-
     def __init__(self, config: FalconConfig, device=None):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
@@ -128,14 +126,8 @@ class QEffFalconAttention(FalconAttention):
         key_layer = key_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-
-        if kv_seq_len > QEffFalconRotaryEmbedding._max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=kv_seq_len, device=value_layer.device, dtype=value_layer.dtype)
-        cos_cached[:kv_seq_len].to(dtype=value_layer.dtype)
-        sin_cached[:kv_seq_len].to(dtype=value_layer.dtype)
-        cos, sin = cos_cached, sin_cached
-        query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos_cached, sin_cached, position_ids)
 
         if layer_past is not None:
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
@@ -247,10 +239,6 @@ class QEffFalconModel(FalconModel):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
-        self.rotary_emb._set_cos_sin_cache(
-            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
-        )
-        QEffFalconRotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
         self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
