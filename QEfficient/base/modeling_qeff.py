@@ -85,6 +85,9 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
+        if self.config.torch_dtype == torch.bfloat16:
+            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
+
     def _normalize_torch_dtype(self):
         """
         Normalizes torch_dtype across all nested configs to match the top-level config.
