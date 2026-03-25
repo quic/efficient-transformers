@@ -59,7 +59,7 @@ export TMPDIR=$HOME/tmp
 > **Note**  
 > If you’re using the pre-built `torch-qaic-env` from the Docker image for QAIC SDK, `torch_qaic` and `accelerate` whl are already installed inside it.
 
-#### For QAIC Training
+#### For QAIC Finetuning
 For Docker-based environments, use the pre-built `torch-qaic-env` environment.
 
 ```bash
@@ -83,8 +83,7 @@ QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 
 ```
 
-
-#### For CUDA Training
+#### For CUDA Finetuning
 
 ```bash
 python -m venv finetune_env
@@ -135,7 +134,7 @@ QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental \
 
 ```
 
-**Distributed Data Parallelism (Using TorchRun)**
+**Distributed Data Parallelism (Via TorchRun)**
 #### If the tokenizer was used before forking processes (for DDP), which can cause deadlocks.
 ```bash
 export TOKENIZERS_PARALLELISM=false
@@ -145,7 +144,7 @@ export TOKENIZERS_PARALLELISM=false
 QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
 
-**Distributed Data Parallelism(Using Accelerate)**
+**Distributed Data Parallelism(Via Accelerate)**
 ```bash
 QAIC_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes 4 -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_ddp_config.yaml
 ```
@@ -205,7 +204,6 @@ dataset:
   prompt_template: "Solve the following math problem step by step:\n\n{'question'}\n\nAnswer:\n"
   completion_template: "{answer}"
 ```
-
 
 Notes: 
 *  The pipeline expects input data in JSON format. If your custom dataset is in JSONL or any other format, please convert it to JSON as a one‑time preprocessing step. After conversion, simply provide the JSON file path in your config.yaml.
@@ -311,7 +309,6 @@ python -m QEfficient.cloud.finetune_experimental \
     --device qaic \
     --pp_degree 2
 ```
-
 
 
 #### Notes
