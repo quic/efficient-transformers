@@ -11,6 +11,7 @@ import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils.device_utils import get_available_device_id
 
 torch.manual_seed(42)
 
