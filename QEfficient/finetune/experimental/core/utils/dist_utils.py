@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+import os
 
 import torch.distributed as dist
 
@@ -37,3 +38,19 @@ def get_world_size() -> int:
 def is_main_process() -> bool:
     """Check if the current process is the main process (rank 0)."""
     return get_rank() == 0
+
+
+def get_global_rank() -> int:
+    """Return global rank if available (torchrun/deepspeed), else fall back to local rank."""
+    r = os.environ.get("RANK")
+    if r is not None:
+        try:
+            return int(r)
+        except ValueError:
+            return 0
+    # Fallback to local rank
+    return int(get_local_rank())
+
+
+def is_global_rank_zero() -> bool:
+    return get_global_rank() == 0

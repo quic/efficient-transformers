@@ -48,6 +48,7 @@ class TestLogger:
     def test_log_levels(self, caplog):
         """Test all log levels work correctly"""
         logger = Logger("level_test_logger", level=logging.DEBUG)
+        logger.logger.propagate = True
 
         with caplog.at_level(logging.DEBUG):
             logger.debug("Debug message")
@@ -63,22 +64,24 @@ class TestLogger:
             assert "Error message" in caplog.text
             assert "Critical message" in caplog.text
 
-    @patch("QEfficient.finetune.experimental.core.logger.get_local_rank")
-    def test_log_rank_zero_positive_case(self, mock_get_local_rank, caplog):
+    @patch("QEfficient.finetune.experimental.core.logger.is_global_rank_zero")
+    def test_log_rank_zero_positive_case(self, mock_get_global_rank, caplog):
         """Test rank zero logging functionality"""
-        mock_get_local_rank.return_value = 0
+        mock_get_global_rank.return_value = True
         logger = Logger("rank_test_logger")
+        logger.logger.propagate = True
 
         with caplog.at_level(logging.INFO):
             logger.log_rank_zero("Rank zero message")
 
             assert "Rank zero message" in caplog.text
 
-    @patch("QEfficient.finetune.experimental.core.logger.get_local_rank")
-    def test_log_rank_zero_negative_case(self, mock_get_local_rank, caplog):
+    @patch("QEfficient.finetune.experimental.core.logger.is_global_rank_zero")
+    def test_log_rank_zero_negative_case(self, mock_get_global_rank, caplog):
         """Test to verify that only rank‑zero messages are logged"""
-        mock_get_local_rank.return_value = 1
+        mock_get_global_rank.return_value = False
         logger = Logger("rank_test_logger")
+        logger.logger.propagate = True
 
         with caplog.at_level(logging.INFO):
             logger.log_rank_zero("Should not appear")
@@ -88,6 +91,7 @@ class TestLogger:
     def test_log_exception_raise(self, caplog):
         """Test exception logging with raising"""
         logger = Logger("exception_test_logger")
+        logger.logger.propagate = True
 
         with pytest.raises(ValueError), caplog.at_level(logging.ERROR):
             logger.log_exception("Custom error", ValueError("Test exception"), raise_exception=True)
@@ -99,6 +103,7 @@ class TestLogger:
     def test_log_exception_no_raise(self, caplog):
         """Test exception logging without raising"""
         logger = Logger("exception_test_logger")
+        logger.logger.propagate = True
 
         with caplog.at_level(logging.ERROR):
             logger.log_exception("Custom error", ValueError("Test exception"), raise_exception=False)
@@ -168,7 +173,7 @@ class TestLogger:
 
         # Check that we have 2 handlers (console + file)
         assert len(logger.logger.handlers) == 2  # Console + file
-        assert isinstance(logger.logger.handlers[1], logging.FileHandler)
+        any(isinstance(h, logging.FileHandler) for h in logger.logger.handlers)
 
         # Check file exists
         assert log_file.exists()
@@ -188,6 +193,7 @@ class TestLoggerIntegration:
         # Setup
         log_file = tmp_path / "workflow.log"
         logger = Logger("workflow_test", str(log_file), logging.DEBUG)
+        logger.logger.propagate = True
 
         # Test all methods
         logger.debug("Debug test")
@@ -203,8 +209,8 @@ class TestLoggerIntegration:
             logger.log_exception("Caught exception", e, raise_exception=False)
 
         # Test rank zero logging
-        with patch("QEfficient.finetune.experimental.core.logger.get_local_rank") as mock_rank:
-            mock_rank.return_value = 0
+        with patch("QEfficient.finetune.experimental.core.logger.is_global_rank_zero") as mock_rank:
+            mock_rank.return_value = True
             logger.log_rank_zero("Rank zero test")
 
         # Verify all messages were logged

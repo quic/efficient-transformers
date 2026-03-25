@@ -10,15 +10,21 @@ Provides centralized configuration loading, validation, and management.
 """
 
 import json
+import logging
 import os
+import sys
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 import yaml
 from transformers.hf_argparser import HfArgumentParser
 
-from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.logger import Logger
+from QEfficient.finetune.experimental.core.utils.dist_utils import is_main_process
+from QEfficient.utils.device_utils import is_nsp_free
+
+logger = Logger(__name__)
 
 
 @dataclass
@@ -55,6 +61,10 @@ class SchedulerConfig:
             "ratio of total training steps for the warmup phase."
         },
     )
+    warmup_ratio: int = field(
+        default=0.1,
+        metadata={"help": "ratio of total training steps for the warmup phase. value is within [0-1) range."},
+    )
 
 
 @dataclass
@@ -66,16 +76,20 @@ class DatasetConfig:
         metadata={"help": "The name or path of the tokenizer to use."},
     )
     dataset_type: str = field(
-        default="seq_completion",
+        default="sft_dataset",
         metadata={"help": "The type of dataset (e.g., 'seq_completion')."},
     )
     dataset_name: str = field(
-        default="knkarthick/samsum",
+        default="yahma/alpaca-cleaned",
         metadata={"help": "The name or path of the dataset."},
     )
     dataset_subset: str = field(
         default="default",
         metadata={"help": "The subset of the dataset to use, if applicable."},
+    )
+    dataset_num_samples: int = field(
+        default=-1,
+        metadata={"help": "Number of samples to use from the dataset. -1 means all samples."},
     )
     train_split: str = field(
         default="train",
@@ -93,7 +107,7 @@ class DatasetConfig:
         default=0.8,
         metadata={"help": "Ratio for train/test split, used when only train_split is provided."},
     )
-    input_columns: list[str] = field(
+    input_columns: List[str] = field(
         default_factory=lambda: ["text"],
         metadata={"help": "List of column names containing input text."},
     )
@@ -112,6 +126,22 @@ class DatasetConfig:
     num_workers: int = field(
         default=4,
         metadata={"help": "Number of workers for dataset processing."},
+    )
+    prompt_template: str = field(
+        default=None,
+        metadata={"help": "Template for formatting prompts (e.g., 'User: {input} Assistant: ')."},
+    )
+    prompt_func: str = field(
+        default=None,
+        metadata={"help": "Function for formatting prompts (e.g., 'User: {input} Assistant: ')."},
+    )
+    completion_template: str = field(
+        default=None,
+        metadata={"help": "Template for formatting output completions (e.g., '{output}')."},
+    )
+    completion_func: str = field(
+        default=None,
+        metadata={"help": "Function for formatting output completions (e.g., '{output}')."},
     )
     collate_fn: str = field(
         default="dynamic_padding",
@@ -145,6 +175,15 @@ class DatasetConfig:
         default=1,
         metadata={"help": "Number of workers for the DataLoader."},
     )
+    remove_samples_with_empty_columns: bool = field(
+        default=True,
+        metadata={"help": "Whether to remove samples with empty columns."},
+    )
+    config_name: str = field(
+        default="default",
+        metadata={"help": "Name of the hf configuration file."},
+    )
+    json_file_path: str = field(default=None, metadata={"help": "Path to a JSON file containing data."})
 
 
 @dataclass
@@ -163,7 +202,7 @@ class PeftConfig:
         default=0.1,
         metadata={"help": "The dropout probability for Lora layers."},
     )
-    target_modules: list[str] = field(
+    target_modules: List[str] = field(
         default_factory=lambda: ["q_proj", "v_proj"],
         metadata={"help": "The modules to apply Lora to."},
     )
@@ -241,7 +280,7 @@ class GradientCheckpointingKwargs:
         default=True,
         metadata={"help": "Whether to preserve the RNG state when checkpointing."},
     )
-    use_reenrant: bool = field(
+    use_reentrant: bool = field(
         default=False,
         metadata={"help": "Whether to use reentrant gradient checkpointing."},
     )
@@ -252,7 +291,7 @@ class DdpConfig:
     """Arguments for Distributed Data Parallel (DDP) training."""
 
     ddp_backend: str = field(
-        default="qccl",
+        default=None,
         metadata={"help": "The DDP backend to use (e.g., 'nccl', 'gloo', 'qccl')."},
     )
     ddp_find_unused_parameters: bool = field(
@@ -293,10 +332,6 @@ class TrainingConfig:
         default=42,
         metadata={"help": "Random seed for reproducibility."},
     )
-    device: str = field(
-        default="qaic",
-        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
-    )
     do_eval: bool = field(
         default=True,
         metadata={"help": "Whether to run evaluation during training."},
@@ -329,7 +364,6 @@ class TrainingConfig:
         default=-1,
         metadata={"help": "If > 0: set total number of training steps to perform."},
     )
-
     log_level: str = field(
         default="info",
         metadata={"help": "Set the verbosity level of the logs ('debug', 'info', 'warning', 'error')."},
@@ -363,12 +397,6 @@ class TrainingConfig:
         default="eval_loss",
         metadata={"help": "The metric to use to compare two models ('eval_loss', etc.)."},
     )
-
-    dtype: str = field(
-        default="fp16",
-        metadata={"help": "The data type to use for training (e.g., 'fp16', 'bf16')."},
-    )
-
     gradient_checkpointing: bool = field(
         default=False,
         metadata={"help": "Whether to use gradient checkpointing."},
@@ -377,9 +405,16 @@ class TrainingConfig:
         default_factory=GradientCheckpointingKwargs,
         metadata={"help": "Arguments for gradient checkpointing."},
     )
-
+    device: str = field(
+        default="qaic",
+        metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
+    )
+    torch_dtype: str = field(
+        default="fp16",
+        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
+    )
     torch_compile: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Whether to compile the model with `torch.compile`."},
     )
     include_num_input_tokens_seen: bool = field(
@@ -412,7 +447,7 @@ class TrainingConfig:
         metadata={"help": "DDP configuration dictionary."},
     )
     use_cpu: Optional[bool] = field(
-        default=None,
+        default=False,
         metadata={"help": "Whether to explicitly run training on CPU."},
     )
     resume_from_checkpoint: Optional[str] = field(
@@ -424,12 +459,16 @@ class TrainingConfig:
         metadata={"help": "Whether to restore callback states from checkpoint."},
     )
     report_to: Optional[List[str]] = field(
-        default=None,
+        default="tensorboard",
         metadata={"help": "The list of integrations to report the results and logs to."},
     )
     completion_only_loss: Optional[bool] = field(
         default=False,
         metadata={"help": "Whether to compute loss only on completion tokens."},
+    )
+    pp_degree: int = field(
+        default=1,
+        metadata={"help": "Pipeline parallelism degree (number of pipeline stages). Set > 1 to enable PP."},
     )
 
 
@@ -460,47 +499,85 @@ class MasterConfig:
     )
 
 
-def parse_arguments(config_path: Optional[str] = None, args: Optional[List[str]] = None) -> MasterConfig:
-    """Create argument parser for the new finetuning interface."""
-    parser = HfArgumentParser(MasterConfig)
-
-    if config_path:
-        config_path = os.path.abspath(config_path)
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-        if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
-            raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
-
-        try:
-            (master_config,) = parser.parse_yaml_file(yaml_file=config_path)
-            return master_config
-        except Exception as e:
-            raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
-
-    args = [] if args is None else args
-    # If a single positional YAML file was passed via args, parse it as YAML
-    if len(args) == 1 and (args[0].endswith(".yaml") or args[0].endswith(".yml")):
-        yaml_path = os.path.abspath(args[0])
-        (master_config,) = parser.parse_yaml_file(yaml_file=yaml_path)
-    else:
-        (master_config,) = parser.parse_args_into_dataclasses(args=args)
-        master_config = asdict(master_config)
-        master_config = MasterConfig(**master_config)
-
-    return master_config
-
-
 class ConfigManager:
     """Manages configuration loading, validation, and updates."""
 
-    def __init__(self, config: MasterConfig):
+    def __init__(self, config: Optional[MasterConfig] = None, config_path: Optional[str] = None):
         """
         Initialize ConfigManager with either:
         - Path to config file (str or Path)
         - Configuration dictionary
-        - None (creates empty config)
         """
-        self.config = config
+        if config:
+            self.config = config
+        else:
+            self.config = MasterConfig()
+
+        if config_path and not config:
+            logger.log_rank_zero("Loading configuration from config_path...")
+            config_path = os.path.abspath(config_path)
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
+                raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
+            try:
+                self.load_config(config_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
+        elif config and not config_path:
+            logger.log_rank_zero("Loading configuration from config object...")
+
+        elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+            logger.log_rank_zero("Loading configuration from config_path from CLI...")
+            config_path = os.path.abspath(sys.argv[1])
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            try:
+                self.load_config(config_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
+        elif len(sys.argv) > 2:
+            logger.log_rank_zero("Loading configuration flags from CLI...")
+            parser = HfArgumentParser(
+                (
+                    TrainingConfig,
+                    ModelConfig,
+                    DatasetConfig,
+                    OptimizerConfig,
+                    SchedulerConfig,
+                    CallbackConfig,
+                    PeftConfig,
+                    DdpConfig,
+                    GradientCheckpointingKwargs,
+                )
+            )
+            train_args, model_args, data_args, opt_args, schd_args, call_args, peft_args, ddp_args, gck_args, extra = (
+                parser.parse_args_into_dataclasses(return_remaining_strings=True)
+            )
+            train_args.ddp_config = ddp_args
+            train_args.gradient_checkpointing_kwargs = gck_args
+            model_args.peft_config = peft_args
+            self.config = MasterConfig(
+                model=model_args,
+                dataset=data_args,
+                training=train_args,
+                callbacks=call_args,
+                optimizers=opt_args,
+                scheduler=schd_args,
+                extra_params=extra,
+            )
+
+        else:
+            logger.log_rank_zero("Using default configuration...")
+        self.config = asdict(self.config)
+        self.config = MasterConfig(**self.config)
+        # Validate loaded config
+        try:
+            self.validate_config()
+        except Exception as e:
+            logger.log_rank_zero(f"Config validation failed with error: {e}")
 
     def load_config(self, config_path: Union[str, Path]) -> None:
         """Load configuration from file."""
@@ -517,8 +594,40 @@ class ConfigManager:
                 config_dict = json.load(f)
         else:
             raise ValueError(f"Unsupported configuration file format: {config_path.suffix}")
-
         self.update_config(config_dict)
+
+    def _merge_dataclass_inplace(self, dc_obj: Any, updates: Dict[str, Any], parent_path: str = "") -> None:
+        """
+        Recursively merge 'updates' (dict) into the dataclass instance 'dc_obj',
+        preserving defaults by updating nested dataclasses/dicts in place.
+        """
+        if not is_dataclass(dc_obj):
+            raise TypeError("dc_obj must be a dataclass instance")
+        field_names = {f.name for f in fields(dc_obj)}
+        for key, value in updates.items():
+            path = f"{parent_path}.{key}" if parent_path else key
+
+            if key not in field_names:
+                self._stash_top_level_extra(parent_path or "__root__", key, value)
+                continue
+
+            current = getattr(dc_obj, key)
+
+            # Case A: current is dataclass, incoming is dict -> deep merge
+            if is_dataclass(current) and isinstance(value, Mapping):
+                self._merge_dataclass_inplace(current, value, path)
+
+            # Case B: both dicts -> shallow update
+            elif isinstance(current, dict) and isinstance(value, Mapping):
+                current.update(value)
+
+            # Case C: both lists -> by default replace; switch to extend if desired
+            elif isinstance(current, list) and isinstance(value, list):
+                setattr(dc_obj, key, value)
+
+            # Case D: simple assignment
+            else:
+                setattr(dc_obj, key, value)
 
     def _ensure_extra_params(self, obj) -> Dict[str, Any]:
         """Ensure obj.extra_params exists and is a dict; return it."""
@@ -554,21 +663,7 @@ class ConfigManager:
                     else:
                         self._stash_top_level_extra(key, "__all__", value)
                     continue
-
-                if isinstance(value, dict) and is_dataclass(target):
-                    known = {f.name for f in fields(target)}
-                    for nested_key, nested_value in value.items():
-                        if nested_key in known:
-                            setattr(target, nested_key, nested_value)
-                        else:
-                            self._stash_top_level_extra(key, nested_key, nested_value)
-                    continue
-
-                if isinstance(value, dict) and isinstance(target, dict):
-                    target.update(value)
-                    continue
-                setattr(self.config, key, value)
-
+                self._merge_dataclass_inplace(target, value, parent_path=key)
             else:
                 ep = self._ensure_extra_params(self.config)
                 ep[key] = value
@@ -598,16 +693,33 @@ class ConfigManager:
         """
         Validate configuration parameters for MasterConfig.
         """
+        cfg = self.config
         errors: List[str] = []
 
-        cfg = self.config
         model = getattr(cfg, "model", {})
         dataset = getattr(cfg, "dataset", {})
         training = getattr(cfg, "training", {})
 
         # ---------- Model ----------
         self._push(errors, not model.get("model_name"), "model.model_name is required.")
+        # Device
+        valid_devices = ["cpu", "cuda", "qaic"]
+        training_device = model.get("device", "qaic")
+        if training_device not in valid_devices:
+            self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
+        if training_device == "qaic":
+            try:
+                import torch_qaic  # noqa: F401
 
+                logger.log_rank_zero("torch_qaic package found. Using QAIC devices...")
+                if is_main_process():
+                    is_nsp_free()
+
+            except ImportError as e:
+                logger.log_rank_zero(
+                    f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+                    logging.WARNING,
+                )
         # PEFT validation
         if model.get("use_peft"):
             pc = model.get("peft_config", {})
@@ -632,34 +744,46 @@ class ConfigManager:
         # ---------- Dataset ----------
         self._push(errors, not dataset.get("dataset_name"), "dataset.dataset_name is required.")
         self._push(errors, not dataset.get("tokenizer_name"), "dataset.tokenizer_name is required.")
-        self._push(errors, dataset.get("max_seq_length", 0) <= 0, "dataset.max_seq_length must be positive.")
 
         # ---------- Training ----------
+        # torch_dtype validation
+        torch_dtype = training.get("torch_dtype")
+        valid_dtypes = {"fp16", "bf16", "fp32"}
+        self._push(
+            errors,
+            not torch_dtype,
+            "training.torch_dtype is required.",
+        )
+        self._push(
+            errors,
+            torch_dtype and torch_dtype not in valid_dtypes,
+            f"training.torch_dtype must be one of {valid_dtypes}.",
+        )
+
         # Batch sizes
         self._push(
             errors,
-            training.get("per_device_train_batch_size", 0) <= 0,
+            training.get("per_device_train_batch_size", 1) <= 0,
             "training.per_device_train_batch_size must be positive.",
         )
         self._push(
             errors,
-            training.get("per_device_eval_batch_size", 0) <= 0,
+            training.get("per_device_eval_batch_size", 1) <= 0,
             "training.per_device_eval_batch_size must be positive.",
         )
 
         # Epochs / steps
-        n_epochs = training.get("num_train_epochs", 0)
-        max_steps = training.get("max_steps", -1)
+        n_epochs = training.get("num_train_epochs", 1)
         self._push(
             errors,
-            n_epochs <= 0 and max_steps <= 0,
-            "Either training.num_train_epochs > 0 or training.max_steps > 0 must be set.",
+            n_epochs <= 0,
+            "Either training.num_train_epochs > 0  must be set.",
         )
 
         # Gradient accumulation
         self._push(
             errors,
-            training.get("gradient_accumulation_steps", 0) <= 0,
+            training.get("gradient_accumulation_steps", 1) <= 0,
             "training.gradient_accumulation_steps must be positive.",
         )
 
@@ -667,11 +791,13 @@ class ConfigManager:
         self._push(errors, training.get("logging_steps", 0) < 0, "training.logging_steps must be >= 0.")
         self._push(errors, training.get("save_total_limit", 0) < 0, "training.save_total_limit must be >= 0.")
 
-        # Device
-        valid_devices = ["cpu", "cuda", "qaic"]
-        training_device = training.get("device", None)
-        if training_device not in valid_devices:
-            self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
+        # Pipeline Parallelism (PP) config
+        pp_degree = training.get("pp_degree", 1)
+        self._push(
+            errors,
+            not isinstance(pp_degree, int) or pp_degree < 1,
+            "training.pp_degree must be a positive integer (default 1 = no PP; > 1 enables PP).",
+        )
 
         # DDP config
         ddp = training.get("ddp_config", {})
@@ -710,8 +836,24 @@ class ConfigManager:
         return self.config.dataset
 
     def get_model_config(self) -> Dict[str, Any]:
-        """Get model configuration as dictionary."""
-        return self.config.model
+        """
+        Get model configuration as dictionary.
+
+        Automatically handles torch_dtype conversion from training config if not set in model config.
+        """
+        model_config = self.config.model
+
+        # Get torch_dtype from training config and convert
+        # To do: check if it can be moved from training config to model config instead
+        if model_config.get("torch_dtype") is None:
+            training_config = self.get_training_config()
+            training_dtype = training_config.get("torch_dtype")
+            if training_dtype:
+                # Convert from training format (fp16/bf16) to model format (float16/bfloat16)
+                dtype_mapping = {"fp16": "float16", "bf16": "bfloat16"}
+                model_config["torch_dtype"] = dtype_mapping.get(training_dtype, "auto")
+
+        return model_config
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
@@ -722,32 +864,3 @@ class ConfigManager:
         if hasattr(self.config, name):
             return getattr(self.config, name)
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-
-
-def create_trainer_config(name: str, **dependencies) -> tuple:
-    """
-    Create trainer configuration based on registered trainer modules.
-
-    Args:
-        name: Name of the trainer type
-        **dependencies: Any dependencies needed to configure the trainer
-
-    Returns:
-        tuple: (trainer_class, args_class, additional_kwargs)
-    """
-    config = registry.get_trainer_module(name)
-
-    # Process required kwargs based on available dependencies
-    additional_kwargs = {}
-    for kwarg, default in config["required_kwargs"].items():
-        if kwarg in dependencies:
-            additional_kwargs[kwarg] = dependencies[kwarg]
-        elif default != "REQUIRED":
-            additional_kwargs[kwarg] = default
-
-    # Check for missing required arguments
-    for kwarg, default in config["required_kwargs"].items():
-        if kwarg not in additional_kwargs and default == "REQUIRED":
-            raise ValueError(f"Required argument '{kwarg}' not provided for trainer '{name}'")
-
-    return config["trainer_cls"], config["args_cls"], additional_kwargs
