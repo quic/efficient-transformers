@@ -510,6 +510,8 @@ class QEffGptOssRotaryEmbedding(GptOssRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
+    _max_seq_len_cached = 0
+
     def __init__(self, config: GptOssConfig, device=None):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
@@ -750,6 +752,11 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
             max_seq_len_cached = 32 * 1024
+
+        if max_seq_len_cached > QEffGptOssRotaryEmbedding._max_seq_len_cached:
+            QEffGptOssRotaryEmbedding._set_cos_sin_cache(
+                seq_len=max_seq_len_cached, device=value_states.device, dtype=value_states.dtype
+            )
         cos_cached[:max_seq_len_cached].to(dtype=value_states.dtype)
         sin_cached[:max_seq_len_cached].to(dtype=value_states.dtype)
         cos, sin = cos_cached, sin_cached
@@ -1124,6 +1131,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
 class QEffGptOssModel(GptOssModel):
     def __qeff_init__(self):
         self.rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
+        QEffGptOssRotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
         self.rotary_emb._set_cos_sin_cache(
             seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
         )

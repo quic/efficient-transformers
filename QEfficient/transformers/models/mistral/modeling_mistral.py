@@ -40,6 +40,8 @@ class QEffMistralRotaryEmbedding(MistralRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
+    _max_seq_len_cached = 0
+
     def __init__(self, config: MistralConfig, device=None):
         super().__init__(config=config)
 
@@ -149,6 +151,10 @@ class QEffMistralAttention(MistralAttention):
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        if kv_seq_len > QEffMistralRotaryEmbedding._max_seq_len_cached:
+            QEffMistralRotaryEmbedding._set_cos_sin_cache(
+                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
+            )
         cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
         sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
         cos, sin = cos_cached, sin_cached
@@ -253,6 +259,7 @@ class QEffMistralModel(MistralModel):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffMistralRotaryEmbedding(config=self.config)
+        QEffMistralRotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
         self.rotary_emb._set_cos_sin_cache(
             seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
         )

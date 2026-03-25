@@ -42,6 +42,8 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
+    _max_seq_len_cached = 0
+
     def __init__(self, config: FalconConfig, device=None):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
@@ -127,6 +129,9 @@ class QEffFalconAttention(FalconAttention):
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+
+        if kv_seq_len > QEffFalconRotaryEmbedding._max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len=kv_seq_len, device=value_layer.device, dtype=value_layer.dtype)
         cos_cached[:kv_seq_len].to(dtype=value_layer.dtype)
         sin_cached[:kv_seq_len].to(dtype=value_layer.dtype)
         cos, sin = cos_cached, sin_cached
@@ -245,6 +250,7 @@ class QEffFalconModel(FalconModel):
         self.rotary_emb._set_cos_sin_cache(
             seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
         )
+        QEffFalconRotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
         self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 

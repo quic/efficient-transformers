@@ -32,6 +32,8 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
+    _max_seq_len_cached = 0
+
     def __init__(self, config: Qwen3MoeConfig, device=None):
         super().__init__(config=config)
 
@@ -199,6 +201,10 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        if kv_seq_len > QEffQwen3MoeRotaryEmbedding._max_seq_len_cached:
+            QEffQwen3MoeRotaryEmbedding._set_cos_sin_cache(
+                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
+            )
         cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
         sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
         cos, sin = cos_cached, sin_cached
@@ -293,6 +299,7 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
 class QEffQwen3MoeModel(Qwen3MoeModel):
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3MoeRotaryEmbedding(config=self.config)
+        QEffQwen3MoeRotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
         self.rotary_emb._set_cos_sin_cache(
             seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
         )

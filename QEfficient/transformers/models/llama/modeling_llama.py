@@ -37,6 +37,8 @@ class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
+    _max_seq_len_cached = 0
+
     def __init__(self, config: LlamaConfig, device=None):
         super().__init__(config=config)
 
@@ -217,6 +219,10 @@ class QEffLlamaAttention(LlamaAttention):
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+        if kv_seq_len > QEffLlamaRotaryEmbedding._max_seq_len_cached:
+            QEffLlamaRotaryEmbedding._set_cos_sin_cache(
+                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
+            )
         cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
         sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
         cos, sin = cos_cached, sin_cached
@@ -318,6 +324,7 @@ class QEffLlamaModel(LlamaModel):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
+        QEffLlamaRotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
         self.rotary_emb._set_cos_sin_cache(
             seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
         )
