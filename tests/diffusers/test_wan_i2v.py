@@ -318,15 +318,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
             rotary_emb = torch.cat(rotary_emb, dim=0)
             ts_seq_len = None
             timestep = timestep.flatten()
-
-            temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = (
-                pytorch_current_model.condition_embedder(
-                    timestep, prompt_embeds, encoder_hidden_states_image=None, timestep_seq_len=ts_seq_len
                 )
-            )
-
-            timestep_proj = timestep_proj.unflatten(1, (6, -1))
-
             # Prepare inputs for QAIC inference
             inputs_aic = {
                 "hidden_states": latent_model_input.detach().numpy(),
