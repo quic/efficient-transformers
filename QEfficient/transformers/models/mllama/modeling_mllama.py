@@ -263,10 +263,10 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+            kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
-        cos_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
-        sin_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
+        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
+        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
         cos, sin = cos_cached, sin_cached
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
@@ -604,8 +604,8 @@ class QEffMllamaTextModel(MllamaTextModel):
         self.rotary_emb._set_cos_sin_cache(
             seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
         )
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def forward(
         self,

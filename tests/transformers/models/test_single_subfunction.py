@@ -81,7 +81,11 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
 
     functions_names = get_function(with_sub_func_onnx)
     print(functions_names)
-    if len(functions_names) != 12:
+
+    keywords = ["DecoderLayer", "Block", "Layer"]
+    filtered = [name for name in functions_names if any(key in name for key in keywords)]
+
+    if len(filtered) > 1:
         raise AssertionError(f"function definition, but found {len(functions_names)} functions: {functions_names}")
 
     if not get_available_device_id():

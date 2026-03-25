@@ -148,9 +148,9 @@ class QEffMistralAttention(MistralAttention):
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
-        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
-        sin_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
+        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
         cos, sin = cos_cached, sin_cached
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 

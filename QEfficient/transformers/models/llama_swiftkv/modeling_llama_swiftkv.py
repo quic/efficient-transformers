@@ -110,11 +110,11 @@ class QEffLlamaSwiftKVAttention(nn.Module):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            # kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
+            kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
         key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
-        cos_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
-        sin_cached[: hidden_states.shape[1]].to(dtype=value_states.dtype)
+        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
+        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
         cos, sin = cos_cached, sin_cached
         position_ids = position_ids[torch.arange(bsz), position_ids.to(torch.int32).argmax(1)].unsqueeze(1)
         query_states, _ = qeff_apply_rotary_pos_emb(
@@ -217,8 +217,8 @@ class QEffLlamaSwiftKVModel(nn.Module):
         self.rotary_emb._set_cos_sin_cache(
             seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
         )
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def _run_swiftkv_layers(
         self,
@@ -388,7 +388,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
                     )
                 kv_seq_len = past_key_values.get_seq_length(self_attn.layer_idx)
 
-            cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
+            cos, sin = self.cos_cached[:kv_seq_len], self.sin_cached[:kv_seq_len]
             _, key_states = qeff_apply_rotary_pos_emb(torch.empty_like(key_states), key_states, cos, sin, position_ids)
             cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             past_key_values.write_only(key_states, value_states, self_attn.layer_idx, cache_kwargs)
