@@ -210,20 +210,18 @@ def _configure_proxy_for_model(instance: "QEFFBaseModel", enable_proxy: bool) ->
     instance._pytorch_transforms = list(instance._pytorch_transforms)
     instance._onnx_transforms = list(instance._onnx_transforms)
     instance._enable_proxy = enable_proxy
-    always_on_onnx_transforms = set(getattr(instance, "_always_on_onnx_transforms", ()))
+    proxy_only_onnx_transforms = tuple(getattr(instance, "_proxy_only_onnx_transforms", _PROXY_ONLY_ONNX_TRANSFORMS))
 
     if enable_proxy:
         if QeffProxyModuleTransform not in instance._pytorch_transforms:
             instance._pytorch_transforms.append(QeffProxyModuleTransform)
-        for transform in _PROXY_ONLY_ONNX_TRANSFORMS:
+        for transform in proxy_only_onnx_transforms:
             if transform not in instance._onnx_transforms:
                 instance._onnx_transforms.append(transform)
         logger.info("Proxy Model Enabled for QEfficient Model")
         return
 
-    instance._onnx_transforms = [
-        t for t in instance._onnx_transforms if t not in _PROXY_ONLY_ONNX_TRANSFORMS or t in always_on_onnx_transforms
-    ]
+    instance._onnx_transforms = [t for t in instance._onnx_transforms if t not in proxy_only_onnx_transforms]
 
 
 # Define a transformers layers to QEff layers dictionary
