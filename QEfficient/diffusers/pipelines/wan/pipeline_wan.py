@@ -260,8 +260,8 @@ class QEffWanPipeline:
         self,
         compile_config: Optional[str] = None,
         parallel: bool = False,
-        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
-        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
+        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_45P,
+        width: int = constants.WAN_ONNX_EXPORT_WIDTH_45P,
         num_frames: int = constants.WAN_ONNX_EXPORT_FRAMES,
         use_onnx_subfunctions: bool = False,
     ) -> str:

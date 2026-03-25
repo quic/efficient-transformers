@@ -20,7 +20,9 @@ import torch
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
+    FP16ClipTransform,
     OnnxTransformPipeline,
+    SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
@@ -52,9 +54,8 @@ class QEFFBaseModel(ABC):
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
-    @classmethod
-    def _transform_names(cls) -> List[str]:
-        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
+    def _transform_names(self) -> List[str]:
+        return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -245,10 +246,7 @@ class QEFFBaseModel(ABC):
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
 
-        # Setup temporary paths
-        tmp_onnx_dir = export_dir / "onnx_tmp"
-        tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
-        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
+        export_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
         input_names = []
@@ -278,7 +276,7 @@ class QEFFBaseModel(ABC):
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
-                str(tmp_onnx_path),
+                str(onnx_path),
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -287,11 +285,13 @@ class QEFFBaseModel(ABC):
             )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
+            model = onnx.load(onnx_path, load_external_data=False)
 
-            # Clear temporary references
+            needs_external_tensor_data = any(
+                transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
+            )
             transform_kwargs = {
-                "onnx_base_dir": str(tmp_onnx_dir),
+                "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
@@ -306,7 +306,9 @@ class QEFFBaseModel(ABC):
             )
             logger.info("ONNX transforms applied")
 
-            onnx.save(model, onnx_path)
+            onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
+            onnx.save(model, onnx_path_tmp)
+            onnx_path_tmp.replace(onnx_path)
             del model
             gc.collect()
             logger.info("Transformed ONNX saved")
@@ -314,9 +316,6 @@ class QEFFBaseModel(ABC):
         except Exception as e:
             logger.error(f"ONNX export or transforms failed: {e}")
             raise e
-
-        finally:
-            shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -442,7 +441,6 @@ class QEFFBaseModel(ABC):
         mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
         mdp_ts_json = None
-        user_provided_load_config = False
 
         if mdp_dump_json_path:
             if mdp_ts_json_path:
@@ -453,12 +451,14 @@ class QEFFBaseModel(ABC):
         elif mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
-            user_provided_load_config = True
         elif mdp_ts_num_devices > 1:
             # Generate mdp config only if neither dump nor load is provided and num_devices > 1
             mdp_ts_json = generate_mdp_partition_config(
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )
+            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+            create_json(str(mdp_ts_json_path), mdp_ts_json)
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
@@ -495,10 +495,6 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(qpc_path)
 
         # Write the generated MDP partition config file (not if user provided it)
-        if mdp_ts_json is not None and not user_provided_load_config:
-            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            create_json(str(mdp_ts_json_path), mdp_ts_json)
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         # Write specializations.json file
         if specializations is not None:
