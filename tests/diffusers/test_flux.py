@@ -12,8 +12,9 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 import pytest
 import torch
-from diffusers import FluxPipeline
+from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler, FluxPipeline, FluxTransformer2DModel
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
+from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
 from QEfficient import QEffFluxPipeline
 from QEfficient.diffusers.pipelines.pipeline_utils import (
@@ -311,34 +312,48 @@ def flux_pipeline_call_with_mad_validation(
 
 @pytest.fixture(scope="session")
 def flux_pipeline():
-    """Setup compiled Flux pipeline for testing"""
+    """Setup Flux test pipelines with random-initialized (dummy) weights."""
     config = INITIAL_TEST_CONFIG["model_setup"]
+    model_id = "black-forest-labs/FLUX.1-schnell"
 
-    pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+    # Build random-init components from model configs (no pretrained weights).
+    vae_config = AutoencoderKL.load_config(model_id, subfolder="vae")
+    transformer_config = FluxTransformer2DModel.load_config(model_id, subfolder="transformer")
+    scheduler_cfg = FlowMatchEulerDiscreteScheduler.load_config(model_id, subfolder="scheduler")
 
-    # Reduce to 2 layers for testing
-    original_blocks = pipeline.transformer.model.transformer_blocks
-    org_single_blocks = pipeline.transformer.model.single_transformer_blocks
+    transformer_config["num_layers"] = config["num_transformer_layers"]
+    transformer_config["num_single_layers"] = config["num_single_layers"]
 
-    pipeline.transformer.model.config["num_layers"] = config["num_transformer_layers"]
-    pipeline.transformer.model.config["num_single_layers"] = config["num_single_layers"]
-    pipeline.transformer.model.transformer_blocks = torch.nn.ModuleList(
-        [original_blocks[i] for i in range(0, pipeline.transformer.model.config["num_layers"])]
-    )
-    pipeline.transformer.model.single_transformer_blocks = torch.nn.ModuleList(
-        [org_single_blocks[i] for i in range(0, pipeline.transformer.model.config["num_single_layers"])]
+    vae = AutoencoderKL.from_config(vae_config)
+    transformer = FluxTransformer2DModel.from_config(transformer_config)
+    scheduler = FlowMatchEulerDiscreteScheduler.from_config(scheduler_cfg)
+
+    clip_text_encoder_cfg = CLIPTextModel.config_class.from_pretrained(model_id, subfolder="text_encoder")
+    t5_text_encoder_cfg = T5EncoderModel.config_class.from_pretrained(model_id, subfolder="text_encoder_2")
+
+    # Reduce text-encoder depth for faster export/compile in this test.
+    clip_text_encoder_cfg.num_hidden_layers = 1
+    t5_text_encoder_cfg.num_layers = 1
+
+    text_encoder = CLIPTextModel(clip_text_encoder_cfg)
+    text_encoder_2 = T5EncoderModel(t5_text_encoder_cfg)
+    tokenizer = CLIPTokenizer.from_pretrained(model_id, subfolder="tokenizer")
+    tokenizer_2 = T5TokenizerFast.from_pretrained(model_id, subfolder="tokenizer_2")
+
+    pytorch_pipeline = FluxPipeline(
+        scheduler=scheduler,
+        vae=vae,
+        text_encoder=text_encoder,
+        tokenizer=tokenizer,
+        text_encoder_2=text_encoder_2,
+        tokenizer_2=tokenizer_2,
+        transformer=transformer,
     )
 
-    ### Pytorch pipeline
-    pytorch_pipeline = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
-    original_blocks_pt = pytorch_pipeline.transformer.transformer_blocks
-    org_single_blocks_pt = pytorch_pipeline.transformer.single_transformer_blocks
-    pytorch_pipeline.transformer.transformer_blocks = torch.nn.ModuleList(
-        [original_blocks_pt[i] for i in range(0, pipeline.transformer.model.config["num_layers"])]
-    )
-    pytorch_pipeline.transformer.single_transformer_blocks = torch.nn.ModuleList(
-        [org_single_blocks_pt[i] for i in range(0, pipeline.transformer.model.config["num_single_layers"])]
-    )
+    # Use QEff wrapper on a copy of the random-init reference model.
+    import copy
+
+    pipeline = QEffFluxPipeline(copy.deepcopy(pytorch_pipeline))
     return pipeline, pytorch_pipeline
 
 
@@ -411,7 +426,7 @@ def test_flux_pipeline(flux_pipeline):
             print(f"   - Mode: {image_validation['mode']}")
             print(f"   - Variance: {image_validation['variance']:.2f}")
             print(f"   - Mean pixel value: {image_validation['mean_pixel_value']:.2f}")
-            file_path = "test_flux_256x256_2layers.png"
+            file_path = "test_flux_64x64_2layers.png"
             # Save test image
             generated_image.save(file_path)
 
