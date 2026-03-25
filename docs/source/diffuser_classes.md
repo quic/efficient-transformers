@@ -70,6 +70,14 @@
    :no-show-inheritance:
 ```
 
+(QEffWanImageToVideoPipeline)=
+### `QEffWanImageToVideoPipeline`
+
+```{eval-rst}
+.. autoclass:: QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline
+   :members:
+   :no-show-inheritance:
+```
 ----
 
 (QEffFluxPipeline)=
