@@ -5,8 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Optional
+
 import torch
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
+    AutoencoderKLWan,
     WanDecoder3d,
     WanEncoder3d,
     WanResample,
@@ -15,8 +18,6 @@ from diffusers.models.autoencoders.autoencoder_kl_wan import (
 )
 
 CACHE_T = 2
-
-modes = []
 
 # Used max(0, x.shape[2] - CACHE_T) instead of CACHE_T because x.shape[2] is either 1 or 4,
 # and CACHE_T = 2. This ensures the value never goes negative
@@ -58,7 +59,6 @@ class QEffWanResample(WanResample):
                     x = x.reshape(b, c, t * 2, h, w)
         t = x.shape[2]
         x = x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
-        modes.append(self.mode)
         x = self.resample(x)
         x = x.view(b, t, x.size(1), x.size(2), x.size(3)).permute(0, 2, 1, 3, 4)
 
@@ -198,3 +198,48 @@ class QEffWanDecoder3d(WanDecoder3d):
         else:
             x = self.conv_out(x)
         return x
+
+
+class QEffAutoencoderKLWan(AutoencoderKLWan):
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        r"""
+        Encode a batch of images into latents.
+
+        Args:
+            x (`torch.Tensor`): Input batch of images.
+        """
+        if self.use_slicing and x.shape[0] > 1:
+            encoded_slices = [self._encode(x_slice) for x_slice in x.split(1)]
+            h = torch.cat(encoded_slices)
+        else:
+            h = self._encode(x)
+        return h
+
+    def forward(
+        self,
+        image: Optional[torch.Tensor] = None,
+        latent_sample: Optional[torch.Tensor] = None,
+        return_dict: bool = True,
+    ) -> torch.Tensor:
+        r"""
+        Forward pass through the VAE autoencoder with dual-mode functionality.
+        This method automatically determines whether to perform encoding or decoding based on the provided inputs:
+        - If `image` is provided, performs encoding (image → latent space)
+        - If `latent_sample` is provided, performs decoding (latent space → image)
+
+        Args:
+            image (`torch.Tensor`, *optional*): Input image tensor to encode into latent space.
+            latent_sample (`torch.Tensor`, *optional*): input latent tensor to decode back to image space.
+                    If provided, `image` should be None.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether to return a dictionary with structured output or a raw tensor.
+                Only applies to decoding operations.
+        Returns:
+            `torch.Tensor`:
+                - If encoding: Latent representation of the input image
+                - If decoding: Reconstructed image/video from latent representation
+        """
+        if image is not None:
+            return self.encode(image)
+        else:
+            return self.decode(latent_sample, return_dict)
