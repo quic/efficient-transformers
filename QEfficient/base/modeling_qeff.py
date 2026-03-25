@@ -477,6 +477,11 @@ class QEFFBaseModel(ABC):
             qaic_config=qaic_config,
             **compiler_options,
         )
+        # Backward-compatible alias accepted by some APIs.
+        if "aic_perf_warning" in compiler_options:
+            if "aic_perf_warnings" not in compiler_options:
+                compiler_options["aic_perf_warnings"] = compiler_options["aic_perf_warning"]
+            compiler_options.pop("aic_perf_warning", None)
 
         onnx_path = Path(
             onnx_path

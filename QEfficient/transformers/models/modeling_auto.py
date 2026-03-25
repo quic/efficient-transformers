@@ -5,7 +5,10 @@
 #
 # ----------------------------------------------------------------------------
 
+import json
 import os
+import re
+import subprocess
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -3666,6 +3669,422 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
+
+    @staticmethod
+    def _parse_perf_metrics_from_text(text: str) -> Dict[str, float]:
+        """
+        Parse best-effort numeric performance metrics from QAIC logs.
+
+        Parameters
+        ----------
+        text : str
+            Raw log text from compiler/runner.
+
+        Returns
+        -------
+        Dict[str, float]
+            Parsed key-value metrics. Missing fields are omitted.
+        """
+        patterns = {
+            "ddr_reads": r"DDR reads\s*[:=]\s*([0-9]*\.?[0-9]+)",
+            "ddr_writes": r"DDR writes\s*[:=]\s*([0-9]*\.?[0-9]+)",
+            "total_ddr_traffic": r"Total DDR Traffic\s*[:=]\s*([0-9]*\.?[0-9]+)",
+            "inference_per_second": r"Inference per second\s*[:=]\s*([0-9]*\.?[0-9]+)",
+            "inferences_per_second": r"inferences per second\s*[:=]\s*([0-9]*\.?[0-9]+)",
+            "inf_per_sec": r"Inf/Sec\s*([0-9]*\.?[0-9]+)",
+            "latency_ms": r"latency[^0-9]*([0-9]*\.?[0-9]+)\s*ms",
+            "total_duration_us": r"TotalDuration\s*([0-9]*\.?[0-9]+)\s*us",
+            "aic_hmx_mac_estimate": r"AIC HMX MAC estimate:\s*([0-9,]+)",
+            "static_constants_size_gb": r"StaticConstantsSize:\s*([0-9]*\.?[0-9]+)\s*GB",
+            "dynamic_constants_size_mb": r"DynamicConstantsSize:\s*([0-9]*\.?[0-9]+)\s*MB",
+            "total_ddr_read_kb": r"total:\s*DDR traffic\s*read:\s*([0-9,]*\.?[0-9]+)\s*KB",
+            "total_ddr_write_kb": r"total:\s*DDR traffic write:\s*([0-9,]*\.?[0-9]+)\s*KB",
+            "total_mc_write_kb": r"total:\s*MC\s*traffic write:\s*([0-9,]*\.?[0-9]+)\s*KB",
+        }
+        parsed: Dict[str, float] = {}
+        for key, pattern in patterns.items():
+            matches = re.findall(pattern, text, flags=re.IGNORECASE)
+            if matches:
+                try:
+                    value = matches[-1].replace(",", "")
+                    parsed[key] = float(value)
+                except ValueError:
+                    continue
+        return parsed
+
+    @staticmethod
+    def _run_subprocess_capture(command: List[str], stdout_log: Path, stderr_log: Path) -> subprocess.CompletedProcess:
+        """
+        Run subprocess command, persist stdout/stderr logs, and return completed process.
+        """
+        result = subprocess.run(command, capture_output=True, text=True)
+        stdout_log.parent.mkdir(parents=True, exist_ok=True)
+        stderr_log.parent.mkdir(parents=True, exist_ok=True)
+        stdout_log.write_text(result.stdout or "")
+        stderr_log.write_text(result.stderr or "")
+        if result.returncode != 0:
+            raise RuntimeError(
+                "\n".join(
+                    [
+                        "Command failed!",
+                        f"Command: {' '.join(command)}",
+                        f"Exit code: {result.returncode}",
+                        f"Stdout log: {stdout_log}",
+                        f"Stderr log: {stderr_log}",
+                    ]
+                )
+            )
+        return result
+
+    @staticmethod
+    def _prepare_perf_output_dirs(output_dir: Optional[str], qpc_path: Path) -> Dict[str, Path]:
+        """
+        Prepare output directories for evaluate_performance artifacts.
+        """
+        if output_dir:
+            root_dir = Path(output_dir)
+            compile_dir = root_dir / "compile"
+        else:
+            # qpc_path: <...>/qpc-<hash>/qpc
+            # Keep io/performance siblings of qpc-<hash>, as requested.
+            compile_dir = qpc_path.parent
+            root_dir = compile_dir.parent
+
+        dirs = {
+            "root": root_dir,
+            "compile": compile_dir,
+            "compile_logs": compile_dir / "compile_logs",
+            "io": root_dir / "io",
+            "performance_analysis": root_dir / "performance_analysis",
+            "logs": root_dir / "performance_analysis" / "logs",
+            "runner_outputs": root_dir / "performance_analysis" / "runner_outputs",
+            "profiling": root_dir / "performance_analysis" / "profiling",
+            "opstats": root_dir / "performance_analysis" / "opstats",
+        }
+        root_dir.mkdir(parents=True, exist_ok=True)
+        dirs["compile"].mkdir(parents=True, exist_ok=True)
+        dirs["compile_logs"].mkdir(parents=True, exist_ok=True)
+        dirs["logs"].mkdir(parents=True, exist_ok=True)
+        dirs["io"].mkdir(parents=True, exist_ok=True)
+        dirs["performance_analysis"].mkdir(parents=True, exist_ok=True)
+        dirs["runner_outputs"].mkdir(parents=True, exist_ok=True)
+        dirs["profiling"].mkdir(parents=True, exist_ok=True)
+        dirs["opstats"].mkdir(parents=True, exist_ok=True)
+        return dirs
+
+    def _create_runner_batch_json(
+        self,
+        *,
+        mode: str,
+        batch_size: int,
+        seq_len: int,
+        io_dir: Path,
+    ) -> Path:
+        """
+        Create a qaic-runner batch-input JSON with deterministic synthetic inputs.
+        """
+        if mode not in {"prefill", "decode"}:
+            raise ValueError(f"Unknown mode {mode}. Expected one of: prefill, decode.")
+
+        if mode == "prefill":
+            input_ids = np.ones((batch_size, seq_len), dtype=np.int64)
+            position_ids = np.tile(np.arange(seq_len, dtype=np.int64), (batch_size, 1))
+        else:
+            input_ids = np.ones((batch_size, 1), dtype=np.int64)
+            position_ids = np.zeros((batch_size, 1), dtype=np.int64)
+
+        inputs = {"input_ids": input_ids, "position_ids": position_ids}
+
+        if self.continuous_batching:
+            inputs["batch_index"] = np.arange(batch_size, dtype=np.int64).reshape(batch_size, 1)
+
+        if self.is_tlm:
+            inputs["num_logits_to_keep"] = np.zeros((1, 1), dtype=np.int64)
+
+        if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
+            raise NotImplementedError("evaluate_performance currently does not support include_sampler=True")
+
+        write_io_files(inputs, {}, str(io_dir), "runner_inputs", "aic_batch_io", include_dims=True, reset=True)
+        batch_json_path = io_dir / "aic_batch_io.json"
+
+        # Convert relative paths to absolute paths for robust qaic-runner execution.
+        with open(batch_json_path, "r") as f:
+            batch_data = json.load(f)
+
+        for io_group in batch_data.get("IO-files", []):
+            for entry in io_group:
+                if "path" in entry:
+                    entry["path"] = str((io_dir / entry["path"]).resolve())
+
+        with open(batch_json_path, "w") as f:
+            json.dump(batch_data, f, indent=2)
+
+        return batch_json_path
+
+    def evaluate_performance(
+        self,
+        *,
+        batch_size: int = 1,
+        prefill_only: bool = False,
+        compile_kwargs: Optional[dict] = None,
+        runner_num_iters: int = 10,
+        profiling_type: str = "raw_device_stats",
+        profiling_start_iter: int = 2,
+        profiling_num_samples: int = 5,
+        write_output_start_iter: Optional[int] = None,
+        output_dir: Optional[str] = None,
+        keep_intermediate_files: bool = True,
+        runner_extra_args: Optional[List[str]] = None,
+    ) -> dict:
+        """
+        Compile with perf flags, execute with qaic-runner, and dump available performance artifacts.
+
+        Parameters
+        ----------
+        batch_size : int, optional
+            Batch size for compilation and synthetic runner inputs. Defaults to 1.
+        prefill_only : bool, optional
+            If True, run performance analysis only for prefill inputs when `prefill_seq_len > 1`.
+            If `prefill_seq_len == 1`, analysis runs decode-only regardless of this flag.
+        compile_kwargs : dict, optional
+            Args passed to compile API. Perf flags are always forced in this API.
+        runner_num_iters : int, optional
+            Number of qaic-runner iterations. Defaults to 10.
+        profiling_type : str, optional
+            qaic-runner profiling type. Defaults to "raw_device_stats".
+        profiling_start_iter : int, optional
+            Iteration to start collecting profiles from. Defaults to 2.
+        profiling_num_samples : int, optional
+            Number of profile samples. Defaults to 5.
+        write_output_start_iter : int, optional
+            Iteration to start writing outputs from qaic-runner.
+            Must be greater than 0 and less than `profiling_start_iter`.
+            If not provided, defaults to `profiling_start_iter - 1`.
+        output_dir : str, optional
+            Directory where all artifacts/logs will be written.
+        keep_intermediate_files : bool, optional
+            If False, removes generated raw input files after runner execution.
+        runner_extra_args : List[str], optional
+            Additional flags forwarded to qaic-runner.
+
+        Returns
+        -------
+        dict
+            Structured metadata including commands, paths, and parsed metrics.
+        """
+        if batch_size <= 0:
+            raise ValueError("`batch_size` must be a positive integer.")
+        if profiling_start_iter <= 1:
+            raise ValueError("`profiling_start_iter` must be greater than 1 to derive `write_output_start_iter`.")
+        if write_output_start_iter is None:
+            write_output_start_iter = profiling_start_iter - 1
+        if write_output_start_iter <= 0 or write_output_start_iter >= profiling_start_iter:
+            raise ValueError(
+                "`write_output_start_iter` must be > 0 and < `profiling_start_iter`. "
+                f"Got write_output_start_iter={write_output_start_iter}, profiling_start_iter={profiling_start_iter}."
+            )
+
+        compile_kwargs = dict(compile_kwargs or {})
+        compile_kwargs.pop("aic_perf_warnings", None)
+        compile_kwargs.setdefault("batch_size", batch_size)
+        if prefill_only:
+            compile_kwargs["prefill_only"] = True
+        requested_prefill_seq_len = int(compile_kwargs.get("prefill_seq_len", 32))
+        compile_prefill_only = compile_kwargs.get("prefill_only", None) is True
+        run_prefill_only = prefill_only or compile_prefill_only
+        compile_kwargs["aic_perf_metrics"] = True
+        compile_kwargs["aic_perf_warning"] = True
+        if profiling_type == "raw_device_stats":
+            compile_kwargs["stats_level"] = 70
+            compile_kwargs["ddr_stats"] = True
+            compile_kwargs["aic_pmu_recipe"] = "KernelUtil"
+
+        if requested_prefill_seq_len == 1:
+            stages_to_run = ["decode"]
+        elif run_prefill_only:
+            stages_to_run = ["prefill"]
+        else:
+            stages_to_run = ["prefill", "decode"]
+
+        if output_dir and "compile_dir" not in compile_kwargs:
+            compile_kwargs["compile_dir"] = str(Path(output_dir) / "compile")
+
+        qpc_path = Path(self.compile(**compile_kwargs))
+        if not qpc_path.is_dir() or not (qpc_path / "programqpc.bin").is_file():
+            raise RuntimeError(f"Compiled QPC directory is invalid: {qpc_path}")
+        dirs = self._prepare_perf_output_dirs(output_dir, qpc_path)
+
+        specializations_path = qpc_path.parent / "specializations.json"
+        if not specializations_path.is_file():
+            raise FileNotFoundError(f"Expected specializations.json at: {specializations_path}")
+
+        with open(specializations_path, "r") as f:
+            specializations = json.load(f)["specializations"]
+        prefill_specs = [spec for spec in specializations if int(spec.get("seq_len", 0)) > 1]
+        decode_specs = [spec for spec in specializations if int(spec.get("seq_len", 0)) == 1]
+
+        if "prefill" in stages_to_run and not prefill_specs:
+            raise RuntimeError("Could not find prefill specialization (seq_len > 1) in compiled specializations.")
+        if "decode" in stages_to_run and not decode_specs:
+            raise RuntimeError("Could not find decode specialization (seq_len == 1) in compiled specializations.")
+
+        stage_specs = {}
+        if "prefill" in stages_to_run:
+            stage_specs["prefill"] = {
+                "batch_size": int(prefill_specs[0]["batch_size"]),
+                "seq_len": int(prefill_specs[0]["seq_len"]),
+            }
+        if "decode" in stages_to_run:
+            stage_specs["decode"] = {
+                "batch_size": int(decode_specs[0]["batch_size"]),
+                "seq_len": 1,
+            }
+
+        stage_results = {}
+        for stage_name, stage_spec in stage_specs.items():
+            stage_io_dir = dirs["io"] / stage_name
+            stage_profiling_dir = dirs["profiling"] / stage_name
+            stage_runner_outputs_dir = dirs["runner_outputs"] / stage_name
+            stage_opstats_dir = dirs["opstats"] / stage_name
+            stage_io_dir.mkdir(parents=True, exist_ok=True)
+            stage_profiling_dir.mkdir(parents=True, exist_ok=True)
+            stage_runner_outputs_dir.mkdir(parents=True, exist_ok=True)
+            stage_opstats_dir.mkdir(parents=True, exist_ok=True)
+
+            batch_json_path = self._create_runner_batch_json(
+                mode=stage_name,
+                batch_size=stage_spec["batch_size"],
+                seq_len=stage_spec["seq_len"],
+                io_dir=stage_io_dir,
+            )
+
+            runner_cmd = [
+                "/opt/qti-aic/exec/qaic-runner",
+                "-t",
+                str(qpc_path),
+                "-n",
+                str(runner_num_iters),
+                "--aic-profiling-type",
+                str(profiling_type),
+                "--aic-profiling-start-iter",
+                str(profiling_start_iter),
+                "--aic-profiling-num-samples",
+                str(profiling_num_samples),
+                "--aic-profiling-out-dir",
+                str(stage_profiling_dir),
+                "--write-output-dir",
+                str(stage_runner_outputs_dir),
+                "--write-output-start-iter",
+                str(write_output_start_iter),
+                "--aic-batch-json-input",
+                str(batch_json_path),
+            ]
+            if runner_extra_args:
+                runner_cmd.extend(runner_extra_args)
+            runner_command_file = dirs["logs"] / f"runner_command_{stage_name}.txt"
+            runner_command_file.write_text(" ".join(runner_cmd))
+
+            runner_stdout_log = dirs["logs"] / f"qaic_runner_{stage_name}_stdout.log"
+            runner_stderr_log = dirs["logs"] / f"qaic_runner_{stage_name}_stderr.log"
+            self._run_subprocess_capture(runner_cmd, runner_stdout_log, runner_stderr_log)
+
+            opstats_cmd = [
+                "/opt/qti-aic/exec/qaic-opstats",
+                "--qpc",
+                str(qpc_path / "programqpc.bin"),
+                "--input-dir",
+                str(stage_profiling_dir),
+                "--output-dir",
+                str(stage_opstats_dir),
+                "--summary",
+                "--trace",
+            ]
+            opstats_command_file = dirs["logs"] / f"opstats_command_{stage_name}.txt"
+            opstats_command_file.write_text(" ".join(opstats_cmd))
+            opstats_stdout_log = dirs["logs"] / f"qaic_opstats_{stage_name}_stdout.log"
+            opstats_stderr_log = dirs["logs"] / f"qaic_opstats_{stage_name}_stderr.log"
+            self._run_subprocess_capture(opstats_cmd, opstats_stdout_log, opstats_stderr_log)
+
+            if not keep_intermediate_files:
+                runner_input_dir = stage_io_dir / "runner_inputs"
+                if runner_input_dir.exists():
+                    for raw_file in runner_input_dir.glob("*.raw"):
+                        raw_file.unlink()
+
+            runner_stdout_text = runner_stdout_log.read_text() if runner_stdout_log.is_file() else ""
+            runner_stderr_text = runner_stderr_log.read_text() if runner_stderr_log.is_file() else ""
+            runner_metrics = self._parse_perf_metrics_from_text(runner_stdout_text + "\n" + runner_stderr_text)
+
+            stage_results[stage_name] = {
+                "batch_input_json_path": str(batch_json_path),
+                "runner_command": " ".join(runner_cmd),
+                "opstats_command": " ".join(opstats_cmd),
+                "runner_metrics": runner_metrics,
+                "log_paths": {
+                    "runner_command": str(runner_command_file),
+                    "runner_stdout": str(runner_stdout_log),
+                    "runner_stderr": str(runner_stderr_log),
+                    "opstats_command": str(opstats_command_file),
+                    "opstats_stdout": str(opstats_stdout_log),
+                    "opstats_stderr": str(opstats_stderr_log),
+                },
+                "profiling_output_dir": str(stage_profiling_dir),
+                "runner_outputs_dir": str(stage_runner_outputs_dir),
+                "opstats_output_dir": str(stage_opstats_dir),
+            }
+
+        compile_stdout_text = ""
+        compile_stderr_text = ""
+        compile_stdout_log = dirs["compile_logs"] / "compiler_stdout.log"
+        compile_stderr_log = dirs["compile_logs"] / "compiler_stderr.log"
+        if compile_stdout_log.is_file():
+            compile_stdout_text = compile_stdout_log.read_text()
+        if compile_stderr_log.is_file():
+            compile_stderr_text = compile_stderr_log.read_text()
+
+        compile_command = None
+        compile_cmd_file = dirs["compile_logs"] / "compiler_command.txt"
+        hashed_compile_params_path = qpc_path.parent / "hashed_compile_params.json"
+        if hashed_compile_params_path.is_file():
+            with open(hashed_compile_params_path, "r") as f:
+                compile_command_list = json.load(f).get("command", [])
+            compile_command = " ".join(compile_command_list)
+            if compile_command:
+                compile_cmd_file.write_text(compile_command)
+        elif compile_cmd_file.is_file():
+            compile_command = compile_cmd_file.read_text().strip()
+
+        compile_metrics = self._parse_perf_metrics_from_text(compile_stdout_text + "\n" + compile_stderr_text)
+        primary_stage = stages_to_run[0]
+        primary_result = stage_results[primary_stage]
+
+        result = {
+            "qpc_path": str(qpc_path),
+            "output_dir": str(dirs["root"]),
+            "stages_ran": stages_to_run,
+            "batch_input_json_path": primary_result["batch_input_json_path"],
+            "batch_input_json_paths": {stage: stage_results[stage]["batch_input_json_path"] for stage in stages_to_run},
+            "compile_command": compile_command,
+            "runner_command": primary_result["runner_command"],
+            "runner_commands": {stage: stage_results[stage]["runner_command"] for stage in stages_to_run},
+            "opstats_command": primary_result["opstats_command"],
+            "opstats_commands": {stage: stage_results[stage]["opstats_command"] for stage in stages_to_run},
+            "compile_metrics": compile_metrics,
+            "runner_metrics": {stage: stage_results[stage]["runner_metrics"] for stage in stages_to_run},
+            "log_paths": {
+                "compile_stdout": str(compile_stdout_log),
+                "compile_stderr": str(compile_stderr_log),
+                "compile_command": str(compile_cmd_file),
+                **{stage: stage_results[stage]["log_paths"] for stage in stages_to_run},
+            },
+            "profiling_output_dir": primary_result["profiling_output_dir"],
+            "runner_outputs_dir": primary_result["runner_outputs_dir"],
+            "opstats_output_dir": primary_result["opstats_output_dir"],
+            "profiling_output_dirs": {stage: stage_results[stage]["profiling_output_dir"] for stage in stages_to_run},
+            "runner_outputs_dirs": {stage: stage_results[stage]["runner_outputs_dir"] for stage in stages_to_run},
+            "opstats_output_dirs": {stage: stage_results[stage]["opstats_output_dir"] for stage in stages_to_run},
+        }
+        return result
 
     def check_and_get_num_speculative_tokens(self, num_speculative_tokens: Optional[int], prefill_seq_len: int):
         """
