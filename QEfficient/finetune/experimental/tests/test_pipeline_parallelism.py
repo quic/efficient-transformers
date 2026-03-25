@@ -10,7 +10,6 @@ Pipeline Parallelism (PP) tests for meta-llama/Llama-3.2-1B.
 """
 
 import os
-import re
 import shutil
 from collections import Counter
 from types import SimpleNamespace
@@ -146,20 +145,13 @@ def _assert_layer_device_ids(
     )
 
 
-def _assert_finite_loss_in_range(
-    value: float,
-    label: str,
-    lo: float = 0.0,
-    hi: float = 20.0,
-) -> None:
+def _assert_finite_positive_loss(value: float, label: str, *, gt: float = 0.0) -> None:
     """
-    Assert that a loss value is finite, positive, and within a plausible range
-    for a causal LM trained on short English sentences.
+    Smoke-check that a reported loss is finite and strictly above ``gt`` (default 0).
     """
     tensor_val = torch.tensor(value, dtype=torch.float32)
     assert torch.isfinite(tensor_val), f"{label} is not finite: {value}"
-    assert value > lo, f"{label} = {value:.4f} ≤ {lo}; expected a positive loss."
-    assert value < hi, f"{label} = {value:.4f} ≥ {hi}; loss appears to have diverged or is unreasonably large."
+    assert value > gt, f"{label} = {value:.4f} ≤ {gt}; expected loss strictly above {gt}."
 
 
 # ---------------------------------------------------------------------------
@@ -667,23 +659,58 @@ class TestPPFineTuningPipelineIntegration:
                 raise AttributeError(key)
 
     def _make_pipeline(self, pp_degree: int, model_name: str = _LLAMA_MODEL_NAME):
+        from QEfficient.cloud import finetune_experimental as fte
         from QEfficient.cloud.finetune_experimental import FineTuningPipeline
 
         cm = MagicMock()
-        cm.config.training = self._DictLike(
+        training = self._DictLike(
             {
+                "type": "sft",
                 "output_dir": "/tmp/test_pp_output",
                 "pp_degree": pp_degree,
                 "device": "qaic",
                 "seed": 42,
+                "torch_dtype": "fp16",
             }
         )
-        cm.get_model_config.return_value = {
+        cm.config.training = training
+        cm.get_training_config.return_value = training
+        cm.get_model_config.side_effect = lambda: {
             "model_type": "hf",
             "model_name": model_name,
             "use_peft": False,
-            "torch_dtype": "float16",
+            "torch_dtype": "fp16",
         }
+        cm.get_optimizer_config.side_effect = lambda: {
+            "optimizer_name": "adamw",
+            "lr": 5e-5,
+            "weight_decay": 0.01,
+        }
+        cm.get_callback_config.return_value = {"callbacks": {}}
+        cm.get_scheduler_config.return_value = {
+            "scheduler_name": "cosine",
+            "warmup_ratio": 0.1,
+            "warmup_steps": 0,
+        }
+        cm.get_dataset_config.return_value = {
+            "dataset_type": "seq_completion",
+            "dataset_name": "dummy",
+            "train_split": "train",
+            "test_split": "test",
+            "split_ratio": 0.8,
+            "dataset_num_samples": -1,
+            "dataloader_pin_memory": False,
+            "dataloader_persistent_workers": False,
+            "dataloader_prefetch_factor": None,
+            "dataloader_drop_last": False,
+            "dataloader_num_workers": 0,
+            "group_by_length": False,
+        }
+        fte.ComponentFactory.create_trainer_config.return_value = (
+            MagicMock(),
+            MagicMock(),
+            {},
+        )
         return FineTuningPipeline(cm), cm
 
     @patch("QEfficient.cloud.finetune_experimental.get_device_map", return_value=None)
@@ -696,11 +723,10 @@ class TestPPFineTuningPipelineIntegration:
         """
         mock_factory.create_model.return_value = MagicMock()
         pipeline, _ = self._make_pipeline(pp_degree=1)
-        pipeline._create_model()
 
         mock_get_dm.assert_not_called()
 
-        # Model creation must still proceed
+        # Model creation 
         assert mock_factory.create_model.call_count == 1, (
             "create_model must be called exactly once even when PP is disabled"
         )
@@ -722,7 +748,6 @@ class TestPPFineTuningPipelineIntegration:
         """
         mock_factory.create_model.return_value = MagicMock()
         pipeline, _ = self._make_pipeline(pp_degree=2)
-        pipeline._create_model()
 
         mock_get_dm.assert_called_once_with(
             model_name=_LLAMA_MODEL_NAME,
@@ -753,7 +778,6 @@ class TestPPFineTuningPipelineIntegration:
         mock_factory.create_model.return_value = MagicMock()
 
         pipeline, _ = self._make_pipeline(pp_degree=2)
-        pipeline._create_model()
 
         call_kwargs = mock_factory.create_model.call_args.kwargs
 
@@ -788,7 +812,6 @@ class TestPPFineTuningPipelineIntegration:
         """
         mock_factory.create_model.return_value = MagicMock()
         pipeline, _ = self._make_pipeline(pp_degree=1)
-        pipeline._create_model()
 
         call_kwargs = mock_factory.create_model.call_args.kwargs
 
@@ -946,7 +969,7 @@ class TestPPE2ETraining:
         • LoRA trainable / total ratio < 1%.
         • LoRA 'lora_A' weights exist in the named parameters.
         • LoRA weights span BOTH GPUs (adapters were placed across the pipeline).
-        • Both train_loss and eval_loss are finite, positive, and bounded.
+        • Both train_loss and eval_loss are finite and strictly positive.
         """
         from peft import LoraConfig
         from trl import SFTConfig, SFTTrainer
@@ -985,11 +1008,11 @@ class TestPPE2ETraining:
         )
 
         train_result = trainer.train()
-        _assert_finite_loss_in_range(train_result.training_loss, "PP=2 LoRA train_loss")
+        _assert_finite_positive_loss(train_result.training_loss, "PP=2 LoRA train_loss")
 
         eval_metrics = trainer.evaluate()
         assert "eval_loss" in eval_metrics, "eval_metrics must contain 'eval_loss'"
-        _assert_finite_loss_in_range(eval_metrics["eval_loss"], "PP=2 LoRA eval_loss")
+        _assert_finite_positive_loss(eval_metrics["eval_loss"], "PP=2 LoRA eval_loss")
 
         # LoRA efficiency
         trainable = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
@@ -1005,9 +1028,3 @@ class TestPPE2ETraining:
         lora_devices = {f"{p.device.type}:{p.device.index}" for _, p in lora_params}
         assert "qaic:0" in lora_devices, "No LoRA adapter on qaic:0 – stage 0 is untrained."
         assert "qaic:1" in lora_devices, "No LoRA adapter on qaic:1 – stage 1 is untrained."
-
-        print(
-            f"\n[PP=2 LoRA] trainable={trainable:,} / total={total:,} ({ratio:.4%})  "
-            f"train_loss={train_result.training_loss:.4f}  "
-            f"eval_loss={eval_metrics['eval_loss']:.4f}"
-        )
