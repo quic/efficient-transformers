@@ -51,7 +51,6 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         B, S, H = hidden.shape
         T = B * S
         hidden = hidden.view(T, H)
-        import ipdb; ipdb.set_trace()
         # Router computation
         router_logits = F.linear(hidden, self.router.weight, self.router.bias)
 
@@ -107,7 +106,6 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
 
         # Router computation
         router_logits = F.linear(hidden, self.router.weight, self.router.bias)
-
         # Top-k selection
         top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
         top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
@@ -121,8 +119,8 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         # ────────────────── allocate the output tensor ─────
         expert_out = hidden.new_zeros((T, H))  # accumulation buffer
 
-        invalid_idx = InvalidIndexProvider._get_invalid_idx_value()
-    
+        invalid_idx = torch.iinfo(torch.int32).max
+
         # ───────────────────────── Expert computation loop ─────────────────────────────
         for e in range(self.experts.num_experts):
             # Routing weight for this expert in original token order [T, 1]
@@ -132,6 +130,7 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             # Sort tokens by routing weight (descending) so that the tokens actually
             # routed to expert e appear at the beginning of the indices tensor.
             expert_weights = masked_logits[:, e]  # [T]
+
             sorted_indices = torch.argsort(expert_weights, descending=True)  # [T]
             sorted_weights = expert_weights[sorted_indices]  # [T]
 
@@ -139,8 +138,8 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             # hardware can skip them during GatherND / ScatterND.
             indices = torch.where(
                 sorted_weights > 0,
-                sorted_indices.to(torch.int32),
-                torch.full((T,), invalid_idx, dtype=torch.int32, device=hidden.device),
+                sorted_indices.to(torch.int64),
+                torch.full((T,), invalid_idx, dtype=torch.int64, device=hidden.device),
             )  # [T]
 
             # ── GatherND: make expert-token hidden states contiguous ──────────────────
@@ -151,10 +150,10 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             W_d = self.experts.down_proj[e]  # [I, H]
             b_d = self.experts.down_proj_bias[e]  # [H]
 
-            
+            unsqueezed_sorted_weights = sorted_weights.unsqueeze(-1)
             # Gate and Up projections on gathered hidden states
-            gate = torch.where(sorted_weights > 0, (gathered_hidden @ W_g) + b_g, hidden.new_zeros(T, self.experts.intermediate_size))  # [T, I]
-            up = torch.where(sorted_weights > 0, (gathered_hidden @ W_u) + b_u, hidden.new_zeros(T, self.experts.intermediate_size))  # [T, I]
+            gate = torch.where(unsqueezed_sorted_weights > 0, (gathered_hidden @ W_g) + b_g, hidden.new_zeros(T, self.experts.intermediate_size))  # [T, I]
+            up = torch.where(unsqueezed_sorted_weights > 0, (gathered_hidden @ W_u) + b_u, hidden.new_zeros(T, self.experts.intermediate_size))  # [T, I]
 
             # Apply GptOss activation with clamping
             gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
@@ -165,9 +164,9 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             intermediate = (up + 1) * glu  # [T, I]
 
             # Down projection
-            down_out_gathered = torch.where(sorted_weights>0, (intermediate @ W_d) + b_d, hidden.new_zeros(T, H))  # [T, H]
+            down_out_gathered = torch.where(unsqueezed_sorted_weights>0, (intermediate @ W_d) + b_d, hidden.new_zeros(T, H))  # [T, H]
 
-            down_out_gathered = down_out_gathered * sorted_weights
+            down_out_gathered = down_out_gathered * unsqueezed_sorted_weights
             
             # ── ScatterND: put results back in original token order ───────────────────
             down_out_original = CtxScatterFunc3DAxis0.apply(
@@ -176,7 +175,6 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
 
             # accumulate
             expert_out += down_out_original
-
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits
 

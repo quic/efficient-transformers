@@ -194,12 +194,11 @@ class CtxGatherFunc2DAxis0(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, indices: torch.Tensor):
         # data: [T, H], indices: [T]
-        safe_indices = torch.where(
-            indices == torch.iinfo(torch.int32).max,
-            torch.zeros_like(indices),
-            indices,
-        ).long()
-        return data[safe_indices]  # [T, H]
+        return_data = torch.zeros_like(data)
+        for wi, ind in enumerate(indices):
+            if ind!=torch.iinfo(torch.int32).max:
+                return_data[wi] = data[ind]
+        return return_data
 
     @staticmethod
     def setup_context(ctx, inputs, outputs):
@@ -234,13 +233,9 @@ class CtxScatterFunc3DAxis0(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, indices: torch.Tensor, updates: torch.Tensor):
         # data: [T, H], indices: [T], updates: [T, H]
-        T = data.shape[0]
-        data = data.clone()
-        # Only scatter positions with a valid index (< T)
-        valid_mask = (indices >= 0) & (indices < T)  # [T]
-        valid_indices = indices[valid_mask].long()
-        valid_updates = updates[valid_mask]
-        data[valid_indices] = valid_updates
+        for wi, ind in enumerate(indices):
+            if ind != torch.iinfo(torch.int32).max:
+                data[ind] = updates[wi]
         return data
 
     @staticmethod
