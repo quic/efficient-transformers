@@ -37,8 +37,6 @@ class QEffPhi3RotaryEmbedding(Phi3RotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    _max_seq_len_cached = 0
-
     def __init__(self, config: Phi3Config, device=None):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
@@ -148,16 +146,11 @@ class QEffPhi3Attention(Phi3Attention):
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        if kv_seq_len > QEffPhi3RotaryEmbedding._max_seq_len_cached:
-            QEffPhi3RotaryEmbedding._set_cos_sin_cache(
-                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
-            )
-        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        cos, sin = cos_cached, sin_cached
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
         if past_key_value is not None:
             cache_kwargs = {
@@ -268,10 +261,6 @@ class QEffPhi3Model(Phi3Model):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffPhi3RotaryEmbedding(config=self.config)
-        QEffPhi3RotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
-        self.rotary_emb._set_cos_sin_cache(
-            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
-        )
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
         self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
 

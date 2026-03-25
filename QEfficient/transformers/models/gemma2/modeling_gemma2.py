@@ -40,8 +40,6 @@ class QEffGemma2RotaryEmbedding(Gemma2RotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    _max_seq_len_cached = 0
-
     def __init__(self, config: Gemma2Config, device=None):
         super().__init__(config=config)
 
@@ -147,21 +145,16 @@ class QEffGemma2Attention(Gemma2Attention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        if kv_seq_len > QEffGemma2RotaryEmbedding._max_seq_len_cached:
-            QEffGemma2RotaryEmbedding._set_cos_sin_cache(
-                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
-            )
-        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
-        cos, sin = cos_cached, sin_cached
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
+                "sin": sin_cached,
+                "cos": cos_cached,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
             }
@@ -274,10 +267,6 @@ class QEffGemma2Model(Gemma2Model):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffGemma2RotaryEmbedding(config=self.config)
-        QEffGemma2RotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
-        self.rotary_emb._set_cos_sin_cache(
-            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
-        )
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
         self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
 
