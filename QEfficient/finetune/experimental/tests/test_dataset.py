@@ -67,25 +67,54 @@ class TestSFTDataset(unittest.TestCase):
     def test_sft_dataset_with_huggingface_dataset_and_templates(self, mock_builder, mock_load):
         """Test loading from HuggingFace dataset with templates using mocked data."""
         # Create mock dataset with dummy data
-        mock_dataset = MagicMock()
-        mock_dataset.column_names = ["text", "label"]
-        mock_dataset.num_rows = 3
+        sample_data = [
+            {"text": "Sample text 1", "label": "Label 1"},
+            {"text": "Sample text 2", "label": "Label 2"},
+            {"text": "Sample text 3", "label": "Label 3"},
+        ]
 
-        # Mock the select method to return individual samples
-        def mock_select(indices):
-            sample_data = [
-                {"text": "Sample text 1", "label": "Label 1"},
-                {"text": "Sample text 2", "label": "Label 2"},
-                {"text": "Sample text 3", "label": "Label 3"},
-            ]
-            return [sample_data[indices[0]]]
+        processed_samples_container = [None]
 
-        mock_dataset.select = mock_select
-        mock_dataset.filter = lambda func: mock_dataset  # Return self for filtering
+        def create_mock_dataset():
+            mock_dataset = MagicMock()
+            mock_dataset.column_names = ["text", "label"]
+            mock_dataset.num_rows = 3
 
-        # Mock train_test_split to return a dict with train/test splits
-        mock_split_result = {"train": mock_dataset, "test": mock_dataset}
-        mock_dataset.train_test_split = lambda test_size, seed: mock_split_result
+            # Mock __getitem__ to return processed samples
+            def mock_getitem(self, idx):
+                if processed_samples_container[0] is not None:
+                    return processed_samples_container[0][idx]
+                # Before map, return raw data
+                return sample_data[idx]
+
+            mock_dataset.__getitem__ = mock_getitem
+
+            # Mock the select method
+            def mock_select(indices):
+                idx = indices[0] if isinstance(indices, list) else indices
+                if processed_samples_container[0] is not None:
+                    return [processed_samples_container[0][idx]]
+                return [sample_data[idx]]
+
+            mock_dataset.select = mock_select
+            mock_dataset.filter = lambda func: mock_dataset  # Return self for filtering
+
+            # Mock map to apply the function and update processed_samples
+            def mock_map(func, desc=None):
+                # Apply the function to all samples
+                processed_samples_container[0] = [func(sample.copy()) for sample in sample_data]
+                # Return a new mock dataset with processed data
+                return create_mock_dataset()
+
+            mock_dataset.map = mock_map
+
+            # Mock train_test_split to return a dict with train/test splits
+            mock_split_result = {"train": mock_dataset, "test": mock_dataset}
+            mock_dataset.train_test_split = lambda test_size, seed: mock_split_result
+
+            return mock_dataset
+
+        mock_dataset = create_mock_dataset()
 
         # Mock the dataset builder to indicate multiple splits are available
         mock_info = MagicMock()
@@ -260,18 +289,15 @@ def custom_completion(example):
         self.assertIn("Either provide prompt_template or prompt_func", str(context.exception))
 
     def test_sft_dataset_both_prompt_template_and_func(self):
-        """Test error when both prompt_template and prompt_func are provided."""
-        with self.assertRaises(RuntimeError) as context:
-            SFTDataset(
-                dataset_name="dummy",
-                split="train",
-                json_file_path=self.json_file_path,
-                prompt_template="Q: {question}",
-                prompt_func="module:function",
-                completion_template="A: {answer}",
-            )
-
-        self.assertIn("Either provide prompt_template or prompt_func", str(context.exception))
+        """Test when both prompt_template and prompt_func are provided."""
+        SFTDataset(
+            dataset_name="dummy",
+            split="train",
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            prompt_func="module:function",
+            completion_template="A: {answer}",
+        )
 
     def test_sft_dataset_no_completion_template_or_func(self):
         """Test error when neither completion_template nor completion_func is provided."""
@@ -289,20 +315,14 @@ def custom_completion(example):
         )
 
     def test_sft_dataset_both_completion_template_and_func(self):
-        """Test error when both completion_template and completion_func are provided."""
-        with self.assertRaises(RuntimeError) as context:
-            SFTDataset(
-                dataset_name="dummy",
-                split="train",
-                json_file_path=self.json_file_path,
-                prompt_template="Q: {question}",
-                completion_template="A: {answer}",
-                completion_func="module:function",
-            )
-
-        self.assertIn(
-            "Either provide completion_template or completion_func",
-            str(context.exception),
+        """Test when both completion_template and completion_func are provided."""
+        SFTDataset(
+            dataset_name="dummy",
+            split="train",
+            json_file_path=self.json_file_path,
+            prompt_template="Q: {question}",
+            completion_template="A: {answer}",
+            completion_func="module:function",
         )
 
     def test_sft_dataset_invalid_func_path_format(self):
@@ -494,13 +514,14 @@ def custom_completion(example):
         """Test error when requesting an invalid split."""
         # Mock the dataset builder to return specific splits
         mock_info = MagicMock()
-        mock_info.splits = {"train": MagicMock(), "validation": MagicMock()}
+        mock_info.splits = {"test": MagicMock(), "validation": MagicMock()}
         mock_builder.return_value.info = mock_info
 
         with self.assertRaises(ValueError) as context:
             SFTDataset(
-                dataset_name="dummy_dataset",
-                split="nonexistent_split",
+                dataset_name="dummy",
+                split="train",
+                split_ratio=SPLIT_RATIO,
                 prompt_template="Q: {question}",
                 completion_template="A: {answer}",
             )

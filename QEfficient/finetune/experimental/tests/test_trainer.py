@@ -345,11 +345,12 @@ class TestSFTTrainerWithModel:
     def peft_model_config(self):
         """Fixture for PEFT configuration."""
         return {
-            "lora_r": LORA_R,
-            "lora_alpha": LORA_ALPHA,
-            "lora_dropout": LORA_DROPOUT,
-            "target_modules": ["q_proj", "v_proj"],
+            "task_type": "CAUSAL_LM",
+            "r": 8,
+            "lora_alpha": 32,
+            "lora_dropout": 0.1,
             "bias": "none",
+            "target_modules": ["q_proj", "v_proj"],
         }
 
     @pytest.fixture
@@ -430,7 +431,7 @@ class TestSFTTrainerWithModel:
         hf_model = ComponentFactory.create_model("hf", model_name, **model_config)
         model = hf_model.model
         # Load PEFT Config
-        peft_config = LoraConfig(peft_model_config)
+        peft_config = LoraConfig(**peft_model_config)
         tokenizer = hf_model.tokenizer
 
         # Create SFT config

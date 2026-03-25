@@ -19,9 +19,13 @@ from datasets import load_dataset, load_dataset_builder
 from torch.utils.data import Dataset
 
 from QEfficient.finetune.experimental.core.component_registry import registry
+from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.utils.dataset_utils import (
     apply_train_test_split,
+    validate_json_structure,
 )
+
+logger = Logger(__name__)
 
 
 class BaseDataset(Dataset, ABC):
@@ -91,17 +95,22 @@ class SFTDataset(BaseDataset):
         self.prompt_func_path = kwargs.get("prompt_func", None)
         self.completion_func_path = kwargs.get("completion_func", None)
         self.remove_samples_with_empty_columns = kwargs.get("remove_samples_with_empty_columns", True)
+        self.config_name = kwargs.get("config_name", None)
 
         if self.json_file_path not in (None, ""):
             if not os.path.isfile(self.json_file_path):
                 raise FileNotFoundError(f"JSON file not found or invalid: '{self.json_file_path}'")
-        if (self.prompt_template is None and self.prompt_func_path is None) or (
-            self.prompt_template is not None and self.prompt_func_path is not None
-        ):
+        if self.prompt_template and self.prompt_func_path:
+            logger.log_rank_zero(
+                "Both prompt_template and prompt_func are provided. Using prompt_template for preprocessing."
+            )
+        if self.completion_template and self.completion_func_path:
+            logger.log_rank_zero(
+                "Both completion_template and completion_func are provided. Using completion_template for preprocessing."
+            )
+        if self.prompt_template is None and self.prompt_func_path is None:
             raise RuntimeError("Either provide prompt_template or prompt_func in the config.")
-        if (self.completion_template is None and self.completion_func_path is None) or (
-            self.completion_template is not None and self.completion_func_path is not None
-        ):
+        if self.completion_template is None and self.completion_func_path is None:
             raise RuntimeError("Either provide completion_template or completion_func in the config.")
 
         # Call parent class __init__ which will call _initialize_dataset
@@ -116,28 +125,59 @@ class SFTDataset(BaseDataset):
         """
         if self.json_file_path:
             # Load dataset from JSON file
+            validate_json_structure(self.json_file_path)
             self.dataset = load_dataset("json", data_files=self.json_file_path, split="train")
-
             # Apply train/test split if needed
             if self.split in ["train", "test"]:
                 self.dataset = apply_train_test_split(self.dataset, self.split_ratio, self.split, self.seed)
         else:
             # Load dataset from HuggingFace
-            db = load_dataset_builder(self.dataset_name)
+            # Pass config_name if provided (required for datasets with multiple configs like openai/gsm8k)
+            load_kwargs = {}
+            if self.config_name is not None:
+                load_kwargs["name"] = self.config_name
+
+            db = load_dataset_builder(self.dataset_name, **load_kwargs)
             available_splits = []
             if db.info.splits is not None:
                 available_splits = list(db.info.splits.keys())
 
-            if self.split not in available_splits:
+            if self.split not in available_splits and self.split == "train":
                 raise ValueError(f"Split {self.split} is not available for dataset {self.dataset_name}.")
-
+            load_split = self.split
+            if self.split not in available_splits:
+                load_split = "train"
             # FIXME: Add streaming support for larger datasets.
-            self.dataset = load_dataset(self.dataset_name, split=self.split)
+            self.dataset = load_dataset(self.dataset_name, split=load_split, **load_kwargs)
 
             if len(available_splits) == 1:
                 self.dataset = apply_train_test_split(self.dataset, self.split_ratio, self.split, self.seed)
 
         self.dataset = self._setup_templates(self.dataset, self.dataset.column_names)
+
+        # Preprocess the HuggingFace dataset to add 'text' field
+        # This is required because TRL SFTTrainer expects a Dataset with 'text' field
+        self.dataset = self._add_text_field(self.dataset)
+
+    def _add_text_field(self, dataset):
+        """
+        Add 'text' field to the HuggingFace dataset by combining prompt and completion.
+        This is required by TRL's SFTTrainer which expects a 'text' field in the dataset.
+        """
+
+        def add_text(example):
+            # Apply preprocessing to get prompt and completion
+            processed = self._preprocess_sample(example)
+            # Add the combined text field
+            example["text"] = processed["prompt"] + processed["completion"]
+            # Also add prompt and completion fields for __getitem__ to access
+            example["prompt"] = processed["prompt"]
+            example["completion"] = processed["completion"]
+            return example
+
+        # Map the function to add 'text' field to all examples
+        dataset = dataset.map(add_text, desc="Adding text field")
+        return dataset
 
     def _setup_templates(self, dataset, dataset_columns):
         """
@@ -237,21 +277,36 @@ class SFTDataset(BaseDataset):
         """
         return self.dataset.num_rows
 
-    def __getitem__(self, idx: int) -> Dict[str, str]:
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
         """
         Retrieves a processed sample from the dataset at the given index.
-        This method doesn't tokenize the input items, it is expected that the SFTTrainer will handle tokenization.
 
         Args:
             idx (int): The index of the sample to retrieve.
 
         Returns:
-            Dict[str, str]: A dictionary containing the processed 'prompt' and 'completion' for the sample.
+            Dict[str, Any]: A dictionary containing either:
+                - Raw text format: 'text', 'prompt', 'completion' (before tokenization)
+                - Tokenized format: 'input_ids', 'attention_mask', 'labels' (after tokenization)
         """
-        # Get the raw example using .select and access the first element
-        example = self.dataset.select(indices=[int(idx)])[0]
+        # Get the example from the dataset
+        # Use __getitem__ if available (for HuggingFace datasets), otherwise use select
+        if hasattr(self.dataset, "__getitem__"):
+            example = self.dataset[int(idx)]
+        else:
+            example = self.dataset.select(indices=[int(idx)])[0]
 
-        # Apply preprocessing (templating) on the fly
-        processed_example = self._preprocess_sample(example)
+        # Convert to dict if it's not already
+        if not isinstance(example, dict):
+            example = dict(example)
 
-        return processed_example
+        if "input_ids" in example:
+            # Return tokenized data as-is (TRL has already tokenized it)
+            return example
+
+        # Otherwise, return raw text format (before tokenization)
+        return {
+            "text": example.get("text", ""),
+            "prompt": example.get("prompt", ""),
+            "completion": example.get("completion", ""),
+        }

@@ -13,9 +13,9 @@ import torch.optim as optim
 
 from QEfficient.finetune.experimental.core.component_registry import registry
 
-registry.optimizer("Adam")(optim.Adam)
-registry.optimizer("AdamW")(optim.AdamW)
-registry.optimizer("SGD")(optim.SGD)
+registry.optimizer("adam")(optim.Adam)
+registry.optimizer("adamw")(optim.AdamW)
+registry.optimizer("sgd")(optim.SGD)
 
 
 def prepare_optimizer(opt_config):
