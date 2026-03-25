@@ -748,16 +748,6 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         hidden_shape = (*input_shape, -1, self.head_dim)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        # if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
-        #     max_seq_len_cached = 32 * 1024
-
-        # if max_seq_len_cached > QEffGptOssRotaryEmbedding._max_seq_len_cached:
-        #     QEffGptOssRotaryEmbedding._set_cos_sin_cache(
-        #         seq_len=max_seq_len_cached, device=value_states.device, dtype=value_states.dtype
-        #     )
-        # cos_cached[:max_seq_len_cached].to(dtype=value_states.dtype)
-        # sin_cached[:max_seq_len_cached].to(dtype=value_states.dtype)
-        cos, sin = cos_cached, sin_cached
         query_states, key_states = qeff_apply_rotary_pos_emb(
             query_states, key_states, cos_cached, sin_cached, position_ids
         )
@@ -765,8 +755,8 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
+                "sin": sin_cached,
+                "cos": cos_cached,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
                 "config": self.config,
