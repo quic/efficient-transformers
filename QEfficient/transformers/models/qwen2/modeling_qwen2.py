@@ -257,7 +257,6 @@ class QEffQwen2Model(Qwen2Model):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen2RotaryEmbedding(config=self.config)
-        QEffQwen2RotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
         self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 

@@ -37,8 +37,6 @@ class QEffPhi3RotaryEmbedding(Phi3RotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    _max_seq_len_cached = 0
-
     def __init__(self, config: Phi3Config, device=None):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
@@ -263,10 +261,6 @@ class QEffPhi3Model(Phi3Model):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffPhi3RotaryEmbedding(config=self.config)
-        QEffPhi3RotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
-        self.rotary_emb._set_cos_sin_cache(
-            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
-        )
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
         self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
 
