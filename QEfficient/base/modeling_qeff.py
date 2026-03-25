@@ -390,6 +390,12 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
+        # Backward-compatible alias accepted by some APIs.
+        if "aic_perf_warning" in compiler_options:
+            if "aic_perf_warnings" not in compiler_options:
+                compiler_options["aic_perf_warnings"] = compiler_options["aic_perf_warning"]
+            compiler_options.pop("aic_perf_warning", None)
+
         onnx_path = Path(
             onnx_path
             if onnx_path
