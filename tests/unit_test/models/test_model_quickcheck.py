@@ -76,6 +76,14 @@ CAUSAL_RUNTIME_MODEL_IDS = {
     "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
     "gpt_oss": "tiny-random/gpt-oss-bf16",
 }
+CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
+    "codegen",
+    "phi",
+    "starcoder2",
+    "mixtral",
+    "gpt_oss",
+    # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
+}
 
 VLM_TEXT_RUNTIME_MODEL_ID = "tiny-random/gemma-3"
 VLM_EXPORT_MODEL_IDS = {
@@ -168,6 +176,22 @@ def _exported_onnx_path(export_result) -> Path:
     onnx_path = Path(export_result)
     assert onnx_path.is_file()
     return onnx_path
+
+
+def _count_decoder_block_subfunctions(onnx_model, qeff_model) -> int:
+    get_submodules = getattr(qeff_model.model, "get_submodules_for_export", None)
+    if not callable(get_submodules):
+        return 0
+
+    submodules = get_submodules()
+    if not submodules:
+        return 0
+
+    if not isinstance(submodules, (set, list, tuple)):
+        submodules = [submodules]
+
+    block_names = {module.__name__ for module in submodules if hasattr(module, "__name__")}
+    return sum(any(block_name in func.name for block_name in block_names) for func in onnx_model.functions)
 
 
 def _assert_has_retained_state_outputs(onnx_path: Path) -> None:
@@ -519,6 +543,34 @@ def test_causal_subfunction_export_smoke_all_models(model_type, model_id, tmp_pa
 
     assert np.array_equal(hf_tokens, kv_tokens.squeeze(0))
     assert np.array_equal(kv_tokens, ort_tokens)
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("model_type", "model_id"),
+    sorted(CAUSAL_RUNTIME_MODEL_IDS.items()),
+    ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
+)
+def test_causal_subfunction_count_with_onnx_subfunctions(model_type, model_id, tmp_path):
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / f"subfunction-count-{model_type}", use_onnx_subfunctions=True)
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    subfunction_count = _count_decoder_block_subfunctions(onnx_model, qeff_model)
+
+    if model_type in CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES:
+        assert subfunction_count > 1, (
+            f"{model_type} expected multiple decoder-block subfunctions (>1), but found {subfunction_count}"
+        )
+    else:
+        assert subfunction_count == 1, (
+            f"{model_type} expected a single decoder-block subfunction (1), but found {subfunction_count}"
+        )
 
 
 @pytest.mark.llm_model

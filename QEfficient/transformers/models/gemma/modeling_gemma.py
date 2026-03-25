@@ -27,7 +27,6 @@ from transformers.models.gemma.modeling_gemma import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.utils._utils import resolve_kv_seq_len
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -37,6 +36,8 @@ class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
     The only differences are:
     - Add static sin/cos computations.
     """
+
+    _max_seq_len_cached = 0
 
     def __init__(self, config: GemmaConfig, device=None):
         super().__init__(config=config)
@@ -55,16 +56,6 @@ class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
-        )
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -129,9 +120,6 @@ class QEffGemmaAttention(GemmaAttention):
     - add new args cache idx for the kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGemmaRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -141,6 +129,8 @@ class QEffGemmaAttention(GemmaAttention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -150,8 +140,14 @@ class QEffGemmaAttention(GemmaAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = resolve_kv_seq_len(past_key_value, self.layer_idx, key_states.shape[-2], cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        if kv_seq_len > QEffGemmaRotaryEmbedding._max_seq_len_cached:
+            QEffGemmaRotaryEmbedding._set_cos_sin_cache(
+                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
+            )
+        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
+        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
+        cos, sin = cos_cached, sin_cached
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -195,6 +191,8 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -224,6 +222,8 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -243,6 +243,15 @@ class QEffGemmaModel(GemmaModel):
     The only differences are:
     - add new args cache idx for the kv retention
     """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffGemmaRotaryEmbedding(config=self.config)
+        QEffGemmaRotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
+        self.rotary_emb._set_cos_sin_cache(
+            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
+        )
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
 
     def forward(
         self,
@@ -311,6 +320,8 @@ class QEffGemmaModel(GemmaModel):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
                 **kwargs,
             )
 

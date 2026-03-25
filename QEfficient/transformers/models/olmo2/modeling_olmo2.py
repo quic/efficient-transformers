@@ -27,7 +27,6 @@ from transformers.models.olmo2.modeling_olmo2 import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.utils._utils import resolve_kv_seq_len
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -37,6 +36,8 @@ class QEffOlmo2RotaryEmbedding(Olmo2RotaryEmbedding):
     The only differences are:
     - Add static sin/cos computations.
     """
+
+    _max_seq_len_cached = 0
 
     def __init__(self, config: Olmo2Config, device=None):
         super().__init__(config=config)
@@ -54,16 +55,6 @@ class QEffOlmo2RotaryEmbedding(Olmo2RotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -124,9 +115,6 @@ def eager_attention_forward(
 class QEffOlmo2Attention(Olmo2Attention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffOlmo2RotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -136,6 +124,8 @@ class QEffOlmo2Attention(Olmo2Attention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -149,8 +139,16 @@ class QEffOlmo2Attention(Olmo2Attention):
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = resolve_kv_seq_len(past_key_value, self.layer_idx, key_states.shape[-2], cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        kv_seq_len = key_states.shape[-2]
+
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        if kv_seq_len > QEffOlmo2RotaryEmbedding._max_seq_len_cached:
+            QEffOlmo2RotaryEmbedding._set_cos_sin_cache(
+                seq_len=kv_seq_len, device=value_states.device, dtype=value_states.dtype
+            )
+        cos_cached[:kv_seq_len].to(dtype=value_states.dtype)
+        sin_cached[:kv_seq_len].to(dtype=value_states.dtype)
+        cos, sin = cos_cached, sin_cached
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -197,6 +195,8 @@ class QEffOlmo2DecoderLayer(Olmo2DecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -212,6 +212,8 @@ class QEffOlmo2DecoderLayer(Olmo2DecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
         hidden_states = self.post_attention_layernorm(hidden_states)
@@ -231,6 +233,15 @@ class QEffOlmo2Model(Olmo2Model):
     The only differences are:
     - add new args cache idx for the kv retention
     """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffOlmo2RotaryEmbedding(config=self.config)
+        QEffOlmo2RotaryEmbedding._max_seq_len_cached = self.config.max_position_embeddings
+        self.rotary_emb._set_cos_sin_cache(
+            seq_len=self.config.max_position_embeddings, device=self.device, dtype=self.dtype
+        )
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def forward(
         self,
@@ -296,6 +307,8 @@ class QEffOlmo2Model(Olmo2Model):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
                 **kwargs,
             )
 
