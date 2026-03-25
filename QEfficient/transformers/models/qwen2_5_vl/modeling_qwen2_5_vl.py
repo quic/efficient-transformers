@@ -601,8 +601,8 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
             else:
                 # sin and cos are specific to RoPE models; cache_position needed for the static cache
                 cache_kwargs = {
-                    "sin": sin,
-                    "cos": cos,
+                    "sin": sin_cached,
+                    "cos": cos_cached,
                     "batch_index": batch_index,
                     "position_ids": position_ids[0],
                 }
