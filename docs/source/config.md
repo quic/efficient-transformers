@@ -63,6 +63,8 @@ If provided, this takes precedence over dataset_name.
 *   **train_batch_size**: `default = 1` → Per-device batch size during training.
 *   **eval_batch_size**: `default = 1` → Per-device batch size during evaluation.
 *   **collate_fn**: `default = "dynamic_padding"` → Collation function used to build batches (e.g., dynamic padding to match the longest sequence in the batch).
+*   **dataset_disc_style**: `default = None` →  Selects the style remix category to apply to the dataset during preprocessing; when None, no style remixing is applied and the original dataset style is preserved.
+
 *   **group_by_length**: `default = true` → Whether to group samples of similar lengths together for efficient batching.
 *   **length_column_name**: `default = "input_ids"` → Column name used to determine sequence length for grouping (commonly the token IDs field).
 *   **num_workers**: `default = 4` → Number of subprocesses to use for data loading.
@@ -88,7 +90,7 @@ dataset:
   train_split: "train"
   test_split: "test"
   max_seq_length: 512
-  prompt_func: "preprocess/alpaca_func:create_alpaca_prompt"
+  prompt_func: "QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt"
   completion_template: "{output}"
 
 ```
@@ -144,21 +146,19 @@ dataset:
   completion_template: "{answer}"
 
 ```
-
 ***
-#### **4. grammar (grammar_dataset)**
+
+#### **4. Style-Remix (hallisky/DiSC)**
 
 ```yaml
 dataset:
-  tokenizer_name: "meta-llama/Llama-3.2-1B"
   dataset_type: "sft_dataset"
-  dataset_name: "grammar"
-  train_split: "train"
-  split_ratio: 0.8
-  prompt_template: f"Correct the grammar in the following sentence:\n\n{'input'}\n\nCorrected:\n"
-  completion_template: "{target}"
-```
+  dataset_name: "hallisky/DiSC" 
+  prompt_template: "### Original:{original} \n ### Rewrite:\n" 
+  completion_template: "{generation}"     
+  dataset_disc_style: "sarcasm_more" 
 
+```
 ***
 
 ## 3. Training Configuration

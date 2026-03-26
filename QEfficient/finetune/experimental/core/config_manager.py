@@ -144,8 +144,12 @@ class DatasetConfig:
         metadata={"help": "Function for formatting output completions (e.g., '{output}')."},
     )
     collate_fn: str = field(
-        default="dynamic_padding",
+        default=None,
         metadata={"help": "The collation function to use (e.g., 'dynamic_padding')."},
+    )
+    dataset_disc_style: str = field(
+        default=None,
+        metadata={"help": "Style of dataset"},
     )
     group_by_length: bool = field(
         default=True,
@@ -184,6 +188,7 @@ class DatasetConfig:
         metadata={"help": "Name of the hf configuration file."},
     )
     json_file_path: str = field(default=None, metadata={"help": "Path to a JSON file containing data."})
+    data_seed: int = field(default=42, metadata={"help": "Seed for data shuffling and sampling."})
 
 
 @dataclass

@@ -226,6 +226,7 @@ def test_create_datasets_called_and_assigned(
         "dataset_name": "test_dataset",
         "train_split": train_split,
         "test_split": test_split,
+        "data_seed": 42,
     }
 
     train_ds = MagicMock(name="train_ds")

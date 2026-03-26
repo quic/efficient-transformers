@@ -44,7 +44,9 @@ class TestSFTDataset(unittest.TestCase):
             {"question": "What is AI?", "answer": "Artificial Intelligence"},
             {"question": "What is ML?", "answer": "Machine Learning"},
             {"question": "What is DL?", "answer": "Deep Learning"},
+            {"question": "What is LLM?", "answer": "Large Language Model"},
             {"question": "What is NLP?", "answer": "Natural Language Processing"},
+            {"question": "What is VLM?", "answer": "Vision Language Model"},
             {"question": "", "answer": "Empty question"},  # Empty question
             {"question": "Valid question", "answer": ""},  # Empty answer
             {"question": None, "answer": "None question"},  # None question
@@ -78,6 +80,7 @@ class TestSFTDataset(unittest.TestCase):
         def create_mock_dataset():
             mock_dataset = MagicMock()
             mock_dataset.column_names = ["text", "label"]
+            mock_dataset.shuffle.return_value = mock_dataset
             mock_dataset.num_rows = 3
 
             # Mock __getitem__ to return processed samples
@@ -177,7 +180,7 @@ class TestSFTDataset(unittest.TestCase):
         )
 
         # When filtering is disabled and split="train" is used, it still applies train/test split
-        # So we get ~80% of 8 samples = ~6 samples
+        # So we get ~80% of 10 samples = ~8 samples
         self.assertGreater(len(dataset), 0)
         self.assertLessEqual(len(dataset), 8)
 
@@ -203,12 +206,12 @@ class TestSFTDataset(unittest.TestCase):
             seed=SEED,
         )
 
-        # After filtering, we have 4 valid samples
-        # With split ratio, train should have ~3 samples, test should have ~1 sample
+        # After filtering, we have 6 valid samples
+        # With split ratio, train should have ~4 samples, test should have ~2 sample
         self.assertGreater(len(train_dataset), 0)
         self.assertGreater(len(test_dataset), 0)
         # Total should equal the filtered dataset size
-        self.assertEqual(len(train_dataset) + len(test_dataset), 4)
+        self.assertEqual(len(train_dataset) + len(test_dataset), 6)
 
     def test_sft_dataset_with_custom_prompt_function(self):
         """Test loading with custom prompt function."""
