@@ -522,6 +522,22 @@ def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100_qnn():
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
+@pytest.mark.regular
+@pytest.mark.parametrize("model_name", test_models_blockedKV)
+def test_custom_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    hf_config = get_hf_config_from_custom_config(model_name)
+    qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, config=hf_config, qaic_config=qaic_config)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.nightly
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -533,17 +549,3 @@ def test_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
     qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models_blockedKV)
-def test_causal_nonBlockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
-    """
-    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    n_layer = get_custom_n_layers(model_name)
-
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
