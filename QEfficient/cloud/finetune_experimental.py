@@ -14,11 +14,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from QEfficient.finetune.experimental.core.callbacks import replace_progress_callback
+from peft import get_peft_model
+
+from QEfficient.finetune.experimental.core.callbacks import TrainingLogger, replace_progress_callback
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory
-from QEfficient.finetune.experimental.core.config_manager import (
-    ConfigManager,
-)
+from QEfficient.finetune.experimental.core.config_manager import ConfigManager
 from QEfficient.finetune.experimental.core.dataset import SFTDataset  # noqa: F401
 from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.model import HFModel  # noqa: F401
@@ -29,6 +29,7 @@ from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_
 from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
 
 logger = Logger(__name__)
+train_logger = TrainingLogger()
 
 # Try importing QAIC-specific module, proceed without it if it's unavailable
 try:
@@ -98,6 +99,7 @@ class FineTuningPipeline:
 
     def _setup_environment(self) -> None:
         """Set up environment variables for output directories."""
+        self.rank = int(os.environ.get("RANK", "0"))
         os.environ["OUTPUT_DIR"] = str(self.output_dir)
         os.environ["TRACKIO_DIR"] = str(self.output_dir / "trackio_logs")
         os.environ["TENSORBOARD_LOGGING_DIR"] = str(self.output_dir)
@@ -245,10 +247,21 @@ class FineTuningPipeline:
         dependencies = {}
         if peft_config is not None:
             dependencies["peft_config"] = peft_config
+            if self.rank == 0:
+                model_configuration = get_peft_model(model, peft_config)
+                trainable_params, all_param = model_configuration.get_nb_trainable_parameters()
+                pct = (trainable_params / all_param) * 100
+                model_configuration.unload()  # Removing the peft adapters
+                train_logger.write(f"TRAINING INFO: Model has {all_param / 1e6:.4f} Million params.")
+                train_logger.write(
+                    f"TRAINING INFO: Trainable params: {trainable_params} || "
+                    f"all params: {all_param} || trainable%: {pct:.4f}"
+                )
         trainer_cls, args_cls, additional_kwargs = ComponentFactory.create_trainer_config(trainer_type, **dependencies)
 
         # Clean up training config: remove fields that shouldn't be passed to TrainingArguments
         training_config.pop("device", None)
+        training_config.pop("log_file_name", None)
         # Note: torch_dtype was already converted to fp16/bf16 flag in prepare_training_config
         training_config.pop("deepspeed_config", None)
         training_config.pop("torch_dtype", None)
@@ -271,6 +284,11 @@ class FineTuningPipeline:
             subset_eval_indices = list(range(0, int(num_samples - num_samples * split_ratio)))
             eval_dataset = eval_dataset.select(subset_eval_indices)
             train_dataset = train_dataset.select(subset_train_indices)
+        # Logging the number of training and evaluation samples
+        if self.rank == 0:
+            train_logger.write(f"TRAINING INFO: Length of Training Dataset is {len(train_dataset)}")
+            train_logger.write(f"TRAINING INFO: Length of Evaluation Dataset is {len(eval_dataset)}")
+
         trainer = trainer_cls(
             model=model,
             processing_class=tokenizer,
