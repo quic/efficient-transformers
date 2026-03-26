@@ -126,7 +126,7 @@ class QEffPhi3Attention(Phi3Attention):
         attention_mask: Optional[torch.Tensor],
         batch_index: Optional[torch.LongTensor] = None,
         position_ids=Optional[torch.Tensor],
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         cos_cached: Optional[torch.Tensor] = None,
@@ -152,7 +152,7 @@ class QEffPhi3Attention(Phi3Attention):
             query_states, key_states, cos_cached, sin_cached, position_ids
         )
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
@@ -160,7 +160,7 @@ class QEffPhi3Attention(Phi3Attention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
@@ -231,7 +231,7 @@ class QEffPhi3DecoderLayer(Phi3DecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             use_cache=use_cache,
             cache_position=cache_position,
