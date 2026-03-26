@@ -144,7 +144,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
 
 
 class QEffLlamaSwiftKVDecoderLayer(nn.Module):
-    def __init__(self, config: QEffLlamaSwiftKVConfig, layer_idx) -> None:
+    def __init__(self, config: QEffLlamaSwiftKVConfig, layer_idx, sin_cached, cos_cached) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_key_value_heads = config.num_key_value_heads
@@ -152,6 +152,8 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.sin_cached = sin_cached
+        self.cos_cached = cos_cached
 
     def forward(
         self,
@@ -167,6 +169,10 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         # Self Attention
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
+        if sin_cached is None:
+            sin_cached = self.sin_cached
+        if cos_cached is None:
+            cos_cached = self.cos_cached
 
         hidden_states, past_key_values = self.self_attn(
             hidden_states=hidden_states,
@@ -197,22 +203,23 @@ class QEffLlamaSwiftKVModel(nn.Module):
         self.vocab_size = config.vocab_size
         self.config = config
 
+        self.rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
         self.embed_tokens = nn.Embedding(self.vocab_size, config.hidden_size, None)
+        sin_cached, cos_cached = self.sin_cached, self.cos_cached
         self.layers = torch.nn.ModuleList(
             [
                 QEffLlamaDecoderLayer(config=config, layer_idx=idx)
                 if idx < config.num_key_value_layers
-                else QEffLlamaSwiftKVDecoderLayer(config=config, layer_idx=idx)
+                else QEffLlamaSwiftKVDecoderLayer(
+                    config=config, layer_idx=idx, sin_cached=sin_cached, cos_cached=cos_cached
+                )
                 for idx in range(config.num_hidden_layers)
             ]
         )
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.norm_swiftkv = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-
-    def __qeff_init__(self):
-        self.rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def _run_swiftkv_layers(
         self,
@@ -226,7 +233,14 @@ class QEffLlamaSwiftKVModel(nn.Module):
         for layer_idx in range(self.config.num_key_value_layers, self.config.num_hidden_layers):
             layer = self.layers[layer_idx]
             hidden_states = layer(
-                hidden_states, position_ids, past_key_values, comp_ctx_lengths, causal_mask, batch_index
+                hidden_states,
+                position_ids,
+                past_key_values,
+                comp_ctx_lengths,
+                causal_mask,
+                batch_index,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
         hidden_states = self.norm(hidden_states)
