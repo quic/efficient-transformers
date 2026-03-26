@@ -330,3 +330,11 @@ pip install pytest pytest-mock
 ```bash
 QAIC_VISIBLE_DEVICES=0 python -m pytest QEfficient/finetune/experimental/tests/
 ```
+
+To run two of the pipeline parallelism tests, 2 devices are required:
+
+```bash
+QAIC_VISIBLE_DEVICES=0,1 python -m pytest QEfficient/finetune/experimental/tests/test_pipeline_parallelism.py
+```
+
+If we pass only one device, two of these tests get skipped and remaining tests run successfully. 
