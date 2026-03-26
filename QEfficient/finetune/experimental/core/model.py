@@ -105,16 +105,6 @@ class HFModel(BaseModel):
             )
         return getattr(transformers, auto_class_name)
 
-    # def _build_quant_config(self) -> Optional[BitsAndBytesConfig]:
-    #     if not self.model_kwargs.get("load_in_4bit"):
-    #         return None
-    #     return BitsAndBytesConfig(
-    #         load_in_4bit=True,
-    #         bnb_4bit_quant_type=self.model_kwargs.get("bnb_4bit_quant_type", "nf4"),
-    #         bnb_4bit_compute_dtype=self.model_kwargs.get("bnb_4bit_compute_dtype", torch.float16),
-    #         bnb_4bit_use_double_quant=self.model_kwargs.get("bnb_4bit_use_double_quant", True),
-    #     )
-
     def configure_model_kwargs(self) -> Dict[str, Any]:
         """Hook for subclasses to tweak HF `.from_pretrained` kwargs."""
 

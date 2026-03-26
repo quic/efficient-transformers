@@ -21,6 +21,7 @@ import yaml
 from transformers.hf_argparser import HfArgumentParser
 
 from QEfficient.finetune.experimental.core.logger import Logger
+from QEfficient.finetune.experimental.core.utils import constants
 from QEfficient.finetune.experimental.core.utils.dist_utils import is_main_process
 from QEfficient.utils.device_utils import is_nsp_free
 
@@ -855,7 +856,7 @@ class ConfigManager:
             training_dtype = training_config.get("torch_dtype")
             if training_dtype:
                 # Convert from training format (fp16/bf16) to model format (float16/bfloat16)
-                dtype_mapping = {"fp16": "float16", "bf16": "bfloat16"}
+                dtype_mapping = dtype_mapping = constants.DTYPE_MAPPING
                 model_config["torch_dtype"] = dtype_mapping.get(training_dtype, "auto")
 
         return model_config
