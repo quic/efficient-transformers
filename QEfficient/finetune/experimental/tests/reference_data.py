@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Reference data for the finetune tests from SDK version - 1.21.0.23"""
+"""Reference data for the finetune tests from SDK version - 1.22.0.32"""
 
 # A dictionary to hold all reference data for all test sets.
 REFERENCE_DATA = {

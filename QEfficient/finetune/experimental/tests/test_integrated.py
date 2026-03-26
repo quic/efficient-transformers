@@ -469,6 +469,7 @@ class TestCausalLMIntegration:
         )
         all_ref_metrices, all_config_spy = get_reference_metrics(scenario_key, config_manager)
         verify_training_results(final_train_loss, final_eval_loss)
+        run_inference_causal_lm(model, tokenizer)
 
         # Test inference
         # Assertions for step-level values using the helper function
@@ -509,4 +510,3 @@ class TestCausalLMIntegration:
             all_config_spy["current_rank"],
         )
         clean_up("qaic-dumps")
-        run_inference_causal_lm(model, tokenizer)
