@@ -82,8 +82,6 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         )
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
-        self.rotary_emb = QEffLlamaRotaryEmbedding(config=config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -92,6 +90,8 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: torch.Tensor = None,
         batch_index: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
         q_len = 1  # as we always run this for single token
@@ -110,13 +110,12 @@ class QEffLlamaSwiftKVAttention(nn.Module):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
+            # kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
         key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         position_ids = position_ids[torch.arange(bsz), position_ids.to(torch.int32).argmax(1)].unsqueeze(1)
         query_states, _ = qeff_apply_rotary_pos_emb(
-            query_states, torch.empty_like(query_states), cos, sin, position_ids
+            query_states, torch.empty_like(query_states), cos_cached, sin_cached, position_ids
         )
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -145,7 +144,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
 
 
 class QEffLlamaSwiftKVDecoderLayer(nn.Module):
-    def __init__(self, config: QEffLlamaSwiftKVConfig, layer_idx) -> None:
+    def __init__(self, config: QEffLlamaSwiftKVConfig, layer_idx, sin_cached, cos_cached) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_key_value_heads = config.num_key_value_heads
@@ -153,6 +152,8 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.sin_cached = sin_cached
+        self.cos_cached = cos_cached
 
     def forward(
         self,
@@ -162,10 +163,16 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         comp_ctx_lengths,
         causal_mask,
         batch_index: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Self Attention
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
+        if sin_cached is None:
+            sin_cached = self.sin_cached
+        if cos_cached is None:
+            cos_cached = self.cos_cached
 
         hidden_states, past_key_values = self.self_attn(
             hidden_states=hidden_states,
@@ -174,6 +181,8 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
             comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=causal_mask,
             batch_index=batch_index,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
 
         hidden_states = residual + hidden_states
@@ -194,12 +203,18 @@ class QEffLlamaSwiftKVModel(nn.Module):
         self.vocab_size = config.vocab_size
         self.config = config
 
+        self.rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
         self.embed_tokens = nn.Embedding(self.vocab_size, config.hidden_size, None)
+        sin_cached, cos_cached = self.sin_cached, self.cos_cached
         self.layers = torch.nn.ModuleList(
             [
                 QEffLlamaDecoderLayer(config=config, layer_idx=idx)
                 if idx < config.num_key_value_layers
-                else QEffLlamaSwiftKVDecoderLayer(config=config, layer_idx=idx)
+                else QEffLlamaSwiftKVDecoderLayer(
+                    config=config, layer_idx=idx, sin_cached=sin_cached, cos_cached=cos_cached
+                )
                 for idx in range(config.num_hidden_layers)
             ]
         )
@@ -218,7 +233,14 @@ class QEffLlamaSwiftKVModel(nn.Module):
         for layer_idx in range(self.config.num_key_value_layers, self.config.num_hidden_layers):
             layer = self.layers[layer_idx]
             hidden_states = layer(
-                hidden_states, position_ids, past_key_values, comp_ctx_lengths, causal_mask, batch_index
+                hidden_states,
+                position_ids,
+                past_key_values,
+                comp_ctx_lengths,
+                causal_mask,
+                batch_index,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
         hidden_states = self.norm(hidden_states)
@@ -347,6 +369,8 @@ class QEffLlamaSwiftKVModel(nn.Module):
                 batch_index=batch_index,
                 output_attentions=False,
                 use_cache=True,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
         bsz, q_len, _ = hidden_states.size()
@@ -370,10 +394,11 @@ class QEffLlamaSwiftKVModel(nn.Module):
                         "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                         "with a layer index."
                     )
-                kv_seq_len = past_key_values.get_seq_length(self_attn.layer_idx)
+                # kv_seq_len = past_key_values.get_seq_length(self_attn.layer_idx)
 
-            cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
-            _, key_states = qeff_apply_rotary_pos_emb(torch.empty_like(key_states), key_states, cos, sin, position_ids)
+            _, key_states = qeff_apply_rotary_pos_emb(
+                torch.empty_like(key_states), key_states, self.cos_cached, self.sin_cached, position_ids
+            )
             cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             past_key_values.write_only(key_states, value_states, self_attn.layer_idx, cache_kwargs)
 
