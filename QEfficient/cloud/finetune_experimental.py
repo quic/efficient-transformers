@@ -115,7 +115,7 @@ class FineTuningPipeline:
         dataset_name = dataset_config.get("dataset_name")
         train_split = dataset_config.get("train_split", "train")
         test_split = dataset_config.get("test_split", "test")
-        seed = self.config.training["seed"]
+        seed = dataset_config.get("data_seed", 42)
 
         # Create a copy of dataset_config excluding keys that are passed explicitly
         # to avoid duplicate keyword arguments when unpacking

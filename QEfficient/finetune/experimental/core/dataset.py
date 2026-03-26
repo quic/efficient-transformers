@@ -89,6 +89,7 @@ class SFTDataset(BaseDataset):
         **kwargs,
     ):
         self.split_ratio = split_ratio
+        self.seed = seed
         self.json_file_path = kwargs.get("json_file_path", None)
         self.prompt_template = kwargs.get("prompt_template", None)
         self.completion_template = kwargs.get("completion_template", None)
@@ -96,6 +97,7 @@ class SFTDataset(BaseDataset):
         self.completion_func_path = kwargs.get("completion_func", None)
         self.remove_samples_with_empty_columns = kwargs.get("remove_samples_with_empty_columns", True)
         self.config_name = kwargs.get("config_name", None)
+        self.dataset_disc_style = kwargs.get("dataset_disc_style", None)
 
         if self.json_file_path not in (None, ""):
             if not os.path.isfile(self.json_file_path):
@@ -127,6 +129,7 @@ class SFTDataset(BaseDataset):
             # Load dataset from JSON file
             validate_json_structure(self.json_file_path)
             self.dataset = load_dataset("json", data_files=self.json_file_path, split="train")
+            self.dataset = self.dataset.shuffle(seed=self.seed)
             # Apply train/test split if needed
             if self.split in ["train", "test"]:
                 self.dataset = apply_train_test_split(self.dataset, self.split_ratio, self.split, self.seed)
@@ -149,6 +152,14 @@ class SFTDataset(BaseDataset):
                 load_split = "train"
             # FIXME: Add streaming support for larger datasets.
             self.dataset = load_dataset(self.dataset_name, split=load_split, **load_kwargs)
+            self.dataset = self.dataset.shuffle(seed=self.seed)
+            if self.dataset_disc_style:
+                available_styles = set(self.dataset["category"])
+                if self.dataset_disc_style not in available_styles:
+                    raise RuntimeError(
+                        f"For DiSC dataset the provided disc_style '{self.dataset_disc_style}' is not supported."
+                    )
+                self.dataset = self.dataset.filter(lambda example: example["category"] == self.dataset_disc_style)
 
             if len(available_splits) == 1:
                 self.dataset = apply_train_test_split(self.dataset, self.split_ratio, self.split, self.seed)
