@@ -204,24 +204,20 @@ def _configure_proxy_for_model(instance: "QEFFBaseModel", enable_proxy: bool) ->
     """
     Configure per-instance transform lists based on proxy mode.
 
-    By default, clip/split ONNX transforms are disabled for production exports.
-    They are only enabled when proxy flow is explicitly requested.
+    Keep class-defined ONNX transforms by default.
+    Proxy flow appends additional proxy-only transforms.
     """
     instance._pytorch_transforms = list(instance._pytorch_transforms)
     instance._onnx_transforms = list(instance._onnx_transforms)
     instance._enable_proxy = enable_proxy
-    proxy_only_onnx_transforms = tuple(getattr(instance, "_proxy_only_onnx_transforms", _PROXY_ONLY_ONNX_TRANSFORMS))
 
     if enable_proxy:
         if QeffProxyModuleTransform not in instance._pytorch_transforms:
             instance._pytorch_transforms.append(QeffProxyModuleTransform)
-        for transform in proxy_only_onnx_transforms:
+        for transform in _PROXY_ONLY_ONNX_TRANSFORMS:
             if transform not in instance._onnx_transforms:
                 instance._onnx_transforms.append(transform)
         logger.info("Proxy Model Enabled for QEfficient Model")
-        return
-
-    instance._onnx_transforms = [t for t in instance._onnx_transforms if t not in proxy_only_onnx_transforms]
 
 
 # Define a transformers layers to QEff layers dictionary
