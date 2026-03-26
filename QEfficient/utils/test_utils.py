@@ -5,14 +5,15 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
-from transformers import (
-    AutoModelForCausalLM,
-    AutoModelForImageTextToText,
-)
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
+
+from QEfficient import QEFFAutoModelForCausalLM
 
 
 def load_vlm_model(config):
@@ -71,6 +72,79 @@ def set_num_layers_vlm(config, n_layer=1):
     else:
         config.num_hidden_layers = n_layer
     return config
+
+
+def get_qeff_model_with_sampler(
+    model_name: str,
+    is_vlm: bool,
+    continuous_batching: bool,
+    num_hidden_layers: Optional[int] = -1,
+    config: Optional[AutoConfig] = None,
+    qaic_config: Optional[dict] = None,
+):
+    """
+    Get a QEfficient model with the sampler transform.
+
+    Args:
+        model_name (str): The name of the model to test.
+        is_vlm (bool): Whether the model is a vision-language model.
+        continuous_batching (bool): Whether to use continuous batching.
+        num_hidden_layers (Optional[int]): The number of hidden layers to use.
+        config (Optional[AutoConfig]): The configuration to use.
+        qaic_config (Optional[dict]): The QAIC configuration to use.
+    """
+    processor = None
+    if is_vlm:
+        # For Intern models only
+        additional_configs = {}
+        if config is None:
+            config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            config = set_num_layers_vlm(config, num_hidden_layers)
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            config=config,
+            trust_remote_code=True,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
+        processor = InternProcessor(model_hf, tokenizer)
+        additional_configs["config"] = config
+        additional_configs["kv_offload"] = True
+        additional_configs["trust_remote_code"] = True
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            model_name,
+            continuous_batching=continuous_batching,
+            qaic_config=qaic_config,
+            **additional_configs,
+        )
+    else:
+        if config is not None:
+            model_hf = AutoModelForCausalLM.from_config(
+                config,
+                attn_implementation="eager",
+            )
+        elif num_hidden_layers != -1:
+            model_hf = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                num_hidden_layers=num_hidden_layers,
+                attn_implementation="eager",
+                low_cpu_mem_usage=False,
+            )
+        else:
+            model_hf = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                attn_implementation="eager",
+                low_cpu_mem_usage=False,
+            )
+        torch_dtype = getattr(model_hf.config, "torch_dtype", None)
+        if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
+            model_hf = model_hf.to(torch.float32)
+        qeff_model = QEFFAutoModelForCausalLM(
+            model_hf,
+            continuous_batching=continuous_batching,
+            qaic_config=qaic_config,
+        )
+
+    return qeff_model, processor
 
 
 # Processor class for InternVL models
