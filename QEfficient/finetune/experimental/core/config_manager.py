@@ -15,6 +15,7 @@ import sys
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from QEfficient.finetune.experimental.core.utils import constants
 
 import yaml
 from transformers.hf_argparser import HfArgumentParser
@@ -807,7 +808,7 @@ class ConfigManager:
             training_dtype = training_config.get("torch_dtype")
             if training_dtype:
                 # Convert from training format (fp16/bf16) to model format (float16/bfloat16)
-                dtype_mapping = {"fp16": "float16", "bf16": "bfloat16"}
+                dtype_mapping = constants.DTYPE_MAPPING
                 model_config["torch_dtype"] = dtype_mapping.get(training_dtype, "auto")
 
         return model_config
