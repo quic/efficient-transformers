@@ -131,6 +131,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
         output_names=all_args.get("output_names"),
         dynamic_axes=all_args.get("dynamic_axes"),
         export_kwargs=all_args.get("export_kwargs", None),
+        blocking_kwargs=all_args.get("blocking_kwargs", None),
         onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
     )
 

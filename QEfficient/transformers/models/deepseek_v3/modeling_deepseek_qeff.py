@@ -8,23 +8,8 @@ from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
-
-# Assuming these are imported from the original DeepseekV3 code
-# from transformers.models.deepseek_v3.modeling_deepseek_v3 import (
-#     DeepseekV3Config,
-#     DeepseekV3RMSNorm,
-#     DeepseekV3MLP,
-#     DeepseekV3MoE,
-#     rotate_half,
-#     repeat_kv,
-#     DeepseekV3Attention,
-#     DeepseekV3DecoderLayer,
-#     DeepseekV3Model,
-#     DeepseekV3ForCausalLM,
-#     DeepseekV3PreTrainedModel,
-#     logger,
-# )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
@@ -234,11 +219,11 @@ class QEffDeepseekV3Attention(nn.Module):
         self.per_head_q_up = torch.nn.Parameter(per_head_q_up.detach().clone())
         self.per_head_k_up = torch.nn.Parameter(per_head_k_up.detach().clone())
 
-        out = torch.matmul(per_head_q_up[0,:,:], per_head_k_up[0,:,:])
-        for i in range(1, self.num_heads):
-            x = torch.matmul(per_head_q_up[i,:,:], per_head_k_up[i,:,:])
-            out = torch.cat((out,x), 0)
-        fusedqk = out.reshape(self.num_heads, -1, self.kv_lora_rank)
+        fusedqk_list = []
+        for i in range(self.num_heads):
+            fusedqk_list.append(torch.matmul(per_head_q_up[i,:,:], per_head_k_up[i,:,:]))
+        fusedqk = torch.cat(fusedqk_list, dim=0)
+        fusedqk = fusedqk.reshape(self.num_heads, -1, self.kv_lora_rank)
 
         self.fusedqk = torch.nn.Parameter(fusedqk.detach().clone())
 
@@ -298,42 +283,51 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
-        x = []
-        for k in range(n_head_ckv):
-            k_nope = torch.matmul(kva[:,k,:,:], self.k_up[:, :, k*p*self.qk_nope_head_dim: (k+1)*p*self.qk_nope_head_dim])
-            k_nope = k_nope.view(bsz, -1, p, self.qk_nope_head_dim).transpose(1, 2)
+        breakpoint()
+        blocking_config = getattr(self, "attn_blocking_config", None)
+        num_kv_blocks = blocking_config.num_kv_blocks #1
+        seq_len = compressed_kv.shape[-2]
+        block_size = -(-seq_len // num_kv_blocks) #32
 
-            for i in range(k*p, (k+1)*p):
+        attn_output_list = []
+        for k in range(n_head_ckv):
+            attn_weights_list = []
+            for j in range(num_kv_blocks):
                 if enable_absorption:
                     if absorb_online:
-                        if i==0:
+                        if j==0:
                             print("online absorption")
-                        out = torch.matmul(self.per_head_q_up[i,:,:], self.per_head_k_up[i,:,:])
-                        out = out.reshape(1, -1, self.kv_lora_rank)
+                        out = torch.matmul(self.per_head_q_up[k*p:(k+1)*p,:,:], self.per_head_k_up[k*p:(k+1)*p,:,:])
                         out2 = torch.matmul(q_a_proj_out.unsqueeze(1), out)
                     else:
-                        if i==0:
+                        if j==0:
                             print("using fused qk")
-                        out2 = torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk[i,:,:])
+                        out2 = torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk[k*p:(k+1)*p,:,:])
 
-                    out3 = torch.cat((out2, q_pe[:,i,:,:].unsqueeze(1)), -1)
-                    kva_kpe = torch.cat((kva[:,k,:,:],k_pe[:,k,:,:]), -1).unsqueeze(1)
+                    out3 = torch.cat((out2, q_pe[:,k*p:(k+1)*p,:,:]), -1)
+                    kva_kpe = torch.cat((kva[:,k,j*block_size:(j+1)*block_size,:],k_pe[:,k,j*block_size:(j+1)*block_size,:]), -1).unsqueeze(1)
                     attn_weights = torch.matmul(out3, kva_kpe.transpose(2,3)) * self.softmax_scale
                 else:
-                    if i==0:
+                    if j==0:
                         print("no absorption")
-                    query_states = torch.cat((q_nope[:,i,:,:], q_pe[:,i,:,:]), -1).unsqueeze(1)
-                    key_states = torch.cat((k_nope[:,i%p,:,:], k_pe[:,k,:,:]), -1).unsqueeze(1)
+                    k_nope = torch.matmul(kva[:,k,:,:], self.k_up[:, :, k*p*self.qk_nope_head_dim: (k+1)*p*self.qk_nope_head_dim])
+                    k_nope = k_nope.view(bsz, -1, p, self.qk_nope_head_dim).transpose(1, 2)
+                    key_states = torch.cat((k_nope[:,:,j*block_size:(j+1)*block_size,:], k_pe[:,k,j*block_size:(j+1)*block_size,:].unsqueeze(1).repeat(1,p,1,1)), -1)
+                    query_states = torch.cat((q_nope[:,k*p:(k+1)*p,:,:], q_pe[:,k*p:(k+1)*p,:,:]), -1)
                     attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
-                if attention_mask is not None:  # no matter the length, we just slice it
-                    attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
+                attn_weights_list.append(attn_weights)
 
-                attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
-                attn_output = torch.matmul(attn_weights, value_states[:,i,:,:])
-                x.append(attn_output)
+            attn_weights = torch.cat(attn_weights_list, dim=-1)
 
-        attn_output = torch.cat(x, dim=1)
+            if attention_mask is not None:  # no matter the length, we just slice it
+                attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
+
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
+            attn_output = torch.matmul(attn_weights, value_states[:,k*p:(k+1)*p,:,:])
+            attn_output_list.append(attn_output)
+
+        attn_output = torch.cat(attn_output_list, dim=1)
 
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
         attn_output = self.o_proj(attn_output)

@@ -39,11 +39,10 @@ inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded
 inputs.pop("token_type_ids", None)
 inputs = {k: torch.from_numpy(v) for k, v in inputs.items()}
 
-cache_len = 128
-pad_shape_k = (1, 64, cache_len, 192)
-pad_shape_v = (1, 64, cache_len, 128)
-pad_shape_ckv = (1, num_kv_heads_repeat, cache_len, 512)
-pad_shape_k_pe = (1, num_kv_heads_repeat, cache_len, 64)
+pad_shape_k = (1, 64, CTX_LEN, 192)
+pad_shape_v = (1, 64, CTX_LEN, 128)
+pad_shape_ckv = (1, num_kv_heads_repeat, CTX_LEN, 512)
+pad_shape_k_pe = (1, num_kv_heads_repeat, CTX_LEN, 64)
 
 past_key_values = []
 compressed_kvs = []
@@ -91,6 +90,11 @@ print("Prompt:", repr(prompt))
 print("Completion:", repr(predicted_string))
 
 
+
+
+
+qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}
+
 prefill_seq_len = 1
 ctx_len = 1024
 
@@ -104,6 +108,7 @@ qpc_path = qeff_model.compile(
     num_devices=num_kv_heads_repeat,
     num_cores=16,
     #prefill_only=True,
+    qaic_config=qaic_config,
 )
 
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)
