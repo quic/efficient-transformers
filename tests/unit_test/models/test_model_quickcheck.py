@@ -52,6 +52,7 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModelForSpeechSeq2Seq,
 )
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
+from QEfficient.utils._utils import _infer_specialization_name, to_named_specializations
 from QEfficient.utils.run_utils import ApiRunner
 
 ort.set_default_logger_severity(3)
@@ -707,3 +708,238 @@ def test_proxy_toggle_onnx_transform_policy_for_vlm():
 
     _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+# ---------------------------------------------------------------------------
+# Tests for the named-specializations format (backend team feature request)
+# ---------------------------------------------------------------------------
+
+
+class TestInferSpecializationName:
+    """Unit tests for _infer_specialization_name."""
+
+    def test_prefill_detected_by_seq_len_gt_1(self):
+        spec = {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 0) == "Prefill"
+
+    def test_decode_detected_by_seq_len_1_string(self):
+        spec = {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 1) == "Decode"
+
+    def test_decode_detected_by_seq_len_1_int(self):
+        spec = {"batch_size": 1, "seq_len": 1, "ctx_len": 4096}
+        assert _infer_specialization_name(spec, 1) == "Decode"
+
+    def test_vision_detected_by_vision_size_key(self):
+        spec = {"batch_size": "1", "vision_size": "247", "grid_height": "988", "grid_width": "1176"}
+        assert _infer_specialization_name(spec, 0) == "Vision"
+
+    def test_vision_detected_by_img_size_key(self):
+        spec = {"batch_size": "1", "img_size": "336"}
+        assert _infer_specialization_name(spec, 0) == "Vision"
+
+    def test_encoder_detected_by_encoder_ctx_len(self):
+        spec = {"batch_size": "1", "encoder_ctx_len": "1500"}
+        assert _infer_specialization_name(spec, 0) == "Encoder"
+
+    def test_embedding_detected_by_sequence_length(self):
+        spec = {"batch_size": "1", "sequence_length": "128"}
+        assert _infer_specialization_name(spec, 0) == "Embedding"
+
+    def test_generic_fallback_for_unknown_shape(self):
+        spec = {"custom_dim": "42"}
+        assert _infer_specialization_name(spec, 3) == "Graph_3"
+
+
+class TestToNamedSpecializations:
+    """Unit tests for to_named_specializations — the main serialization helper."""
+
+    def test_llm_prefill_decode_pair(self):
+        """Standard LLM: two specializations → Prefill + Decode."""
+        flat = [
+            {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+        ]
+        result = to_named_specializations(flat)
+        assert len(result) == 2
+        assert result[0] == {
+            "name": "Prefill",
+            "symbols": {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+        }
+        assert result[1] == {
+            "name": "Decode",
+            "symbols": {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+        }
+
+    def test_llm_continuous_batching_with_full_batch_size(self):
+        """Continuous-batching LLM: full_batch_size present in both entries."""
+        flat = [
+            {"batch_size": "1", "full_batch_size": "16", "seq_len": "128", "ctx_len": "4096"},
+            {"batch_size": "16", "full_batch_size": "16", "seq_len": "1", "ctx_len": "4096"},
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Prefill"
+        assert result[1]["name"] == "Decode"
+        assert result[0]["symbols"]["full_batch_size"] == "16"
+        assert result[1]["symbols"]["batch_size"] == "16"
+
+    def test_prefill_only_single_entry(self):
+        """When prompt_len == 1 the decode entry is dropped; only one entry remains."""
+        flat = [{"batch_size": "1", "seq_len": "1", "ctx_len": "128"}]
+        result = to_named_specializations(flat)
+        assert len(result) == 1
+        assert result[0]["name"] == "Decode"
+
+    def test_vlm_vision_specialization(self):
+        """VLM vision encoder: no seq_len, vision-specific keys → 'Vision'."""
+        flat = [
+            {
+                "batch_size": "1",
+                "vision_size": "247",
+                "grid_height": "988",
+                "grid_width": "1176",
+                "grid_h": "26",
+                "grid_w": "38",
+            }
+        ]
+        result = to_named_specializations(flat)
+        assert len(result) == 1
+        assert result[0]["name"] == "Vision"
+        assert result[0]["symbols"]["vision_size"] == "247"
+
+    def test_vlm_lang_prefill_decode(self):
+        """VLM language side: prefill + decode with vision_batch_size."""
+        flat = [
+            {
+                "batch_size": "1",
+                "ctx_len": "4096",
+                "seq_len": "128",
+                "vision_batch_size": "1",
+                "vision_size": "247",
+            },
+            {
+                "batch_size": "1",
+                "ctx_len": "4096",
+                "seq_len": "1",
+                "vision_batch_size": "1",
+                "vision_size": "247",
+            },
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Prefill"
+        assert result[1]["name"] == "Decode"
+        assert result[0]["symbols"]["vision_size"] == "247"
+        assert result[1]["symbols"]["vision_size"] == "247"
+
+    def test_all_values_coerced_to_strings(self):
+        """Integer values in the flat dict must be stringified in symbols."""
+        flat = [{"batch_size": 1, "seq_len": 32, "ctx_len": 128}]
+        result = to_named_specializations(flat)
+        symbols = result[0]["symbols"]
+        assert all(isinstance(v, str) for v in symbols.values())
+
+    def test_output_structure_keys(self):
+        """Every entry must have exactly 'name' and 'symbols' keys."""
+        flat = [
+            {"batch_size": "1", "seq_len": "64", "ctx_len": "256"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "256"},
+        ]
+        result = to_named_specializations(flat)
+        for entry in result:
+            assert set(entry.keys()) == {"name", "symbols"}
+
+    def test_whisper_encoder_specialization(self):
+        """Whisper encoder: encoder_ctx_len present, no seq_len → 'Encoder'."""
+        flat = [
+            {"batch_size": "1", "encoder_ctx_len": "1500"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "448"},
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Encoder"
+        assert result[1]["name"] == "Decode"
+        assert result[0]["symbols"]["encoder_ctx_len"] == "1500"
+
+    def test_text_embedding_specialization(self):
+        """Text embedding (BERT): sequence_length present, no seq_len → 'Embedding'."""
+        flat = [{"batch_size": "1", "sequence_length": "128"}]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Embedding"
+        assert result[0]["symbols"]["sequence_length"] == "128"
+
+    def test_roundtrip_via_json(self):
+        """Serializing to JSON and back must preserve the named format exactly."""
+        import json
+
+        flat = [
+            {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+        ]
+        named = to_named_specializations(flat)
+        payload = {"specializations": named}
+        roundtripped = json.loads(json.dumps(payload))
+        assert roundtripped["specializations"][0]["name"] == "Prefill"
+        assert roundtripped["specializations"][1]["name"] == "Decode"
+        assert roundtripped["specializations"][0]["symbols"]["seq_len"] == "128"
+
+    def test_compile_helper_create_and_dump_specializations(self, tmp_path):
+        """create_and_dump_specializations must write the new named format to disk."""
+        import json
+
+        from QEfficient.compile.compile_helper import create_and_dump_specializations
+
+        out_path = tmp_path / "specializations.json"
+        create_and_dump_specializations(
+            batch_size=1,
+            prompt_len=128,
+            ctx_len=4096,
+            path=str(out_path),
+        )
+        data = json.loads(out_path.read_text())
+        specs = data["specializations"]
+        assert len(specs) == 2
+        assert specs[0]["name"] == "Prefill"
+        assert specs[1]["name"] == "Decode"
+        assert "symbols" in specs[0]
+        assert specs[0]["symbols"]["seq_len"] == "128"
+        assert specs[1]["symbols"]["seq_len"] == "1"
+
+    def test_compile_helper_prefill_only_when_prompt_len_1(self, tmp_path):
+        """When prompt_len==1 and no full_batch_size, only one entry is written."""
+        import json
+
+        from QEfficient.compile.compile_helper import create_and_dump_specializations
+
+        out_path = tmp_path / "specializations_prefill_only.json"
+        create_and_dump_specializations(
+            batch_size=1,
+            prompt_len=1,
+            ctx_len=128,
+            path=str(out_path),
+        )
+        data = json.loads(out_path.read_text())
+        specs = data["specializations"]
+        assert len(specs) == 1
+        assert specs[0]["name"] == "Decode"
+
+    def test_compile_helper_continuous_batching(self, tmp_path):
+        """With full_batch_size, both entries carry full_batch_size in symbols."""
+        import json
+
+        from QEfficient.compile.compile_helper import create_and_dump_specializations
+
+        out_path = tmp_path / "specializations_cb.json"
+        create_and_dump_specializations(
+            batch_size=1,
+            prompt_len=128,
+            ctx_len=4096,
+            path=str(out_path),
+            full_batch_size=16,
+        )
+        data = json.loads(out_path.read_text())
+        specs = data["specializations"]
+        assert len(specs) == 2
+        assert specs[0]["name"] == "Prefill"
+        assert specs[1]["name"] == "Decode"
+        assert specs[0]["symbols"]["full_batch_size"] == "16"
+        assert specs[1]["symbols"]["full_batch_size"] == "16"
+        assert specs[1]["symbols"]["batch_size"] == "16"
