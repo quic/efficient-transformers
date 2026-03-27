@@ -1582,6 +1582,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
+                specialization_module_name="Vision",
                 convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
