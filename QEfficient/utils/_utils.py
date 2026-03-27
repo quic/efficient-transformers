@@ -845,23 +845,22 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
 
     The naming convention follows the backend team's request:
 
-    - If ``module_name`` is provided and there is only one specialization for that
-      module, the module name itself is used as the graph name (e.g. ``"text_encoder"``,
-      ``"vae_decoder"``).  When there are multiple specializations for the same module
-      the name is derived from a distinguishing key in the spec (see ``model_type``
-      rule below) or falls back to ``f"{module_name}_{index}"``.
-    - ``"model_type_<value>"`` when the spec contains a ``model_type`` key and
-      ``module_name`` is provided (e.g. Wan transformer high-noise / low-noise).
+    - If ``module_name`` is provided it is used directly as the graph name
+      (e.g. ``"text_encoder"``, ``"vae_decoder"``).  For multi-specialization
+      modules that carry a ``model_type`` key the name becomes
+      ``f"{module_name}_model_type_{value}"`` (e.g. Wan transformer).
     - "Prefill" for entries whose ``seq_len`` value is not "1" / 1.
     - "Decode" for entries whose ``seq_len`` is "1" / 1.
-    - "Vision" for entries that contain vision-specific keys (e.g. ``vision_size``,
-      ``img_size``, ``grid_height``) but no ``seq_len`` key.
-    - "Encoder" for entries that contain ``encoder_ctx_len`` but no ``seq_len`` key
+    - "Encoder" for entries that contain ``encoder_ctx_len`` but no ``seq_len``
       (e.g. Whisper encoder).
-    - "Embedding" for entries that contain ``sequence_length`` but no ``seq_len`` key
+    - "Embedding" for entries that contain ``sequence_length`` but no ``seq_len``
       (e.g. BERT / text-embedding models).
-    - A generic fallback ``f"Graph_{index}"`` for anything that does not match any
-      of the above patterns.
+    - A generic fallback ``f"Graph_{index}"`` for anything else.
+
+    Note: "Vision" is **not** inferred from spec keys because VLM vision specs
+    vary too much across models (some carry ``seq_len`` + ``ctx_len``, some do
+    not).  Callers that know they are compiling a vision encoder should pass
+    ``module_name="Vision"`` explicitly.
 
     Parameters
     ----------
@@ -871,25 +870,22 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
         Zero-based position of this entry in the specializations list, used only
         for the generic fallback name.
     module_name : str, optional
-        Pipeline module name (e.g. ``"text_encoder"``, ``"transformer"``).
-        When provided it takes priority for single-specialization modules and
-        is used as a prefix for multi-specialization modules.
+        Explicit graph name hint.  When provided it takes priority over all
+        heuristics.  Used by diffusers pipeline modules and VLM vision/lang
+        compile call sites.
 
     Returns
     -------
     str
         The inferred graph name.
     """
-    # Module-name-aware naming for diffusers pipeline modules.
+    # Explicit name hint — used by diffusers modules and VLM vision/lang paths.
     if module_name is not None:
         if "model_type" in spec:
             return f"{module_name}_model_type_{spec['model_type']}"
         return module_name
 
-    vision_only_keys = {"vision_size", "img_size", "grid_height", "grid_width", "grid_h", "grid_w"}
     if "seq_len" not in spec:
-        if vision_only_keys & set(spec.keys()):
-            return "Vision"
         if "encoder_ctx_len" in spec:
             return "Encoder"
         if "sequence_length" in spec:

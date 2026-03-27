@@ -643,13 +643,48 @@ class TestInferSpecializationName:
         spec = {"batch_size": 1, "seq_len": 1, "ctx_len": 4096}
         assert _infer_specialization_name(spec, 1) == "Decode"
 
-    def test_vision_detected_by_vision_size_key(self):
-        spec = {"batch_size": "1", "vision_size": "247", "grid_height": "988", "grid_width": "1176"}
-        assert _infer_specialization_name(spec, 0) == "Vision"
-
-    def test_vision_detected_by_img_size_key(self):
+    def test_vision_via_explicit_module_name(self):
+        """Vision name must be passed explicitly — not inferred from spec keys."""
         spec = {"batch_size": "1", "img_size": "336"}
-        assert _infer_specialization_name(spec, 0) == "Vision"
+        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
+
+    def test_vision_explicit_qwen25vl(self):
+        spec = {"batch_size": "1", "vision_size": "247", "grid_height": "988", "grid_width": "1176"}
+        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
+
+    def test_vision_explicit_gemma3(self):
+        """Gemma3 vision spec has seq_len+ctx_len — still 'Vision' when module_name passed."""
+        spec = {"batch_size": 1, "img_size": 896, "seq_len": 128, "ctx_len": 4096}
+        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
+
+    def test_vision_explicit_mistral3(self):
+        """Mistral3 vision spec — 'Vision' when module_name passed."""
+        spec = {"batch_size": 1, "seq_len": 128, "ctx_len": 4096, "image_size": 1024, "vision_size": 1024}
+        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
+
+    def test_vision_explicit_molmo(self):
+        """Molmo vision spec — 'Vision' when module_name passed."""
+        spec = {
+            "batch_size": 1,
+            "img_size": 336,
+            "seq_len": 128,
+            "ctx_len": 4096,
+            "img_tile": 336,
+            "num_images": 1,
+            "num_patch": 576,
+            "valid_size": 576,
+        }
+        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
+
+    def test_vision_spec_without_module_name_falls_to_prefill(self):
+        """Without module_name, a vision spec with seq_len falls through to Prefill."""
+        spec = {"batch_size": 1, "img_size": 336, "seq_len": 128, "ctx_len": 4096}
+        assert _infer_specialization_name(spec, 0) == "Prefill"
+
+    def test_vision_spec_without_module_name_no_seq_len_falls_to_graph_n(self):
+        """Without module_name, a vision spec with no seq_len falls to Graph_N."""
+        spec = {"batch_size": "1", "img_size": "336"}
+        assert _infer_specialization_name(spec, 0) == "Graph_0"
 
     def test_encoder_detected_by_encoder_ctx_len(self):
         spec = {"batch_size": "1", "encoder_ctx_len": "1500"}
@@ -704,7 +739,7 @@ class TestToNamedSpecializations:
         assert result[0]["name"] == "Decode"
 
     def test_vlm_vision_specialization(self):
-        """VLM vision encoder: no seq_len, vision-specific keys → 'Vision'."""
+        """VLM vision encoder: module_name='Vision' passed explicitly → 'Vision'."""
         flat = [
             {
                 "batch_size": "1",
@@ -715,7 +750,7 @@ class TestToNamedSpecializations:
                 "grid_w": "38",
             }
         ]
-        result = to_named_specializations(flat)
+        result = to_named_specializations(flat, module_name="Vision")
         assert len(result) == 1
         assert result[0]["name"] == "Vision"
         assert result[0]["symbols"]["vision_size"] == "247"

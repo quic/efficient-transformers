@@ -500,7 +500,11 @@ class QEFFBaseModel(ABC):
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
-            specializations_data = {"specializations": to_named_specializations(specializations)}
+            # Pop the hint before it reaches the compiler command builder.
+            spec_module_name = compiler_options.pop("specialization_module_name", None)
+            specializations_data = {
+                "specializations": to_named_specializations(specializations, module_name=spec_module_name)
+            }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
 
