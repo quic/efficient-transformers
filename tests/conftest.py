@@ -13,7 +13,7 @@ from transformers import logging
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
-_QUICKCHECK_FILE = "tests/test_model_quickcheck.py"
+_QUICKCHECK_FILE = "tests/unit_test/models/test_model_quickcheck.py"
 _QUICKCHECK_SUMMARY = {}
 _QUICKCHECK_META = {
     "test_causal_lm_cpu_runtime_parity_with_api_runner": (
