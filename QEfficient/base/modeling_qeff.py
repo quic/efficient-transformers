@@ -539,6 +539,9 @@ class QEFFBaseModel(ABC):
 
             return self.qpc_path
 
+        # Pop internal-only kwargs that must never reach the compiler command line.
+        spec_module_name = compiler_options.pop("specialization_module_name", None)
+
         command = (
             constants.COMPILER
             + [
@@ -609,8 +612,6 @@ class QEFFBaseModel(ABC):
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
-            # Pop the hint before it reaches the compiler command builder.
-            spec_module_name = compiler_options.pop("specialization_module_name", None)
             specializations_data = {
                 "specializations": to_named_specializations(specializations, module_name=spec_module_name)
             }
