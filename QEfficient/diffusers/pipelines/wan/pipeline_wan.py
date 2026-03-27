@@ -14,6 +14,7 @@ The pipeline supports WAN 2.2 architectures with unified transformer.
 TODO: 1. Update umt5 to Qaic; present running on cpu
 """
 
+import json
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -374,6 +375,43 @@ class QEffWanPipeline:
         else:
             compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
 
+    def write_io_files(
+        self,
+        inputs: Dict[str, np.ndarray],
+        write_io_dir: str,
+        write_io_subdir: str,
+        write_io_name: str, 
+        include_dims: bool = False
+        ):
+        """Write input/output files for debugging"""
+        os.makedirs(f"{write_io_dir}/{write_io_subdir}", exist_ok=True)
+        
+        io_specs = []
+        
+        # Write inputs
+        for name, array in inputs.items():
+            array.tofile(f"{write_io_dir}/{write_io_subdir}/{name}.raw")
+            spec = {
+                "path": f"{write_io_subdir}/{name}.raw",
+                "io-direction": "in",
+                "elem-size": array.itemsize,
+                "map-to": name,
+            }
+            if include_dims:
+                spec["dims"] = list(array.shape)
+            io_specs.append(spec)
+        
+        # Write JSON specification
+        with open(f"{write_io_dir}/{write_io_name}.json", "w") as fp:
+            json.dump({"IO-files": [io_specs]}, fp, indent=2)
+        
+        print(f"IO files written to: {write_io_dir}/{write_io_subdir}")
+
+
+
+# write_io_files(inputs=inputs_aic, write_io_dir="unified_720_io",write_io_subdir="io",write_io_name="wan_unified", include_dims=True)
+
+
     def __call__(
         self,
         prompt: Union[str, List[str]] = None,
@@ -397,7 +435,8 @@ class QEffWanPipeline:
         max_sequence_length: int = 512,
         custom_config_path: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
-        cache_threshold: Optional[float] = None,
+        cache_threshold_high: Optional[float] = None,
+        cache_threshold_low: Optional[float] = None,
         parallel_compile: bool = True,
     ):
         """
@@ -571,7 +610,7 @@ class QEffWanPipeline:
         else:
             boundary_timestep = None
 
-        # Step 7: Initialize QAIC inference session for transformer
+        # # Step 7: Initialize QAIC inference session for transformer
         if self.transformer_high.qpc_session is None:
             self.transformer_high.qpc_session = QAICInferenceSession(
                 str(self.transformer_high.qpc_path), device_ids=self.transformer_high.device_ids
@@ -640,7 +679,7 @@ class QEffWanPipeline:
                     current_model = self.transformer_high.model
                     current_guidance_scale = guidance_scale
                     picked_qpc_session=self.transformer_high.qpc_session
-                    cache_threshold=0.1
+                    cache_threshold=cache_threshold_high
                     model_type = torch.ones(1, dtype=torch.int64)  # High-noise model indicator
                 else:
                     # Low-noise stage
@@ -652,7 +691,7 @@ class QEffWanPipeline:
                     if count_low<3:
                         cache_threshold=0.0
                     else:
-                        cache_threshold=0.065
+                        cache_threshold=cache_threshold_low
                 # Prepare latent input with proper dtype
                 latent_model_input = latents.to(transformer_dtype)
 
@@ -736,8 +775,15 @@ class QEffWanPipeline:
                 
                     # transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
                     t1=end_transformer_step_time-start_transformer_step_time
-                    print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
-                    print("Current cache--->",cache_threshold)
+
+                    if picked_qpc_session == self.transformer_high.qpc_session:
+                        session_picked="high"
+                    else:
+                        session_picked="low"
+                    print("##################################################################")
+                    print(f"\n\nDIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f}sec,")
+                    # print(outputs["difference"])
+                    # print("difference value is-->",outputs['difference'])
                     # Process transformer output
                     hidden_states = torch.tensor(outputs["output"])
 
@@ -754,10 +800,6 @@ class QEffWanPipeline:
                 if self.do_classifier_free_guidance:  # Note: CFG is False for WAN Lightning
                     with current_model.cache_context("uncond"):
                         # print(picked_qpc_session)
-                        if picked_qpc_session == self.transformer_high.qpc_session:
-                            print("selected---> High")
-                        else:
-                            print("selected---> Low")
                         # QAIC inference for unconditional prediction
                         if cache_threshold:
                             inputs_aic2['cache_threshold']= np.array(cache_threshold, dtype=np.float32) 
@@ -772,8 +814,11 @@ class QEffWanPipeline:
                         t2= end_transformer_step_time - start_transformer_step_time
                         transformer_perf.append(t1+t2)
 
-                        print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
+                        # print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
                         # Process unconditional output
+                        # print("difference value is-->",outputs['difference'])
+                        print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f}")
+                        print("\n\n##################################################################")
                         hidden_states = torch.tensor(outputs["output"])
 
                         # Reshape unconditional output

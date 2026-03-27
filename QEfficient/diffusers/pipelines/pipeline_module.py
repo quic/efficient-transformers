@@ -652,6 +652,8 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             "tsp": {0: "model_type"},
         }
 
+        # downsampled_hidden_dim= hidden_dim/4
+
         if self.model.enable_first_cache:
             
             example_inputs["prev_remain_block_residuals"]= torch.randn(
@@ -663,7 +665,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             example_inputs["prev_first_block_residuals"]= torch.randn(
                 batch_size,
                 cl,
-                hidden_dim,
+                1280,
                 dtype=torch.float32,
             )
             # example_inputs["prev_low_hidden_state_residuals"] = torch.randn(
@@ -688,6 +690,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
                 "prev_remain_block_residuals_RetainedState",
                 # "prev_low_first_block_residuals_RetainedState",
                 # "prev_low_hidden_state_residuals_RetainedState"
+                # "difference"
             ])
 
             # update dynamic axes 
@@ -754,16 +757,16 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
-        # kv_cache_dtype = "float16"
+        kv_cache_dtype = "float16"
         
-        # custom_io = {
-        #         "prev_first_block_residuals": kv_cache_dtype,
-        #         "prev_remain_block_residuals": kv_cache_dtype,
-        #         "prev_first_block_residuals_RetainedState":kv_cache_dtype,
-        #         "prev_remain_block_residuals_RetainedState": kv_cache_dtype,
-        #         }
-        
+        custom_io = {
+                "prev_first_block_residuals": kv_cache_dtype,
+                "prev_remain_block_residuals": kv_cache_dtype,
+                "prev_first_block_residuals_RetainedState":kv_cache_dtype,
+                "prev_remain_block_residuals_RetainedState": kv_cache_dtype,
+                }
         self._compile(specializations=specializations,
                       retained_state=True,
-                    #   custom_io=custom_io,
+                      custom_io=custom_io,
+                    #   node_precision_info="/home/amitraj/project/first_cache/efficient-transformers/QEfficient/diffusers/pipelines/configs/wan2.yaml",
                       **compiler_options)

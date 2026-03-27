@@ -160,6 +160,14 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
     This model extends the base WanTransformer3DModel with QEfficient optimizations.
     """
 
+    # Downsampling factor applied to the first-block residual before storing it as
+    # retained state and before the similarity check. This reduces the retained-state
+    # memory footprint and the all-reduce communication cost of the .mean() operations
+    # in sequence-parallel execution (e.g. factor=4 → 4× smaller retained state).
+    # Only the *key* used for the cache decision is downsampled; the remaining-blocks
+    # residual used for reconstruction is kept at full resolution.
+    FIRST_BLOCK_RESIDUAL_DOWNSAMPLE_FACTOR: int = 4
+
     def set_adapters(
         self,
         adapter_names: Union[List[str], str],
@@ -229,28 +237,63 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         
         return hidden_state_residual    
     
-    def _check_similarity(
-        self,
-        first_block_residuals: torch.Tensor,
-        prev_first_block_residuals: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Compute cache decision (returns boolean tensor).
+    # def _check_similarity(
+    #     self,
+    #     first_block_residuals: torch.Tensor,
+    #     prev_first_block_residuals: torch.Tensor,
+    # ) -> torch.Tensor:
+    #     """
+    #     Compute cache decision (returns boolean tensor).
 
-        Cache is used when:
-        1. Not in warmup period (current_step >= cache_warmup_steps)
-        2. Previous residual exists (not first step)
-        3. Similarity is below threshold
+    #     Cache is used when:
+    #     1. Not in warmup period (current_step >= cache_warmup_steps)
+    #     2. Previous residual exists (not first step)
+    #     3. Similarity is below threshold
+    #     """
+    #     # Compute similarity (L1 distance normalized by magnitude)
+    #     # This must be computed BEFORE any conditional logic
+    #     diff = (first_block_residuals - prev_first_block_residuals).abs().mean()
+    #     norm = first_block_residuals.abs().mean()
+        
+    #     difference = diff / (norm + 1e-8)
+        
+    #     return   difference
+    def _check_similarity(self, first_block_residuals: torch.Tensor, prev_first_block_residuals: torch.Tensor) -> torch.Tensor:
         """
-        # Compute similarity (L1 distance normalized by magnitude)
-        # This must be computed BEFORE any conditional logic
-        diff = (first_block_residuals - prev_first_block_residuals).abs().mean()
-        norm = first_block_residuals.abs().mean()
-        
+        Compute the L1-normalised difference between the current and previous
+        first-block residuals to decide whether the cache can be reused.
+
+        Both inputs are expected to be **already downsampled** along the hidden
+        dimension (via FIRST_BLOCK_RESIDUAL_DOWNSAMPLE_FACTOR), so the .mean()
+        operations here work on a proportionally smaller tensor — reducing the
+        all-reduce communication cost in sequence-parallel execution.
+
+        A SCALE factor of 1/1024 is applied before arithmetic to keep FP16
+        values in a numerically safe range.
+
+        Args:
+            first_block_residuals: Downsampled residual for the current step,
+                shape [B, seq_len, hidden_dim // DOWNSAMPLE_FACTOR].
+            prev_first_block_residuals: Downsampled residual cached from the
+                previous step, same shape as first_block_residuals.
+
+        Returns:
+            Scalar tensor representing the normalised L1 difference.
+        """
+        # SCALE = 1.0 / 1024.0
+
+        # Both tensors are already downsampled — no further slicing needed here.
+        # a = first_block_residuals * SCALE
+        # b = prev_first_block_residuals * SCALE
+
+        a = first_block_residuals
+        b = prev_first_block_residuals
+
+        diff = (a - b).abs().mean()
+        norm = a.abs().mean()
         difference = diff / (norm + 1e-8)
-        
-        return   difference
-    
+        return difference
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -307,36 +350,44 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         #################### Magic of first block caching begins here ####################    
 
         if cache_threshold is not None:
-            # Run the first layer first
+            # ── Step 1: always run blocks[0] ──────────────────────────────────
             first_block_out = self.blocks[0](hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
-            current_first_block_residuals= first_block_out - hidden_states
-            
-            
-            # calculate remaning block residuals
-            
-            current_remaning_block_residuals=self._compute_remaining_block(
-                hidden_states=first_block_out,
-                encoder_hidden_states=encoder_hidden_states,
-                timestep_proj=timestep_proj,
-                rotary_emb=rotary_emb,
-            )
-                    
-            # calculate difference 
+            current_first_block_residuals = first_block_out - hidden_states
+
+            # ── Step 2: downsample the first-block residual ───────────────────
+            # Only the *key* used for the cache decision is downsampled along
+            # the hidden dimension.  This reduces:
+            #   • the retained-state buffer size by DOWNSAMPLE_FACTOR×
+            #   • the .mean() tensor size in _check_similarity by the same factor
+            #   • the all-reduce communication cost in sequence-parallel runs
+            # The remaining-blocks residual (used for reconstruction) is kept at
+            # full resolution so output quality is unaffected.
+            ds = self.FIRST_BLOCK_RESIDUAL_DOWNSAMPLE_FACTOR
+            downsampled_first_block_residuals = current_first_block_residuals[..., ::ds].contiguous()
+
+            # ── Step 3: always run blocks[1:] and compute their residual ──────
+            remain_hidden_state = first_block_out
+            for block in self.blocks[1:]:
+                remain_hidden_state = block(remain_hidden_state, encoder_hidden_states, timestep_proj, rotary_emb)
+            current_remaning_block_residuals = remain_hidden_state - first_block_out
+
+            # ── Step 4: similarity check (both inputs are downsampled) ────────
             difference = self._check_similarity(
-                first_block_residuals=current_first_block_residuals,
-                prev_first_block_residuals= prev_first_block_residuals
+                first_block_residuals=downsampled_first_block_residuals,
+                prev_first_block_residuals=prev_first_block_residuals,
             )
-            
+
             cache_hit = difference < cache_threshold
-            
-            final_remaining_block_residual=torch.where(
+
+            # ── Step 5: select cached or freshly-computed residual ────────────
+            final_remaining_block_residual = torch.where(
                 cache_hit,
                 prev_remain_block_residuals,
                 current_remaning_block_residuals,
             )
-            
-            
-            hidden_states=final_remaining_block_residual+first_block_out
+
+            # ── Step 6: reconstruct final hidden state ────────────────────────
+            hidden_states = final_remaining_block_residual + first_block_out
          
          ################### Magic of first block caching ends here #######################
                     
@@ -368,12 +419,26 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         # Store output for return (compiler optimization)
         output = hidden_states
 
-        # Return in requested format
+        # Return in requested format.
+        # NOTE: we return `downsampled_first_block_residuals` (not the full-size
+        # `current_first_block_residuals`) as the retained-state output so that
+        # the on-device buffer and the next step's similarity check both operate
+        # on the smaller, downsampled tensor.
         if not return_dict:
-            return (output,current_first_block_residuals, final_remaining_block_residual)
+            return (output, downsampled_first_block_residuals, final_remaining_block_residual)
 
-        return Transformer2DModelOutput(sample=output), current_first_block_residuals, final_remaining_block_residual
-
+        if cache_threshold:
+            return Transformer2DModelOutput(sample=output), downsampled_first_block_residuals, final_remaining_block_residual
+        return Transformer2DModelOutput(sample=output)
+    
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {WanTransformerBlock}
 
 class QEffWanUnifiedWrapper(nn.Module):
     """
@@ -395,15 +460,6 @@ class QEffWanUnifiedWrapper(nn.Module):
         self.transformer_low = transformer_low
         # Both high and low noise transformers share the same configuration
         self.config = transformer_high.config
-
-    def get_submodules_for_export(self) -> Type[nn.Module]:
-        """
-        Return the set of class used as the repeated layer across the model for subfunction extraction.
-        Notes:
-            This method should return the *class object* (not an instance).
-            Downstream code can use this to find/build subfunctions for repeated blocks.
-        """
-        return {WanTransformerBlock}
 
     def forward(
         self,

@@ -19,8 +19,8 @@
                                       "compile_only":true,
                                       "aic_num_cores": 16,
                                       "mos": 1,
-                                      "mdts_mos": 1
-                                  },
+                                      "mdts_mos": 1                                  
+                                    },
                     "execute":     {
                                         "device_ids": null,
                                         "qpc_path" : null

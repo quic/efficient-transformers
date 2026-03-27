@@ -100,6 +100,7 @@ pipeline.transformer_low.model.blocks = torch.nn.ModuleList(
     [org_blocks[i] for i in range(0, pipeline.transformer_low.model.config['num_layers'])]
 )
 
+
 # ============================================================================
 # OPTIONAL: COMPILE WITH CUSTOM CONFIGURATION
 # ============================================================================
@@ -168,11 +169,12 @@ output = pipeline(
     num_inference_steps=40,  # Lightning model uses fewer steps
     generator=torch.Generator().manual_seed(42),  # For reproducible results
     custom_config_path="/home/amitraj/project/first_cache/efficient-transformers/examples/diffusers/wan/wan_config.json",
-    height=480,
-    width=832,
-    use_onnx_subfunctions=False,  # Enable ONNX optimizations
-    parallel_compile=True,  # Set to True for parallel compilation
-    cache_threshold=0.09,
+    height=96,
+    width=160,
+    use_onnx_subfunctions=True,  # Enable ONNX optimizations
+    parallel_compile=False,  # Set to True for parallel compilation
+    cache_threshold_high=0.1,
+    cache_threshold_low=0.075
 )
 
 # Extract generated frames and export to video
