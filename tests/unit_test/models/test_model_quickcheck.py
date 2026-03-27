@@ -856,3 +856,74 @@ class TestToNamedSpecializations:
         assert specs[0]["symbols"]["full_batch_size"] == "16"
         assert specs[1]["symbols"]["full_batch_size"] == "16"
         assert specs[1]["symbols"]["batch_size"] == "16"
+
+
+class TestGetCompilationDims:
+    """Verify get_compilation_dims handles both flat (legacy) and named (new) formats."""
+
+    def _write_spec(self, tmp_path, payload):
+        import json
+
+        spec_dir = tmp_path / "qpc-hash"
+        spec_dir.mkdir()
+        qpc_dir = spec_dir / "qpc"
+        qpc_dir.mkdir()
+        (spec_dir / "specializations.json").write_text(json.dumps(payload))
+        return str(qpc_dir)
+
+    def test_new_named_format(self, tmp_path):
+        from QEfficient.generation.text_generation_inference import get_compilation_dims
+
+        qpc_path = self._write_spec(
+            tmp_path,
+            {
+                "specializations": [
+                    {"name": "Prefill", "symbols": {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}},
+                    {"name": "Decode", "symbols": {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"}},
+                ]
+            },
+        )
+        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        assert bs == 1
+        assert ctx == 4096
+        assert fbs is None
+
+    def test_new_named_format_with_full_batch_size(self, tmp_path):
+        from QEfficient.generation.text_generation_inference import get_compilation_dims
+
+        qpc_path = self._write_spec(
+            tmp_path,
+            {
+                "specializations": [
+                    {
+                        "name": "Prefill",
+                        "symbols": {"batch_size": "1", "full_batch_size": "16", "seq_len": "128", "ctx_len": "4096"},
+                    },
+                    {
+                        "name": "Decode",
+                        "symbols": {"batch_size": "16", "full_batch_size": "16", "seq_len": "1", "ctx_len": "4096"},
+                    },
+                ]
+            },
+        )
+        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        assert bs == 1
+        assert ctx == 4096
+        assert fbs == 16
+
+    def test_legacy_flat_format_still_works(self, tmp_path):
+        from QEfficient.generation.text_generation_inference import get_compilation_dims
+
+        qpc_path = self._write_spec(
+            tmp_path,
+            {
+                "specializations": [
+                    {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+                    {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+                ]
+            },
+        )
+        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        assert bs == 1
+        assert ctx == 4096
+        assert fbs is None
