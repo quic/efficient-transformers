@@ -25,7 +25,7 @@ import tempfile
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional, Set
 
 import numpy as np
 import onnx
@@ -213,13 +213,19 @@ def _run_whisper_export_smoke(qeff_model: QEFFAutoModelForSpeechSeq2Seq, out_dir
     return onnx_path
 
 
-def _assert_proxy_only_onnx_transform_policy(qeff_model, enable_proxy: bool) -> None:
+def _assert_proxy_only_onnx_transform_policy(
+    qeff_model, enable_proxy: bool, always_on_transforms: Optional[Set[str]] = None
+) -> None:
     transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
     proxy_only_transforms = {"FP16ClipTransform", "SplitTensorsTransform"}
+    always_on_transforms = always_on_transforms or set()
+    conditional_proxy_transforms = proxy_only_transforms - always_on_transforms
+
     if enable_proxy:
         assert proxy_only_transforms.issubset(transform_names)
     else:
-        assert proxy_only_transforms.isdisjoint(transform_names)
+        assert conditional_proxy_transforms.isdisjoint(transform_names)
+        assert always_on_transforms.issubset(transform_names)
 
 
 def _skip_on_model_fetch_error(exc: Exception, model_id: str) -> None:
@@ -379,6 +385,22 @@ def test_text_embedding_cpu_parity_and_export(tmp_path):
 
     assert np.allclose(hf_outputs, qeff_outputs, atol=1e-5)
     assert np.allclose(hf_outputs, ort_outputs, atol=1e-5)
+
+
+@pytest.mark.llm_model
+def test_text_embedding_fp16_clip_transform_and_export(tmp_path):
+    tokenizer = AutoTokenizer.from_pretrained(TINY_TEXT_EMBEDDING_MODEL_ID)
+    qeff_model = QEFFAutoModel.from_pretrained(TINY_TEXT_EMBEDDING_MODEL_ID)
+    transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
+
+    assert "FP16ClipTransform" in transform_names
+    assert "SplitTensorsTransform" not in transform_names
+
+    inputs = tokenizer("hello world", return_tensors="pt")
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "embedding-ai100"))
+    ort_outputs = _run_embedding_ort(onnx_path, inputs)
+    assert ort_outputs.shape[0] == inputs["input_ids"].shape[0]
+    assert ort_outputs.shape[1] == inputs["input_ids"].shape[1]
 
 
 @pytest.mark.llm_model
@@ -644,7 +666,9 @@ def test_proxy_toggle_onnx_transform_policy_for_embedding():
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
-    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
+    _assert_proxy_only_onnx_transform_policy(
+        qeff_default, enable_proxy=False, always_on_transforms={"FP16ClipTransform"}
+    )
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
 
 
