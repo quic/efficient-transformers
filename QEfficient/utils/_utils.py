@@ -839,13 +839,20 @@ def custom_format_warning(msg, category, *args, **kwargs):
     return f"{YELLOW}[Warning]: {msg}{RESET}\n"
 
 
-def _infer_specialization_name(spec: Dict, index: int) -> str:
+def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str] = None) -> str:
     """
     Infer a human-readable name for a specialization entry.
 
     The naming convention follows the backend team's request:
-    - "Prefill" for the first specialization (seq_len > 1) or any entry whose
-      ``seq_len`` value is not "1" / 1.
+
+    - If ``module_name`` is provided and there is only one specialization for that
+      module, the module name itself is used as the graph name (e.g. ``"text_encoder"``,
+      ``"vae_decoder"``).  When there are multiple specializations for the same module
+      the name is derived from a distinguishing key in the spec (see ``model_type``
+      rule below) or falls back to ``f"{module_name}_{index}"``.
+    - ``"model_type_<value>"`` when the spec contains a ``model_type`` key and
+      ``module_name`` is provided (e.g. Wan transformer high-noise / low-noise).
+    - "Prefill" for entries whose ``seq_len`` value is not "1" / 1.
     - "Decode" for entries whose ``seq_len`` is "1" / 1.
     - "Vision" for entries that contain vision-specific keys (e.g. ``vision_size``,
       ``img_size``, ``grid_height``) but no ``seq_len`` key.
@@ -863,12 +870,22 @@ def _infer_specialization_name(spec: Dict, index: int) -> str:
     index : int
         Zero-based position of this entry in the specializations list, used only
         for the generic fallback name.
+    module_name : str, optional
+        Pipeline module name (e.g. ``"text_encoder"``, ``"transformer"``).
+        When provided it takes priority for single-specialization modules and
+        is used as a prefix for multi-specialization modules.
 
     Returns
     -------
     str
         The inferred graph name.
     """
+    # Module-name-aware naming for diffusers pipeline modules.
+    if module_name is not None:
+        if "model_type" in spec:
+            return f"{module_name}_model_type_{spec['model_type']}"
+        return module_name
+
     vision_only_keys = {"vision_size", "img_size", "grid_height", "grid_width", "grid_h", "grid_w"}
     if "seq_len" not in spec:
         if vision_only_keys & set(spec.keys()):
@@ -884,7 +901,7 @@ def _infer_specialization_name(spec: Dict, index: int) -> str:
     return "Prefill"
 
 
-def to_named_specializations(specializations: List[Dict]) -> List[Dict]:
+def to_named_specializations(specializations: List[Dict], module_name: Optional[str] = None) -> List[Dict]:
     """
     Convert a flat list of specialization dicts to the nested ``{name, symbols}``
     format expected by the backend compiler.
@@ -897,10 +914,15 @@ def to_named_specializations(specializations: List[Dict]) -> List[Dict]:
 
         {"name": "Prefill", "symbols": {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}}
 
+    For diffusers pipeline modules pass ``module_name`` so the graph name reflects
+    the module (e.g. ``"text_encoder"``, ``"vae_decoder"``, ``"transformer_model_type_1"``).
+
     Parameters
     ----------
     specializations : List[Dict]
         List of flat specialization dicts (values may be int or str).
+    module_name : str, optional
+        Pipeline module name forwarded to ``_infer_specialization_name``.
 
     Returns
     -------
@@ -909,7 +931,11 @@ def to_named_specializations(specializations: List[Dict]) -> List[Dict]:
     """
     result = []
     for index, spec in enumerate(specializations):
-        name = _infer_specialization_name(spec, index)
+        # Idempotent: already in named format, pass through unchanged.
+        if set(spec.keys()) == {"name", "symbols"}:
+            result.append(spec)
+            continue
+        name = _infer_specialization_name(spec, index, module_name=module_name)
         symbols = {k: str(v) for k, v in spec.items()}
         result.append({"name": name, "symbols": symbols})
     return result

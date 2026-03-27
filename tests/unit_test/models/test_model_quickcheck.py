@@ -927,3 +927,69 @@ class TestGetCompilationDims:
         assert bs == 1
         assert ctx == 4096
         assert fbs is None
+
+
+class TestDiffusersNamedSpecializations:
+    """Named-specialization format for diffusers pipeline modules."""
+
+    def test_flux_text_encoder_uses_module_name(self):
+        flat = [{"batch_size": 1, "seq_len": 77}]
+        result = to_named_specializations(flat, module_name="text_encoder")
+        assert result[0]["name"] == "text_encoder"
+        assert result[0]["symbols"] == {"batch_size": "1", "seq_len": "77"}
+
+    def test_flux_text_encoder_2_uses_module_name(self):
+        flat = [{"batch_size": 1, "seq_len": 256}]
+        result = to_named_specializations(flat, module_name="text_encoder_2")
+        assert result[0]["name"] == "text_encoder_2"
+
+    def test_flux_transformer_uses_module_name(self):
+        flat = [{"batch_size": 1, "seq_len": 256, "steps": 1}]
+        result = to_named_specializations(flat, module_name="transformer")
+        assert result[0]["name"] == "transformer"
+
+    def test_flux_vae_decoder_uses_module_name(self):
+        flat = [{"batch_size": 1, "channels": 16}]
+        result = to_named_specializations(flat, module_name="vae_decoder")
+        assert result[0]["name"] == "vae_decoder"
+
+    def test_wan_transformer_model_type_naming(self):
+        """Wan transformer: two model_type entries → transformer_model_type_1 / _2."""
+        flat = [
+            {"batch_size": "1", "num_channels": "16", "steps": "1", "sequence_length": "512", "model_type": 1},
+            {"batch_size": "1", "num_channels": "16", "steps": "1", "sequence_length": "512", "model_type": 2},
+        ]
+        result = to_named_specializations(flat, module_name="transformer")
+        assert result[0]["name"] == "transformer_model_type_1"
+        assert result[1]["name"] == "transformer_model_type_2"
+
+    def test_wan_vae_decoder_uses_module_name(self):
+        flat = [{"batch_size": 1, "num_channels": 16}]
+        result = to_named_specializations(flat, module_name="vae_decoder")
+        assert result[0]["name"] == "vae_decoder"
+
+    def test_wan_i2v_vae_encoder_uses_module_name(self):
+        flat = [{"batch_size": 1, "num_channels": 16}]
+        result = to_named_specializations(flat, module_name="vae_encoder")
+        assert result[0]["name"] == "vae_encoder"
+
+    def test_all_values_stringified(self):
+        flat = [{"batch_size": 1, "seq_len": 77}]
+        result = to_named_specializations(flat, module_name="text_encoder")
+        assert all(isinstance(v, str) for v in result[0]["symbols"].values())
+
+    def test_idempotent_already_named_entries(self):
+        """Entries already in {name, symbols} format must pass through unchanged."""
+        already = [{"name": "transformer", "symbols": {"batch_size": "1", "steps": "1"}}]
+        result = to_named_specializations(already, module_name="transformer")
+        assert result == already
+
+    def test_no_module_name_falls_back_to_lm_rules(self):
+        """Without module_name the standard Prefill/Decode rules still apply."""
+        flat = [
+            {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Prefill"
+        assert result[1]["name"] == "Decode"

@@ -15,7 +15,7 @@ import numpy as np
 import PIL.Image
 from tqdm import tqdm
 
-from QEfficient.utils._utils import load_json
+from QEfficient.utils._utils import load_json, to_named_specializations
 from QEfficient.utils.logging_utils import logger
 
 
@@ -173,6 +173,9 @@ def compile_modules_parallel(
         else:
             specializations = [specializations]
 
+        # Convert flat dicts to named {name, symbols} format using the module name.
+        specializations = to_named_specializations(specializations, module_name=module_name)
+
         if module_obj.qpc_path is None:
             # Compile with prepared specializations
             module_obj.compile(specializations=specializations, **compile_kwargs)
@@ -225,6 +228,9 @@ def compile_modules_sequential(
                 specializations = [specializations]
         else:
             specializations = [specializations]
+
+        # Convert flat dicts to named {name, symbols} format using the module name.
+        specializations = to_named_specializations(specializations, module_name=module_name)
 
         if module_obj.qpc_path is None:
             # Compile with prepared specializations
