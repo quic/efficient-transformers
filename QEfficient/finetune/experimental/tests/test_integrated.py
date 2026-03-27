@@ -36,6 +36,7 @@ from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.tests import reference_data as ref_data
 from QEfficient.finetune.experimental.tests.constants import (
     HF_DATASET_ALPACA,
+    HF_DATASET_ALPACA_CONFIG,
     HF_DATASET_GSM8K,
     HF_DATASET_GSM8K_CONFIG,
     HF_DATASET_IMDB,
@@ -130,7 +131,6 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
 
 def get_reference_metrics(
     scenario_key,
-    mocker,
 ):
     reference_data = ref_data.REFERENCE_DATA.get(scenario_key)
     if reference_data is None:
@@ -229,7 +229,7 @@ GSM8K_DATASET_CONFIG = TestDatasetConfig(
 ALPACA_DATASET_CONFIG = TestDatasetConfig(
     dataset_name="yahma/alpaca-cleaned",
     hf_dataset_name=HF_DATASET_ALPACA,
-    hf_dataset_config=None,
+    hf_dataset_config=HF_DATASET_ALPACA_CONFIG,
     prompt_func="QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt",
     completion_template="{output}",
     max_seq_length=TEST_MAX_SEQ_LENGTH_CAUSAL,
@@ -305,10 +305,10 @@ def create_master_config(
             prompt_template=dataset_config.prompt_template if dataset_config.prompt_template else None,
             prompt_func=dataset_config.prompt_func if dataset_config.prompt_func else None,
             completion_template=dataset_config.completion_template,
-            num_workers=1,
-            test_split="train",
+            test_split="test",
             config_name=dataset_config.hf_dataset_config,
             dataset_num_samples=TEST_DATASET_SUBSET_SIZE,
+            data_seed=TEST_SEED,
         ),
         optimizers=OptimizerConfig(
             optimizer_name="adamw",
@@ -335,7 +335,7 @@ def create_master_config(
     )
 
 
-def run_training(trainer, config_name: str):
+def run_training(trainer, config_name):
     """
     Run training and return results.
 
@@ -349,8 +349,6 @@ def run_training(trainer, config_name: str):
     logger.info(f"Starting training for {config_name}...")
     trainer.train()
     logger.info(f"Training completed for {config_name}!")
-    logger.info(f"Starting evaluation for {config_name}...")
-    logger.info(f"Evaluation completed for {config_name}!")
     train_step_loss = [log["loss"] for log in trainer.state.log_history if "loss" in log]
     eval_step_loss = [log["eval_loss"] for log in trainer.state.log_history if "eval_loss" in log]
     train_step_metric = [math.exp(x) for x in train_step_loss]
@@ -467,7 +465,7 @@ class TestCausalLMIntegration:
         final_eval_loss, final_train_loss, train_step_loss, eval_step_loss, train_step_metric, eval_step_metric = (
             run_training(trainer, config_name)
         )
-        all_ref_metrices, all_config_spy = get_reference_metrics(scenario_key, config_manager)
+        all_ref_metrices, all_config_spy = get_reference_metrics(scenario_key)
         verify_training_results(final_train_loss, final_eval_loss)
         run_inference_causal_lm(model, tokenizer)
 

@@ -54,7 +54,7 @@ TEST_SPLIT_RATIO = 0.8
 TEST_LORA_R = 8
 TEST_LORA_ALPHA = 16
 TEST_LORA_DROPOUT = 0
-TEST_LORA_TARGET_MODULES_LLAMA = ["k_proj", "gate_proj", "q_proj", "up_proj", "v_proj", "down_proj"]
+TEST_LORA_TARGET_MODULES_LLAMA = ["k_proj", "v_proj"]
 TEST_LORA_TARGET_MODULES_BERT = ["query", "value"]
 TEST_LORA_BIAS = "none"
 
@@ -79,9 +79,10 @@ TEST_MAX_STEPS = 20
 # ============================================================================
 
 # HuggingFace Dataset Names
-HF_DATASET_ALPACA = "tatsu-lab/alpaca"
+HF_DATASET_ALPACA = "yahma/alpaca-cleaned"
 HF_DATASET_GSM8K = "openai/gsm8k"
 HF_DATASET_GSM8K_CONFIG = "main"
+HF_DATASET_ALPACA_CONFIG = "default"
 HF_DATASET_IMDB = "stanfordnlp/imdb"
 
 # Dataset subset size for testing
@@ -108,5 +109,5 @@ OPT_SGD_MOMENTUM = 0.9
 # ============================================================================
 
 TRAIN_EVAL_EPOCH_LOSS_DIFF_THRESHOLD = 2.0
-METRIC_ATOL = 1
-LOSS_ATOL = 1
+METRIC_ATOL = 0.5
+LOSS_ATOL = 0.5
