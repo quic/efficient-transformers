@@ -248,6 +248,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
     mad_validator.validate_module_mad(
         pytorch_image_latents[0].detach().cpu().numpy(), latents.detach().cpu().numpy(), "vae_encoder", "image encoding"
     )
+    pipeline.vae_encoder.qpc_session.deactivate()  # deactivate vae encoder qpc session
 
     # Step 7: Setup transformer inference session
     if pipeline.transformer.qpc_session is None:
@@ -380,6 +381,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
+    pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
     # Handle final conditioning for expand_timesteps mode
     if pipeline.model.config.expand_timesteps:
         latents = (1 - first_frame_mask) * condition + first_frame_mask * latents
@@ -415,6 +417,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
     video = pipeline.vae_decoder.qpc_session.run(inputs)
     end_decode_time = time.perf_counter()
     vae_decoder_perf = end_decode_time - start_decode_time
+    pipeline.vae_decoder.qpc_session.deactivate()  # deactivate vae decoder qpc session
 
     # VAE decoder MAD validation
     print(" Performing MAD validation for VAE decoder...")

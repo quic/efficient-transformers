@@ -258,6 +258,7 @@ def flux_pipeline_call_with_mad_validation(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
+    pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
     # Step 8: Decode latents to images
     if output_type == "latent":
         image = latents
@@ -288,6 +289,7 @@ def flux_pipeline_call_with_mad_validation(
         image = pipeline.vae_decode.qpc_session.run(inputs)
         end_decode_time = time.time()
         vae_decode_perf = end_decode_time - start_decode_time
+        pipeline.vae_decode.qpc_session.deactivate()  # deactivate vae decoder qpc session
 
         # VAE MAD validation
         mad_validator.validate_module_mad(image_torch.detach().cpu().numpy(), image["sample"], "vae_decoder")
@@ -357,6 +359,7 @@ def flux_pipeline():
     return pipeline, pytorch_pipeline
 
 
+@pytest.mark.flux
 @pytest.mark.diffusion_models
 @pytest.mark.on_qaic
 def test_flux_pipeline(flux_pipeline):

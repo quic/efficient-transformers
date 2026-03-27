@@ -308,6 +308,7 @@ def wan_pipeline_call_with_mad_validation(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
+    pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
     # Step 9: Decode latents to video QAIC VAE decoder
     latents = latents.to(pipeline.vae_decoder.model.dtype)
     latents_mean = (
@@ -338,6 +339,7 @@ def wan_pipeline_call_with_mad_validation(
     video = pipeline.vae_decoder.qpc_session.run(inputs)
     end_decode_time = time.perf_counter()
     vae_decoder_perf = end_decode_time - start_decode_time
+    pipeline.vae_decoder.qpc_session.deactivate()  # deactivate vae decoder qpc session
 
     # VAE decoder MAD validation
     print(" Performing MAD validation for VAE decoder...")
