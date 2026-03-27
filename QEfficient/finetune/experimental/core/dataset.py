@@ -144,9 +144,9 @@ class SFTDataset(BaseDataset):
                 db = load_dataset_builder(self.dataset_name, **load_kwargs)
             except Exception as e:
                 raise RuntimeError(
-                f"Failed to load dataset builder for '{self.dataset_name}': {e}. "
-                "Please check the dataset name and your network connection."
-            )
+                    f"Failed to load dataset builder for '{self.dataset_name}': {e}. "
+                    "Please check the dataset name and your network connection."
+                )
             available_splits = []
             if db.info.splits is not None:
                 available_splits = list(db.info.splits.keys())
@@ -161,9 +161,9 @@ class SFTDataset(BaseDataset):
                 self.dataset = load_dataset(self.dataset_name, split=load_split, **load_kwargs)
             except Exception as e:
                 raise RuntimeError(
-                f"Failed to load dataset '{self.dataset_name}' with split '{load_split}': {e}. "
-                "Please verify the dataset exists and is accessible."
-            )
+                    f"Failed to load dataset '{self.dataset_name}' with split '{load_split}': {e}. "
+                    "Please verify the dataset exists and is accessible."
+                )
             self.dataset = self.dataset.shuffle(seed=self.seed)
             if self.dataset_disc_style:
                 available_styles = set(self.dataset["category"])
