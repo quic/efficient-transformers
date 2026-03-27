@@ -837,3 +837,79 @@ def custom_format_warning(msg, category, *args, **kwargs):
     YELLOW = "\033[93m"
     RESET = "\033[0m"
     return f"{YELLOW}[Warning]: {msg}{RESET}\n"
+
+
+def _infer_specialization_name(spec: Dict, index: int) -> str:
+    """
+    Infer a human-readable name for a specialization entry.
+
+    The naming convention follows the backend team's request:
+    - "Prefill" for the first specialization (seq_len > 1) or any entry whose
+      ``seq_len`` value is not "1" / 1.
+    - "Decode" for entries whose ``seq_len`` is "1" / 1.
+    - "Vision" for entries that contain vision-specific keys (e.g. ``vision_size``,
+      ``img_size``, ``grid_height``) but no ``seq_len`` key.
+    - "Encoder" for entries that contain ``encoder_ctx_len`` but no ``seq_len`` key
+      (e.g. Whisper encoder).
+    - "Embedding" for entries that contain ``sequence_length`` but no ``seq_len`` key
+      (e.g. BERT / text-embedding models).
+    - A generic fallback ``f"Graph_{index}"`` for anything that does not match any
+      of the above patterns.
+
+    Parameters
+    ----------
+    spec : Dict
+        A single flat specialization dictionary (key → value).
+    index : int
+        Zero-based position of this entry in the specializations list, used only
+        for the generic fallback name.
+
+    Returns
+    -------
+    str
+        The inferred graph name.
+    """
+    vision_only_keys = {"vision_size", "img_size", "grid_height", "grid_width", "grid_h", "grid_w"}
+    if "seq_len" not in spec:
+        if vision_only_keys & set(spec.keys()):
+            return "Vision"
+        if "encoder_ctx_len" in spec:
+            return "Encoder"
+        if "sequence_length" in spec:
+            return "Embedding"
+        return f"Graph_{index}"
+    seq_len = spec["seq_len"]
+    if str(seq_len) == "1":
+        return "Decode"
+    return "Prefill"
+
+
+def to_named_specializations(specializations: List[Dict]) -> List[Dict]:
+    """
+    Convert a flat list of specialization dicts to the nested ``{name, symbols}``
+    format expected by the backend compiler.
+
+    Old format (one entry)::
+
+        {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
+
+    New format (one entry)::
+
+        {"name": "Prefill", "symbols": {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}}
+
+    Parameters
+    ----------
+    specializations : List[Dict]
+        List of flat specialization dicts (values may be int or str).
+
+    Returns
+    -------
+    List[Dict]
+        List of ``{"name": str, "symbols": Dict[str, str]}`` dicts.
+    """
+    result = []
+    for index, spec in enumerate(specializations):
+        name = _infer_specialization_name(spec, index)
+        symbols = {k: str(v) for k, v in spec.items()}
+        result.append({"name": name, "symbols": symbols})
+    return result

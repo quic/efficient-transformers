@@ -14,35 +14,34 @@ from typing import List, Optional, Tuple
 
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.utils import constants
-from QEfficient.utils._utils import load_json, load_yaml
+from QEfficient.utils._utils import load_json, load_yaml, to_named_specializations
 from QEfficient.utils.logging_utils import logger
 
 
 def create_and_dump_specializations(
     batch_size: int, prompt_len: int, ctx_len: int, path: str, full_batch_size: Optional[int] = None
 ):
-    # Create specialization file.
-    specializations = {
-        "specializations": [
-            {
-                "batch_size": str(batch_size),
-                "seq_len": str(prompt_len),
-                "ctx_len": str(ctx_len),
-            },
-            {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)},
-        ]
-    }
-    # If continuous batching is enabled by proving full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS
+    # Build flat specialization entries first, then convert to named format.
+    flat_specs = [
+        {
+            "batch_size": str(batch_size),
+            "seq_len": str(prompt_len),
+            "ctx_len": str(ctx_len),
+        },
+        {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)},
+    ]
+    # If continuous batching is enabled by providing full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS
     if full_batch_size is not None:
-        specializations["specializations"][0]["full_batch_size"] = str(full_batch_size)
-        specializations["specializations"][1]["full_batch_size"] = str(full_batch_size)
-        specializations["specializations"][1]["batch_size"] = str(full_batch_size)
+        flat_specs[0]["full_batch_size"] = str(full_batch_size)
+        flat_specs[1]["full_batch_size"] = str(full_batch_size)
+        flat_specs[1]["batch_size"] = str(full_batch_size)
 
-    # To handle repetative input in specializations when prompt_len is 1
+    # To handle repetitive input in specializations when prompt_len is 1
     if prompt_len == 1 and full_batch_size is None:
-        specializations["specializations"].pop()
+        flat_specs.pop()
 
     # Dump
+    specializations = {"specializations": to_named_specializations(flat_specs)}
     with open(path, "w") as file:
         json.dump(specializations, file, indent=4)
 

@@ -34,6 +34,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     onnx_exists,
     padding_check_and_fix,
     qpc_exists,
+    to_named_specializations,
 )
 from QEfficient.utils.hash_utils import (  # noqa: F401
     create_export_hash,
