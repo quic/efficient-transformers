@@ -26,6 +26,7 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     rotate_half,
 )
 
+from QEfficient.customop.ctx_scatter_gather import CtxGatherFunc3D, CtxScatterFunc3D
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -133,8 +134,13 @@ def _scatter_gather_qwen3_expert_where_before_reorder(
     # 1. Running-sum
     scatter_idx = torch.cumsum(T2Ei.long(), dim=0) - 1
     safe_idx = torch.where(T2Ei, scatter_idx, torch.full_like(scatter_idx, T))
-    x_prime = torch.zeros(T + 1, H, dtype=x.dtype, device=x.device)
-    x_prime = x_prime.scatter(0, safe_idx.unsqueeze(-1).expand(-1, H), x)
+
+    # x_prime = torch.zeros(T + 1, H, dtype=x.dtype, device=x.device)
+    # x_prime = x_prime.scatter(0, safe_idx.unsqueeze(-1).expand(-1, H), x)
+
+    x_prime = torch.zeros(1, T + 1, H, dtype=x.dtype, device=x.device)
+    x_prime = CtxScatterFunc3D.apply(x_prime, safe_idx.unsqueeze(0).to(torch.int32), x.unsqueeze(0))
+    x_prime = x_prime[0]
 
     gate_prime = x_prime[:T] @ W_g
     up_prime = x_prime[:T] @ W_u
@@ -152,6 +158,75 @@ def _scatter_gather_qwen3_expert_where_before_reorder(
     delta = down_prime_ext[safe_idx]  # [T, H]
 
     return delta
+
+
+def _ctx_scatter_gather_expert_forward_where_before_reorder(
+    x: torch.Tensor,  # [T, H]
+    T2Ei: torch.Tensor,  # [T] bool
+    W_g: torch.Tensor,  # [H, I]
+    W_u: torch.Tensor,  # [H, I]
+    W_d: torch.Tensor,  # [I, H]
+    act_fn,
+    T: int,
+    H: int,
+) -> torch.Tensor:
+    scatter_idx = torch.cumsum(T2Ei.long(), dim=0) - 1
+    safe_idx = torch.where(T2Ei, scatter_idx, torch.full_like(scatter_idx, T))
+
+    x_prime = torch.zeros(1, T + 1, H, dtype=x.dtype, device=x.device)
+    x_prime = CtxScatterFunc3D.apply(x_prime, safe_idx.unsqueeze(0).to(torch.int32), x.unsqueeze(0))
+    x_prime = x_prime[0]
+
+    gate_prime = x_prime[:T] @ W_g
+    up_prime = x_prime[:T] @ W_u
+    down_prime = (up_prime * act_fn(gate_prime)) @ W_d
+
+    num_active = T2Ei.long().sum()
+    compact_rows = torch.arange(T, device=x.device)
+    compact_mask = compact_rows < num_active
+    down_prime = torch.where(compact_mask.unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
+
+    down_prime_ext = torch.zeros(1, T + 1, H, dtype=x.dtype, device=x.device)
+    down_prime_ext[:, :T] = down_prime.unsqueeze(0)
+    delta_out = CtxGatherFunc3D.apply(down_prime_ext, safe_idx.unsqueeze(0).to(torch.int32))[0]
+
+    return delta_out
+
+
+def _ctx_scatter_gather_expert_forward_active_only(
+    x: torch.Tensor,  # [T, H]
+    T2Ei: torch.Tensor,  # [T] bool
+    W_g: torch.Tensor,  # [H, I]
+    W_u: torch.Tensor,  # [H, I]
+    W_d: torch.Tensor,  # [I, H]
+    act_fn,
+    T: int,
+    H: int,
+) -> torch.Tensor:
+    """
+    Optimized version that only computes on active tokens.
+    No trash row, no WHERE operation, direct indexing.
+    """
+    num_active = T2Ei.long().sum().item()
+
+    if num_active == 0:
+        return torch.zeros(T, H, dtype=x.dtype, device=x.device)
+
+    # Get active token indices
+    active_indices = torch.where(T2Ei)[0]  # [num_active], But Non Zero op
+
+    # Gather only active tokens
+    x_active = x[active_indices]  # [num_active, H]
+
+    gate_active = x_active @ W_g  # [num_active, I]
+    up_active = x_active @ W_u  # [num_active, I]
+    down_active = (up_active * act_fn(gate_active)) @ W_d  # [num_active, H]
+
+    # Scatter results back to original positions
+    delta_out = torch.zeros(T, H, dtype=x.dtype, device=x.device)
+    delta_out[active_indices] = down_active
+
+    return delta_out
 
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
@@ -213,7 +288,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             W_u = expert.up_proj.weight.T  # [H, I]
             W_d = expert.down_proj.weight.T  # [I, H]
 
-            delta = _scatter_gather_qwen3_expert_where_before_reorder(
+            delta = _ctx_scatter_gather_expert_forward_where_before_reorder(
                 x=x,
                 T2Ei=T2Ei,
                 W_g=W_g,
