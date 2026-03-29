@@ -718,6 +718,53 @@ def test_proxy_toggle_onnx_transform_policy_for_vlm():
 class TestInferSpecializationName:
     """Unit tests for _infer_specialization_name."""
 
+    # --- _graph_name tag (authoritative, set at creation time) ---
+
+    def test_graph_name_tag_takes_priority(self):
+        """_graph_name in spec overrides all heuristics."""
+        spec = {"_graph_name": "Vision", "batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 0) == "Vision"
+
+    def test_graph_name_tag_whisper_encoder(self):
+        spec = {
+            "_graph_name": "Encoder",
+            "batch_size": "1",
+            "seq_len": "1",
+            "encoder_ctx_len": "1500",
+            "feature_len": "3000",
+        }
+        assert _infer_specialization_name(spec, 0) == "Encoder"
+
+    def test_graph_name_tag_whisper_decode(self):
+        spec = {
+            "_graph_name": "Decode",
+            "batch_size": "1",
+            "seq_len": "1",
+            "encoder_ctx_len": "1500",
+            "feature_len": "1",
+        }
+        assert _infer_specialization_name(spec, 1) == "Decode"
+
+    def test_graph_name_tag_prefill(self):
+        spec = {"_graph_name": "Prefill", "batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 0) == "Prefill"
+
+    def test_graph_name_tag_decode(self):
+        spec = {"_graph_name": "Decode", "batch_size": "1", "seq_len": "1", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 1) == "Decode"
+
+    # --- module_name hint (diffusers path) ---
+
+    def test_module_name_used_when_no_tag(self):
+        spec = {"batch_size": "1", "seq_len": "77"}
+        assert _infer_specialization_name(spec, 0, module_name="text_encoder") == "text_encoder"
+
+    def test_module_name_with_model_type(self):
+        spec = {"batch_size": "1", "model_type": 1}
+        assert _infer_specialization_name(spec, 0, module_name="transformer") == "transformer_model_type_1"
+
+    # --- seq_len heuristic fallback (plain causal LM raw dicts) ---
+
     def test_prefill_detected_by_seq_len_gt_1(self):
         spec = {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
         assert _infer_specialization_name(spec, 0) == "Prefill"
@@ -730,75 +777,9 @@ class TestInferSpecializationName:
         spec = {"batch_size": 1, "seq_len": 1, "ctx_len": 4096}
         assert _infer_specialization_name(spec, 1) == "Decode"
 
-    def test_vision_via_explicit_module_name(self):
-        """Vision name must be passed explicitly — not inferred from spec keys."""
-        spec = {"batch_size": "1", "img_size": "336"}
-        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
-
-    def test_vision_explicit_qwen25vl(self):
-        spec = {"batch_size": "1", "vision_size": "247", "grid_height": "988", "grid_width": "1176"}
-        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
-
-    def test_vision_explicit_gemma3(self):
-        """Gemma3 vision spec has seq_len+ctx_len — still 'Vision' when module_name passed."""
-        spec = {"batch_size": 1, "img_size": 896, "seq_len": 128, "ctx_len": 4096}
-        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
-
-    def test_vision_explicit_mistral3(self):
-        """Mistral3 vision spec — 'Vision' when module_name passed."""
-        spec = {"batch_size": 1, "seq_len": 128, "ctx_len": 4096, "image_size": 1024, "vision_size": 1024}
-        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
-
-    def test_vision_explicit_molmo(self):
-        """Molmo vision spec — 'Vision' when module_name passed."""
-        spec = {
-            "batch_size": 1,
-            "img_size": 336,
-            "seq_len": 128,
-            "ctx_len": 4096,
-            "img_tile": 336,
-            "num_images": 1,
-            "num_patch": 576,
-            "valid_size": 576,
-        }
-        assert _infer_specialization_name(spec, 0, module_name="Vision") == "Vision"
-
-    def test_vision_spec_without_module_name_falls_to_prefill(self):
-        """Without module_name, a vision spec with seq_len falls through to Prefill."""
-        spec = {"batch_size": 1, "img_size": 336, "seq_len": 128, "ctx_len": 4096}
-        assert _infer_specialization_name(spec, 0) == "Prefill"
-
-    def test_vision_spec_without_module_name_no_seq_len_falls_to_graph_n(self):
-        """Without module_name, a vision spec with no seq_len falls to Graph_N."""
-        spec = {"batch_size": "1", "img_size": "336"}
-        assert _infer_specialization_name(spec, 0) == "Graph_0"
-
     def test_encoder_detected_by_encoder_ctx_len_no_seq_len(self):
-        """Simplified spec with encoder_ctx_len and no seq_len → Encoder."""
         spec = {"batch_size": "1", "encoder_ctx_len": "1500"}
         assert _infer_specialization_name(spec, 0) == "Encoder"
-
-    def test_encoder_detected_whisper_real_spec(self):
-        """Real Whisper encoder-run: seq_len=1, encoder_ctx_len, feature_len>1 → Encoder."""
-        spec = {
-            "batch_size": "1",
-            "seq_len": "1",
-            "encoder_ctx_len": "1500",
-            "decoder_ctx_len": "150",
-            "feature_len": "3000",
-        }
-        assert _infer_specialization_name(spec, 0) == "Encoder"
-
-    def test_decode_detected_whisper_real_spec(self):
-        """Real Whisper decoder-run: seq_len=1, encoder_ctx_len, feature_len=1 → Decode."""
-        spec = {
-            "batch_size": "1",
-            "seq_len": "1",
-            "encoder_ctx_len": "1500",
-            "decoder_ctx_len": "150",
-            "feature_len": "1",
-        }
-        assert _infer_specialization_name(spec, 1) == "Decode"
 
     def test_embedding_detected_by_sequence_length(self):
         spec = {"batch_size": "1", "sequence_length": "128"}
@@ -849,9 +830,10 @@ class TestToNamedSpecializations:
         assert result[0]["name"] == "Decode"
 
     def test_vlm_vision_specialization(self):
-        """VLM vision encoder: module_name='Vision' passed explicitly → 'Vision'."""
+        """VLM vision encoder: _graph_name tag set at source → 'Vision', tag stripped from symbols."""
         flat = [
             {
+                "_graph_name": "Vision",
                 "batch_size": "1",
                 "vision_size": "247",
                 "grid_height": "988",
@@ -860,10 +842,11 @@ class TestToNamedSpecializations:
                 "grid_w": "38",
             }
         ]
-        result = to_named_specializations(flat, module_name="Vision")
+        result = to_named_specializations(flat)
         assert len(result) == 1
         assert result[0]["name"] == "Vision"
         assert result[0]["symbols"]["vision_size"] == "247"
+        assert "_graph_name" not in result[0]["symbols"]
 
     def test_vlm_lang_prefill_decode(self):
         """VLM language side: prefill + decode with vision_batch_size."""
@@ -907,7 +890,7 @@ class TestToNamedSpecializations:
             assert set(entry.keys()) == {"name", "symbols"}
 
     def test_whisper_encoder_specialization_simplified(self):
-        """Simplified Whisper spec: encoder_ctx_len, no seq_len → 'Encoder'."""
+        """Simplified Whisper spec: encoder_ctx_len, no seq_len → 'Encoder' via heuristic."""
         flat = [
             {"batch_size": "1", "encoder_ctx_len": "1500"},
             {"batch_size": "1", "seq_len": "1", "ctx_len": "448"},
@@ -918,10 +901,10 @@ class TestToNamedSpecializations:
         assert result[0]["symbols"]["encoder_ctx_len"] == "1500"
 
     def test_whisper_encoder_specialization_real_spec(self):
-        """Real Whisper spec: both entries have seq_len=1 + encoder_ctx_len;
-        feature_len distinguishes Encoder (>1) from Decode (==1)."""
+        """Real Whisper spec: _graph_name tags set at source distinguish Encoder from Decode."""
         flat = [
             {
+                "_graph_name": "Encoder",
                 "batch_size": "1",
                 "seq_len": "1",
                 "encoder_ctx_len": "1500",
@@ -929,6 +912,7 @@ class TestToNamedSpecializations:
                 "feature_len": "3000",
             },
             {
+                "_graph_name": "Decode",
                 "batch_size": "1",
                 "seq_len": "1",
                 "encoder_ctx_len": "1500",
@@ -941,6 +925,15 @@ class TestToNamedSpecializations:
         assert result[1]["name"] == "Decode"
         assert result[0]["symbols"]["feature_len"] == "3000"
         assert result[1]["symbols"]["feature_len"] == "1"
+        assert "_graph_name" not in result[0]["symbols"]
+        assert "_graph_name" not in result[1]["symbols"]
+
+    def test_graph_name_tag_stripped_from_symbols(self):
+        """_graph_name must never appear in the serialized symbols dict."""
+        flat = [{"_graph_name": "Prefill", "batch_size": "1", "seq_len": "128", "ctx_len": "4096"}]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Prefill"
+        assert "_graph_name" not in result[0]["symbols"]
 
     def test_text_embedding_specialization(self):
         """Text embedding (BERT): sequence_length present, no seq_len → 'Embedding'."""
@@ -1100,62 +1093,72 @@ class TestGetCompilationDims:
 
 
 class TestDiffusersNamedSpecializations:
-    """Named-specialization format for diffusers pipeline modules."""
+    """Named-specialization format for diffusers pipeline modules via _graph_name tag."""
 
-    def test_flux_text_encoder_uses_module_name(self):
-        flat = [{"batch_size": 1, "seq_len": 77}]
-        result = to_named_specializations(flat, module_name="text_encoder")
+    def _tag(self, specs, module_name):
+        """Simulate what pipeline_utils does: tag each spec with _graph_name."""
+        return [
+            {**s, "_graph_name": f"{module_name}_model_type_{s['model_type']}" if "model_type" in s else module_name}
+            for s in specs
+        ]
+
+    def test_flux_text_encoder(self):
+        flat = self._tag([{"batch_size": 1, "seq_len": 77}], "text_encoder")
+        result = to_named_specializations(flat)
         assert result[0]["name"] == "text_encoder"
         assert result[0]["symbols"] == {"batch_size": "1", "seq_len": "77"}
+        assert "_graph_name" not in result[0]["symbols"]
 
-    def test_flux_text_encoder_2_uses_module_name(self):
-        flat = [{"batch_size": 1, "seq_len": 256}]
-        result = to_named_specializations(flat, module_name="text_encoder_2")
+    def test_flux_text_encoder_2(self):
+        flat = self._tag([{"batch_size": 1, "seq_len": 256}], "text_encoder_2")
+        result = to_named_specializations(flat)
         assert result[0]["name"] == "text_encoder_2"
 
-    def test_flux_transformer_uses_module_name(self):
-        flat = [{"batch_size": 1, "seq_len": 256, "steps": 1}]
-        result = to_named_specializations(flat, module_name="transformer")
+    def test_flux_transformer(self):
+        flat = self._tag([{"batch_size": 1, "seq_len": 256, "steps": 1}], "transformer")
+        result = to_named_specializations(flat)
         assert result[0]["name"] == "transformer"
 
-    def test_flux_vae_decoder_uses_module_name(self):
-        flat = [{"batch_size": 1, "channels": 16}]
-        result = to_named_specializations(flat, module_name="vae_decoder")
+    def test_flux_vae_decoder(self):
+        flat = self._tag([{"batch_size": 1, "channels": 16}], "vae_decoder")
+        result = to_named_specializations(flat)
         assert result[0]["name"] == "vae_decoder"
 
     def test_wan_transformer_model_type_naming(self):
         """Wan transformer: two model_type entries → transformer_model_type_1 / _2."""
-        flat = [
-            {"batch_size": "1", "num_channels": "16", "steps": "1", "sequence_length": "512", "model_type": 1},
-            {"batch_size": "1", "num_channels": "16", "steps": "1", "sequence_length": "512", "model_type": 2},
-        ]
-        result = to_named_specializations(flat, module_name="transformer")
+        flat = self._tag(
+            [
+                {"batch_size": "1", "num_channels": "16", "steps": "1", "sequence_length": "512", "model_type": 1},
+                {"batch_size": "1", "num_channels": "16", "steps": "1", "sequence_length": "512", "model_type": 2},
+            ],
+            "transformer",
+        )
+        result = to_named_specializations(flat)
         assert result[0]["name"] == "transformer_model_type_1"
         assert result[1]["name"] == "transformer_model_type_2"
 
-    def test_wan_vae_decoder_uses_module_name(self):
-        flat = [{"batch_size": 1, "num_channels": 16}]
-        result = to_named_specializations(flat, module_name="vae_decoder")
+    def test_wan_vae_decoder(self):
+        flat = self._tag([{"batch_size": 1, "num_channels": 16}], "vae_decoder")
+        result = to_named_specializations(flat)
         assert result[0]["name"] == "vae_decoder"
 
-    def test_wan_i2v_vae_encoder_uses_module_name(self):
-        flat = [{"batch_size": 1, "num_channels": 16}]
-        result = to_named_specializations(flat, module_name="vae_encoder")
+    def test_wan_i2v_vae_encoder(self):
+        flat = self._tag([{"batch_size": 1, "num_channels": 16}], "vae_encoder")
+        result = to_named_specializations(flat)
         assert result[0]["name"] == "vae_encoder"
 
-    def test_all_values_stringified(self):
-        flat = [{"batch_size": 1, "seq_len": 77}]
-        result = to_named_specializations(flat, module_name="text_encoder")
-        assert all(isinstance(v, str) for v in result[0]["symbols"].values())
+    def test_graph_name_tag_stripped_from_symbols(self):
+        flat = self._tag([{"batch_size": 1, "seq_len": 77}], "text_encoder")
+        result = to_named_specializations(flat)
+        assert "_graph_name" not in result[0]["symbols"]
 
     def test_idempotent_already_named_entries(self):
-        """Entries already in {name, symbols} format must pass through unchanged."""
         already = [{"name": "transformer", "symbols": {"batch_size": "1", "steps": "1"}}]
-        result = to_named_specializations(already, module_name="transformer")
+        result = to_named_specializations(already)
         assert result == already
 
-    def test_no_module_name_falls_back_to_lm_rules(self):
-        """Without module_name the standard Prefill/Decode rules still apply."""
+    def test_no_tag_falls_back_to_lm_rules(self):
+        """Without _graph_name tag, seq_len heuristic applies."""
         flat = [
             {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
             {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},

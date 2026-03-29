@@ -449,8 +449,14 @@ class QEFFAutoModel(QEFFTransformersBase):
         if isinstance(seq_len, list) and len(seq_len) >= 15:
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
+        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
+            {
+                "_graph_name": "Embedding" if len(_seq_lens) == 1 else f"Embedding_{i}",
+                "batch_size": batch_size,
+                "seq_len": sl,
+            }
+            for i, sl in enumerate(_seq_lens)
         ]
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
@@ -794,8 +800,14 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         if isinstance(seq_len, list) and len(seq_len) >= 15:
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
+        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
+            {
+                "_graph_name": "SeqClassification" if len(_seq_lens) == 1 else f"SeqClassification_{i}",
+                "batch_size": batch_size,
+                "seq_len": sl,
+            }
+            for i, sl in enumerate(_seq_lens)
         ]
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         return self._compile(
@@ -3257,7 +3269,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: remove this; not required
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
-        return {k: v for k, v in spec.items() if v is not None}
+        result = {k: v for k, v in spec.items() if v is not None}
+        result["_graph_name"] = "Prefill"
+        return result
 
     def build_decode_specialization(
         self,
@@ -3315,7 +3329,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
-        return {k: v for k, v in spec.items() if v is not None}
+        result = {k: v for k, v in spec.items() if v is not None}
+        result["_graph_name"] = "Decode"
+        return result
 
     def compile(
         self,
@@ -4236,8 +4252,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :str: Path of the compiled ``qpc`` package.
         """
 
+        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
+            {"_graph_name": "CTC" if len(_seq_lens) == 1 else f"CTC_{i}", "batch_size": batch_size, "seq_len": sl}
+            for i, sl in enumerate(_seq_lens)
         ]
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
