@@ -270,6 +270,14 @@ class QEffDeepseekV3Attention(nn.Module):
         n_head_ckv = compressed_kv.shape[1]
         p = self.num_heads//n_head_ckv
 
+        blocking_config = getattr(self, "attn_blocking_config", None)
+        num_kv_blocks = 1
+        if blocking_config is not None:
+            num_kv_blocks = blocking_config.num_kv_blocks
+        print("num_kv_blocks : ", num_kv_blocks)
+        ctx_len = compressed_kv.shape[-2]
+        block_size = -(-ctx_len // num_kv_blocks)
+
         value_out = []
         for i in range(n_head_ckv):
           value_states_ph = torch.matmul(kva[:,i,:,:], self.v_up[:, :, i*p*self.v_head_dim: (i+1)*p*self.v_head_dim])
@@ -283,18 +291,12 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
-        blocking_config = getattr(self, "attn_blocking_config", None)
-        num_kv_blocks = 1
-        if blocking_config is not None:
-            num_kv_blocks = blocking_config.num_kv_blocks
-        print("num_kv_blocks : ", num_kv_blocks)
-        seq_len = compressed_kv.shape[-2]
-        block_size = -(-seq_len // num_kv_blocks)
-
         attn_output_list = []
         for k in range(n_head_ckv):
             attn_weights_list = []
             for j in range(num_kv_blocks):
+                kv_start_index = j*block_size
+                kv_end_index = min(ctx_len, (j+1)*block_size)
                 if enable_absorption:
                     if absorb_online:
                         if j==0:
@@ -307,14 +309,14 @@ class QEffDeepseekV3Attention(nn.Module):
                         out2 = torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk[k*p:(k+1)*p,:,:])
 
                     out3 = torch.cat((out2, q_pe[:,k*p:(k+1)*p,:,:]), -1)
-                    kva_kpe = torch.cat((kva[:,k,j*block_size:(j+1)*block_size,:],k_pe[:,k,j*block_size:(j+1)*block_size,:]), -1).unsqueeze(1)
+                    kva_kpe = torch.cat((kva[:,k,kv_start_index:kv_end_index,:],k_pe[:,k,kv_start_index:kv_end_index,:]), -1).unsqueeze(1)
                     attn_weights = torch.matmul(out3, kva_kpe.transpose(2,3)) * self.softmax_scale
                 else:
                     if j==0:
                         print("no absorption")
                     k_nope = torch.matmul(kva[:,k,:,:], self.k_up[:, :, k*p*self.qk_nope_head_dim: (k+1)*p*self.qk_nope_head_dim])
                     k_nope = k_nope.view(bsz, -1, p, self.qk_nope_head_dim).transpose(1, 2)
-                    key_states = torch.cat((k_nope[:,:,j*block_size:(j+1)*block_size,:], k_pe[:,k,j*block_size:(j+1)*block_size,:].unsqueeze(1).repeat(1,p,1,1)), -1)
+                    key_states = torch.cat((k_nope[:,:,kv_start_index:kv_end_index,:], k_pe[:,k,kv_start_index:kv_end_index,:].unsqueeze(1).repeat(1,p,1,1)), -1)
                     query_states = torch.cat((q_nope[:,k*p:(k+1)*p,:,:], q_pe[:,k*p:(k+1)*p,:,:]), -1)
                     attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
