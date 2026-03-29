@@ -135,12 +135,12 @@ def _scatter_gather_qwen3_expert_where_before_reorder(
     scatter_idx = torch.cumsum(T2Ei.long(), dim=0) - 1
     safe_idx = torch.where(T2Ei, scatter_idx, torch.full_like(scatter_idx, T))
 
-    # x_prime = torch.zeros(T + 1, H, dtype=x.dtype, device=x.device)
-    # x_prime = x_prime.scatter(0, safe_idx.unsqueeze(-1).expand(-1, H), x)
+    x_prime = torch.zeros(T + 1, H, dtype=x.dtype, device=x.device)
+    x_prime = x_prime.scatter(0, safe_idx.unsqueeze(-1).expand(-1, H), x)
 
-    x_prime = torch.zeros(1, T + 1, H, dtype=x.dtype, device=x.device)
-    x_prime = CtxScatterFunc3D.apply(x_prime, safe_idx.unsqueeze(0).to(torch.int32), x.unsqueeze(0))
-    x_prime = x_prime[0]
+    # x_prime = torch.zeros(1, T + 1, H, dtype=x.dtype, device=x.device)
+    # x_prime = CtxScatterFunc3D.apply(x_prime, safe_idx.unsqueeze(0).to(torch.int32), x.unsqueeze(0))
+    # x_prime = x_prime[0]
 
     gate_prime = x_prime[:T] @ W_g
     up_prime = x_prime[:T] @ W_u
@@ -160,7 +160,7 @@ def _scatter_gather_qwen3_expert_where_before_reorder(
     return delta
 
 
-def _ctx_scatter_gather_expert_forward_where_before_reorder(
+def _ctx_scatter_gather_expert_forward_where_before_reorder_without_invalid_gather_indices(
     x: torch.Tensor,  # [T, H]
     T2Ei: torch.Tensor,  # [T] bool
     W_g: torch.Tensor,  # [H, I]
@@ -193,7 +193,7 @@ def _ctx_scatter_gather_expert_forward_where_before_reorder(
     return delta_out
 
 
-def _ctx_scatter_gather_expert_forward_active_only(
+def _ctx_scatter_gather_expert_forward_where_before_reorder(
     x: torch.Tensor,  # [T, H]
     T2Ei: torch.Tensor,  # [T] bool
     W_g: torch.Tensor,  # [H, I]
@@ -203,28 +203,78 @@ def _ctx_scatter_gather_expert_forward_active_only(
     T: int,
     H: int,
 ) -> torch.Tensor:
-    """
-    Optimized version that only computes on active tokens.
-    No trash row, no WHERE operation, direct indexing.
-    """
-    num_active = T2Ei.long().sum().item()
+    scatter_idx = (torch.cumsum(T2Ei.long(), dim=0) - 1).to(torch.int32)
+    invalid_mask = ~T2Ei
 
-    if num_active == 0:
-        return torch.zeros(T, H, dtype=x.dtype, device=x.device)
+    scatter_safe_idx = torch.where(invalid_mask, torch.tensor(T, dtype=torch.int32, device=x.device), scatter_idx)
+    x_prime = torch.zeros(1, T + 1, H, dtype=x.dtype, device=x.device)
+    x_prime = CtxScatterFunc3D.apply(x_prime, scatter_safe_idx.unsqueeze(0), x.unsqueeze(0))
+    x_prime = x_prime[0]
 
-    # Get active token indices
-    active_indices = torch.where(T2Ei)[0]  # [num_active], But Non Zero op
+    gate_prime = x_prime[:T] @ W_g
+    up_prime = x_prime[:T] @ W_u
+    down_prime = (up_prime * act_fn(gate_prime)) @ W_d
 
-    # Gather only active tokens
-    x_active = x[active_indices]  # [num_active, H]
+    num_active = T2Ei.long().sum()
+    compact_rows = torch.arange(T, device=x.device)
+    compact_mask = compact_rows < num_active
+    down_prime = torch.where(compact_mask.unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
 
-    gate_active = x_active @ W_g  # [num_active, I]
-    up_active = x_active @ W_u  # [num_active, I]
-    down_active = (up_active * act_fn(gate_active)) @ W_d  # [num_active, H]
+    # INT32_MAX during ONNX export → HW skips invalid fetches (same as KV cache).
+    if torch.onnx.is_in_onnx_export():
+        invalid_idx_value = torch.iinfo(torch.int32).max
+    else:
+        invalid_idx_value = 0
+    gather_idx = torch.where(
+        invalid_mask, torch.tensor(invalid_idx_value, dtype=torch.int32, device=x.device), scatter_idx
+    )
+    delta_out = CtxGatherFunc3D.apply(down_prime.unsqueeze(0), gather_idx.unsqueeze(0))[0]
+    delta_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(delta_out), delta_out)
 
-    # Scatter results back to original positions
-    delta_out = torch.zeros(T, H, dtype=x.dtype, device=x.device)
-    delta_out[active_indices] = down_active
+    return delta_out
+
+
+def _ctx_scatter_gather_expert_forward_with_capacity(
+    x: torch.Tensor,  # [T, H]
+    T2Ei: torch.Tensor,  # [T] bool
+    W_g: torch.Tensor,  # [H, I]
+    W_u: torch.Tensor,  # [H, I]
+    W_d: torch.Tensor,  # [I, H]
+    act_fn,
+    T: int,
+    H: int,
+    C: int,  # static expert capacity (C << T)
+) -> torch.Tensor:
+    scatter_idx = (torch.cumsum(T2Ei.long(), dim=0) - 1).to(torch.int32)
+    invalid_mask = ~T2Ei
+
+    C = min(C, T)
+    overflow_mask = scatter_idx >= C
+    trash_mask = invalid_mask | overflow_mask
+    scatter_safe_idx = torch.where(trash_mask, torch.tensor(T, dtype=torch.int32, device=x.device), scatter_idx)
+    x_prime = torch.zeros(1, T + 1, H, dtype=x.dtype, device=x.device)
+    x_prime = CtxScatterFunc3D.apply(x_prime, scatter_safe_idx.unsqueeze(0), x.unsqueeze(0))
+    x_prime = x_prime[0]
+
+    # Expert matmul on C rows only
+    gate_prime = x_prime[:C] @ W_g
+    up_prime = x_prime[:C] @ W_u
+    down_prime = (up_prime * act_fn(gate_prime)) @ W_d  # [C, H]
+
+    # Extend down_prime back to T rows so gather data=[1,T,H] matches idx=[1,T].
+    down_prime_full = torch.zeros(1, T, H, dtype=x.dtype, device=x.device)
+    down_prime_full[:, :C] = down_prime.unsqueeze(0)
+
+    # Gather: INT32_MAX for trash tokens
+    if torch.onnx.is_in_onnx_export():
+        invalid_idx_value = torch.iinfo(torch.int32).max
+    else:
+        invalid_idx_value = 0
+    gather_idx = torch.where(
+        trash_mask, torch.tensor(invalid_idx_value, dtype=torch.int32, device=x.device), scatter_idx
+    )
+    delta_out = CtxGatherFunc3D.apply(down_prime_full, gather_idx.unsqueeze(0))[0]
+    delta_out = torch.where(trash_mask.unsqueeze(-1), torch.zeros_like(delta_out), delta_out)
 
     return delta_out
 

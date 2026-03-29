@@ -98,17 +98,16 @@ class CtxScatterFunc3D(torch.autograd.Function):
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
-    # Cast indices to INT64 for GatherND
-    # No Expand needed - indices shape determines output shape
-    ctx_indices_i64 = ops.Cast(ctx_indices, to=7)  # Cast to INT64
-    ctx_indices_i64 = ops.Unsqueeze(ctx_indices_i64, [-1])
-    return ops.GatherND(data, ctx_indices_i64, batch_dims=1)
+    ctx_indices = ops.Expand(ctx_indices, ops.Slice(ops.Shape(data), starts=[0], ends=[2], axes=[0]))
+    ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
+    return ops.GatherND(data, ctx_indices, batch_dims=1)
 
 
 class CtxGatherFunc3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
         batch_indices = torch.arange(data.shape[0]).view(-1, 1)
+        ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
         return data[batch_indices, ctx_indices]
 
     @staticmethod
