@@ -686,9 +686,32 @@ class TestInferSpecializationName:
         spec = {"batch_size": "1", "img_size": "336"}
         assert _infer_specialization_name(spec, 0) == "Graph_0"
 
-    def test_encoder_detected_by_encoder_ctx_len(self):
+    def test_encoder_detected_by_encoder_ctx_len_no_seq_len(self):
+        """Simplified spec with encoder_ctx_len and no seq_len → Encoder."""
         spec = {"batch_size": "1", "encoder_ctx_len": "1500"}
         assert _infer_specialization_name(spec, 0) == "Encoder"
+
+    def test_encoder_detected_whisper_real_spec(self):
+        """Real Whisper encoder-run: seq_len=1, encoder_ctx_len, feature_len>1 → Encoder."""
+        spec = {
+            "batch_size": "1",
+            "seq_len": "1",
+            "encoder_ctx_len": "1500",
+            "decoder_ctx_len": "150",
+            "feature_len": "3000",
+        }
+        assert _infer_specialization_name(spec, 0) == "Encoder"
+
+    def test_decode_detected_whisper_real_spec(self):
+        """Real Whisper decoder-run: seq_len=1, encoder_ctx_len, feature_len=1 → Decode."""
+        spec = {
+            "batch_size": "1",
+            "seq_len": "1",
+            "encoder_ctx_len": "1500",
+            "decoder_ctx_len": "150",
+            "feature_len": "1",
+        }
+        assert _infer_specialization_name(spec, 1) == "Decode"
 
     def test_embedding_detected_by_sequence_length(self):
         spec = {"batch_size": "1", "sequence_length": "128"}
@@ -796,8 +819,8 @@ class TestToNamedSpecializations:
         for entry in result:
             assert set(entry.keys()) == {"name", "symbols"}
 
-    def test_whisper_encoder_specialization(self):
-        """Whisper encoder: encoder_ctx_len present, no seq_len → 'Encoder'."""
+    def test_whisper_encoder_specialization_simplified(self):
+        """Simplified Whisper spec: encoder_ctx_len, no seq_len → 'Encoder'."""
         flat = [
             {"batch_size": "1", "encoder_ctx_len": "1500"},
             {"batch_size": "1", "seq_len": "1", "ctx_len": "448"},
@@ -806,6 +829,31 @@ class TestToNamedSpecializations:
         assert result[0]["name"] == "Encoder"
         assert result[1]["name"] == "Decode"
         assert result[0]["symbols"]["encoder_ctx_len"] == "1500"
+
+    def test_whisper_encoder_specialization_real_spec(self):
+        """Real Whisper spec: both entries have seq_len=1 + encoder_ctx_len;
+        feature_len distinguishes Encoder (>1) from Decode (==1)."""
+        flat = [
+            {
+                "batch_size": "1",
+                "seq_len": "1",
+                "encoder_ctx_len": "1500",
+                "decoder_ctx_len": "150",
+                "feature_len": "3000",
+            },
+            {
+                "batch_size": "1",
+                "seq_len": "1",
+                "encoder_ctx_len": "1500",
+                "decoder_ctx_len": "150",
+                "feature_len": "1",
+            },
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Encoder"
+        assert result[1]["name"] == "Decode"
+        assert result[0]["symbols"]["feature_len"] == "3000"
+        assert result[1]["symbols"]["feature_len"] == "1"
 
     def test_text_embedding_specialization(self):
         """Text embedding (BERT): sequence_length present, no seq_len → 'Embedding'."""

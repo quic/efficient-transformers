@@ -851,8 +851,10 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
       ``f"{module_name}_model_type_{value}"`` (e.g. Wan transformer).
     - "Prefill" for entries whose ``seq_len`` value is not "1" / 1.
     - "Decode" for entries whose ``seq_len`` is "1" / 1.
-    - "Encoder" for entries that contain ``encoder_ctx_len`` but no ``seq_len``
-      (e.g. Whisper encoder).
+    - "Encoder" for entries that contain ``encoder_ctx_len`` but no ``seq_len``,
+      OR entries that have both ``encoder_ctx_len`` and ``feature_len`` with
+      ``feature_len != 1`` (Whisper encoder-run: both specs carry ``seq_len=1``
+      and ``encoder_ctx_len``; ``feature_len > 1`` identifies the encoder pass).
     - "Embedding" for entries that contain ``sequence_length`` but no ``seq_len``
       (e.g. BERT / text-embedding models).
     - A generic fallback ``f"Graph_{index}"`` for anything else.
@@ -891,6 +893,15 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
         if "sequence_length" in spec:
             return "Embedding"
         return f"Graph_{index}"
+
+    # Whisper: both encoder-run and decoder-run specs carry seq_len=1 and
+    # encoder_ctx_len.  feature_len distinguishes them: > 1 is the encoder
+    # (full audio features), == 1 is the decoder (cross-attention disabled).
+    if "encoder_ctx_len" in spec and "feature_len" in spec:
+        if str(spec["feature_len"]) != "1":
+            return "Encoder"
+        return "Decode"
+
     seq_len = spec["seq_len"]
     if str(seq_len) == "1":
         return "Decode"
