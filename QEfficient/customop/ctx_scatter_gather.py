@@ -84,6 +84,10 @@ class CtxScatterFunc3D(torch.autograd.Function):
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
         batch_idx = torch.arange(data.shape[0]).view(-1, 1)
         ctx_idx = position_ids
+        # Clamp INT32_MAX
+        # On HW the backend kernel sees INT32_MAX and skips the write entirely
+        last_row = data.shape[1] - 1
+        ctx_idx = torch.where(ctx_idx == torch.iinfo(torch.int32).max, last_row, ctx_idx)
         data[batch_idx, ctx_idx] = updates
         return data
 
