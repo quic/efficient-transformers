@@ -897,6 +897,15 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
         if "sequence_length" in spec:
             return "Embedding"
         return f"Graph_{index}"
+
+    # Whisper: both encoder-run and decoder-run specs carry seq_len=1 and
+    # encoder_ctx_len.  feature_len distinguishes them: > 1 is the encoder
+    # (full audio features), == 1 is the decoder (cross-attention disabled).
+    if "encoder_ctx_len" in spec and "feature_len" in spec:
+        if str(spec["feature_len"]) != "1":
+            return "Encoder"
+        return "Decode"
+
     seq_len = spec["seq_len"]
     if str(seq_len) == "1":
         return "Decode"
