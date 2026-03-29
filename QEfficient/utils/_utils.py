@@ -843,65 +843,56 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
     """
     Infer a human-readable name for a specialization entry.
 
-    The naming convention follows the backend team's request:
-
-    - If ``module_name`` is provided it is used directly as the graph name
-      (e.g. ``"text_encoder"``, ``"vae_decoder"``).  For multi-specialization
-      modules that carry a ``model_type`` key the name becomes
-      ``f"{module_name}_model_type_{value}"`` (e.g. Wan transformer).
-    - "Prefill" for entries whose ``seq_len`` value is not "1" / 1.
-    - "Decode" for entries whose ``seq_len`` is "1" / 1.
-    - "Encoder" for entries that contain ``encoder_ctx_len`` but no ``seq_len``,
-      OR entries that have both ``encoder_ctx_len`` and ``feature_len`` with
-      ``feature_len != 1`` (Whisper encoder-run: both specs carry ``seq_len=1``
-      and ``encoder_ctx_len``; ``feature_len > 1`` identifies the encoder pass).
-    - "Embedding" for entries that contain ``sequence_length`` but no ``seq_len``
-      (e.g. BERT / text-embedding models).
-    - A generic fallback ``f"Graph_{index}"`` for anything else.
-
-    Note: "Vision" is **not** inferred from spec keys because VLM vision specs
-    vary too much across models (some carry ``seq_len`` + ``ctx_len``, some do
-    not).  Callers that know they are compiling a vision encoder should pass
-    ``module_name="Vision"`` explicitly.
+    Priority order:
+    1. ``_graph_name`` key inside ``spec`` — set at the point of creation by
+       ``build_prefill_specialization``, ``build_decode_specialization``,
+       VLM ``get_specializations``, Whisper ``get_specializations``, and
+       ``pipeline_utils`` compile helpers.  This is the authoritative source
+       and requires no heuristics.
+    2. ``module_name`` argument — used by diffusers pipeline modules where the
+       module name itself is the graph name (e.g. ``"text_encoder"``).
+    3. ``seq_len`` heuristic — reliable fallback for plain causal LM specs that
+       do not carry ``_graph_name`` (e.g. user-supplied raw dicts, legacy paths).
+       ``seq_len != 1`` → ``"Prefill"``, ``seq_len == 1`` → ``"Decode"``.
+    4. ``encoder_ctx_len`` with no ``seq_len`` → ``"Encoder"`` (simplified
+       Whisper-like spec without ``feature_len``).
+    5. ``sequence_length`` with no ``seq_len`` → ``"Embedding"`` (BERT-like).
+    6. Generic fallback ``f"Graph_{index}"``.
 
     Parameters
     ----------
     spec : Dict
-        A single flat specialization dictionary (key → value).
+        A single flat specialization dictionary (key → value).  May contain
+        the reserved ``_graph_name`` key which is consumed here and never
+        written to ``symbols``.
     index : int
-        Zero-based position of this entry in the specializations list, used only
-        for the generic fallback name.
+        Zero-based position in the specializations list, used only for the
+        generic fallback name.
     module_name : str, optional
-        Explicit graph name hint.  When provided it takes priority over all
-        heuristics.  Used by diffusers pipeline modules and VLM vision/lang
-        compile call sites.
+        Explicit graph name hint for diffusers pipeline modules.
 
     Returns
     -------
     str
         The inferred graph name.
     """
-    # Explicit name hint — used by diffusers modules and VLM vision/lang paths.
+    # 1. Authoritative tag set at creation time — no heuristics needed.
+    if "_graph_name" in spec:
+        return spec["_graph_name"]
+
+    # 2. Explicit module name (diffusers pipeline path).
     if module_name is not None:
         if "model_type" in spec:
             return f"{module_name}_model_type_{spec['model_type']}"
         return module_name
 
+    # 3-6. Heuristic fallback — only reached for raw/legacy dicts.
     if "seq_len" not in spec:
         if "encoder_ctx_len" in spec:
             return "Encoder"
         if "sequence_length" in spec:
             return "Embedding"
         return f"Graph_{index}"
-
-    # Whisper: both encoder-run and decoder-run specs carry seq_len=1 and
-    # encoder_ctx_len.  feature_len distinguishes them: > 1 is the encoder
-    # (full audio features), == 1 is the decoder (cross-attention disabled).
-    if "encoder_ctx_len" in spec and "feature_len" in spec:
-        if str(spec["feature_len"]) != "1":
-            return "Encoder"
-        return "Decode"
-
     seq_len = spec["seq_len"]
     if str(seq_len) == "1":
         return "Decode"
@@ -943,6 +934,22 @@ def to_named_specializations(specializations: List[Dict], module_name: Optional[
             result.append(spec)
             continue
         name = _infer_specialization_name(spec, index, module_name=module_name)
-        symbols = {k: str(v) for k, v in spec.items()}
+        # Strip the internal _graph_name tag — it must not appear in symbols.
+        symbols = {k: str(v) for k, v in spec.items() if k != "_graph_name"}
         result.append({"name": name, "symbols": symbols})
+
+    # Deduplicate names: if two entries share the same inferred name (e.g. both
+    # have seq_len=1 in a raw-dict override path), append a positional suffix so
+    # the compiler never sees duplicate graph names.
+    seen: Dict[str, int] = {}
+    for entry in result:
+        name = entry["name"]
+        if name in seen:
+            # Rename the first occurrence retroactively on its second encounter
+            if seen[name] == 1:
+                first_idx = next(i for i, e in enumerate(result) if e["name"] == name)
+                result[first_idx] = {**result[first_idx], "name": f"{name}_0"}
+            entry["name"] = f"{name}_{seen[name]}"
+        seen[name] = seen.get(name, 0) + 1
+
     return result
