@@ -267,14 +267,8 @@ def _ctx_scatter_gather_expert_forward_where_before_reorder(
     up_prime = x_prime[:T] @ W_u
     down_prime = (up_prime * act_fn(gate_prime)) @ W_d
 
-    num_active = T2Ei.long().sum()
-    compact_rows = torch.arange(T, device=x.device)
-    compact_mask = compact_rows < num_active
-    down_prime = torch.where(compact_mask.unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
-
     gather_idx = torch.where(invalid_mask, INT32_MAX, scatter_idx)
     delta_out = CtxGatherFunc3D.apply(down_prime.unsqueeze(0), gather_idx.unsqueeze(0))[0]
-    delta_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(delta_out), delta_out)
 
     return delta_out
 
