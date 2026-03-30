@@ -292,7 +292,6 @@ class QEFFBaseModel(ABC):
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
-
             onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 

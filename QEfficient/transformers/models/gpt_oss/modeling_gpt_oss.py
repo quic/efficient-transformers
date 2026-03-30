@@ -139,7 +139,7 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             indices = torch.where(
                 sorted_weights > 0,
                 sorted_indices.to(torch.int64),
-                torch.full((T,), invalid_idx, dtype=torch.int64, device=hidden.device),
+                invalid_idx,
             )  # [T]
 
             # ── GatherND: make expert-token hidden states contiguous ──────────────────

@@ -72,7 +72,7 @@ prefill_qpc_path = qeff_model.compile(
     node_precision_info=subfunc_npi_file_path,
 )
 
-exit()
+#exit()
 inputs = tokenizer(prompt, return_tensors="np", padding=True)
 position_ids = inputs["attention_mask"].sum(1, keepdims=True)
 generation_len = CTX_LEN - position_ids.max()
@@ -87,7 +87,7 @@ inputs.pop("past_key_values", None)
 inputs = {k: v.detach().numpy() for k, v in inputs.items()}
 
 
-decode_session = QAICInferenceSession(decode_qpc_path)
+#decode_session = QAICInferenceSession(decode_qpc_path)
 prefill_session = QAICInferenceSession(prefill_qpc_path)
 
 all_outputs = []
@@ -102,6 +102,7 @@ for i in range(num_chunks):
         inputs[f"past_key.{i}"] = qpc_out[f"past_key.{i}_RetainedState"]
         inputs[f"past_value.{i}"] = qpc_out[f"past_value.{i}_RetainedState"]
 
+exit()
 all_outputs.append(np.argmax(qpc_out["logits"]))
 decode_inputs = {
     "input_ids": np.argmax(qpc_out["logits"]).reshape(1, 1),
