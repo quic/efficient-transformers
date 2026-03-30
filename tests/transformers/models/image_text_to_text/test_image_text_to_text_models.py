@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import copy
 import json
 import os
 from io import BytesIO
@@ -16,8 +17,6 @@ import torch
 from PIL import Image
 from transformers import (
     AutoConfig,
-    AutoModelForCausalLM,
-    AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
     GenerationConfig,
@@ -25,11 +24,16 @@ from transformers import (
 )
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
-from QEfficient.utils import hf_download
-from QEfficient.utils._utils import create_json, get_num_layers_vlm
+from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
-from QEfficient.utils.test_utils import InternProcessor
+from QEfficient.utils.test_utils import (
+    InternProcessor,
+    ModelConfig,
+    load_vlm_model,
+    load_vlm_model_from_config,
+    set_num_layers_vlm,
+)
 
 NEW_GENERATION_TOKENS = 10
 
@@ -43,71 +47,6 @@ test_mm_models = [model_config["model_name"] for model_config in multimodal_mode
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
 test_custom_dtype_support_models = [model_config["model_name"] for model_config in custom_dtype_support_models]
 custom_dtype_support_models_config_dict = {model["model_name"]: model for model in custom_dtype_support_models}
-
-
-def load_image_text_to_text_model(model_config):
-    model_path = hf_download(
-        repo_id=model_config._name_or_path,
-        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
-    )
-    try:
-        model_hf = AutoModelForImageTextToText.from_pretrained(
-            model_path,
-            low_cpu_mem_usage=False,
-            config=model_config,
-        )
-    except ValueError:
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=model_config,
-        )
-    params = sum(p.numel() for p in model_hf.parameters())
-    model_hf.eval()
-    return model_hf, params
-
-
-def load_image_text_to_text_model_from_config(model_name, config):
-    torch.manual_seed(42)
-    model_path = hf_download(
-        repo_id=model_name,
-        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
-    )
-    try:
-        model_hf = AutoModelForImageTextToText.from_config(
-            config,
-        )
-    except ValueError:
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=config,
-        )
-    params = sum(p.numel() for p in model_hf.parameters())
-    model_hf.eval()
-    return model_hf, params
-
-
-def set_num_layers(config, n_layer=1):
-    ## -1 indicates use all the layers of the model.
-    if n_layer == -1:
-        return config
-    elif hasattr(config, "model_type") and "mllama" in config.model_type:
-        config.text_config.num_hidden_layers = n_layer
-        config.text_config.cross_attention_layers = [
-            x for x in config.text_config.cross_attention_layers if x < n_layer
-        ]
-    elif hasattr(config, "text_config"):
-        config.text_config.num_hidden_layers = n_layer
-        config.vision_config.num_hidden_layers = n_layer
-    elif hasattr(config, "llm_config"):
-        config.llm_config.num_hidden_layers = n_layer
-        config.vision_config.num_hidden_layers = n_layer
-    else:
-        config.num_hidden_layers = n_layer
-    return config
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -147,40 +86,49 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         config: Pre-configured model config (optional)
         img_size: Image size for standard models (optional)
     """
-
-    is_intern_model = model_name == "OpenGVLab/InternVL2_5-1B" or model_name == "OpenGVLab/InternVL3_5-1B"
-    is_molmo_model = model_name == "allenai/Molmo-7B-D-0924"
-
-    # ========== Config and Model Loading ==========
     if config is None:
-        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, padding=not is_molmo_model)
-        config._attn_implementation = "eager" if (is_intern_model or is_molmo_model) else None
-        config = set_num_layers(config, n_layer=n_layer)
-
-    if is_intern_model:
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=config,
+        config = AutoConfig.from_pretrained(
+            model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
-        n_layer = get_num_layers_vlm(config)
-
-    elif is_molmo_model:
-        model_hf, _ = load_image_text_to_text_model(config)
-        n_layer = (n_layer, n_layer)
+        config = set_num_layers_vlm(config, n_layer=n_layer)
+        if model_name in ModelConfig.INTERNVL_MODELS or model_name in ModelConfig.MOLMO_MODELS:
+            config._attn_implementation = "eager"
+            model_hf = load_vlm_model(config)
+            qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+                model_name,
+                kv_offload=kv_offload,
+                config=config,
+                torch_dtype=torch_dtype,
+            )
+        else:
+            model_hf = load_vlm_model(config)
+            qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+                model_name,
+                kv_offload=kv_offload,
+                config=config,
+                torch_dtype=torch_dtype,
+            )
     else:
-        model_hf, _ = load_image_text_to_text_model(config)
-        n_layer = get_num_layers_vlm(config)
+        model_hf = load_vlm_model_from_config(config)
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=config,
+            torch_dtype=torch_dtype,
+        )
 
-    # ========== Processor and Image Loading ==========
-    if is_intern_model:
+    compile_kwargs = {
+        "num_devices": num_devices,
+        "prefill_seq_len": prompt_len,
+        "ctx_len": ctx_len,
+        "mxfp6": False,
+        "enable_qnn": enable_qnn,
+        "qnn_config": qnn_config,
+    }
+
+    if model_name in ModelConfig.INTERNVL_MODELS:
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
         processor = InternProcessor(model_hf, tokenizer)
-    else:
-        processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-
-    if is_intern_model:
         prompt = [query]
         img_url_list = [img_url]
         pixel_values = []
@@ -195,19 +143,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             pixel_values.append(pixel_value)
             question = "<image>\n" + prompt[i]
             questions.append(question)
-        pixel_values = torch.cat(pixel_values, dim=0)
-    else:
-        if is_molmo_model:
-            img = requests.get(img_url, stream=True)
-            image = Image.open(BytesIO(img.content)).convert("RGB")
-            image = image.resize((536, 354))
-        else:
-            image = Image.open(requests.get(img_url, stream=True).raw)
-            if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
-                image = image.resize((1540, 1540))
 
-    # ========== Prepare Inputs and Get PyTorch HF Tokens ==========
-    if is_intern_model:
+        pixel_values = torch.cat(pixel_values, dim=0)
         messages: List[List[str]] = []
         roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
         prompt = processor(pixel_values, questions, messages, roles, num_patches_list=num_patches_list)
@@ -228,7 +165,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             n_layer,
         )
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
-    elif is_molmo_model:
+        compile_kwargs["num_patches"] = 1
+
+    elif model_name in ModelConfig.MOLMO_MODELS:
+        processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
+        img = requests.get(img_url, stream=True)
+        image = Image.open(BytesIO(img.content)).convert("RGB")
+        image = image.resize((536, 354))
         inputs = processor.process(images=[image], text=query)
         inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
         generation_config = GenerationConfig(max_new_tokens=NEW_GENERATION_TOKENS, stop_strings="<|endoftext|>")
@@ -241,7 +184,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             prompt_len,
             ctx_len,
             max_gen_len,
-            n_layer,
+            (n_layer, n_layer),
         )
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
         batch_size, prompt_len = inputs["input_ids"].shape
@@ -250,7 +193,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         valid = valid.reshape(1, -1)
         inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
         inputs["pixel_values"] = inputs.pop("images")
+        compile_kwargs["img_size"] = img_size
+
     else:
+        processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
+        image = Image.open(requests.get(img_url, stream=True).raw)
+        if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
+            image = image.resize((1540, 1540))
         conversation = [
             {
                 "role": "user",
@@ -275,57 +224,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         )
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if "pixel_values" in inputs:
-            inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+            inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
-
-    # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
-    # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
-    #     "Tokens don't match for pytorch HF output and pytorch KV output"
-    # )
-
-    streamer = TextStreamer(processor.tokenizer)
-
-    # ========== Export and Compile Model ==========
-    if is_intern_model or is_molmo_model:
-        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-            model_name,
-            kv_offload=kv_offload,
-            config=config,
-            torch_dtype=torch_dtype,
-        )
-    else:
-        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_name,
-            kv_offload=kv_offload,
-            config=config,
-            torch_dtype=torch_dtype,
-        )
-
-    qeff_model.export()
-
-    # onnx_model_path = qeff_model.export()
-    # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
-    # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
-
-    compile_kwargs = {
-        "num_devices": num_devices,
-        "prefill_seq_len": prompt_len,
-        "ctx_len": ctx_len,
-        "mxfp6": False,
-        "enable_qnn": enable_qnn,
-        "qnn_config": qnn_config,
-    }
-
-    if is_intern_model:
-        compile_kwargs["num_patches"] = 1
-    elif not is_molmo_model and img_size is not None:
-        compile_kwargs["img_size"] = img_size
-
-    qeff_model.compile(**compile_kwargs)
-
-    # ========== Generate and Verify Output ==========
-
-    if not is_intern_model and not is_molmo_model:
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
             inputs = qeff_model.model.prepare_inputs_for_generation(
@@ -333,16 +233,69 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             )
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
+        compile_kwargs["img_size"] = img_size
 
+    # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
+    # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
+    #     "Tokens don't match for pytorch HF output and pytorch KV output"
+    # )
+
+    _ = qeff_model.export()
+    # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
+    # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
+
+    qeff_model.compile(**compile_kwargs)
+    streamer = TextStreamer(processor.tokenizer)
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
-    return
 
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
+@pytest.mark.regular
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_custom_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    torch.manual_seed(42)
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    img_size = model_config_dict[model_name].get("img_size")
+
+    hf_config = None
+    model_type = model_config_dict[model_name].get("model_type", None)
+    if model_name in ModelConfig.STANDARD_VLM_MODELS and model_type is not None:
+        custom_config = model_config_dict[model_name].get("additional_params", {})
+        hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
+        hf_config.name_or_path = model_name
+
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=model_config_dict[model_name]["prompt_len"],
+        ctx_len=model_config_dict[model_name]["ctx_len"],
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=model_config_dict[model_name]["img_url"],
+        query=model_config_dict[model_name]["text_prompt"],
+        n_layer=model_config_dict[model_name]["num_layers"],
+        batch_size=model_config_dict[model_name]["batch_size"],
+        kv_offload=kv_offload,
+        config=hf_config,
+    )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.nightly
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
@@ -351,18 +304,12 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-    if model_name in [
-        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        "allenai/Molmo-7B-D-0924",
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    ]:
+    torch.manual_seed(42)
+    if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    if (
-        model_name in ["OpenGVLab/InternVL2_5-1B", "OpenGVLab/InternVL3_5-1B", "Qwen/Qwen2.5-VL-3B-Instruct"]
-        and not kv_offload
-    ):
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
         pytest.skip("These models require kv_offload=True for testing.")
-    # Get img_size for standard models, None for InternVL and Molmo
+
     img_size = model_config_dict[model_name].get("img_size")
 
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
