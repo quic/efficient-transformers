@@ -298,9 +298,9 @@ training:
 
 **PP only — single process, 2 stages (via YAML)**
 ```bash
-python -m QEfficient.cloud.finetune_experimental configs/sft_single_device_gsm8k_config.yaml
+python -m QEfficient.cloud.finetune_experimental QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
 ```
-where `sft_single_device_gsm8k_config.yaml` contains `pp_degree: 2` under `training:`.
+where change `pp_degree: 2` under `training:` for `sft_single_device_gsm8k_config.yaml` to enable pipeline parallelism of degree 2.
 
 **PP only — single process, 2 stages (via CLI flags)**
 ```bash
