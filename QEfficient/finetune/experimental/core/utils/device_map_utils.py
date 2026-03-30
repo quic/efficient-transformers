@@ -37,17 +37,16 @@ def get_device_map(
     # Validate pp_degree
     if not isinstance(pp_degree, int):
         raise TypeError(f"pp_degree must be an integer, got {type(pp_degree).__name__}")
-    
+
     if pp_degree < 1:
         raise ValueError(f"pp_degree must be >= 1, got {pp_degree}")
-    
+
     if pp_degree == 1:
         return None
 
     torch_device = torch.device(device)
     num_available_devices = getattr(torch, torch_device.type).device_count()
 
-    
     if pp_degree > num_available_devices:
         raise ValueError(
             f"pp_degree ({pp_degree}) cannot exceed the number of available {device} devices "
