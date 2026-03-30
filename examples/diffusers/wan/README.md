@@ -9,7 +9,7 @@ WAN 2.2 is a text-to-video diffusion model that uses dual-stage processing for h
 ## Files
 
 - **`wan_lightning.py`** - Complete example with Lightning LoRA for fast video generation
-- **`wan_config.json`** - Configuration file for transformer module compilation
+- **`wan_config.json`** - Contains default compilation config for transformer, vae modules.
 
 ## Quick Start
 
@@ -102,7 +102,7 @@ pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
     [original_blocks[i] for i in range(0, pipeline.transformer.model.transformer_high.config['num_layers'])]
 )
 pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
-    [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config.config['num_layers'])]
+    [org_blocks[i] for i in range(0, pipeline.transformer.model.transformer_low.config['num_layers'])]
 )
 ```
 
@@ -160,7 +160,7 @@ Head blocking is common in all modes
 
 ## Configuration File
 
-The `wan_config.json` file controls compilation settings for the transformer module:
+The `wan_config.json` file controls compilation settings for the transformer, vae modules:
 
 ### Module Structure
 
