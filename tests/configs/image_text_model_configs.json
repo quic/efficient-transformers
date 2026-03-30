@@ -380,7 +380,7 @@
       "ctx_len": 4096,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
-      "text_prompt": "Can you describe the image in detail.",
+      "query": "Can you describe the image in detail.",
       "num_layers": 1,
       "additional_params": {
         "hidden_size": 2048,

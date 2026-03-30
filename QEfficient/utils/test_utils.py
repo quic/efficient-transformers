@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -13,7 +13,67 @@ import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
 
-from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
+
+
+def get_qeff_model(
+    model_name: str,
+    num_hidden_layers: int = -1,
+    continuous_batching: bool = False,
+    qaic_config: Dict = None,
+    config: Optional[AutoConfig] = None,
+):
+
+    kwargs = dict(continuous_batching=continuous_batching, qaic_config=qaic_config)
+    if config is None:
+        if num_hidden_layers > 0:
+            kwargs["num_hidden_layers"] = num_hidden_layers
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+    else:
+        model_hf = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
+        torch_dtype = getattr(model_hf.config, "torch_dtype", None)
+        if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
+            model_hf = model_hf.to(torch.float32)
+        qeff_model = QEFFAutoModelForCausalLM(model_hf, **kwargs)
+
+    return qeff_model
+
+
+def get_qeff_vlm_model(
+    model_name: str, kv_offload: bool = True, num_hidden_layers: int = -1, config: Optional[AutoConfig] = None
+):
+    if config is None:
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        config = set_num_layers_vlm(config, num_hidden_layers)
+        try:
+            qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+                model_name, kv_offload=kv_offload, **config.__dict__
+            )
+        except ValueError:
+            qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, **config.__dict__)
+    else:
+        try:
+            model_hf = AutoModelForImageTextToText.from_config(
+                config,
+                attn_implementation="eager",
+                trust_remote_code=True,
+            )
+        except ValueError:
+            model_hf = AutoModelForCausalLM.from_config(
+                config,
+                attn_implementation="eager",
+                trust_remote_code=True,
+            )
+        torch_dtype = getattr(model_hf.config, "torch_dtype", None)
+        if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
+            model_hf = model_hf.to(torch.float32)
+        model_hf.eval()
+        try:
+            qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=kv_offload)
+        except ValueError:
+            qeff_model = QEFFAutoModelForCausalLM(model_hf, kv_offload=kv_offload)
+
+    return qeff_model
 
 
 def load_vlm_model(config):
@@ -66,9 +126,13 @@ def set_num_layers_vlm(config, n_layer=1):
     elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
+        if hasattr(config.vision_config, "depth"):
+            config.vision_config.depth = n_layer
     elif hasattr(config, "llm_config"):
         config.llm_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
+        if hasattr(config.vision_config, "depth"):
+            config.vision_config.depth = n_layer
     else:
         config.num_hidden_layers = n_layer
     return config

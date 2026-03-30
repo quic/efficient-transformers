@@ -5,32 +5,28 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
+import os
 from dataclasses import dataclass
 from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
 import pytest
-from transformers import AutoTokenizer
+import torch
+from transformers import AutoConfig, AutoTokenizer
 
-from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.device_utils import get_available_device_id
+from QEfficient.utils.test_utils import get_qeff_model
 
-configs = [
-    pytest.param(
-        Constants.INPUT_STR,  # prompts
-        4,  # num_speculative_tokens
-        32,  # prefill_seq_len
-        128,  # ctx_len
-        1,  # prefill_bsz
-        "JackFram/llama-68m",  # target_model_name
-        1,  # full_batch_size
-        3,  # max_ngram_size
-        id="CB llama",
-    ),
-]
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/feature_config.json")
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    spd_models = config_data["spd_config"]
+
+test_models_id = [model["id"] for model in spd_models[:1]]
+model_config_dict = {model["id"]: model for model in spd_models}
 
 
 @dataclass
@@ -202,43 +198,20 @@ def find_candidate_pred_tokens(
     return np.full(num_pred_tokens, fill_tok, dtype=np.int64), has_empty_tokens
 
 
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize(
-    "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, target_model_name, full_batch_size, max_ngram_size",
-    configs,
-)
-def test_pld_spec_decode_inference(
-    prompts: List[str],
-    num_speculative_tokens: int,
-    prefill_seq_len: int,
-    ctx_len: int,
-    prefill_bsz: int,
-    target_model_name: str,
-    full_batch_size: Optional[int],
-    max_ngram_size: int,
-) -> CloudAI100ExecInfo:
-    """
-    Perform draft speculative decode inference on the given prompts.
+def check_pld_spec_decode_inference(
+    model_id: str, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None
+):
+    """check pld"""
+    draft_model_name = model_config_dict[model_id]["draft_model_name"]
+    target_model_name = model_config_dict[model_id]["target_model_name"]
+    prompts = model_config_dict[model_id]["prompts"]
+    num_speculative_tokens = model_config_dict[model_id]["num_speculative_tokens"]
+    prefill_seq_len = model_config_dict[model_id]["prefill_seq_len"]
+    ctx_len = model_config_dict[model_id]["ctx_len"]
+    prefill_bsz = model_config_dict[model_id]["prefill_bsz"]
+    full_batch_size = model_config_dict[model_id]["full_batch_size"]
+    max_ngram_size = model_config_dict[model_id]["max_ngram_size"]
 
-    Args:
-        prompts (List[str]): List of prompts to perform inference on.
-        num_speculative_tokens (int): Number of speculative tokens.
-        prefill_seq_len (int): Prefill sequence length.
-        ctx_len (int): Context length.
-        prefill_bsz (int): Prefill batch size.
-        target_model_name (str): Name of the target model.
-        full_batch_size (Optional[int]): Full batch size.
-        device_group (List[int]): List of device IDs.
-        max_ngram_size (int): Max ngram size
-
-    Returns:
-        CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
-    """
-    # get device group
-    device_group: List[int] = get_available_device_id()
-    if not device_group:
-        pytest.skip("No available devices to run model on Cloud AI 100")
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
@@ -249,8 +222,12 @@ def test_pld_spec_decode_inference(
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
     qaic_config = dict(speculative_model_type="target")
-    target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, qaic_config=qaic_config
+    target_model = get_qeff_model(
+        target_model_name,
+        num_hidden_layers=num_hidden_layers,
+        continuous_batching=continuous_batching,
+        qaic_config=qaic_config,
+        config=config,
     )
 
     target_model_qpc_path: str = target_model.compile(
@@ -460,3 +437,51 @@ def test_pld_spec_decode_inference(
     ]  # Because we always run for single input and single batch size
     all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
+
+
+@pytest.mark.full_layers
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("model_id", test_models_id)
+def test_full_pld_inference(model_id):
+    """
+    Test the full layers model PLD inference pipeline.
+    """
+    torch.manual_seed(42)
+    check_pld_spec_decode_inference(
+        model_id,
+    )
+
+
+@pytest.mark.few_layers
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("model_id", test_models_id)
+def test_few_pld_inference(model_id):
+    """
+    Test few layers model for PLD inference pipeline.
+    """
+    torch.manual_seed(42)
+    check_pld_spec_decode_inference(
+        model_id,
+        num_hidden_layers=2,
+    )
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("model_id", test_models_id)
+def test_dummy_pld_inference(model_id):
+    """
+    Test dummy layers model for PLD inference pipeline.
+    """
+    torch.manual_seed(42)
+    hf_config = AutoConfig.from_pretrained(
+        model_config_dict[model_id]["target_model_name"], **model_config_dict[model_id]["additional_params"]
+    )
+    print(hf_config)
+    check_pld_spec_decode_inference(
+        model_id,
+        config=hf_config,
+    )

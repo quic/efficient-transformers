@@ -5,8 +5,8 @@
 #
 # ----------------------------------------------------------------------------
 
-import copy
 import json
+import os
 from typing import Optional
 
 import onnx
@@ -19,14 +19,12 @@ from transformers import (
     AutoProcessor,
 )
 
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
-from QEfficient.utils._utils import get_num_layers_vlm
-from QEfficient.utils.test_utils import load_vlm_model, load_vlm_model_from_config
+from QEfficient.utils.test_utils import get_qeff_vlm_model
 
 NEW_GENERATION_TOKENS = 10
 
 
-CONFIG_PATH = "tests/configs/image_text_model_configs.json"
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/image_text_model_configs.json")
 
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
@@ -45,45 +43,24 @@ def has_QwenLayer_function(onnx_path):
 
 
 def check_image_text_to_text_subfunction_core(
-    model_name: str,
-    img_size: int,
-    img_url: str,
-    query: str,
-    prompt_len: int,
-    ctx_len: int,
-    max_gen_len: int = 20,
-    batch_size: int = 1,
-    n_layer: int = 1,
-    kv_offload: bool = False,
-    num_devices: int = 1,
-    enable_qnn: Optional[bool] = False,
-    qnn_config: Optional[str] = None,
-    config: Optional[AutoConfig] = None,
+    model_name: str, kv_offload: bool = False, num_hidden_layers: int = -1, config: Optional[AutoConfig] = None
 ):
-    if config is None:
-        model_config = {"model_name": model_name}
-        model_config["img_size"] = img_size
-        config = AutoConfig.from_pretrained(model_config["model_name"], trust_remote_code=True, padding=True)
-        config.text_config.num_hidden_layers = n_layer
-        config.vision_config.num_hidden_layers = n_layer
-        model_hf = load_vlm_model(config)
-        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_name,
-            kv_offload=kv_offload,
-            config=config,
-        )
-    else:
-        model_hf = load_vlm_model_from_config(config)
-        qeff_model = QEFFAutoModelForImageTextToText(
-            copy.deepcopy(model_hf),
-            kv_offload=kv_offload,
-            config=config,
-        )
 
+    img_size = model_config_dict[model_name]["img_size"]
+    img_url = model_config_dict[model_name]["img_url"]
+    query = model_config_dict[model_name]["query"]
+    prompt_len = model_config_dict[model_name]["prompt_len"]
+    ctx_len = model_config_dict[model_name]["ctx_len"]
+    batch_size = model_config_dict[model_name]["batch_size"]
+    enable_qnn = False
+    qnn_config = None
+    num_devices = 1
+
+    qeff_model = get_qeff_vlm_model(
+        model_name, kv_offload=kv_offload, num_hidden_layers=num_hidden_layers, config=config
+    )
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-    n_layer = get_num_layers_vlm(config)
     image = Image.open(requests.get(img_url, stream=True).raw)
-
     conversation = [
         {
             "role": "user",
@@ -127,58 +104,58 @@ def check_image_text_to_text_subfunction_core(
     )
 
 
+@pytest.mark.full_layers
 @pytest.mark.feature
-@pytest.mark.regular
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
-def test_custom_image_text_to_text_subfunction(model_name, kv_offload):
+def test_full_image_text_to_text_subfunction(model_name, kv_offload):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``Qwen/Qwen2.5-VL-3B-Instruct``
     """
     torch.manual_seed(42)
-    img_size = model_config_dict[model_name].get("img_size")
+    check_image_text_to_text_subfunction_core(
+        model_name,
+        kv_offload=kv_offload,
+    )
+
+
+@pytest.mark.few_layers
+@pytest.mark.feature
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True])
+def test_few_image_text_to_text_subfunction(model_name, kv_offload):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``Qwen/Qwen2.5-VL-3B-Instruct``
+    """
+    torch.manual_seed(42)
+    check_image_text_to_text_subfunction_core(
+        model_name,
+        kv_offload=kv_offload,
+        num_hidden_layers=2,
+    )
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.feature
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True])
+def test_dummy_image_text_to_text_subfunction(model_name, kv_offload):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``Qwen/Qwen2.5-VL-3B-Instruct``
+    """
+    torch.manual_seed(42)
     custom_config = model_config_dict[model_name].get("additional_params", {})
     model_type = model_config_dict[model_name].get("model_type", None)
     hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
     hf_config.name_or_path = model_name
     check_image_text_to_text_subfunction_core(
-        model_name=model_name,
-        prompt_len=model_config_dict[model_name]["prompt_len"],
-        ctx_len=model_config_dict[model_name]["ctx_len"],
-        max_gen_len=NEW_GENERATION_TOKENS,
-        img_size=img_size,
-        img_url=model_config_dict[model_name]["img_url"],
-        query=model_config_dict[model_name]["text_prompt"],
-        n_layer=model_config_dict[model_name]["num_layers"],
-        batch_size=model_config_dict[model_name]["batch_size"],
+        model_name,
         kv_offload=kv_offload,
         config=hf_config,
-    )
-
-
-@pytest.mark.feature
-@pytest.mark.nightly
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])
-def test_image_text_to_text_subfunction(model_name, kv_offload):
-    """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``Qwen/Qwen2.5-VL-3B-Instruct``
-    """
-    torch.manual_seed(42)
-    img_size = model_config_dict[model_name].get("img_size")
-    check_image_text_to_text_subfunction_core(
-        model_name=model_name,
-        prompt_len=model_config_dict[model_name]["prompt_len"],
-        ctx_len=model_config_dict[model_name]["ctx_len"],
-        max_gen_len=NEW_GENERATION_TOKENS,
-        img_size=img_size,
-        img_url=model_config_dict[model_name]["img_url"],
-        query=model_config_dict[model_name]["text_prompt"],
-        n_layer=model_config_dict[model_name]["num_layers"],
-        batch_size=model_config_dict[model_name]["batch_size"],
-        kv_offload=kv_offload,
     )
