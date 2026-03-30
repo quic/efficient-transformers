@@ -18,6 +18,9 @@ The **QEfficient Fine-Tune Module** is a component of the QEfficient project foc
 
 ## Getting Started
 
+Transformer's Trainer `https://huggingface.co/docs/transformers/main/en/main_classes/trainer#trainer` class goes hand-in-hand with the TrainingArguments class `https://huggingface.co/docs/transformers/v5.2.0/en/main_classes/trainer#transformers.TrainingArguments`, which offers a wide range of options to customize how a model is trained.
+Since this stack is based on HF's Trainer class. Please refer to above docs to configure config.yaml file for finetuning. 
+
 ### Installation (ENV set up)
 
 Install the same prerequisites as **QEfficient**, additionally **QAIC PyTorch Eager mode** as needed.
