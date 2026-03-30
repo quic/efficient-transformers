@@ -80,6 +80,7 @@ pip install trl==0.22.0
 cd .. && git clone https://github.com/quic-swatia/transformers.git
 cd transformers 
 git checkout version-4.55.0 && pip install -e .
+pip install datasets==4.5.0
 cd .. && cd efficient-transformers
 QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py \
 QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
@@ -101,6 +102,7 @@ pip install trl==0.22.0
 cd .. && git clone https://github.com/quic-swatia/transformers.git
 cd transformers 
 git checkout version-4.55.0 && pip install -e .
+pip install datasets==4.5.0
 cd .. && cd efficient-transformers
 CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_experimental \
 --device cuda --num_epochs 1 --model_name meta-llama/Llama-3.2-3B \
