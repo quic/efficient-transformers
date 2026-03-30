@@ -566,5 +566,5 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
     def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
         return missing_keys
 
-    def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str) -> List[str]:
+    def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str = None) -> List[str]:
         return unexpected_keys
