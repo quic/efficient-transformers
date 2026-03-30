@@ -66,9 +66,18 @@ class FineTuningPipeline:
 
         # Create model and tokenizer
         logger.log_rank_zero("Loading model and tokenizer...")
-        model_instance = self._create_model()
-        self.model = model_instance.model
-        self.tokenizer = model_instance.tokenizer
+        try:
+            model_instance = self._create_model()
+            self.model = model_instance.model
+            self.tokenizer = model_instance.tokenizer
+        except Exception as e:
+            logger.log_rank_zero(f"Failed to load model: {e}", level=logging.ERROR)
+            # Cleanup datasets if already created
+            if hasattr(self, 'train_dataset'):
+                del self.train_dataset
+            if hasattr(self, 'eval_dataset'):
+                del self.eval_dataset
+            raise RuntimeError(f"Model loading failed: {e}") from e
 
         # Create optimizer
         logger.log_rank_zero("Preparing optimizer...")
