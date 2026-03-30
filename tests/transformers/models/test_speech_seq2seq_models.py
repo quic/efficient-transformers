@@ -7,7 +7,6 @@
 
 import json
 import os
-from importlib import reload
 from typing import List, Optional
 
 import numpy as np
@@ -15,7 +14,6 @@ import onnx
 import onnxruntime
 import pytest
 import torch
-import transformers
 from datasets import load_dataset
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
@@ -89,7 +87,6 @@ def run_seq2seq_pytorch_hf(
     )
 
     # TODO: temporary hack to nullify effect of KVCacheTransform add this as setup_module in pytest
-    reload(transformers.cache_utils)
     # encoder run
     outputs = model(**model_inputs)
 
@@ -354,7 +351,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.skip(reason="Whisper is failing with the latest transformers v4.57.3")
+# @pytest.mark.skip(reason="Whisper is failing with the latest transformers v4.57.3")
 @pytest.mark.parametrize("model_name", test_models)
 def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
