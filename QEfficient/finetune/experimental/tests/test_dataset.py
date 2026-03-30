@@ -348,7 +348,7 @@ def custom_completion(example):
                 dataset_name="dummy",
                 split="train",
                 json_file_path=self.json_file_path,
-                prompt_func="nonexistent_module:function",
+                prompt_func="QEfficient.finetune.experimental.preprocessing.nonexistent_module:function",
                 completion_template="A: {answer}",
             )
 
@@ -377,9 +377,13 @@ def custom_completion(example):
 
             self.assertIn("not found in module", str(context.exception))
         finally:
-            sys.path.remove(self.test_dir)
-            if os.path.exists(func_file_path):
-                os.remove(func_file_path)
+            if self.test_dir in sys.path:
+                sys.path.remove(self.test_dir)
+            try:
+                if os.path.exists(func_file_path):
+                    os.remove(func_file_path)
+            except Exception:
+                pass
 
     def test_sft_dataset_filter_empty_or_none_samples(self):
         """Test filtering of samples with empty or None values."""
