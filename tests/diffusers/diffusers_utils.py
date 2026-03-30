@@ -70,6 +70,7 @@ class DiffusersTestUtils:
         """
         exists = os.path.exists(file_path)
         print(f"file exist: {exists}; {file_type}: {file_path}")
+        assert exists, f"Missing {file_type}: {file_path}"
         return exists
 
     @staticmethod

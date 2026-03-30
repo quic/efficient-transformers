@@ -1,16 +1,16 @@
 {
     "model_setup": {
-                        "height": 256,
-                        "width": 256,
+                        "height": 64,
+                        "width": 64,
                         "num_transformer_layers": 2,
                         "num_single_layers": 2
                     },
     "mad_validation": {
                         "tolerances": {
-                            "clip_text_encoder": 0.1,
-                            "t5_text_encoder": 5.5,
-                            "transformer": 2.0,
-                            "vae_decoder": 1.0
+                            "clip_text_encoder": 0.01,
+                            "t5_text_encoder": 5,
+                            "transformer": 0.1,
+                            "vae_decoder": 0.01
                         }
     },
     "pipeline_params": {
