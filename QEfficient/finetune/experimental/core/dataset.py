@@ -10,10 +10,11 @@ Dataset components for the training system.
 """
 
 import importlib
+import inspect
 import os
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Set
 
 from datasets import load_dataset, load_dataset_builder
 from torch.utils.data import Dataset
@@ -24,6 +25,60 @@ from QEfficient.finetune.experimental.core.utils.dataset_utils import (
     apply_train_test_split,
     validate_json_structure,
 )
+
+# Whitelist of allowed modules
+ALLOWED_MODULE_PREFIXES: Set[str] = {
+    "QEfficient.finetune.experimental.preprocessing",
+    "custom_funcs",  # Assuming this is a user-defined module for custom functions
+    "test_module",  # Used in tests, should be removed or renamed in production
+}
+# Blacklist of dangerous modules/functions
+DANGEROUS_MODULES: Set[str] = {
+    "os",
+    "sys",
+    "subprocess",
+    "shutil",
+    "pickle",
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "importlib",
+    "builtins",
+    "pty",
+    "commands",
+    "popen2",
+    "socket",
+    "urllib",
+    "requests",
+    "http",
+    "ftplib",
+    "smtplib",
+}
+DANGEROUS_FUNCTIONS: Set[str] = {
+    "system",
+    "popen",
+    "exec",
+    "eval",
+    "compile",
+    "__import__",
+    "open",
+    "input",
+    "execfile",
+    "reload",
+    "rmtree",
+    "remove",
+    "unlink",
+    "chmod",
+    "chown",
+    "kill",
+    "Popen",
+    "call",
+    "run",
+    "check_output",
+    "getoutput",
+    "getstatusoutput",
+}
 
 logger = Logger(__name__)
 
@@ -238,18 +293,159 @@ class SFTDataset(BaseDataset):
             dataset = dataset.filter(lambda example: self._filter_empty_or_none_samples(example, relevant_columns))
         return dataset
 
-    def import_func(self, func_path: str) -> Callable:
-        if ":" not in func_path:
-            raise ValueError("func_path must be in the format 'module_file_path:function_name'.")
-        module_file_path, function_name = func_path.split(":")
+    def _validate_module_path(self, module_path: str) -> None:
+        """
+        Validate that the module path is safe to import.
 
+        Args:
+            module_path: Module path to validate
+
+        Raises:
+            ValueError: If module is not allowed
+        """
+        # Check for empty or invalid path
+        if not module_path or not module_path.strip():
+            raise ValueError("Module path cannot be empty")
+
+        # Check for path traversal attempts
+        if ".." in module_path or "/" in module_path or "\\" in module_path:
+            raise ValueError(f"Module path '{module_path}' contains invalid characters. Path traversal is not allowed.")
+
+        # Check against allowed prefixes
+        is_allowed = any(module_path.startswith(prefix) for prefix in ALLOWED_MODULE_PREFIXES)
+
+        if not is_allowed:
+            raise ValueError(
+                f"Module '{module_path}' is not in the allowed modules list. "
+                f"Only modules starting with {ALLOWED_MODULE_PREFIXES} are allowed. "
+                "This is a security restriction to prevent arbitrary code execution."
+            )
+
+        # Check against dangerous modules
+        module_parts = module_path.split(".")
+        for part in module_parts:
+            if part in DANGEROUS_MODULES:
+                raise ValueError(
+                    f"Module '{module_path}' contains dangerous module '{part}'. "
+                    "Importing this module is not allowed for security reasons."
+                )
+
+    def _validate_function_name(self, function_name: str) -> None:
+        """
+        Validate that the function name is safe.
+
+        Args:
+            function_name: Function name to validate
+
+        Raises:
+            ValueError: If function name is dangerous or invalid
+        """
+        # Check for empty name
+        if not function_name or not function_name.strip():
+            raise ValueError("Function name cannot be empty")
+
+        # Check against dangerous functions
+        if function_name in DANGEROUS_FUNCTIONS:
+            raise ValueError(f"Function '{function_name}' is not allowed for security reasons.")
+
+        # Check for dunder methods
+        if function_name.startswith("__") and function_name.endswith("__"):
+            raise ValueError(f"Dunder method '{function_name}' is not allowed for security reasons.")
+
+        # Check for private methods
+        if function_name.startswith("_"):
+            raise ValueError(
+                f"Private function '{function_name}' is not allowed. Only public functions can be imported."
+            )
+
+        # Validate identifier
+        if not function_name.isidentifier():
+            raise ValueError(
+                f"Invalid function name '{function_name}'. Function name must be a valid Python identifier."
+            )
+
+    def _validate_function(self, func: Callable, function_name: str, module_path: str) -> None:
+        """
+        Validate that the function is safe to use.
+
+        Args:
+            func: Function to validate
+            function_name: Name of the function
+            module_path: Module path
+
+        Raises:
+            ValueError: If function is not safe
+        """
+        # Check if callable
+        if not callable(func):
+            raise ValueError(f"'{function_name}' in module '{module_path}' is not callable. Got type: {type(func)}")
+
+        # Check if built-in (potentially dangerous)
+        if inspect.isbuiltin(func):
+            raise ValueError(f"Built-in function '{function_name}' is not allowed for security reasons.")
+
+        # Check function module
+        func_module = inspect.getmodule(func)
+        if func_module:
+            func_module_name = func_module.__name__
+
+            # Verify it's from the expected module
+            if not func_module_name.startswith(tuple(ALLOWED_MODULE_PREFIXES)):
+                raise ValueError(
+                    f"Function '{function_name}' is from module '{func_module_name}' "
+                    f"which is not in allowed prefixes: {ALLOWED_MODULE_PREFIXES}"
+                )
+
+            # Check for dangerous modules
+            for dangerous in DANGEROUS_MODULES:
+                if dangerous in func_module_name:
+                    raise ValueError(f"Function '{function_name}' is from dangerous module '{func_module_name}'.")
+
+        # Check function signature
+        try:
+            sig = inspect.signature(func)
+            params = list(sig.parameters.keys())
+
+            # Function should accept at least one parameter
+            if len(params) < 1:
+                raise ValueError(
+                    f"Function '{function_name}' must accept at least one parameter (example dict). "
+                    f"Got signature: {sig}"
+                )
+
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Cannot inspect signature of '{function_name}': {e}. Function may not be safe to use.")
+
+    def import_func(self, func_path: str) -> Callable:
+        """
+        Safely import a function from a module with security checks.
+        Args:
+           func_path: Path in format 'module_path:function_name'
+        Returns:
+           Callable function
+        """
+        if ":" not in func_path:
+            raise ValueError(f"func_path must be in the format 'module_file_path:function_name'. Got: '{func_path}'")
+        module_file_path, function_name = func_path.split(":", 1)
+        # Security validations
+        self._validate_module_path(module_file_path)
+        self._validate_function_name(function_name)
         try:
             module = importlib.import_module(module_file_path)
-        except Exception:
-            raise RuntimeError(f"Unable to import module : {module_file_path}.")
+        except ImportError as e:
+            raise RuntimeError(
+                f"Unable to import module '{module_file_path}': {e}. "
+                "Please ensure the module exists and is in PYTHONPATH."
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error importing module '{module_file_path}': {e}")
         if not hasattr(module, function_name):
             raise ValueError(f"Function {function_name} not found in module {module_file_path}.")
-        return getattr(module, function_name)
+        func = getattr(module, function_name)
+        # Validate function
+        self._validate_function(func, function_name, module_file_path)
+
+        return func
 
     def _filter_empty_or_none_samples(self, example: Dict[str, Any], relevant_columns: list) -> bool:
         """

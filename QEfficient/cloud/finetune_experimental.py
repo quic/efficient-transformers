@@ -73,9 +73,9 @@ class FineTuningPipeline:
         except Exception as e:
             logger.log_rank_zero(f"Failed to load model: {e}", level=logging.ERROR)
             # Cleanup datasets if already created
-            if hasattr(self, 'train_dataset'):
+            if hasattr(self, "train_dataset"):
                 del self.train_dataset
-            if hasattr(self, 'eval_dataset'):
+            if hasattr(self, "eval_dataset"):
                 del self.eval_dataset
             raise RuntimeError(f"Model loading failed: {e}") from e
 
