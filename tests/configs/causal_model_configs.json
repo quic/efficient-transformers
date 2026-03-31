@@ -569,8 +569,8 @@
   ],
   "blockedKV_causal_lm_models": [
     {
-      "model_name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-      "model_type": "mixtral",
+      "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "model_type": "llama",
       "additional_params": {
         "max_position_embeddings": 128,
         "num_hidden_layers": 1,
