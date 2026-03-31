@@ -309,10 +309,12 @@ where user can configure `pp_degree: 2` under `training:` section for the input 
 
 **PP only — single process, 2 stages (via CLI flags)**
 ```bash
-python -m QEfficient.cloud.finetune_experimental \
-    --model_name meta-llama/Llama-3.2-1B \
-    --device qaic \
-    --pp_degree 2
+QAIC_VISIBLE_DEVICES=0,1 python -m QEfficient.cloud.finetune_experimental \
+--device qaic --lora_r 16 --target_modules q_proj, v_proj \
+--gradient_checkpointing True --dataset_name "yahma/alpaca-cleaned" \
+--completion_template {output} \
+--prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt \
+--pp_degree 2
 ```
 
 
