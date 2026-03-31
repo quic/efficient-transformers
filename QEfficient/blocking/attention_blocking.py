@@ -20,7 +20,6 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_kv_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
-    invalid_blocking_attention_forward,
 )
 
 
@@ -39,6 +38,7 @@ class AttentionBlockingConfig:
     num_kv_blocks: Optional[int] = None
     num_q_blocks: Optional[int] = None
     head_block_size: Optional[int] = None
+    skip_kv: Optional[bool] = False
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -46,7 +46,6 @@ def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
 
 
 _STRATEGIES: Dict[BlockingMode, Callable] = {
-    BlockingMode.NONE: invalid_blocking_attention_forward,
     BlockingMode.KV: blocked_kv_attention_forward,
     BlockingMode.Q: blocked_q_attention_forward,
     BlockingMode.H: blocked_h_attention_forward,
@@ -56,7 +55,27 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
 
 
 def get_blocking_strategy(config: AttentionBlockingConfig) -> Callable:
-    return _STRATEGIES.get(config.mode, _STRATEGIES[BlockingMode.NONE])
+    return _STRATEGIES.get(config.mode)
+
+
+# helper function needed both in generic blocked approach and in other modeling files for non-blocked approach
+def past_key_value_update(
+    module,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    past_key_value: Cache,
+    comp_ctx_lengths: Optional[torch.LongTensor] = None,
+    batch_index: Optional[torch.LongTensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+):
+    if past_key_value is not None:
+        cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+        if comp_ctx_lengths is not None:
+            attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+            cache_kwargs["CCL"] = attention_mask.shape[-1]
+        key, value = past_key_value.update(key, value, module.layer_idx, cache_kwargs)
+    return key, value, cache_kwargs
 
 
 def generic_blocked_attention_interface(
@@ -75,12 +94,12 @@ def generic_blocked_attention_interface(
     past_seen_tokens: Optional[int] = None,
     non_blocked_forward: Callable = None,
     score_mod: Optional[Callable] = None,
+    position_bias: Optional[torch.Tensor] = None,
     **kwargs,
 ):
     use_kv_blocked = (
         blocking_config is not None and "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
     )
-    use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
 
     if past_key_value is not None:
         if use_kv_blocked:
@@ -91,38 +110,33 @@ def generic_blocked_attention_interface(
             }
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         else:
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key, value = past_key_value.update(key, value, module.layer_idx, cache_kwargs)
+            key, value, cache_kwargs = past_key_value_update(
+                module=module, 
+                key=key, 
+                value=value, 
+                attention_mask=attention_mask, 
+                past_key_value=past_key_value, 
+                comp_ctx_lengths=comp_ctx_lengths, 
+                batch_index=batch_index,
+                position_ids=position_ids
+            )
 
-    if use_blocking:
-        strategy = get_blocking_strategy(blocking_config)
-        attn_output, attn_weights = strategy(
-            module=module,
-            query=query,
-            key=key,
-            value=value,
-            attention_mask=attention_mask,
-            scaling=scaling,
-            cache_kwargs=cache_kwargs,
-            layer_idx=layer_idx,
-            past_key_value=past_key_value,
-            num_kv_blocks=blocking_config.num_kv_blocks,
-            num_q_blocks=blocking_config.num_q_blocks,
-            head_block_size=blocking_config.head_block_size,
-            score_mod=score_mod,
-        )
-    else:
-        attn_output, attn_weights = non_blocked_forward(
-            module,
-            query,
-            key,
-            value,
-            attention_mask,
-            scaling=scaling,
-            **kwargs,
-        )
+    strategy = _STRATEGIES.get(blocking_config.mode)
+    attn_output, attn_weights = strategy(
+        module=module,
+        query=query,
+        key=key,
+        value=value,
+        attention_mask=attention_mask,
+        scaling=scaling,
+        cache_kwargs=cache_kwargs,
+        layer_idx=layer_idx,
+        past_key_value=past_key_value,
+        num_kv_blocks=blocking_config.num_kv_blocks,
+        num_q_blocks=blocking_config.num_q_blocks,
+        head_block_size=blocking_config.head_block_size,
+        score_mod=score_mod,
+        position_bias=position_bias
+    )
 
     return attn_output, attn_weights
