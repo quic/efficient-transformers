@@ -1,0 +1,33 @@
+{
+    "meta_llama_Llama_Prompt_Guard_2_22M": {
+        "model_name": "meta-llama/Llama-Prompt-Guard-2-22M",
+        "timestamp": "2026-03-31T05:20:40.400431",
+        "compile_params": {
+            "seq_len": 32,
+            "batch_size": 1,
+            "num_devices": 1,
+            "mxfp6_matmul": false
+        },
+        "pytorch_hf_tokens": [
+            [
+                -4.116999626159668,
+                2.765293836593628
+            ]
+        ],
+        "pytorch_kv_tokens": null,
+        "ort_tokens": null,
+        "cloud_ai_100_tokens": [
+            [
+                -4.12109375,
+                2.767578125
+            ]
+        ],
+        "exec_info_metrics": {
+            "prefill_time_sec": null,
+            "decode_throughput_tokens_per_sec": null,
+            "total_throughput_tokens_per_sec": null,
+            "e2e_inference_time_sec": null
+        },
+        "exec_info_raw_string": "None"
+    }
+}

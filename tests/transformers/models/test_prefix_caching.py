@@ -26,46 +26,6 @@ with open(CONFIG_PATH, "r") as f:
 test_models = [model["model_name"] for model in prefix_caching_models]
 
 
-# The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models)
-def test_simple_prefix_caching(model_name):
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
-    qeff_model.compile(
-        prefill_seq_len=128,
-        ctx_len=256,
-        full_batch_size=2,
-        kv_cache_batch_size=4,
-        num_cores=14,
-    )
-    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
-    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
-
-
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.qnn
-@pytest.mark.parametrize("model_name", test_models)
-def test_simple_prefix_caching_qnn(model_name):
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    qeff_model.compile(
-        prefill_seq_len=128,
-        ctx_len=256,
-        full_batch_size=2,
-        kv_cache_batch_size=4,
-        num_cores=14,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-    )
-    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
-    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
-    os.remove(qnn_config_json_path)
-
-
 def prefix_caching_inference(model_name, qpc_path):
     prefixes = ["Once upon a time ", "Once upon a time "]
     suffixes1 = ["in a land far away", "there was a small village"]
@@ -220,3 +180,48 @@ def prefix_caching_inference(model_name, qpc_path):
     assert np.all(
         prompts_exec_info.generated_ids[1][:247] == [int(val[1]) for val in generation_outputs_prefill_cached][:247]
     )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("model_name", test_models)
+def test_simple_prefix_caching(model_name):
+    """
+    The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
+    """
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
+    qeff_model.compile(
+        prefill_seq_len=128,
+        ctx_len=256,
+        full_batch_size=2,
+        kv_cache_batch_size=4,
+        num_cores=14,
+    )
+    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+
+
+################################# QNN Tests #################################
+
+
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.qnn
+@pytest.mark.parametrize("model_name", test_models)
+def test_simple_prefix_caching_qnn(model_name):
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    qeff_model.compile(
+        prefill_seq_len=128,
+        ctx_len=256,
+        full_batch_size=2,
+        kv_cache_batch_size=4,
+        num_cores=14,
+        enable_qnn=True,
+        qnn_config=qnn_config_json_path,
+    )
+    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+    os.remove(qnn_config_json_path)
