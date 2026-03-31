@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import copy
+
 import torch
 from torch import nn
 from transformers.models.gpt_oss.modeling_gpt_oss import GptOssExperts
@@ -79,7 +81,7 @@ class PackQuantizedInt4ToMatMulNBitsTransform(ModuleMutatorTransform):
         scales = original_module.weight_scale
         # assuming symmetric quantization
         quantization_args = original_module.quantization_scheme.weights
-        zeros = torch.zeros_like(scales) + pow(2, (quantization_args.num_bits-1))
+        zeros = (torch.zeros_like(scales) + pow(2, (quantization_args.num_bits-1))).to(torch.uint8)
         g_idx = torch.arange(original_module.in_features//quantization_args.group_size).repeat_interleave(quantization_args.group_size)
         original_module.weight = torch.nn.Parameter(fp_weight)
         assert quantization_args.type=="int", "uint is not tested yet"

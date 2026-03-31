@@ -876,6 +876,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
         "DeepseekV3ForCausalLM": {
             "forward": QEffDeepseekV3ForCausalLM.forward,
+            "get_submodules_for_export": QEffDeepseekV3ForCausalLM.get_submodules_for_export,
         },
         "DeepseekV3Model": {"forward": QEffDeepseekV3Model.forward, "__qeff_init__": QEffDeepseekV3Model.__qeff_init__},
         "DeepseekV3DecoderLayer": {
@@ -883,7 +884,9 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
+            "moe_weights_as_activations": QEffDeepseekV3MoE.moe_weights_as_activations,
+            "moe_waa_unpack": QEffDeepseekV3MoE.moe_waa_unpack,
+            "original_moe": QEffDeepseekV3MoE.original_moe,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
             "gate.forward": QEffDeepseekMoEGate.forward,
         },

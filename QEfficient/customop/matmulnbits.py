@@ -184,48 +184,44 @@ class QuantLinearORT(nn.Module):
 
 class QMOE(torch.autograd.Function):
     @staticmethod
-    def symbolic(g, x, router_probs, fc1_experts_weights, fc1_scales, fc2_experts_weights, fc2_scales, fc3_experts_weights, fc3_scales,
+    def symbolic(g, x, router_weights, fc1_experts_weights, fc1_scales,
+                 fc2_experts_weights, fc2_scales, fc3_experts_weights, fc3_scales,
+                 router_probs,
                  activation_type, block_size, expert_weight_bits, k):
-        return g.op(
-            "com.microsoft::QMOE",
-            input = x,
-            router_probs=router_probs,
-            fc1_experts_weights=fc1_experts_weights,
-            fc1_scales=fc1_scales,
-            fc2_experts_weights=fc2_experts_weights,
-            fc2_scales=fc2_scales,
-            fc3_experts_weights=fc3_experts_weights,
-            fc3_scales=fc3_scales,
+        qmoe_out = g.op(
+            "com.microsoft::QMoE",
+            x,
+            router_weights,
+            router_probs,
+            fc1_experts_weights,
+            fc1_scales,
+            fc2_experts_weights,
+            fc2_scales,
+            fc3_experts_weights,
+            fc3_scales,
             outputs=1,
-            activation_type_i=activation_type,
+            activation_type_s=activation_type,      # <-- _s suffix for string
             block_size_i=block_size,
             expert_weight_bits_i=expert_weight_bits,
             k_i=k,
         )
 
+        # # Create axes=-1 as an explicit int64 constant tensor
+        # axes = g.op("Constant", value_t=torch.tensor([-1], dtype=torch.int64))
+
+        # # Compute mean of router_probs along the last axis, keepdims for broadcasting
+        # router_probs_mean = g.op("ReduceMean", router_probs, axes, keepdims_i=1)
+
+        # Multiply qmoe_out with the averaged router_probs
+        return qmoe_out
+        # return g.op("Mul", qmoe_out, router_probs_mean))
+
     @staticmethod
-    def forward(ctx, x, router_probs, fc1_experts_weights, fc1_scales, fc2_experts_weights, fc2_scales, fc3_experts_weights, fc3_scales,
-                 activation_type, block_size, expert_weight_bits, k):
-        if torch.onnx.is_in_onnx_export():
-            return torch.zeros_like(x)
-        # TODO write code to gather required ones and dequantize and matmul
-        _, topk_idx = torch.topk(router_probs, k=self.top_k, dim=-1, sorted=False)
-        topk_weight = scores.gather(1, topk_idx)
-        expert_in = (
-            hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.config.hidden_size)
-        )
-        gate_out = torch.bmm(expert_in, gate_proj)
-        up_out = torch.bmm(expert_in, up_proj)
-        hidden = self.act_fn(gate_out) * up_out
-        expert_output = torch.bmm(hidden, down_proj)
-        experts_out = expert_output.view(seq_len, self.gate.top_k, self.config.hidden_size)
-        experts_out = experts_out * topk_weights.unsqueeze(-1)
-        # final_hidden_states = experts_out.sum(dim=1)
-        final_hidden_states = torch.einsum("abc->ac", experts_out)
-
-        return final_hidden_states.type(hidden_states.dtype)
-        fp_weight = dequantize_blockwise_bits(
-            qself_qweight, qself_scales, qself_qzeros, bits, group_size, g_idx, in_features, out_features
-        )[0].float()
-
-        return torch.matmul(x.float(), fp_weight.T.float())
+    def forward(ctx, x, router_weights, fc1_experts_weights, fc1_scales,
+                fc2_experts_weights, fc2_scales, fc3_experts_weights, fc3_scales,
+                router_probs,
+                activation_type, block_size, expert_weight_bits, k):
+        # Dummy forward: simulate qmoe_out as zeros_like(x), then apply ReduceMean * Mul
+        qmoe_out = torch.zeros_like(x)
+        router_probs_mean = router_probs.mean(dim=-1, keepdim=True)
+        return qmoe_out * router_probs_mean

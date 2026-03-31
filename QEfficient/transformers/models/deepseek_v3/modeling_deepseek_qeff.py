@@ -1,6 +1,6 @@
 import math
 import os
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -9,23 +9,9 @@ from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
 from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
+from QEfficient.customop.quantization_ops import DequantizeLinearFunc, UnpackUInt8ToUInt4
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 
-# Assuming these are imported from the original DeepseekV3 code
-# from transformers.models.deepseek_v3.modeling_deepseek_v3 import (
-#     DeepseekV3Config,
-#     DeepseekV3RMSNorm,
-#     DeepseekV3MLP,
-#     DeepseekV3MoE,
-#     rotate_half,
-#     repeat_kv,
-#     DeepseekV3Attention,
-#     DeepseekV3DecoderLayer,
-#     DeepseekV3Model,
-#     DeepseekV3ForCausalLM,
-#     DeepseekV3PreTrainedModel,
-#     logger,
-# )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
@@ -420,10 +406,9 @@ class QEffDeepseekMoEGate(nn.Module):
             topk_weight = topk_weight / denominator
         topk_weight = topk_weight * self.routed_scaling_factor  # must multiply the scaling factor
 
-        if not tmp_scores:
-            tmp_scores = None
-
-        return topk_idx, topk_weight, tmp_scores, scores
+        router_probs = tmp_scores
+        router_weights = scores
+        return topk_idx, topk_weight, router_probs, router_weights
 
 
 
@@ -431,7 +416,6 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
-        import ipdb; ipdb.set_trace()
 
         # Get common parameters from first expert
         first_expert = self.experts[0]
@@ -447,40 +431,39 @@ class QEffDeepseekV3MoE(nn.Module):
         self.in_features_down, self.out_features_down = first_expert.down_proj.in_features, first_expert.down_proj.out_features
 
         # Stack all parameters along a new dimension (expert dimension)
-        all_gate_qweight = torch.nn.Parameter(torch.stack([exp.gate_proj.qweight for exp in self.experts], dim=0), requires_grad=False)
-        all_gate_scales = torch.nn.Parameter(torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0), requires_grad=False)
+        self.all_gate_qweight = torch.nn.Parameter(torch.stack([exp.gate_proj.qweight for exp in self.experts], dim=0).reshape(-1, self.out_features_gate, self.in_features_gate//2), requires_grad=False)
+        self.all_gate_scales = torch.nn.Parameter(torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0).reshape(-1, self.out_features_gate, self.in_features_gate//self.group_size), requires_grad=False)
         # TODO: Since we know qzeros is always 8 -> Just embed this once into the operator as parameter -> explore this later
-        all_gate_qzeros = torch.nn.Parameter(torch.stack([exp.gate_proj.qzeros for exp in self.experts], dim=0), requires_grad=False)
-        all_gate_gidx = torch.nn.Parameter(torch.stack([exp.gate_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
+        self.all_gate_qzeros = torch.nn.Parameter(torch.stack([exp.gate_proj.qzeros for exp in self.experts], dim=0).reshape(-1, self.out_features_gate, self.in_features_gate//(self.group_size*2)), requires_grad=False)
+        self.all_gate_gidx = torch.nn.Parameter(torch.stack([exp.gate_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
         
-        all_up_qweight = torch.nn.Parameter(torch.stack([exp.up_proj.qweight for exp in self.experts], dim=0), requires_grad=False)
-        all_up_scales = torch.nn.Parameter(torch.stack([exp.up_proj.scales for exp in self.experts], dim=0), requires_grad=False)
-        all_up_qzeros = torch.nn.Parameter(torch.stack([exp.up_proj.qzeros for exp in self.experts], dim=0), requires_grad=False)
-        all_up_gidx = torch.nn.Parameter(torch.stack([exp.up_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
+        self.all_up_qweight = torch.nn.Parameter(torch.stack([exp.up_proj.qweight for exp in self.experts], dim=0).reshape(-1, self.out_features_up, self.in_features_up//2), requires_grad=False)
+        self.all_up_scales = torch.nn.Parameter(torch.stack([exp.up_proj.scales for exp in self.experts], dim=0).reshape(-1, self.out_features_up, self.in_features_up//self.group_size), requires_grad=False)
+        self.all_up_qzeros = torch.nn.Parameter(torch.stack([exp.up_proj.qzeros for exp in self.experts], dim=0).reshape(-1, self.out_features_up, self.in_features_up//(self.group_size*2)), requires_grad=False)
+        self.all_up_gidx = torch.nn.Parameter(torch.stack([exp.up_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
         
-        all_down_qweight = torch.nn.Parameter(torch.stack([exp.down_proj.qweight for exp in self.experts], dim=0), requires_grad=False)
-        all_down_scales = torch.nn.Parameter(torch.stack([exp.down_proj.scales for exp in self.experts], dim=0), requires_grad=False)
-        all_down_qzeros = torch.nn.Parameter(torch.stack([exp.down_proj.qzeros for exp in self.experts], dim=0), requires_grad=False)
-        all_down_gidx = torch.nn.Parameter(torch.stack([exp.down_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
+        self.all_down_qweight = torch.nn.Parameter(torch.stack([exp.down_proj.qweight for exp in self.experts], dim=0).reshape(-1, self.out_features_down, self.in_features_down//2), requires_grad=False)
+        self.all_down_scales = torch.nn.Parameter(torch.stack([exp.down_proj.scales for exp in self.experts], dim=0).reshape(-1, self.out_features_down, self.in_features_down//self.group_size), requires_grad=False)
+        self.all_down_qzeros = torch.nn.Parameter(torch.stack([exp.down_proj.qzeros for exp in self.experts], dim=0).reshape(-1, self.out_features_down, self.in_features_down//(self.group_size*2)), requires_grad=False)
+        self.all_down_gidx = torch.nn.Parameter(torch.stack([exp.down_proj.g_idx for exp in self.experts], dim=0), requires_grad=False)
 
-        self.fc1_experts_weights = torch.nn.Parameter(all_gate_qweight.view(self.config.n_routed_experts, self.out_features_gate, -1), requires_grad=False)
-        self.fc1_scales = torch.nn.Parameter(all_gate_scales.view(self.config.n_routed_experts, self.out_features_gate, -1), requires_grad=False)
+        # self.fc1_experts_weights = torch.nn.Parameter(all_gate_qweight.view(self.config.n_routed_experts, self.out_features_gate, -1), requires_grad=False)
+        # self.fc1_scales = torch.nn.Parameter(all_gate_scales.view(self.config.n_routed_experts, self.out_features_gate, -1), requires_grad=False)
         
-        self.fc2_experts_weights = torch.nn.Parameter(all_up_qweight.view(self.config.n_routed_experts, self.out_features_up, -1), requires_grad=False)
-        self.fc2_scales = torch.nn.Parameter(all_up_scales.view(self.config.n_routed_experts, self.out_features_up, -1), requires_grad=False)
+        # self.fc2_experts_weights = torch.nn.Parameter(all_up_qweight.view(self.config.n_routed_experts, self.out_features_up, -1), requires_grad=False)
+        # self.fc2_scales = torch.nn.Parameter(all_up_scales.view(self.config.n_routed_experts, self.out_features_up, -1), requires_grad=False)
         
-        self.fc3_experts_weights = torch.nn.Parameter(all_down_qweight.view(self.config.n_routed_experts, self.out_features_down, -1), requires_grad=False)
-        self.fc3_scales = torch.nn.Parameter(all_down_scales.view(self.config.n_routed_experts, self.out_features_down, -1), requires_grad=False)
+        # self.fc3_experts_weights = torch.nn.Parameter(all_down_qweight.view(self.config.n_routed_experts, self.out_features_down, -1), requires_grad=False)
+        # self.fc3_scales = torch.nn.Parameter(all_down_scales.view(self.config.n_routed_experts, self.out_features_down, -1), requires_grad=False)
         
         
         
-    def moe(
+    def moe_old(
         self,
         hidden_states: torch.Tensor,
         topk_indices: torch.Tensor,
         topk_weights: torch.Tensor,
     ):
-        import ipdb; ipdb.set_trace()
         seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
@@ -544,25 +527,102 @@ class QEffDeepseekV3MoE(nn.Module):
         
         return final_hidden_states
 
-    def moe_weights_as_activations(self, hidden_states, router_weights):
-        return QMOE.apply(hidden_states, router_weights, self.fc1_experts_weights, self.fc1_scales, self.fc2_experts_weights, self.fc2_scales, self.fc3_experts_weights, self.fc3_scales,
-                          self.config.hidden_act, self.group_size, self.bits, self.num_experts_per_tok, )
-    
-    def forward_weights_as_activations(self, hidden_states):
-        residuals = hidden_states
-        orig_shape = hidden_states.shape
-        topk_indices, topk_weights, router_weights = self.gate(hidden_states)
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        hidden_states = self.moe_weights_as_activations(hidden_states, router_weights).view(*orig_shape)
-        hidden_states = hidden_states + self.shared_experts(residuals)
-        return hidden_states
+    def moe_weights_as_activations(self, hidden_states, router_probs, router_weights):
+
+        return QMOE.apply(hidden_states, router_weights, self.fc1_experts_weights, self.fc1_scales, self.fc2_experts_weights, self.fc2_scales, self.fc3_experts_weights, self.fc3_scales, router_probs,
+                          self.config.hidden_act, self.group_size, self.bits, self.num_experts_per_tok)
+
+    @torch.no_grad()
+    def original_moe(self, x, topk_ids, topk_weight):
+        cnts = topk_ids.new_zeros((topk_ids.shape[0], len(self.experts)))
+        cnts.scatter_(1, topk_ids, 1)
+        tokens_per_expert = cnts.sum(dim=0)
+        idxs = topk_ids.view(-1).argsort()
+        sorted_tokens = x[idxs // topk_ids.shape[1]]
+        sorted_tokens_shape = sorted_tokens.shape
+        tokens_per_expert = tokens_per_expert.cpu().numpy()
+
+        outputs = []
+        start_idx = 0
+        for i, num_tokens in enumerate(tokens_per_expert):
+            end_idx = start_idx + num_tokens
+            if num_tokens == 0:
+                continue
+            expert = self.experts[i + self.ep_rank * self.experts_per_rank]
+            tokens_for_this_expert = sorted_tokens[start_idx:end_idx]
+            expert_out = expert(tokens_for_this_expert)
+            outputs.append(expert_out)
+            start_idx = end_idx
+
+        outs = torch.cat(outputs, dim=0) if len(outputs) else sorted_tokens.new_empty(0)
+
+        new_x = torch.empty_like(outs)
+        new_x[idxs] = outs
+        final_out = (
+            new_x.view(*topk_ids.shape, -1)
+            .type(topk_weight.dtype)
+            .mul_(topk_weight.unsqueeze(dim=-1))
+            .sum(dim=1)
+            .type(new_x.dtype)
+        )
+        return final_out
+
+
+
+    def moe_waa_unpack(self, hidden_states, topk_indices, topk_weights):
+        # GATHER - collect weights for selected experts
+        gate_proj_qweight = self.all_gate_qweight[topk_indices.flatten()]
+        gate_proj_scales = self.all_gate_scales[topk_indices.flatten()]
+        gate_proj_qzeros = self.all_gate_qzeros[topk_indices.flatten()]
+        
+        up_proj_qweight = self.all_up_qweight[topk_indices.flatten()]
+        up_proj_scales = self.all_up_scales[topk_indices.flatten()]
+        up_proj_qzeros = self.all_up_qzeros[topk_indices.flatten()]
+        
+        down_proj_qweight = self.all_down_qweight[topk_indices.flatten()]
+        down_proj_scales = self.all_down_scales[topk_indices.flatten()]
+        down_proj_qzeros = self.all_down_qzeros[topk_indices.flatten()]
+
+        gate_proj_unpacked = UnpackUInt8ToUInt4.apply(gate_proj_qweight)
+        gate_zeros_unpacked = UnpackUInt8ToUInt4.apply(gate_proj_qzeros)
+        gate_proj_dq = DequantizeLinearFunc.apply(gate_proj_unpacked, gate_proj_scales, gate_zeros_unpacked, self.group_size)
+        
+        up_proj_unpacked = UnpackUInt8ToUInt4.apply(up_proj_qweight)
+        up_zeros_unpacked = UnpackUInt8ToUInt4.apply(up_proj_qzeros)
+        up_proj_dq = DequantizeLinearFunc.apply(up_proj_unpacked, up_proj_scales, up_zeros_unpacked, self.group_size)
+        
+        down_proj_unpacked = UnpackUInt8ToUInt4.apply(down_proj_qweight)
+        down_zeros_unpacked = UnpackUInt8ToUInt4.apply(down_proj_qzeros)
+        down_proj_dq = DequantizeLinearFunc.apply(down_proj_unpacked, down_proj_scales, down_zeros_unpacked, self.group_size)
+        
+        # Reshape for bmm: (bs*seq_len*top_k, 1, hidden_size)
+        expert_in = (
+            hidden_states.unsqueeze(1)
+            .expand(-1, self.gate.top_k, -1)
+            .contiguous()
+            .view(-1, 1, self.in_features_gate)
+        )
+
+
+        gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2))
+        up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2))
+        hidden = self.act_fn(gate_out) * up_out
+        down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2))
+        
+        down_out = down_out.view(-1, self.gate.top_k, self.out_features_down)
+        
+        down_out = down_out * topk_weights.unsqueeze(-1)
+        
+        return torch.einsum("abc-> ac", down_out)
 
     def forward(self, hidden_states):
+        print("Using new MoE forward with weights as activations")
         residuals = hidden_states
         orig_shape = hidden_states.shape
-        topk_indices, topk_weights, router_weights = self.gate(hidden_states)
+        topk_indices, topk_weights, router_probs, router_weights = self.gate(hidden_states)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
+        # hidden_states = self.moe_weights_as_activations(hidden_states, router_probs, router_weights).view(*orig_shape)
+        hidden_states = self.moe_waa_unpack(hidden_states, topk_indices, topk_weights).view(*orig_shape)
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
 
@@ -829,6 +889,15 @@ class QEffDeepseekV3Model(nn.Module):
 
 class QEffDeepseekV3ForCausalLM(nn.Module):
     """Adapted DeepseekV3ForCausalLM with batch_index and QEff optimizations."""
+    
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.layers[0].__class__}
 
     def forward(
         self,
