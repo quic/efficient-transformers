@@ -212,7 +212,6 @@ def build_transformer_blocking_config_for_transform(
     qaic_config: Optional[dict] = None,
     **compile_options,
 ) -> Dict[str, Any]:
-
     if qaic_config:
         blocking_mode = BlockingMode(qaic_config.get("blocking_mode", "hqkv"))
     else:
@@ -255,5 +254,8 @@ def build_transformer_blocking_config_for_transform(
             )
         else:
             blocking_config.mode = BlockingMode(mode_from_config)
+
+        if qaic_config.get("skip_kv", False) and enable_blocking:
+            blocking_config.skip_kv = qaic_config.get("skip_kv")
 
     return blocking_config

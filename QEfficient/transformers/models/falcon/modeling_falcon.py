@@ -30,7 +30,12 @@ from transformers.models.falcon.modeling_falcon import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -130,48 +135,45 @@ class QEffFalconAttention(FalconAttention):
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos_cached, sin_cached, position_ids)
 
-        num_kv_blocks = getattr(self, "num_kv_blocks", None)
-        blocking_config = getattr(self, "attn_blocking_config", None)
-        if blocking_config is None and num_kv_blocks is not None:
-            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_kv_blocked = (
-            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(layer_past)
-        )
-        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
-        if layer_past is not None:
-            past_seen_tokens = layer_past.get_seq_length()
-            cache_kwargs = {
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-                "past_seen_tokens": past_seen_tokens,
-            }
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            if use_kv_blocked:
-                layer_past.write_only(key_layer, value_layer, self.layer_idx, cache_kwargs)
-            else:
-                key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
 
-        if attention_mask is not None:
-            attention_mask = attention_mask[:, :, :, : key_layer.shape[-2]]
 
         if use_blocking:
-            strategy = get_blocking_strategy(blocking_config)
-            attn_output, attention_scores = strategy.apply(
+            past_seen_tokens = layer_past.get_seq_length() if layer_past is not None else 0
+            attn_output, attention_scores = generic_blocked_attention_interface(
                 module=self,
                 query=query_layer,
                 key=key_layer,
                 value=value_layer,
                 attention_mask=attention_mask,
                 scaling=1.0 / math.sqrt(self.head_dim),
-                cache_kwargs=cache_kwargs,
                 layer_idx=self.layer_idx,
                 past_key_value=layer_past,
-                config=blocking_config,
+                blocking_config=blocking_config,
+                comp_ctx_length=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+                past_seen_tokens=past_seen_tokens,
             )
             attn_output = attn_output.transpose(1, 2)
         else:
+            # Cache update + gather (if cache is provided) using shared helper.
+            if layer_past is not None:
+                key_layer, value_layer, attention_mask = past_key_value_update(
+                    module=self,
+                    key=key_layer,
+                    value=value_layer,
+                    attention_mask=attention_mask,
+                    past_key_value=layer_past,
+                    comp_ctx_lengths=comp_ctx_lengths,
+                    batch_index=batch_index,
+                    position_ids=position_ids,
+                )
+
+            if attention_mask is not None:
+                attention_mask = attention_mask[:, :, :, : key_layer.shape[-2]]
+
             attention_scores = query_layer @ key_layer.transpose(-1, -2)
             attention_scores /= math.sqrt(self.head_dim)
             attention_scores = torch.where(

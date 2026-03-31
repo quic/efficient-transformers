@@ -28,7 +28,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode, generic_blocked_attention_interface, past_key_value_update
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -171,47 +171,36 @@ class QEffQwen3Attention(Qwen3Attention):
         )
         use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
 
-        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
-        blocking_config = getattr(self, "attn_blocking_config", None)
-        if blocking_config is None and num_kv_blocks is not None:
-            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_kv_blocked = (
-            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
-        )
-        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
-
-        if past_key_value is not None:
-            past_seen_tokens = past_key_value.get_seq_length()
-            if use_kv_blocked:
-                cache_kwargs = {
-                    "batch_index": batch_index,
-                    "position_ids": position_ids,
-                    "past_seen_tokens": past_seen_tokens,
-                }
-                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
-            else:
-                cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
-
-                if comp_ctx_lengths is not None:
-                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                    cache_kwargs["CCL"] = attention_mask.shape[-1]
-                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-
+        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
-            strategy = get_blocking_strategy(blocking_config)
-            attn_output, attn_weights = strategy.apply(
+            attn_output, attn_weights = generic_blocked_attention_interface(
                 module=self,
                 query=query_states,
                 key=key_states,
                 value=value_states,
                 attention_mask=attention_mask,
                 scaling=self.scaling,
-                cache_kwargs=cache_kwargs,
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_value,
-                config=blocking_config,
+                blocking_config=blocking_config,
+                comp_ctx_length=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+                past_seen_tokens=past_seen_tokens,
             )
         else:
+            key_states, value_states, _ = past_key_value_update(
+                module=self, 
+                key=key_states, 
+                value=value_states, 
+                attention_mask=attention_mask, 
+                past_key_value=past_key_value, 
+                comp_ctx_lengths=comp_ctx_lengths, 
+                batch_index=batch_index,
+                position_ids=position_ids
+            )
             attn_output, attn_weights = eager_attention_forward(
                 self,
                 query_states,
