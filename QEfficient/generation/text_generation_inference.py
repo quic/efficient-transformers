@@ -196,7 +196,6 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
     if compilation_fbs := spec.get("full_batch_size", None):
         compilation_fbs = int(compilation_fbs)
     return compilation_batch_size, compilation_ctx_len, compilation_fbs
-    return compilation_batch_size, compilation_ctx_len, compilation_fbs
 
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:

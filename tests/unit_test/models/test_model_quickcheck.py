@@ -753,6 +753,10 @@ class TestInferSpecializationName:
         spec = {"_graph_name": "Decode", "batch_size": "1", "seq_len": "1", "ctx_len": "4096"}
         assert _infer_specialization_name(spec, 1) == "Decode"
 
+    def test_graph_name_tag_embedding_with_seq_len(self):
+        spec = {"_graph_name": "Embedding", "batch_size": "1", "seq_len": "128"}
+        assert _infer_specialization_name(spec, 0) == "Embedding"
+
     # --- module_name hint (diffusers path) ---
 
     def test_module_name_used_when_no_tag(self):
@@ -781,7 +785,7 @@ class TestInferSpecializationName:
         spec = {"batch_size": "1", "encoder_ctx_len": "1500"}
         assert _infer_specialization_name(spec, 0) == "Encoder"
 
-    def test_embedding_detected_by_sequence_length(self):
+    def test_legacy_embedding_detected_by_sequence_length(self):
         spec = {"batch_size": "1", "sequence_length": "128"}
         assert _infer_specialization_name(spec, 0) == "Embedding"
 
@@ -935,8 +939,15 @@ class TestToNamedSpecializations:
         assert result[0]["name"] == "Prefill"
         assert "_graph_name" not in result[0]["symbols"]
 
-    def test_text_embedding_specialization(self):
-        """Text embedding (BERT): sequence_length present, no seq_len → 'Embedding'."""
+    def test_text_embedding_specialization_actual_compile_path(self):
+        """Text embedding compile path: _graph_name + seq_len should serialize as Embedding."""
+        flat = [{"_graph_name": "Embedding", "batch_size": "1", "seq_len": "128"}]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Embedding"
+        assert result[0]["symbols"]["seq_len"] == "128"
+
+    def test_legacy_text_embedding_specialization(self):
+        """Legacy BERT-like raw dict: sequence_length fallback still resolves to Embedding."""
         flat = [{"batch_size": "1", "sequence_length": "128"}]
         result = to_named_specializations(flat)
         assert result[0]["name"] == "Embedding"
