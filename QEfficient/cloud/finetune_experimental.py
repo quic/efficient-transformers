@@ -15,9 +15,9 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from peft import get_peft_model
-
 from QEfficient.finetune.experimental.core.callbacks import TrainingLogger, replace_progress_callback
+import torch
+from accelerate.utils import ParallelismConfig
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory
 from QEfficient.finetune.experimental.core.config_manager import (
     ConfigManager,
@@ -29,6 +29,7 @@ from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
 from QEfficient.finetune.experimental.core.trainer import sft_trainer  # noqa: F401
 from QEfficient.finetune.experimental.core.utils.device_map_utils import get_device_map
 from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
+from QEfficient.finetune.experimental.core.utils.tp_peft_utils import apply_peft_to_model
 from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
 
 logger = Logger(__name__)
@@ -167,8 +168,11 @@ class FineTuningPipeline:
         model_name = model_config.pop("model_name")
 
         # Get training config for PP settings
-        training_config = self.config.training
-        pp_degree = training_config.get("pp_degree", 1)
+        # training_config = self.config.training
+        training_config = self.training_config
+
+        pp_degree = self.training_config.get("pp_degree", 1)
+
         device = training_config.get("device", "qaic")
 
         # Generate device_map for pipeline parallelism if pp_degree > 1
@@ -182,11 +186,39 @@ class FineTuningPipeline:
             model_config["device_map"] = device_map
             logger.log_rank_zero(f"Pipeline Parallelism enabled: Using device_map for {pp_degree} stages")
 
+        tp_degree = training_config.pop("tp_degree", 1)
+
+        if tp_degree > 1:
+            pc = training_config.get("parallelism_config")
+            if not isinstance(pc, ParallelismConfig):
+                raise TypeError(f"Expected ParallelismConfig, got {type(pc).__name__}")
+            device_mesh = pc.build_device_mesh(device)
+            tp_mesh = device_mesh["tp"]
+            model_config["tp_plan"] = "auto"
+            model_config["tp_size"] = tp_degree
+            model_config["device_mesh"] = tp_mesh
+
         # Filter out PEFT-related fields, these shouldn't be passed to model creation
         excluded_keys = {"use_peft", "peft_config"}
         model_config_kwargs = {k: v for k, v in model_config.items() if k not in excluded_keys}
 
         model_instance = ComponentFactory.create_model(model_type, model_name, **model_config_kwargs)
+
+        if tp_degree > 1:
+            # Need to explicitly untie the embedding weights here to consider
+            # this as separate params in further TP processing
+            model_instance.model.lm_head.weight = torch.nn.Parameter(model_instance.model.lm_head.weight.clone())
+            peft_config = None
+            if model_config.get("use_peft", False):
+                peft_config_dataclass = model_config.get("peft_config")
+                if peft_config_dataclass is not None:
+                    peft_config = convert_peft_config_to_lora_config(peft_config_dataclass)
+                # Apply PEFT to the model and include PEFT layers in TP plan
+
+                model_instance.model = apply_peft_to_model(
+                    model_instance.model, tp_mesh=tp_mesh, peft_config=peft_config
+                )
+
         return model_instance
 
     def _create_optimizer(self) -> Tuple[Any, Dict[str, Any]]:
@@ -251,25 +283,17 @@ class FineTuningPipeline:
         # Get PEFT config if enabled
         model_config_dict = self.config_manager.get_model_config()
         peft_config = None
-        if model_config_dict.get("use_peft", False):
+        if model_config_dict.get("use_peft", False) and not (
+            self.config_manager.config.training.get("tp_degree", 1) > 1
+        ):
             peft_config_dataclass = model_config_dict.get("peft_config")
             if peft_config_dataclass is not None:
                 peft_config = convert_peft_config_to_lora_config(peft_config_dataclass)
 
         # Build dependencies for trainer configuration
         dependencies = {}
-        if peft_config is not None:
+        if peft_config is not None and not (self.config_manager.config.training.get("tp_degree", 1) > 1):
             dependencies["peft_config"] = peft_config
-            if getattr(self, "rank", 0) == 0:
-                model_configuration = get_peft_model(model, peft_config)
-                trainable_params, all_param = model_configuration.get_nb_trainable_parameters()
-                pct = (trainable_params / all_param) * 100
-                model_configuration.unload()  # Removing the peft adapters
-                train_logger.write(f"TRAINING INFO: Model has {all_param / 1e6:.4f} Million params.")
-                train_logger.write(
-                    f"TRAINING INFO: Trainable params: {trainable_params} || "
-                    f"all params: {all_param} || trainable%: {pct:.4f}"
-                )
         trainer_cls, args_cls, additional_kwargs = ComponentFactory.create_trainer_config(trainer_type, **dependencies)
 
         # Clean up training config: remove fields that shouldn't be passed to TrainingArguments
@@ -280,6 +304,13 @@ class FineTuningPipeline:
         training_config.pop("torch_dtype", None)
         # Remove PP-specific fields as they're handled via device_map in model loading
         training_config.pop("pp_degree", None)
+
+        training_config.pop("tp_degree", None)
+        training_config.pop("ddp_degree", None)
+
+        # Before constructing SFTConfig/TrainingArguments
+        if training_config.get("report_to") is None:
+            training_config["report_to"] = "tensorboard"
 
         # Create trainer arguments instance
         args = args_cls(**training_config)

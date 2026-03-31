@@ -11,6 +11,8 @@ Utility functions for preparing training configurations.
 
 from typing import Any, Dict
 
+from accelerate.utils import ParallelismConfig
+
 from QEfficient.finetune.experimental.core.config_manager import ConfigManager
 
 
@@ -33,6 +35,17 @@ def prepare_training_config(
 
     # Handle dtype conversion
     # To do: (For Tanisha) Check if torch_dtype should rather be added directly in model_config only in config_manager.py
+
+    # TODO: Add PC here
+    parallelism_config = {}
+    if training_config.get("tp_degree", 1) > 1:
+        parallelism_config["tp_size"] = training_config["tp_degree"]
+    if training_config.get("ddp_degree", 1) > 1:
+        parallelism_config["dp_replicate_size"] = training_config["ddp_degree"]
+
+    if parallelism_config:  # Only inject if at least one parallelism dimension is active
+        pc = ParallelismConfig(**parallelism_config)
+        training_config["parallelism_config"] = pc
 
     torch_dtype = training_config.pop("torch_dtype", None)
     if torch_dtype is None:
