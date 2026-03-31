@@ -856,7 +856,9 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
        ``seq_len != 1`` → ``"Prefill"``, ``seq_len == 1`` → ``"Decode"``.
     4. ``encoder_ctx_len`` with no ``seq_len`` → ``"Encoder"`` (simplified
        Whisper-like spec without ``feature_len``).
-    5. ``sequence_length`` with no ``seq_len`` → ``"Embedding"`` (BERT-like).
+    5. Legacy ``sequence_length`` with no ``seq_len`` → ``"Embedding"``
+       (older BERT-like raw dicts). Current embedding compile paths set
+       ``_graph_name="Embedding"`` and still use ``seq_len``.
     6. Generic fallback ``f"Graph_{index}"``.
 
     Parameters
@@ -890,6 +892,8 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
     if "seq_len" not in spec:
         if "encoder_ctx_len" in spec:
             return "Encoder"
+        # Legacy fallback for older BERT-style raw dicts. Current embedding
+        # compile paths set _graph_name="Embedding" and use seq_len.
         if "sequence_length" in spec:
             return "Embedding"
         return f"Graph_{index}"
@@ -901,14 +905,10 @@ def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str
 
 def to_named_specializations(specializations: List[Dict], module_name: Optional[str] = None) -> List[Dict]:
     """
-    Convert a flat list of specialization dicts to the nested ``{name, symbols}``
-    format expected by the backend compiler.
+    Convert flat specialization dicts to the nested ``{name, symbols}`` format
+    expected by the backend compiler.
 
-    Old format (one entry)::
-
-        {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
-
-    New format (one entry)::
+    Example output (one entry)::
 
         {"name": "Prefill", "symbols": {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}}
 

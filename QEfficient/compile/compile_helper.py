@@ -21,8 +21,8 @@ from QEfficient.utils.logging_utils import logger
 def create_and_dump_specializations(
     batch_size: int, prompt_len: int, ctx_len: int, path: str, full_batch_size: Optional[int] = None
 ):
-    # Build flat specialization entries first, then convert to named format.
-    flat_specs = [
+    # Build the base specialization entries first, then convert to named format.
+    base_specializations = [
         {
             "batch_size": str(batch_size),
             "seq_len": str(prompt_len),
@@ -32,16 +32,16 @@ def create_and_dump_specializations(
     ]
     # If continuous batching is enabled by providing full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS
     if full_batch_size is not None:
-        flat_specs[0]["full_batch_size"] = str(full_batch_size)
-        flat_specs[1]["full_batch_size"] = str(full_batch_size)
-        flat_specs[1]["batch_size"] = str(full_batch_size)
+        base_specializations[0]["full_batch_size"] = str(full_batch_size)
+        base_specializations[1]["full_batch_size"] = str(full_batch_size)
+        base_specializations[1]["batch_size"] = str(full_batch_size)
 
     # To handle repetitive input in specializations when prompt_len is 1
     if prompt_len == 1 and full_batch_size is None:
-        flat_specs.pop()
+        base_specializations.pop()
 
     # Dump
-    specializations = {"specializations": to_named_specializations(flat_specs)}
+    specializations = {"specializations": to_named_specializations(base_specializations)}
     with open(path, "w") as file:
         json.dump(specializations, file, indent=4)
 
