@@ -242,10 +242,10 @@ class ModelConfig:
         default="AutoModelForCausalLM",
         metadata={"help": "The AutoClass name to load the model (e.g., 'AutoModelForCausalLM')."},
     )
-    load_in_4bit: bool = field(
-        default=False,
-        metadata={"help": "Whether to load the model in 4-bit quantization."},
-    )
+    # load_in_4bit: bool = field(
+    #     default=False,
+    #     metadata={"help": "Whether to load the model in 4-bit quantization."},
+    # )
     use_peft: bool = field(
         default=True,
         metadata={"help": "Whether to use PEFT (Parameter-Efficient Fine-Tuning)."},
@@ -330,10 +330,10 @@ class TrainingConfig:
         default="./training_results",
         metadata={"help": "The output directory where the model predictions and checkpoints will be written."},
     )
-    overwrite_output_dir: bool = field(
-        default=False,
-        metadata={"help": "Whether to overwrite the output directory."},
-    )
+    # overwrite_output_dir: bool = field(
+    #     default=False,
+    #     metadata={"help": "Whether to overwrite the output directory."},
+    # )
     seed: int = field(
         default=42,
         metadata={"help": "Random seed for reproducibility."},
@@ -475,6 +475,14 @@ class TrainingConfig:
     pp_degree: int = field(
         default=1,
         metadata={"help": "Pipeline parallelism degree (number of pipeline stages). Set > 1 to enable PP."},
+    )
+    tp_degree: int = field(
+        default=1,
+        metadata={"help": "Tensor parallelism degree (number of pipeline stages). Set > 1 to enable TP."},
+    )
+    ddp_degree: int = field(
+        default=1,
+        metadata={"help": "Data parallelism degree (number of pipeline stages). Set > 1 to enable DDP."},
     )
 
 

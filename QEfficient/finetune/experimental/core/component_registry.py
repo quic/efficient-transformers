@@ -225,7 +225,7 @@ class ComponentFactory:
         for kwarg, default in config["required_kwargs"].items():
             if kwarg in dependencies:
                 additional_kwargs[kwarg] = dependencies[kwarg]
-            elif default != "REQUIRED":
+            elif default != "REQUIRED" and not isinstance(default, type):
                 additional_kwargs[kwarg] = default
 
         # Check for missing required arguments
