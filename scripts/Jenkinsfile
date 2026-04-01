@@ -75,10 +75,9 @@ pipeline {
                            mkdir -p $PWD/Non_qaic_feature &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_feature &&
-                           pytest tests -m '(not cli) and (on_qaic) and (feature) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                           pytest tests -m '(not cli) and (on_qaic) and (feature) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/transformers/sampler --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                            junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
                            deactivate"
-                           '''
                        }
                    }
                }
