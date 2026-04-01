@@ -189,9 +189,9 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLTextDecoderLayer,
     Qwen3VLTextModel,
     Qwen3VLTextRMSNorm,
+    Qwen3VLTextRotaryEmbedding,
     Qwen3VLVisionAttention,
     Qwen3VLVisionModel,
-    # Qwen3VLTextRotaryEmbedding,
 )
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeForConditionalGeneration,
@@ -431,9 +431,9 @@ from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLTextAttention,
     QEffQwen3VLTextDecoderLayer,
     QEffQwen3VLTextModel,
+    QEffQwen3VLTextRotaryEmbedding,
     QEffQwen3VLVisionAttention,
     QEffQwen3VLVisionModel,
-    # QEffQwen3VLTextRotaryEmbedding,
 )
 from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
@@ -570,7 +570,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLVisionAttention: QEffQwen3VLVisionAttention,
         Qwen3VLVisionModel: QEffQwen3VLVisionModel,
         Qwen3VLTextModel: QEffQwen3VLTextModel,
-        # Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,
+        Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,
         # Gemma2
         Gemma2Attention: QEffGemma2Attention,
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
