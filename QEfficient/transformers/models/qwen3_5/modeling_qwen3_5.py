@@ -240,6 +240,7 @@ class QEffQwen3_5TextRotaryEmbedding(Qwen3_5TextRotaryEmbedding):
         )
 
 
+
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
     """Apply interleaved MRoPE to 3D rotary embeddings.
     Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
@@ -296,6 +297,10 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    
+    
+    cos = cos[position_ids]
+    sin = sin[position_ids]
 
     cos = cos[position_ids]
     sin = sin[position_ids]
