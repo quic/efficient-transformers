@@ -201,10 +201,9 @@ class QEffQwen3_5TextRotaryEmbedding(Qwen3_5TextRotaryEmbedding):
         self.max_seq_len_cached = seq_len
         t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
         freqs = torch.outer(t, self.inv_freq)
-
-        freqs = self.apply_interleaved_mrope(freqs.unsqueeze(0).unsqueeze(0), self.mrope_section)
-        self.register_buffer("cos_cached", freqs.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", freqs.sin().to(dtype), persistent=False)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
     def forward(self, x, seq_len=None):
         # x: [bs, num_attention_heads, seq_len, head_size]
@@ -217,22 +216,29 @@ class QEffQwen3_5TextRotaryEmbedding(Qwen3_5TextRotaryEmbedding):
         )
 
 
+
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
-    """Apply interleaved MRoPE to 3D rotary embeddings.
-    Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
-    interleaved [THWTHWTHW...TT], preserving frequency continuity.
-    args:
-        x: (3, bs, seq_len, head_dim // 2)
-        mrope_section: (3,)
-    returns:
-        x_t: (bs, seq_len, head_dim // 2)
-    """
-    freqs_t = freqs[0]  # just overwrite the first dimension T
-    for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = mrope_section[dim] * 3
-        idx = slice(offset, length, 3)
-        freqs_t[..., idx] = freqs[dim, ..., idx]
-    return freqs_t
+        """Apply interleaved MRoPE to 3D rotary embeddings.
+        Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
+        interleaved [THWTHWTHW...TT], preserving frequency continuity.
+        args:
+            x: (3, bs, seq_len, head_dim // 2)
+            mrope_section: (3,)
+        returns:
+            x_t: (bs, seq_len, head_dim // 2)
+        """
+
+        half_shape = freqs[0].shape // 2
+        freqs_t = freqs[0] 
+        for dim, offset in enumerate((1, 2), start=1):  # H, W
+            length = mrope_section[dim] * 3
+            idx = slice(offset, length, 3)
+            freqs_t[..., idx] = freqs[dim, ..., idx]
+            offset += half_shape
+            length += half_shape
+            idx = slice(offset, length, 3)
+            freqs_t[..., idx] = freqs[dim, ..., idx]
+        return freqs_t
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqueeze_dim=1):
@@ -267,14 +273,32 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    
+    
+    cos = cos[position_ids]
+    sin = sin[position_ids]
 
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    cos = qeff_apply_interleaved_mrope(cos, mrope_section)
+    sin  = qeff_apply_interleaved_mrope(sin, mrope_section)
 
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
+    cos  = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
 
-    return q_embed.to(q.dtype), k_embed.to(k.dtype)
+    # import ipdb; ipdb.set_trace()
+    # Keep half or full tensor for later concatenation
+    rotary_dim = cos.shape[-1]
+    q_rot, q_pass = q[:,:,:, :rotary_dim], q[:,:,:, rotary_dim:]
+    k_rot, k_pass = k[:,:,:, :rotary_dim], k[:,:,:, rotary_dim:]
+
+    # Apply rotary embeddings on the first half or full tensor
+    q_embed = (q_rot * cos) + (rotate_half(q_rot) * sin)
+    k_embed = (k_rot * cos) + (rotate_half(k_rot) * sin)
+
+    # Concatenate back to full shape
+    q_embed = torch.cat([q_embed, q_pass], dim=-1)
+    k_embed = torch.cat([k_embed, k_pass], dim=-1)
+
+    return q_embed, k_embed
 
 
 def eager_attention_forward(
@@ -335,10 +359,10 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
     Full-attention path with QEff cache updates for retained-state export.
     """
 
-    # def __qeff_init__(self):
+    def __qeff_init__(self):
 
-    #     pass
-    #     # self.rotary_emb = QEffQwen3_5TextRotaryEmbedding(config=self.config)
+        # pass
+        self.rotary_emb = QEffQwen3_5TextRotaryEmbedding(config=self.config)
 
     def forward(
         self,
@@ -364,11 +388,15 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        # kv_seq_len = key_states.shape[-2]
-        # kv_seq_len = past_key_values.get_seq_length(self.layer_idx, cache_position)
+        kv_seq_len = key_states.shape[-2]
+        kv_seq_len = past_key_values.get_seq_length(self.layer_idx, cache_position)
 
-        cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, position_ids[1:], self.rotary_emb.mrope_section
+        )
+
 
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -524,6 +552,20 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             sub = attn[..., :i, :i].clone()
             attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
         attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+
+        ## Approximation code ##
+        # A = attn
+        # # # Approximate (I - A)^-1
+        # L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        # Ak = A
+
+        # K = 128
+        # for _ in range(K):
+        #     L = L + Ak
+        #     Ak = Ak @ A
+
+        # attn = L
+
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
 
