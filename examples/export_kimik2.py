@@ -1,40 +1,39 @@
 import torch
-
-torch.set_printoptions(
-    precision=4,
-    edgeitems=2,
-    threshold=50,  # max number of elements printed
-    linewidth=120,
-)
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
+#parameters to be configured
+TS=4
+num_hidden_layers=2
+enable_mla=True
+mla_absorption_config={"enable": True, "online": False}
+prefill_seq_len = 1
+ctx_len = 2048
+qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}
+
+
 model = AutoModelForCausalLM.from_pretrained(
-    "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd",
+    "moonshotai/Kimi-K2-Thinking",
     torch_dtype=torch.float32,
-    num_hidden_layers=2,
+    num_hidden_layers=num_hidden_layers,
     trust_remote_code=True,
 )
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
 
-qeff_model = QEFFAutoModelForCausalLM(model)
+qeff_model = QEFFAutoModelForCausalLM(model, num_kv_heads_repeat = TS)
 
-onnx_path = qeff_model.export(
-    prefill_seq_len=1, enable_mla=True, mla_absorption_config={"enable": True, "online": False}
-)
-print(onnx_path)
 qpc_path = qeff_model.compile(
-    prefill_seq_len=1,
-    ctx_len=128,
-    enable_mla=True,
-    mla_absorption_config={"enable": True, "online": False},
+    prefill_seq_len=prefill_seq_len,
+    ctx_len=ctx_len,
+    enable_mla=enable_mla,
+    mla_absorption_config=mla_absorption_config,
     mxfp6_matmul=True,
     mxint8_kv_cache=False,
-    num_devices=4,
+    num_devices=TS,
     num_cores=16,
+    #prefill_only=True,
+    qaic_config=qaic_config,
 )
-print(qpc_path)
 
-prompts = "Once upon a time,"
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)
