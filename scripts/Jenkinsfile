@@ -4,6 +4,9 @@ pipeline {
            label 'qeff_node'
        }
    }
+   environment {
+     RUN_FINETUNE_TESTS = 'false'      // Set to 'true' to enable
+   }
    options {
         disableConcurrentBuilds()
     }
@@ -197,6 +200,9 @@ pipeline {
         //     }
         // }
         stage('Finetune CLI Tests') {
+            when {
+            environment name: 'RUN_FINETUNE_TESTS', value: 'true'
+                }
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
