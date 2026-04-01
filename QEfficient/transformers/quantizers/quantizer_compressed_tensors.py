@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import List
@@ -12,7 +12,7 @@ from typing import List
 import torch
 from transformers.quantizers.quantizer_compressed_tensors import CompressedTensorsHfQuantizer
 from transformers.utils.quantization_config import CompressedTensorsConfig, QuantizationConfigMixin, QuantizationMethod
-
+from transformers.utils import is_compressed_tensors_available
 from QEfficient.transformers.quantizers.quantizer_utils import get_keys_to_not_convert
 from QEfficient.utils.logging_utils import logger
 
@@ -223,7 +223,56 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
 
 
 class QEffCompressedTensorsConfig(CompressedTensorsConfig):
-    def __init__(
+    
+    def handle_pack_quantized_init(
+        self,
+        config_groups=None,
+        format="dense",
+        quantization_status="initialized",
+        kv_cache_scheme=None,
+        global_compression_ratio=None,
+        ignore=None,
+        sparsity_config=None,
+        quant_method="compressed-tensors",
+        run_compressed: bool = True,
+        **kwargs,
+    ):
+        if is_compressed_tensors_available():
+            from compressed_tensors.config import SparsityCompressionConfig
+            from compressed_tensors.quantization import QuantizationConfig
+        else:
+            raise ImportError(
+                "compressed_tensors is not installed and is required for compressed-tensors quantization. Please install it with `pip install compressed-tensors`."
+            )
+        self.quantization_config = None
+        self.sparsity_config = None
+
+        self.run_compressed = run_compressed
+        assert self.run_compressed, "pack-quantized needs to have run_compressed set to True"
+
+        # parse from dict to load nested QuantizationScheme objects
+        if config_groups or kv_cache_scheme:
+            self.quantization_config = QuantizationConfig.model_validate(
+                {
+                    "config_groups": config_groups,
+                    "quant_method": quant_method,
+                    "format": format,
+                    "quantization_status": quantization_status,
+                    "kv_cache_scheme": kv_cache_scheme,
+                    "global_compression_ratio": global_compression_ratio,
+                    "ignore": ignore,
+                    **kwargs,
+                }
+            )
+
+        if sparsity_config:
+            self.sparsity_config = SparsityCompressionConfig.load_from_registry(
+                sparsity_config.get("format"), **sparsity_config
+            )
+
+        self.quant_method = QuantizationMethod.COMPRESSED_TENSORS
+
+    def handle_fp8_init(
         self,
         config_groups=None,
         format="dense",
@@ -313,7 +362,52 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
 
         self.quant_method = QuantizationMethod.COMPRESSED_TENSORS
 
+        
+    def __init__(
+        self,
+        config_groups=None,
+        format="dense",
+        quantization_status="initialized",
+        kv_cache_scheme=None,
+        global_compression_ratio=None,
+        ignore=None,
+        sparsity_config=None,
+        quant_method="compressed-tensors",
+        run_compressed: bool = None,
+        **kwargs,
+    ):
+        if format == "pack-quantized":
+            self.handle_pack_quantized_init(
+                config_groups=config_groups,
+                format=format,
+                quantization_status=quantization_status,
+                kv_cache_scheme=kv_cache_scheme,
+                global_compression_ratio=global_compression_ratio,
+                ignore=ignore,
+                sparsity_config=sparsity_config,
+                quant_method=quant_method,
+                run_compressed=True if run_compressed is None else run_compressed,
+                **kwargs,
+            )
+        else:
+            self.handle_fp8_init(
+                config_groups=config_groups,
+                format=format,
+                quantization_status=quantization_status,
+                kv_cache_scheme=kv_cache_scheme,
+                global_compression_ratio=global_compression_ratio,
+                ignore=ignore,
+                sparsity_config=sparsity_config,
+                quant_method=quant_method,
+                run_compressed=False if run_compressed is None else run_compressed,
+                **kwargs,
+            )
+
+
     def to_dict(self):
+        if self.quantization_config.format=="pack-quantized":
+            return super().to_dict()
+    
         return {
             "quantization_config": {
                 "config_groups": self.config_groups,
@@ -333,40 +427,56 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
 
 class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
     requires_calibration = False
+    
+    @staticmethod
+    def is_pack_quantized(quant_config):
+        return hasattr(quant_config, "quantization_config") and hasattr(quant_config.quantization_config, "format") and quant_config.quantization_config.format == "pack-quantized"
 
     def __init__(self, quantization_config, **kwargs):
-        # TODO: check if more checks are required
-        if not isinstance(quantization_config, QEffCompressedTensorsConfig):
-            raise TypeError(
-                f"Only {QEffCompressedTensorsConfig} is supported for initialization got {type(quantization_config)}"
-            )
-        self.run_compressed = quantization_config.run_compressed
-        self.quantization_config = quantization_config
+        if self.is_pack_quantized(quantization_config):
+            super().__init__(quantization_config, **kwargs)
+        else:
+            if not isinstance(quantization_config, QEffCompressedTensorsConfig):
+                raise TypeError(
+                    f"Only {QEffCompressedTensorsConfig} is supported for initialization got {type(quantization_config)}"
+                )
+            self.run_compressed = quantization_config.run_compressed
+            self.quantization_config = quantization_config
 
-        # -- Handle extra kwargs below --
-        self.modules_to_not_convert = kwargs.pop("modules_to_not_convert", [])
-        self.modules_to_not_convert = list(
-            set(self.modules_to_not_convert if self.modules_to_not_convert else [])
-            | set(self.quantization_config.ignore if self.quantization_config.ignore else [])
-        )
-        self.pre_quantized = kwargs.pop("pre_quantized", True)
-
-        if not self.pre_quantized and self.requires_calibration:
-            raise ValueError(
-                f"The quantization method {quantization_config.quant_method} does require the model to be pre-quantized."
-                f" You explicitly passed `pre_quantized=False` meaning your model weights are not quantized. Make sure to "
-                f"pass `pre_quantized=True` while knowing what you are doing."
+            # -- Handle extra kwargs below --
+            self.modules_to_not_convert = kwargs.pop("modules_to_not_convert", [])
+            self.modules_to_not_convert = list(
+                set(self.modules_to_not_convert if self.modules_to_not_convert else [])
+                | set(self.quantization_config.ignore if self.quantization_config.ignore else [])
             )
+            self.pre_quantized = kwargs.pop("pre_quantized", True)
+
+            if not self.pre_quantized and self.requires_calibration:
+                raise ValueError(
+                    f"The quantization method {quantization_config.quant_method} does require the model to be pre-quantized."
+                    f" You explicitly passed `pre_quantized=False` meaning your model weights are not quantized. Make sure to "
+                    f"pass `pre_quantized=True` while knowing what you are doing."
+                )
 
     def validate_environment(self, *args, **kwargs):
+        if self.is_pack_quantized(self.quantization_config):
+            return super().validate_environment(*args, **kwargs)
+
         return True
 
     def update_torch_dtype(self, torch_dtype):
+        if self.is_pack_quantized(self.quantization_config):
+            return super().update_torch_dtype(torch_dtype)
+        
         if torch_dtype not in [None, torch.float32]:
             logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
         return None
 
     def _process_model_before_weight_loading(self, model, **kwargs):
+        if self.is_pack_quantized(self.quantization_config):
+            super()._process_model_before_weight_loading(model, **kwargs)
+            return
+
         if self.quantization_config.targets != ["Linear"]:
             raise NotImplementedError(
                 f"Only Linear layer with FP8 quantization are supported got targets = {self.quantization_config.targets}"
@@ -394,10 +504,18 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
         replace_linear_with_fp8_dequant_layer(model)
 
     def _process_model_after_weight_loading(self, model, **kwargs):
+        if self.is_pack_quantized(self.quantization_config):
+            super()._process_model_after_weight_loading(model, **kwargs)
+            return
         pass
 
     def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
+        if self.is_pack_quantized(self.quantization_config):
+            return super().update_missing_keys_after_loading(model, missing_keys=missing_keys, prefix=prefix)
+            
         return missing_keys
 
     def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str) -> List[str]:
+        if self.is_pack_quantized(self.quantization_config):
+            return super().update_unexpected_keys(model, unexpected_keys=unexpected_keys, prefix=prefix)
         return unexpected_keys

@@ -15,6 +15,8 @@ model_path ="/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshot
 model = AutoModelForCausalLM.from_pretrained(
     model_path, torch_dtype=torch.float32, num_hidden_layers=num_hidden_layers, trust_remote_code=True
 )
+qeff_model.compile(prefill_seq_len=1, num_cores=16, num_devices=1, mxfp6_matmul=True, mxint8_kv_cache=True)
+
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
 
 PREFILL_SEQ_LEN = 32
@@ -27,9 +29,9 @@ padded_len = inputs["input_ids"].shape[1]
 num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
-with torch.no_grad():
-    out = model(**inputs)
-    predictions = torch.argmax(out.logits, dim=-1)
+# with torch.no_grad():
+#     out = model(**inputs)
+#     predictions = torch.argmax(out.logits, dim=-1)
 
 qeff_model = QEFFAutoModelForCausalLM(model, num_kv_heads_repeat=num_kv_heads_repeat)
 qeff_model.mla(enable_mla=enable_mla, mla_absorption_config=mla_absorption_config)
@@ -47,7 +49,7 @@ pad_shape_k_pe = (1, num_kv_heads_repeat, CTX_LEN, 64)
 past_key_values = []
 compressed_kvs = []
 
-for i in range(model.config.num_hidden_layers):
+for i in range(qeff_model.model.config.num_hidden_layers):
     past_key = torch.zeros((pad_shape_k), dtype=torch.float32)
     past_value = torch.zeros((pad_shape_v), dtype=torch.float32)
     pkv = (past_key, past_value)
