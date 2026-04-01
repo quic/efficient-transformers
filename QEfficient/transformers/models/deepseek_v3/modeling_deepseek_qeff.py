@@ -283,11 +283,13 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
-        breakpoint()
         blocking_config = getattr(self, "attn_blocking_config", None)
-        num_kv_blocks = blocking_config.num_kv_blocks #1
+        num_kv_blocks = 1
+        if blocking_config is not None:
+            num_kv_blocks = blocking_config.num_kv_blocks
+        print("num_kv_blocks : ", num_kv_blocks)
         seq_len = compressed_kv.shape[-2]
-        block_size = -(-seq_len // num_kv_blocks) #32
+        block_size = -(-seq_len // num_kv_blocks)
 
         attn_output_list = []
         for k in range(n_head_ckv):
