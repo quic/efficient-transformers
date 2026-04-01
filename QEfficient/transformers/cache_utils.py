@@ -198,12 +198,16 @@ class QEffDynamicLayer(CacheLayerMixin):
         else:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             self._mark_initialized(self.keys)
 =======
             # breakpoint()
 >>>>>>> 657a757 (Add fp8 support (#802))
 =======
 >>>>>>> 1f269b4 (Support for Qwen3VL MOE Disagg mode (#808))
+=======
+            self._mark_initialized(self.keys)
+>>>>>>> 4f643cd (added interleave changes to qwen3vl)
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
@@ -239,13 +243,11 @@ class QEffDynamicLayer(CacheLayerMixin):
             A tuple containing the updated key and value states.
         """
         # Update the cache
-
         if self.keys is None:
             self.keys = key_states
             self.values = value_states
             self._mark_initialized(self.keys)
             k_out, v_out = self.keys, self.values
-            self.is_initialized = True
         else:
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
@@ -366,6 +368,7 @@ class QEffDynamicCache(Cache):
     """
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
         # Remove cache-layer construction args if present to avoid duplicate arguments.
         kwargs.pop("layer_classes", None)
@@ -389,26 +392,15 @@ class QEffDynamicCache(Cache):
         **kwargs,
     ):
         # Remove layer_classes if present to avoid duplicate argument
+=======
+    def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
+        # Remove cache-layer construction args if present to avoid duplicate arguments.
+        kwargs.pop("layer_classes", None)
+>>>>>>> 4f643cd (added interleave changes to qwen3vl)
         kwargs.pop("layers", None)
-        from transformers.cache_utils import Cache  # Import here to avoid circular import
+        kwargs.pop("layer_class_to_replicate", None)
 
-        layers = []
-        # If a config is passed, use it to infer the layer types and initialize accordingly
-        if len(layers) == 0:
-            Cache.__init__(
-                self,
-                layer_class_to_replicate=QEffDynamicLayer,
-                offloading=offloading,
-                offload_only_non_sliding=offload_only_non_sliding,
-            )
-        else:
-            Cache.__init__(
-                self,
-                layers=layers,
-                offloading=offloading,
-                offload_only_non_sliding=offload_only_non_sliding,
-            )
-
+<<<<<<< HEAD
 >>>>>>> 657a757 (Add fp8 support (#802))
         if ddp_cache_data is not None:
             for layer_idx, (key_states, value_states) in enumerate(ddp_cache_data):
@@ -417,6 +409,17 @@ class QEffDynamicCache(Cache):
                 # Update the layer with the data
                 _, _ = layers[layer_idx].update(key_states, value_states)
 <<<<<<< HEAD
+=======
+        try:
+            # transformers>=4.57
+            Cache.__init__(self, *args, layer_class_to_replicate=QEffDynamicLayer, **kwargs)
+        except TypeError:
+            # transformers<=4.56
+            Cache.__init__(self, *args, layer_classes=QEffDynamicLayer, **kwargs)
+        if ddp_cache_data is not None:
+            for key_states, value_states in ddp_cache_data:
+                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+>>>>>>> 4f643cd (added interleave changes to qwen3vl)
 
     def append_new_layers(self, layer_idx: int) -> None:
         while len(self.layers) <= layer_idx:
@@ -442,8 +445,11 @@ class QEffDynamicCache(Cache):
         Keep backward-compatible call shape while deferring to upstream implementation.
         """
         return super().get_seq_length(layer_idx)
+<<<<<<< HEAD
 =======
 >>>>>>> 657a757 (Add fp8 support (#802))
+=======
+>>>>>>> 4f643cd (added interleave changes to qwen3vl)
 
     def read_only(self, layer_idx, cache_kwargs):
         """

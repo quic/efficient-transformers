@@ -23,7 +23,9 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLTextModel,
     Qwen3VLVisionAttention,
     Qwen3VLVisionModel,
+    Qwen3VLTextConfig,
     apply_rotary_pos_emb_vision,
+    Qwen3VLTextRotaryEmbedding,
     repeat_kv,
     rotate_half,
 )
@@ -34,8 +36,30 @@ from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+def qeff_apply_interleaved_mrope(freqs, mrope_section):
+        """Apply interleaved MRoPE to 3D rotary embeddings.
+        Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
+        interleaved [THWTHWTHW...TT], preserving frequency continuity.
+        args:
+            x: (3, bs, seq_len, head_dim // 2)
+            mrope_section: (3,)
+        returns:
+            x_t: (bs, seq_len, head_dim // 2)
+        """
+        freqs_t = freqs[0]  # just overwrite the first dimension T
+        half_shape = freqs.shape[-1] // 2
+        for dim, offset in enumerate((1, 2), start=1):  # H, W
+            length = mrope_section[dim] * 3
+            idx = slice(offset, length, 3)
+            freqs_t[..., idx] = freqs[dim, ..., idx]
+            offset += half_shape
+            length += half_shape
+            idx = slice(offset, length, 3)
+            freqs_t[..., idx] = freqs[dim, ..., idx]
 
-
+            # freqs_t[:, :, :freqs.shape[-1] // 2][..., idx] = freqs[dim, :, :, :freqs.shape[-1] // 2][..., idx]
+            # freqs_t[:, :, freqs.shape[-1] // 2:][..., idx] = freqs[dim, :, :, freqs.shape[-1] // 2:][..., idx]
+        return freqs_t
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqueeze_dim=1):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
@@ -68,12 +92,111 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    cos = cos[position_ids]
+    sin = sin[position_ids]
+    # breakpoint()
+    cos = qeff_apply_interleaved_mrope(cos, mrope_section)
+    sin  = qeff_apply_interleaved_mrope(sin, mrope_section)
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
+    # breakpoint()
+    # cos=cos.unsqueeze(0).expand(1,-1,-1,-1)
+    # sin=sin.unqueeze(0).expand(1,-1,-1,-1)
+    # cos = torch.cat([cos[0, ..., 0:48], cos[1, ..., 48:88], cos[2, ..., 88:128]], dim=-1).unsqueeze(unsqueeze_dim)
+    # sin = torch.cat([sin[0, ..., 0:48], sin[1, ..., 48:88], sin[2, ..., 88:128]], dim=-1).unsqueeze(unsqueeze_dim)
+    # breakpoint()
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
+
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
+class QEffQwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
+    """
+    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    The only differences are:
+    - Add static sin/cos computations.
+    """
+
+    def __init__(self, config: Qwen3VLTextConfig, device=None):
+        super().__init__(config=config)
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
+
+        freqs = torch.outer(t, self.inv_freq)
+
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+# class QEffQwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
+    
+#     def __init__(self, config: Qwen3VLTextConfig, device=None):
+#         super().__init__(config, device)
+#         self.mrope_section = config.rope_scaling.get("mrope_section", [24, 20, 20])
+#         self._set_cos_sin_cache(
+#             seq_len=self.original_max_seq_len,
+#             device=self.inv_freq.device,
+#             dtype=torch.get_default_dtype()
+#         )
+    
+#     def _set_cos_sin_cache(self, seq_len, device, dtype):
+#         self.max_seq_len_cached = seq_len
+#         position_ids = torch.arange(seq_len, device=device, dtype=torch.long)
+#         position_ids = position_ids.unsqueeze(0).expand(3, 1, -1)  # (3, 1, seq_len)
+        
+#         inv_freq_expanded = self.inv_freq[None, None, :, None].float().expand(3, 1, -1, 1)
+#         position_ids_expanded = position_ids[:, :, None, :].float()  # (3, 1, 1, seq_len)
+        
+#         device_type = device.type if isinstance(device.type, str) and device.type != "mps" else "cpu"
+        
+#         with torch.autocast(device_type=device_type, enabled=False):
+#             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
+            
+#             freqs_interleaved = self._apply_interleaved_mrope_cached(freqs, self.mrope_section)     
+#             emb = torch.cat((freqs_interleaved, freqs_interleaved), dim=-1)
+#             self.register_buffer(
+#                 "cos_cached", 
+#                 (emb.cos() * self.attention_scaling).squeeze(0).to(dtype), 
+#                 persistent=False
+#             )
+#             self.register_buffer(
+#                 "sin_cached", 
+#                 (emb.sin() * self.attention_scaling).squeeze(0).to(dtype), 
+#                 persistent=False
+#             )
+    
+#     def _apply_interleaved_mrope_cached(self, freqs, mrope_section):
+#             freqs_t = freqs[0]  # just overwrite the first dimension T
+#             for dim, offset in enumerate((1, 2), start=1):  # H, W
+#                 length = mrope_section[dim] * 3
+#                 idx = slice(offset, length, 3)
+#                 freqs_t[:, :, :freqs.shape[-1] // 2][..., idx] = freqs[dim, :, :, :freqs.shape[-1] // 2][..., idx]
+#                 freqs_t[:, :, freqs.shape[-1] // 2:][..., idx] = freqs[dim, :, :, freqs.shape[-1] // 2:][..., idx]
+#             return freqs_t
+    
+#     def forward(self, x, position_ids):
+#         if position_ids.ndim == 2:
+#             position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
+#         seq_len = position_ids.shape[-1]
+#         if seq_len > self.max_seq_len_cached:
+#             self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+#         cos = self.cos_cached[:seq_len].to(dtype=x.dtype)
+#         sin = self.sin_cached[:seq_len].to(dtype=x.dtype)
+
+#         if position_ids.shape[1] > 1:
+#             cos = cos.unsqueeze(0).expand(position_ids.shape[1], -1, -1)
+#             sin = sin.unsqueeze(0).expand(position_ids.shape[1], -1, -1)
+#         else:
+#             cos = cos.unsqueeze(0)
+#             sin = sin.unsqueeze(0)
+        
+#         return cos, sin
 
 class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
@@ -309,6 +432,7 @@ def eager_attention_forward(
 
 
 class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -321,6 +445,8 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -330,15 +456,20 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        cos, sin = position_embeddings
+        # cos, sin = position_embeddings
+        # kv_seq_len = key_states.shape[-2]
+        # kv_seq_len = past_key_value.get_seq_length()
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+
         query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos, sin, position_ids[1:], self.config.rope_scaling["mrope_section"]
+            query_states, key_states, cos_cached, sin_cached, position_ids[1:], self.config.rope_scaling["mrope_section"]
         )
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
+                "sin": sin_cached,
+                "cos": cos_cached,
                 "batch_index": batch_index,
                 "position_ids": position_ids[0],
             }
@@ -383,6 +514,8 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
         use_cache: Optional[bool] = False,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         # position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
@@ -423,6 +556,8 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
         hidden_states = residual + hidden_states
 
@@ -443,6 +578,12 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
 
 
 class QEffQwen3VLTextModel(Qwen3VLTextModel):
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffQwen3VLTextRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -508,6 +649,8 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
                 **kwargs,
             )
 
