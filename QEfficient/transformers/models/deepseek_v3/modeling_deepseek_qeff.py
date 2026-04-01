@@ -1,6 +1,7 @@
 import math
 from typing import Dict, List, Optional, Tuple, Union
 
+import os
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -25,6 +26,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCom
 #     logger,
 # )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 def rotate_half(x):
@@ -234,7 +236,14 @@ class QEffDeepseekV3Attention(nn.Module):
         # self.register_buffer("per_head_k_up", per_head_k_up.detach().clone(), persistent=False)
         self.per_head_q_up = torch.nn.Parameter(per_head_q_up.detach().clone())
         self.per_head_k_up = torch.nn.Parameter(per_head_k_up.detach().clone())
-        fusedqk = torch.bmm(per_head_q_up, per_head_k_up)
+
+        out = torch.matmul(per_head_q_up[0,:,:], per_head_k_up[0,:,:])
+        for i in range(1, self.num_heads):
+            x = torch.matmul(per_head_q_up[i,:,:], per_head_k_up[i,:,:])
+            out = torch.cat((out,x), 0)
+        fusedqk = out.reshape(self.num_heads, -1, self.kv_lora_rank)
+
+        #fusedqk = torch.bmm(per_head_q_up, per_head_k_up)
         # self.register_buffer("fusedqk", fusedqk.detach().clone(), persistent=False)
         self.fusedqk = torch.nn.Parameter(fusedqk.detach().clone())
         kv_a_proj_with_mqa_ckv, kv_a_proj_with_mqa_k_pe = self.kv_a_proj_with_mqa.weight.T.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
@@ -290,30 +299,39 @@ class QEffDeepseekV3Attention(nn.Module):
         else:
             enable_absorption = False
 
-        if enable_absorption:
-            if absorb_online:
-                print("online absorption")
-                atn = torch.matmul(
-                    torch.matmul(q_a_proj_out.unsqueeze(1), torch.bmm(self.per_head_q_up, self.per_head_k_up)),
-                    kva.transpose(1, 2).unsqueeze(1),
-                )
+        x = []
+        for i in range(self.num_heads):
+            if enable_absorption:
+                if absorb_online:
+                    if i==0:
+                        print("online absorption")
+                    out = torch.matmul(self.per_head_q_up[i,:,:], self.per_head_k_up[i,:,:])
+                    out = out.reshape(1, -1, self.kv_lora_rank)
+                    out2 = torch.matmul(q_a_proj_out.unsqueeze(1), out)
+                else:
+                    if i==0:
+                        print("using fused qk")
+                    out2 = torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk[i,:,:])
+
+                out3 = torch.cat((out2, q_pe[:,i,:,:].unsqueeze(1)), -1)
+                kva_kpe = torch.cat((kva,k_pe.squeeze(1)), -1)
+                attn_weights = torch.matmul(out3, kva_kpe.transpose(1, 2).unsqueeze(1)) * self.softmax_scale
             else:
-                print("using fused qk")
-                atn = torch.matmul(
-                    torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk), kva.transpose(1, 2).unsqueeze(1)
-                )
-        else:
-            print("no absorption")
-            atn = torch.matmul(q_nope, k_nope.transpose(2, 3))
+                if i==0:
+                    print("no absorption")
+                query_states = torch.cat((q_nope[:,i,:,:], q_pe[:,i,:,:]), -1)
+                key_states = torch.cat((k_nope[:,i,:,:].unsqueeze(1), k_pe), -1)
+                attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
-        atr = torch.matmul(q_pe, k_pe.expand(-1, self.num_heads, -1, -1).transpose(2, 3))
-        attn_weights = (atn + atr) * self.softmax_scale
+            if attention_mask is not None:  # no matter the length, we just slice it
+                attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
-        if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
+            attn_output = torch.matmul(attn_weights, value_states[:,i,:,:])
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
+            x.append(attn_output)
+
+        attn_output = torch.cat(x, dim=1)
 
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
         attn_output = self.o_proj(attn_output)
@@ -356,7 +374,7 @@ class QEffDeepseekV3Attention(nn.Module):
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         query_states = torch.cat((q_nope, q_pe), -1)
-        k_pe_new = k_pe.repeat(1, self.num_heads, 1, 1)
+        k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
         key_states = torch.cat((k_nope, k_pe_new), -1)
 
         if past_key_value is not None:
@@ -366,7 +384,7 @@ class QEffDeepseekV3Attention(nn.Module):
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
         if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
@@ -459,16 +477,18 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
-        self.all_gate_proj = torch.nn.Parameter(
-            torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.all_up_proj = torch.nn.Parameter(
-            torch.cat([exp.up_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.all_down_proj = torch.nn.Parameter(
-            torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.act_fn = self.experts[0].act_fn
+        for exp in self.experts:
+          gate_proj = torch.nn.Linear(self.config.hidden_size, self.config.moe_intermediate_size, bias=False)
+          up_proj = torch.nn.Linear(self.config.hidden_size, self.config.moe_intermediate_size, bias=False)
+          down_proj = torch.nn.Linear(self.config.moe_intermediate_size, self.config.hidden_size, bias=False)
+
+          gate_proj.weight = torch.nn.Parameter(exp.gate_proj.compressor.decompress_module(exp.gate_proj))
+          up_proj.weight = torch.nn.Parameter(exp.up_proj.compressor.decompress_module(exp.up_proj))
+          down_proj.weight = torch.nn.Parameter(exp.down_proj.compressor.decompress_module(exp.down_proj))
+
+          setattr(exp,"gate_proj", gate_proj)
+          setattr(exp,"up_proj", up_proj)
+          setattr(exp,"down_proj", down_proj)
 
     def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
@@ -481,6 +501,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             current_hidden_states = expert_output * expert_mask[:, expert_idx].unsqueeze(-1)
             final_hidden_states += current_hidden_states
 
+        print("\n\ninside prefill only moe\n")
         return final_hidden_states.type(hidden_states.dtype)
 
     def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):

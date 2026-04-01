@@ -51,10 +51,12 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
+    PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyTransform,
+    RevertPrefillOnlyExternalModuleMapperTransform,
     SamplerTransform,
     SpDTransform,
     TextClassificationTransform,
@@ -2700,12 +2702,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         retain_full_kv: Optional[bool] = False,
     ):
         if enable:
+            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if enable_chunking:
                 self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
             else:
                 self.model, tf = PrefillOnlyTransform.apply(self.model)
 
         else:
+            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if retain_full_kv:
                 self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
@@ -3012,6 +3016,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if mla_absorption_config := kwargs.get("mla_absorption_config", None):
             self.hash_params["mla_absorption_config"] = mla_absorption_config
             setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
+
+        if self.model.config.model_type in {"kimi_k2"}:
+            if prefill_only:
+                self.prefill(enable=True)
+                self.hash_params["prefill_only"] = True
+            else:
+                self.prefill(enable=False)
+                self.hash_params.pop("prefill_only", None)
 
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
