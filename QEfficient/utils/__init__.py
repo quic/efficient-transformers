@@ -17,6 +17,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     custom_format_warning,
     dump_qconfig,
     generate_mdp_partition_config,
+    get_attr_or_key,
     get_num_layers_from_config,
     get_num_layers_vlm,
     get_onnx_dir_name,
@@ -34,6 +35,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     onnx_exists,
     padding_check_and_fix,
     qpc_exists,
+    require_value,
     to_named_specializations,
 )
 from QEfficient.utils.hash_utils import (  # noqa: F401

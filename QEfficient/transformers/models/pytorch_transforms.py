@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import warnings
-from functools import partial
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
@@ -732,7 +731,7 @@ class SpDTransform:
             supported_spd_model_types := [SPD_TARGET] + list(model_type_registry.keys())
         ):
             raise ValueError(
-                f"Specualtive model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
+                f"Speculative model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
             )
         elif (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
@@ -914,21 +913,24 @@ class PoolingTransform:
         return model, transformed
 
 
-class BlockedKVAttentionTransform:
-    _module_mapping = {
-        QEffLlamaAttention,
-        QEffQwen2_5_VLAttention,
-    }
+class BlockingAttentionTransform:
+    _skip_classes = {}
 
     @classmethod
-    def apply(cls, model: nn.Module, num_kv_blocks) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
         transformed = False
+        supported_attention_classes = {
+            qeff_class
+            for qeff_class in KVCacheTransform._module_mapping.values()
+            if qeff_class.__name__.endswith("Attention")
+        }
         for module in model.modules():
-            if type(module) in cls._module_mapping:
-                repl_module = type(module)
-                module.__class__ = repl_module
-                module.forward = MethodType(partial(repl_module.forward, num_kv_blocks=num_kv_blocks), module)
-                transformed = True  # Set to True if at least one transformation occurs
-            elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
-                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
+            if type(module) in cls._skip_classes:
+                warnings.warn(f"Blocking is not yet supported for {type(module)}.")
+                continue
+            if type(module) in supported_attention_classes:
+                module.attn_blocking_config = attn_blocking_config
+                transformed = True
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
+                warnings.warn(f"Blocking is not yet supported for {type(module)}.")
         return model, transformed
