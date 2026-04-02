@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import copy
 import json
 import os
 from io import BytesIO
@@ -23,92 +22,56 @@ from transformers import (
     TextStreamer,
 )
 
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import (
     InternProcessor,
     ModelConfig,
-    load_vlm_model,
-    load_vlm_model_from_config,
-    set_num_layers_vlm,
+    load_vlm_hf_config,
+    load_vlm_hf_model,
+    load_vlm_qeff_model,
 )
 
-NEW_GENERATION_TOKENS = 10
+from ..check_model_results import dump_and_compare_results
 
-CONFIG_PATH = "tests/configs/image_text_model_configs.json"
-
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
     multimodal_models = config_data["image_text_models"]
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
 
+NEW_GENERATION_TOKENS = 10
+
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
-    img_url: str,
-    query: str,
-    prompt_len: int,
-    ctx_len: int,
-    max_gen_len: int = 20,
-    batch_size: int = 1,
-    n_layer: int = 1,
-    kv_offload: bool = False,
-    num_devices: int = 1,
+    num_hidden_layers: Optional[int] = -1,
+    kv_offload: Optional[bool] = False,
+    num_devices: Optional[int] = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
-    img_size: Optional[int] = None,
+    compare_results: Optional[bool] = False,
 ):
-    """
-    Unified function to test PyTorch model, PyTorch KV model, ONNX model, and Cloud AI 100 model.
-    Handles standard VLM models, InternVL models, and Molmo models.
+    prompt_len = model_config_dict[model_name]["prompt_len"]
+    ctx_len = model_config_dict[model_name]["ctx_len"]
+    img_size = model_config_dict[model_name].get("img_size")
+    img_url = model_config_dict[model_name]["img_url"]
+    query = model_config_dict[model_name]["text_prompt"]
+    n_layer = model_config_dict[model_name]["num_layers"]
+    batch_size = model_config_dict[model_name]["batch_size"]
 
-    Args:
-        model_name: Hugging Face model identifier
-        img_url: URL to image for testing
-        query: Text query for the model
-        prompt_len: Prompt sequence length
-        ctx_len: Context length
-        max_gen_len: Maximum generation length
-        batch_size: Batch size for processing
-        n_layer: Number of layers to use
-        kv_offload: Whether to use KV offloading
-        num_devices: Number of devices to use
-        enable_qnn: Enable QNN compilation
-        qnn_config: Path to QNN config file
-        config: Pre-configured model config (optional)
-        img_size: Image size for standard models (optional)
-    """
-    if config is None:
-        config = AutoConfig.from_pretrained(
-            model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
-        )
-        config = set_num_layers_vlm(config, n_layer=n_layer)
-        if model_name in ModelConfig.INTERNVL_MODELS or model_name in ModelConfig.MOLMO_MODELS:
-            config._attn_implementation = "eager"
-            model_hf = load_vlm_model(config)
-            qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-                model_name,
-                kv_offload=kv_offload,
-                config=config,
-            )
-        else:
-            model_hf = load_vlm_model(config)
-            qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-                model_name,
-                kv_offload=kv_offload,
-                config=config,
-            )
-    else:
-        model_hf = load_vlm_model_from_config(config)
-        qeff_model = QEFFAutoModelForImageTextToText(
-            copy.deepcopy(model_hf),
-            kv_offload=kv_offload,
-            config=config,
-        )
+    max_gen_len = NEW_GENERATION_TOKENS
+    pytorch_kv_tokens = None
+    ort_tokens = None
+
+    model_hf = load_vlm_hf_model(model_name, num_hidden_layers=num_hidden_layers, config=config)
+    config = model_hf.config
+    qeff_model = load_vlm_qeff_model(
+        model_name, num_hidden_layers=num_hidden_layers, model_hf=model_hf, kv_offload=kv_offload
+    )
 
     compile_kwargs = {
         "num_devices": num_devices,
@@ -240,86 +203,99 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qeff_model.compile(**compile_kwargs)
     streamer = TextStreamer(processor.tokenizer)
     print("QPC Outputs (QAIC):")
-    output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
-    qpc_tokens = output.generated_ids[:, :-1]
-    assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+    exec_info = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    print(exec_info)
+    cloud_ai_100_tokens = exec_info.generated_ids[:, :-1]
+    assert (pytorch_hf_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+
+    if compare_results is False:
+        return
+
+    dump_and_compare_results(
+        model_name=model_name,
+        compile_params=compile_kwargs,
+        json_file_path="image_text_to_text_model_results.json",
+        cloud_ai_100_tokens=cloud_ai_100_tokens.tolist(),
+        pytorch_hf_tokens=pytorch_hf_tokens.tolist(),
+        pytorch_kv_tokens=pytorch_kv_tokens.tolist() if pytorch_kv_tokens is not None else None,
+        ort_tokens=ort_tokens.cpu().tolist() if ort_tokens is not None else None,
+        exec_info=exec_info,
+    )
 
 
+@pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.regular
-@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("model_name", test_mm_models[:1])
 @pytest.mark.parametrize("kv_offload", [True, False])
-def test_custom_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
-    """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    torch.manual_seed(42)
+def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
+
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
         pytest.skip("These models require kv_offload=True for testing.")
 
-    img_size = model_config_dict[model_name].get("img_size")
+    torch.manual_seed(42)
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name,
+        kv_offload=kv_offload,
+        compare_results=True,
+    )
 
+
+@pytest.mark.few_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_models[:1])
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
+
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    torch.manual_seed(42)
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name,
+        num_hidden_layers=model_config_dict[model_name]["num_layers"],
+        kv_offload=kv_offload,
+        compare_results=True,
+    )
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_models[:1])
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
+
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    torch.manual_seed(42)
     hf_config = None
-    model_type = model_config_dict[model_name].get("model_type", None)
-    if model_name in ModelConfig.STANDARD_VLM_MODELS and model_type is not None:
-        custom_config = model_config_dict[model_name].get("additional_params", {})
-        hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
-        hf_config.name_or_path = model_name
-
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        prompt_len=model_config_dict[model_name]["prompt_len"],
-        ctx_len=model_config_dict[model_name]["ctx_len"],
-        max_gen_len=NEW_GENERATION_TOKENS,
-        img_size=img_size,
-        img_url=model_config_dict[model_name]["img_url"],
-        query=model_config_dict[model_name]["text_prompt"],
-        n_layer=model_config_dict[model_name]["num_layers"],
-        batch_size=model_config_dict[model_name]["batch_size"],
-        kv_offload=kv_offload,
-        config=hf_config,
-    )
+    if model_name in ModelConfig.STANDARD_VLM_MODELS:
+        hf_config = load_vlm_hf_config(
+            model_name, additional_params=model_config_dict[model_name].get("additional_params", {})
+        )
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+        )
+    else:
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name,
+            num_hidden_layers=model_config_dict[model_name]["num_layers"],
+            kv_offload=kv_offload,
+        )
 
 
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-@pytest.mark.nightly
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
-    """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    torch.manual_seed(42)
-    if model_name in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
-
-    img_size = model_config_dict[model_name].get("img_size")
-
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        prompt_len=model_config_dict[model_name]["prompt_len"],
-        ctx_len=model_config_dict[model_name]["ctx_len"],
-        max_gen_len=NEW_GENERATION_TOKENS,
-        img_size=img_size,
-        img_url=model_config_dict[model_name]["img_url"],
-        query=model_config_dict[model_name]["text_prompt"],
-        n_layer=model_config_dict[model_name]["num_layers"],
-        batch_size=model_config_dict[model_name]["batch_size"],
-        kv_offload=kv_offload,
-    )
-
-
-### QNN Tests ###
+################################ QNN Tests ################################
 
 
 @pytest.mark.on_qaic
@@ -341,14 +317,6 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_off
 
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
-        prompt_len=model_config_dict[model_name]["prompt_len"],
-        ctx_len=model_config_dict[model_name]["ctx_len"],
-        max_gen_len=NEW_GENERATION_TOKENS,
-        img_size=model_config_dict[model_name]["img_size"],
-        img_url=model_config_dict[model_name]["img_url"],
-        query=model_config_dict[model_name]["text_prompt"],
-        n_layer=model_config_dict[model_name]["num_layers"],
-        batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
         enable_qnn=True,
         qnn_config=qnn_config_json_path,

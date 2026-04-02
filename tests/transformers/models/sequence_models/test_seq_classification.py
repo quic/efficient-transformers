@@ -158,7 +158,7 @@ def test_full_seq_classification_multiple_seq_len(model_name):
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_few_seq_classification_pytorch_vs_ai100(model_name):
+def test_seq_classification_pytorch_vs_ai100(model_name):
     """
     Test function to validate the PyTorch model and Cloud AI 100 model
     for sequence classification with a single sequence length.
@@ -177,7 +177,7 @@ def test_few_seq_classification_pytorch_vs_ai100(model_name):
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_few_seq_classification_multiple_seq_len(model_name):
+def test_seq_classification_multiple_seq_len(model_name):
     """
     Test function to validate the sequence classification model with multiple sequence lengths.
 

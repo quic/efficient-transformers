@@ -382,7 +382,7 @@ def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_few_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
     ``Mandatory`` Args:

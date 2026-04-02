@@ -38,13 +38,13 @@ def parse_exec_info_metrics(exec_info_str):
 
     # Parse Decode throughput
     if "Decode" in exec_info_text:
-        match = re.search(r"Decode\s+is=\s*([\d.]+)\s*tokens/sec", exec_info_text)
+        match = re.search(r"Decode\s+is=\s*([\d.]+)\s*tokens?/sec", exec_info_text)
         if match:
             metrics["decode_throughput_tokens_per_sec"] = float(match.group(1))
 
     # Parse Total throughput
     if "Total is=" in exec_info_text:
-        match = re.search(r"Total\s+is=\s*([\d.]+)\s*tokens/sec", exec_info_text)
+        match = re.search(r"Total\s+is=\s*([\d.]+)\s*tokens?/sec", exec_info_text)
         if match:
             metrics["total_throughput_tokens_per_sec"] = float(match.group(1))
 

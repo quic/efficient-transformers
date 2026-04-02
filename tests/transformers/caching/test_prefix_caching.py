@@ -16,14 +16,15 @@ from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
+from QEfficient.utils.test_utils import get_qeff_model
 
-CONFIG_PATH = "tests/configs/causal_model_configs.json"
-
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/causal_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
     prefix_caching_models = config_data["prefix_caching_models"]
 
 test_models = [model["model_name"] for model in prefix_caching_models]
+model_config_dict = {model["model_name"]: model for model in prefix_caching_models}
 
 
 def prefix_caching_inference(model_name, qpc_path):
@@ -182,6 +183,26 @@ def prefix_caching_inference(model_name, qpc_path):
     )
 
 
+@pytest.mark.full_layers
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("model_name", test_models)
+def test_full_simple_prefix_caching(model_name):
+    """
+    The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
+    """
+    qeff_model = get_qeff_model(model_name=model_name, continuous_batching=True)
+    qeff_model.compile(
+        prefill_seq_len=128,
+        ctx_len=256,
+        full_batch_size=2,
+        kv_cache_batch_size=4,
+        num_cores=16,
+    )
+    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+
+
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
@@ -189,13 +210,17 @@ def test_simple_prefix_caching(model_name):
     """
     The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
     """
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
+    qeff_model = get_qeff_model(
+        model_name=model_name,
+        continuous_batching=True,
+        num_hidden_layers=1,
+    )
     qeff_model.compile(
         prefill_seq_len=128,
         ctx_len=256,
         full_batch_size=2,
         kv_cache_batch_size=4,
-        num_cores=14,
+        num_cores=16,
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))

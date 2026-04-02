@@ -210,7 +210,7 @@ def test_full_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_few_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     Test function to validate the PyTorch model, the PyTorch model the ONNX model, and the Cloud AI 100 model.
     ``Mandatory`` Args:

@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import copy
 from typing import Dict, Optional
 
 import torch
@@ -39,18 +40,53 @@ def get_qeff_model(
     return qeff_model
 
 
-def get_qeff_vlm_model(
-    model_name: str, kv_offload: bool = True, num_hidden_layers: int = -1, config: Optional[AutoConfig] = None
-):
-    if config is None:
-        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-        config = set_num_layers_vlm(config, num_hidden_layers)
+def load_vlm_qeff_model(model_name, num_hidden_layers=-1, kv_offload=False, model_hf=None):
+    if num_hidden_layers != -1:
         try:
             qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-                model_name, kv_offload=kv_offload, **config.__dict__
+                model_name,
+                low_cpu_mem_usage=False,
+                config=model_hf.config,
+                kv_offload=kv_offload,
             )
         except ValueError:
-            qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, **config.__dict__)
+            qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+                model_name,
+                low_cpu_mem_usage=False,
+                config=model_hf.config,
+                kv_offload=kv_offload,
+            )
+    else:
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+        )
+    return qeff_model
+
+
+def load_vlm_hf_config(model_name, num_hidden_layers=-1, additional_params={}):
+    config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, **additional_params)
+    if num_hidden_layers != -1:
+        config = set_num_layers_vlm(config, num_hidden_layers)
+    return config
+
+
+def load_vlm_hf_model(model_name, num_hidden_layers=-1, config=None):
+    if config is None:
+        config = load_vlm_hf_config(model_name, num_hidden_layers=num_hidden_layers)
+        try:
+            model_hf = AutoModelForImageTextToText.from_pretrained(
+                config._name_or_path,
+                low_cpu_mem_usage=False,
+                config=config,
+            )
+        except ValueError:
+            model_hf = AutoModelForCausalLM.from_pretrained(
+                config._name_or_path,
+                low_cpu_mem_usage=False,
+                trust_remote_code=True,
+                config=config,
+            )
     else:
         try:
             model_hf = AutoModelForImageTextToText.from_config(
@@ -67,54 +103,12 @@ def get_qeff_vlm_model(
         torch_dtype = getattr(model_hf.config, "torch_dtype", None)
         if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
             model_hf = model_hf.to(torch.float32)
-        model_hf.eval()
-        try:
-            qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=kv_offload)
-        except ValueError:
-            qeff_model = QEFFAutoModelForCausalLM(model_hf, kv_offload=kv_offload)
 
-    return qeff_model
-
-
-def load_vlm_model(config):
-    try:
-        model_hf = AutoModelForImageTextToText.from_pretrained(
-            config._name_or_path,
-            low_cpu_mem_usage=False,
-            config=config,
-        )
-    except ValueError:
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            config._name_or_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=config,
-        )
     model_hf.eval()
     return model_hf
 
 
-def load_vlm_model_from_config(config):
-    try:
-        model_hf = AutoModelForImageTextToText.from_config(
-            config,
-            attn_implementation="eager",
-            trust_remote_code=True,
-        )
-    except ValueError:
-        model_hf = AutoModelForCausalLM.from_config(
-            config,
-            attn_implementation="eager",
-            trust_remote_code=True,
-        )
-    torch_dtype = getattr(model_hf.config, "torch_dtype", None)
-    if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
-        model_hf = model_hf.to(torch.float32)
-    model_hf.eval()
-    return model_hf
-
-
-def set_num_layers_vlm(config, n_layer=1):
+def set_num_layers_vlm(config, n_layer=-1):
     ## -1 indicates use all the layers of the model.
     if n_layer == -1:
         return config
