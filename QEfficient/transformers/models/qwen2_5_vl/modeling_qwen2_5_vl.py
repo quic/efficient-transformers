@@ -1079,10 +1079,19 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             grid_height = grid_height * batch_size
             if not user_vision_size:
                 max_vision_size = max(max_vision_size, vision_size * f)
-                assert max_vision_size < ctx_len, "vision_size must be less than ctx_len"
+                assert max_vision_size < ctx_len, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) must be less than ctx_len. Please adjust the image "
+                    "resolution."
+                )
             else:
                 assert vision_size * f <= user_vision_size, (
-                    f"Image resolution (height: {h}, width: {w}, num_frames: {f}) cannot exceed the vision_size. Please adjust the image resolution or increase the vision_size"
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) cannot exceed the provided "
+                    f"vision_size={user_vision_size}. Please adjust the image resolution or "
+                    "increase the vision_size."
                 )
 
             vision.append(
