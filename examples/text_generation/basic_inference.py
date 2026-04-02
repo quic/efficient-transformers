@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
+    parser.add_argument("--aic-hw-version", type=str, default="ai100", help="Version of aic hardware")
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
