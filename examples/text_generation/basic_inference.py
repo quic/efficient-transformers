@@ -37,6 +37,7 @@ def main():
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
+        aic_hw_version="ai100",
         num_devices=(1 if args.device_group is None else len(args.device_group)),
     )
     print(f"Model compiled to: {qpc_path}")
