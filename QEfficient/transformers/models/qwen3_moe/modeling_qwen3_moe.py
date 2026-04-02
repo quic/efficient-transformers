@@ -209,15 +209,6 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
             query_states, key_states, cos_cached, sin_cached, position_ids
         )
 
-        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
-        blocking_config = getattr(self, "attn_blocking_config", None)
-        if blocking_config is None and num_kv_blocks is not None:
-            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_kv_blocked = (
-            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
-        )
-        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
-
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
