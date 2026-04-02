@@ -14,11 +14,11 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 def main():
     parser = argparse.ArgumentParser(description="Basic text generation inference")
-    parser.add_argument("--model-name", type=str, default="meta-llama/Llama-3.2-1B", help="HuggingFace model ID")
+    parser.add_argument("--model-name", type=str, default="openai/gpt-oss-20b", help="HuggingFace model ID")
     parser.add_argument("--prompt", type=str, default="Hello", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=1, help="Prefill sequence length")
     parser.add_argument(
-        "--ctx-len", type=int, default=32768, help="Context length high enough to force blocking computation"
+        "--ctx-len", type=int, default=2048, help="Context length high enough to force blocking computation"
     )
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
@@ -31,7 +31,7 @@ def main():
     parser.add_argument(
         "--blocking-mode",
         type=str,
-        default="hqkv",
+        default="q",
         help="Blocking mode, valid options: kv, q, h, qkv, hqkv",
     )
     parser.add_argument(
@@ -51,7 +51,7 @@ def main():
             prefill_seq_len=args.prefill_seq_len,
             ctx_len=args.ctx_len,
             num_cores=args.num_cores,
-            num_devices=8,
+            num_devices=1,
         )
         print(f"Model compiled to: {qpc_path}")
 
@@ -66,7 +66,7 @@ def main():
         print(f"Generated: {exec_info.generated_texts[0]}")
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode}
+    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "num_q_blocks": 2}
     model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
 
     # Compile the model
@@ -74,7 +74,7 @@ def main():
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
-        num_devices=8,
+        num_devices=1,
         qaic_config=qaic_config,
     )
     print(f"Model compiled to: {qpc_path_blocked}")

@@ -25,8 +25,12 @@ from transformers.models.gemma.modeling_gemma import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import supports_blocked_kv
-from QEfficient.blocking.blocked_attention_forwards import blocked_kv_attention_forward
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -140,42 +144,39 @@ class QEffGemmaAttention(GemmaAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids
-        )
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached, position_ids)
 
-        num_kv_blocks = getattr(self, "num_kv_blocks", None)
-        use_blocked_kv = num_kv_blocks is not None and supports_blocked_kv(past_key_value)
-        if past_key_value is not None:
-            past_seen_tokens = past_key_value.get_seq_length()
-            cache_kwargs = {
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-                "past_seen_tokens": past_seen_tokens,
-            }
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            if use_blocked_kv:
-                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
-            else:
-                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-
-        if use_blocked_kv:
-            attn_output, attn_weights = blocked_kv_attention_forward(
+        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
+        if use_blocking:
+            attn_output, attn_weights = generic_blocked_attention_interface(
                 module=self,
                 query=query_states,
                 key=key_states,
                 value=value_states,
                 attention_mask=attention_mask,
                 scaling=self.scaling,
-                num_kv_blocks=num_kv_blocks,
-                cache_kwargs=cache_kwargs,
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_value,
+                blocking_config=blocking_config,
+                comp_ctx_length=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+                past_seen_tokens=past_seen_tokens,
             )
         else:
+            key_states, value_states, _ = past_key_value_update(
+                module=self,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                past_key_value=past_key_value,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+            )
             attn_output, attn_weights = eager_attention_forward(
                 self,
                 query_states,
@@ -184,6 +185,7 @@ class QEffGemmaAttention(GemmaAttention):
                 attention_mask,
                 scaling=self.scaling,
             )
+            
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)

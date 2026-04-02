@@ -427,13 +427,7 @@ class QEFFBaseModel(ABC):
 
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
-            blocking_kwargs = self.hash_params.setdefault("blocking_kwargs", {})
-            if blocking_config.num_kv_blocks:
-                blocking_kwargs["num_kv_blocks"] = blocking_config.num_kv_blocks
-            if blocking_config.num_q_blocks:
-                blocking_kwargs["num_q_blocks"] = blocking_config.num_q_blocks
-            if blocking_config.head_block_size:
-                blocking_kwargs["head_block_size"] = blocking_config.head_block_size
+            self.hash_params["blocking_kwargs"] = blocking_config
 
     @dump_qconfig
     def _compile(

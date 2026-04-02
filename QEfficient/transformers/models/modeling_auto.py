@@ -2827,13 +2827,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
         self.model.pretrained_path = kwargs.pop("pretrained_model_name_or_path", None)
-        # self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
-        # self.is_tlm = transformed
-        self.is_tlm = (
-            (qaic_config is not None)
-            and (qaic_config.get("speculative_model_type") is not None)
-            and (model.__class__ in SpDTransform._module_mapping)
-        )
+        self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
+        self.is_tlm = transformed
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = False
@@ -2846,29 +2841,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
-        # self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
+        self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
         # TODO : Update in qaic_config isn't updated in the hash due to SpDTransforms. Need to move
         # SpDTransforms to PytorchTransforms.
-        # if self.is_tlm:
-        #     self.model.qaic_config["return_pdfs"] = True
-
-        # blocking_config = None
-        # if self.model.qaic_config is not None:
-        #     blocking_config = self.model.qaic_config.get("attn_blocking_config")
-        #     if blocking_config is None and self.model.qaic_config.get("attn_blocking_auto"):
-        #         blocking_config = derive_blocking_config(
-        #             self.model.config,
-        #             device_info=self.model.qaic_config.get("device_info"),
-        #             compile_params=self.model.qaic_config.get("compile_params"),
-        #         )
-        #         self.model.qaic_config["attn_blocking_config"] = blocking_config
-
-        # if blocking_config is not None and blocking_config.mode == "kv":
-        #     KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=blocking_config.num_kv_blocks)
-        # elif blocking_config is not None and blocking_config.mode == "q":
-        #     QBlockingAttentionTransform.apply(self.model, num_q_blocks=blocking_config.num_q_blocks)
-        # elif self.model.qaic_config is not None and self.model.qaic_config.get("num_kv_blocks", None) is not None:
-        #     KVBlockingAttentionTransform.apply(self.model, num_kv_blocks=self.model.qaic_config.get("num_kv_blocks"))
+        if self.is_tlm:
+            self.model.qaic_config["return_pdfs"] = True
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -2986,7 +2963,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params["chunking"] = True
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
-        num_q_blocks = os.environ.get("NUM_Q_BLOCKS", None)
+        num_q_blocks = self.hash_params["blocking_config"].num_q_blocks
         if num_q_blocks is None:
             if (
                 prefill_seq_len is None
@@ -3001,9 +2978,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             num_q_blocks = prefill_seq_len // constants.GPT_OSS_PREFILL_Q_BLOCK_SIZE
             logger.warning(
-                f"Setting NUM_Q_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please set ENV variable `NUM_Q_BLOCKS` to override"
+                f"Setting NUM_Q_BLOCKS={num_q_blocks} used in attention Q-blocking for prefill_only model, please pass `NUM_Q_BLOCKS` in qaic_config to override"
             )
-            os.environ["NUM_Q_BLOCKS"] = str(num_q_blocks)
         num_q_blocks = int(num_q_blocks)
 
         num_ffn_blocks = os.environ.get("NUM_FFN_BLOCKS", None)
@@ -3056,8 +3032,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # increase seq_len if using a larger number of blocks
         if self.hash_params.get("blocking_kwargs", None):
             max_blocks = -1
-            for num_blocks in self.hash_params.get("blocking_kwargs").values():
-                max_blocks = max(max_blocks, num_blocks)
+            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
+                if isinstance(num_blocks, int):
+                    max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             while seq_len < max_blocks or (seq_len % max_blocks > block_size):
                 seq_len = seq_len * 2
