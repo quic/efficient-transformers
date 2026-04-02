@@ -14,7 +14,10 @@ from torch import nn
 class QuantLinearTorchFunction(torch.autograd.Function):
     @staticmethod
     def symbolic(g, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
-        input_tuple = (x, qself_qweight, qself_scales, qself_qzeros)
+        if qself_qzeros is None:
+            input_tuple = (x, qself_qweight, qself_scales)
+        else:
+            input_tuple = (x, qself_qweight, qself_scales, qself_qzeros)
         input_tuple += (g_idx,) if g_idx is not None else ()
         return g.op(
             "com.microsoft::MatMulNBits",
@@ -28,6 +31,8 @@ class QuantLinearTorchFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
+        if qself_qzeros is None:
+            qself_qzeros = 2^(bits-1)
         if torch.onnx.is_in_onnx_export():
             # For faster export
             return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype).float()

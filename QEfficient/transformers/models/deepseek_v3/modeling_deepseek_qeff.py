@@ -9,7 +9,6 @@ from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
 from QEfficient.customop.quantization_ops import DequantizeLinearFunc, UnpackUInt8ToUInt4
@@ -662,7 +661,7 @@ class QEffDeepseekV3MoE(nn.Module):
 
 
 class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
-    def __qeff_init__(
+    '''def __qeff_init__(
         self,
     ):
         for exp in self.experts:
@@ -677,7 +676,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
           setattr(exp,"gate_proj", gate_proj)
           setattr(exp,"up_proj", up_proj)
           setattr(exp,"down_proj", down_proj)
-
+    '''
     def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
         for expert_idx in range(num_experts):
@@ -724,7 +723,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         """
         residuals = hidden_states
         orig_shape = hidden_states.shape
-        topk_indices, topk_weights = self.gate(hidden_states)
+        topk_indices, topk_weights, _, _ = self.gate(hidden_states)
         # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
 
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])

@@ -978,7 +978,7 @@ class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3MoE": {
             "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
             "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
-            "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
+            #"__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
         },
     }
 
@@ -987,7 +987,7 @@ class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransfo
     _match_string_replace_method = {
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
+            "moe": QEffDeepseekV3MoE.moe_waa_unpack,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
     }
