@@ -68,9 +68,17 @@ def past_key_value_update(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
+    sliding_window: Optional[int] = None,
 ):
     if past_key_value is not None:
         cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+        if sliding_window is not None:
+            cache_kwargs.update(
+                {
+                    "is_sliding": sliding_window is not None,
+                    "sliding_window": past_key_value.sliding_window_len,
+                }
+            )
         if comp_ctx_lengths is not None:
             attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             cache_kwargs["CCL"] = attention_mask.shape[-1]
@@ -95,6 +103,8 @@ def generic_blocked_attention_interface(
     non_blocked_forward: Callable = None,
     score_mod: Optional[Callable] = None,
     position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    sliding_window: Optional[int] = None,
     **kwargs,
 ):
     use_kv_blocked = (
@@ -102,23 +112,31 @@ def generic_blocked_attention_interface(
     )
 
     if past_key_value is not None:
-        if use_kv_blocked:
+        if use_kv_blocked and sliding_window is None:
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
                 "past_seen_tokens": past_seen_tokens,
             }
+            if sliding_window is not None:
+                cache_kwargs.update(
+                    {
+                        "is_sliding": sliding_window is not None,
+                        "sliding_window": past_key_value.sliding_window_len,
+                    }
+                )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         else:
             key, value, cache_kwargs = past_key_value_update(
-                module=module, 
-                key=key, 
-                value=value, 
-                attention_mask=attention_mask, 
-                past_key_value=past_key_value, 
-                comp_ctx_lengths=comp_ctx_lengths, 
+                module=module,
+                key=key,
+                value=value,
+                attention_mask=attention_mask,
+                past_key_value=past_key_value,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
-                position_ids=position_ids
+                position_ids=position_ids,
+                sliding_window=sliding_window,
             )
 
     strategy = _STRATEGIES.get(blocking_config.mode)
@@ -136,7 +154,8 @@ def generic_blocked_attention_interface(
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
         score_mod=score_mod,
-        position_bias=position_bias
+        position_bias=position_bias,
+        sinks=sinks,
     )
 
     return attn_output, attn_weights

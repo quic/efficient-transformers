@@ -33,7 +33,6 @@ from transformers.models.llama4.modeling_llama4 import (
     repeat_kv,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, generic_blocked_attention_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
@@ -503,30 +502,34 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
 
-        chunk_position_ids = position_ids
-        if self.use_rope and self.config.attention_chunk_size:
-            chunk_position_ids = torch.where(
-                chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
-            )
+        if past_key_value is not None:
+            chunk_position_ids = position_ids
+            if self.use_rope and self.config.attention_chunk_size:
+                chunk_position_ids = torch.where(
+                    chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
+                )
 
-        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+            # sin and cos are specific to RoPE models; cache_position needed for the static cache
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": chunk_position_ids,
+            }
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
 
-        attn_output, attn_weights = generic_blocked_attention_interface(
-            module=self,
-            query=query_states,
-            key=key_states,
-            value=value_states,
-            attention_mask=attention_mask,
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+        attention_interface: Callable = eager_attention_forward
+
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
             scaling=self.scaling,
-            layer_idx=self.layer_idx,
-            past_key_value=past_key_value,
-            blocking_config=blocking_config,
-            comp_ctx_lengths=comp_ctx_lengths,
-            batch_index=batch_index,
-            position_ids=chunk_position_ids,
-            past_seen_tokens=past_seen_tokens,
-            non_blocked_forward=eager_attention_forward,
+            **kwargs,
         )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()

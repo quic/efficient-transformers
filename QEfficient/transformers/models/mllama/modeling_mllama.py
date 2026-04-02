@@ -35,7 +35,6 @@ from transformers.models.mllama.modeling_mllama import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, get_blocking_strategy, supports_blocked_kv
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_utils import (
     _create_causal_mask,
@@ -123,16 +122,6 @@ class QEffMllamaRotaryEmbedding(MllamaRotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -242,9 +231,6 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         - add new args cache idx for the kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -256,7 +242,8 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         position_embeddings: torch.Tensor = None,
         use_cache: bool = False,
         cache_position=None,
-        num_kv_blocks: Optional[torch.Tensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ):
         bsz, q_len, _ = hidden_states.size()
@@ -276,59 +263,32 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+            # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
-
-        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
-        blocking_config = getattr(self, "attn_blocking_config", None)
-        if blocking_config is None and num_kv_blocks is not None:
-            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_kv_blocked = (
-            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
         )
-        use_blocking = blocking_config is not None and (blocking_config.mode != "kv" or use_kv_blocked)
+
         if past_key_value is not None:
-            past_seen_tokens = past_key_value.get_seq_length()
-            if use_kv_blocked:
-                cache_kwargs = {
-                    "batch_index": batch_index,
-                    "position_ids": position_ids,
-                    "past_seen_tokens": past_seen_tokens,
-                }
-                past_key_value.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
-            else:
-                cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-                if comp_ctx_lengths is not None:
-                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                    cache_kwargs["CCL"] = attention_mask.shape[-1]
-                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+        attention_interface = eager_self_attention_forward
 
-        if use_blocking:
-            strategy = get_blocking_strategy(blocking_config)
-            attn_output, attn_weights = strategy.apply(
-                module=self,
-                query=query_states,
-                key=key_states,
-                value=value_states,
-                attention_mask=attention_mask,
-                scaling=self.scaling,
-                cache_kwargs=cache_kwargs,
-                layer_idx=self.layer_idx,
-                past_key_value=past_key_value,
-                config=blocking_config,
-            )
-        else:
-            attn_output, attn_weights = eager_self_attention_forward(
-                self,
-                query_states,
-                key_states,
-                value=value_states,
-                attention_mask=attention_mask,
-                scaling=self.scaling,
-            )
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            scaling=self.scaling,
+        )
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
         attn_output = self.o_proj(attn_output)
 
@@ -356,6 +316,8 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        sin_cached=None,
+        cos_cached=None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -391,6 +353,8 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
         hidden_states = residual + hidden_states
 
@@ -495,6 +459,8 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[torch.Tensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -632,6 +598,11 @@ class QEffMllamaTextModel(MllamaTextModel):
         - add new args cache idx for the kv retention
     """
 
+    def __qeff_init__(self):
+        self.rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -706,6 +677,8 @@ class QEffMllamaTextModel(MllamaTextModel):
                 comp_ctx_lengths=comp_ctx_lengths,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
         hidden_states = self.norm(hidden_states)

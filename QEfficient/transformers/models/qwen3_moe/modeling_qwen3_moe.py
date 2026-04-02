@@ -26,7 +26,12 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode, generic_blocked_attention_interface, past_key_value_update
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -236,14 +241,14 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
             )
         else:
             key_states, value_states, _ = past_key_value_update(
-                module=self, 
-                key=key_states, 
-                value=value_states, 
-                attention_mask=attention_mask, 
-                past_key_value=past_key_value, 
-                comp_ctx_lengths=comp_ctx_lengths, 
+                module=self,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                past_key_value=past_key_value,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
-                position_ids=position_ids
+                position_ids=position_ids,
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,

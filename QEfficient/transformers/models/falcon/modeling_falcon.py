@@ -30,12 +30,6 @@ from transformers.models.falcon.modeling_falcon import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import (
-    AttentionBlockingConfig,
-    BlockingMode,
-    generic_blocked_attention_interface,
-    past_key_value_update,
-)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -64,16 +58,6 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -114,9 +98,6 @@ class QEffFalconAttention(FalconAttention):
     - add new args position idx for the cache_kwargs for kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -131,6 +112,8 @@ class QEffFalconAttention(FalconAttention):
         use_cache: bool = False,
         output_attentions: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
     ):
         fused_qkv = self.query_key_value(hidden_states)  # [batch_size, seq_length, 3 x hidden_size]
         num_kv_heads = self.num_heads if self.new_decoder_architecture else self.num_kv_heads
@@ -143,57 +126,27 @@ class QEffFalconAttention(FalconAttention):
         key_layer = key_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_layer, seq_len=kv_seq_len)
-        query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+        query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos_cached, sin_cached, position_ids)
 
-        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
+        if layer_past is not None:
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
+            key_layer, value_layer = layer_past.update(key_layer, value_layer, self.layer_idx, cache_kwargs)
 
+        if attention_mask is not None:
+            attention_mask = attention_mask[:, :, :, : key_layer.shape[-2]]
 
-        if use_blocking:
-            past_seen_tokens = layer_past.get_seq_length() if layer_past is not None else 0
-            attn_output, attention_scores = generic_blocked_attention_interface(
-                module=self,
-                query=query_layer,
-                key=key_layer,
-                value=value_layer,
-                attention_mask=attention_mask,
-                scaling=1.0 / math.sqrt(self.head_dim),
-                layer_idx=self.layer_idx,
-                past_key_value=layer_past,
-                blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
-                batch_index=batch_index,
-                position_ids=position_ids,
-                past_seen_tokens=past_seen_tokens,
-            )
-            attn_output = attn_output.transpose(1, 2)
-        else:
-            # Cache update + gather (if cache is provided) using shared helper.
-            if layer_past is not None:
-                key_layer, value_layer, attention_mask = past_key_value_update(
-                    module=self,
-                    key=key_layer,
-                    value=value_layer,
-                    attention_mask=attention_mask,
-                    past_key_value=layer_past,
-                    comp_ctx_lengths=comp_ctx_lengths,
-                    batch_index=batch_index,
-                    position_ids=position_ids,
-                )
-
-            if attention_mask is not None:
-                attention_mask = attention_mask[:, :, :, : key_layer.shape[-2]]
-
-            attention_scores = query_layer @ key_layer.transpose(-1, -2)
-            attention_scores /= math.sqrt(self.head_dim)
-            attention_scores = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
-            )
-            attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=hidden_states.dtype)
-            # It is unclear why neither dropout nor head_mask is applied here (while it is with alibi).
-            attn_output = attention_scores @ value_layer
+        attention_scores = query_layer @ key_layer.transpose(-1, -2)
+        attention_scores /= math.sqrt(self.head_dim)
+        attention_scores = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
+        )
+        attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=hidden_states.dtype)
+        # It is unclear why neither dropout nor head_mask is applied here (while it is with alibi).
+        attn_output = attention_scores @ value_layer
 
         attn_output = attn_output.view(batch_size, self.num_heads, query_length, self.head_dim)
         attn_output = attn_output.permute(0, 2, 1, 3)
@@ -219,6 +172,8 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
         use_cache: bool = False,
         output_attentions: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ):
         residual = hidden_states
@@ -243,6 +198,8 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
             use_cache=use_cache,
             output_attentions=output_attentions,
             cache_position=cache_position,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
 
         if not self.config.new_decoder_architecture:
@@ -279,6 +236,11 @@ class QEffFalconModel(FalconModel):
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
     """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def forward(
         self,
@@ -357,6 +319,8 @@ class QEffFalconModel(FalconModel):
                 output_attentions=output_attentions,
                 alibi=alibi,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
             hidden_states = outputs[0]
