@@ -77,9 +77,23 @@ if skip_vision:  # Only Text
 else:  # Vision + Text
     batch_size = 1
     ctx_len = 14336
-    widths = [360, 320, 360, 454, 536, 640, 720, 910, 720, 1280, 1920]
-    heights = [120, 180, 240, 256, 354, 360, 480, 512, 576, 720, 1080]
-    num_frames = [177, 139, 78, 64, 37, 30, 20, 16, 16, 7, 7]
+    resolutions = [
+        {"width": 360, "height": 120, "num_frames": 177},
+        {"width": 320, "height": 180, "num_frames": 139},
+        {"width": 360, "height": 240, "num_frames": 78},
+        {"width": 454, "height": 256, "num_frames": 64},
+        {"width": 536, "height": 354, "num_frames": 37},
+        {"width": 640, "height": 360, "num_frames": 30},
+        {"width": 720, "height": 480, "num_frames": 20},
+        {"width": 910, "height": 512, "num_frames": 16},
+        {"width": 720, "height": 576, "num_frames": 16},
+        {"width": 1280, "height": 720, "num_frames": 7},
+        {"width": 1920, "height": 1080, "num_frames": 3},
+        # Add more
+    ]
+    widths = [s["width"] for s in resolutions]
+    heights = [s["height"] for s in resolutions]
+    num_frames = [s["num_frames"] for s in resolutions]
     user_vision_size = 9216
 
     qeff_model.compile(
@@ -90,7 +104,7 @@ else:  # Vision + Text
         num_devices=2,
         height=heights,
         width=widths,
-        num_frames=max(num_frames),
+        num_frames=num_frames,
         mm_processor_kwargs={
             "min_pixels": 4 * 28 * 28,
             "max_pixels": 16384 * 28 * 28,

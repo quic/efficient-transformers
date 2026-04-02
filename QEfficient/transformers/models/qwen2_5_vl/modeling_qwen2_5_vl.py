@@ -1027,7 +1027,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         img_size: None,
         height: int | List[int] = None,
         width: int | List[int] = None,
-        num_frames: int = 1,
+        num_frames: int | List[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
@@ -1045,6 +1045,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             )
         height = [height] if isinstance(height, int) else height
         width = [width] if isinstance(width, int) else width
+        num_frames = [num_frames] * len(height) if isinstance(num_frames, int) else num_frames
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
@@ -1063,13 +1064,11 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
 
         vision = []
-        min_vision_size = None
+        max_vision_size = 0
         user_vision_size = compiler_options.pop("vision_size", None)
         if user_vision_size:
             assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
-        else:
-            min_vision_size = ctx_len
-        for h, w in zip(height, width):
+        for h, w, f in zip(height, width, num_frames):
             resized_height, resized_width = smart_resize(
                 height=h, width=w, factor=IMAGE_FACTOR, min_pixels=min_pixels, max_pixels=max_pixels
             )
@@ -1079,7 +1078,12 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             vision_size = grid_height // 4
             grid_height = grid_height * batch_size
             if not user_vision_size:
-                min_vision_size = min(min_vision_size, vision_size * num_frames)
+                max_vision_size = max(max_vision_size, vision_size * f)
+                assert max_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            else:
+                assert vision_size * f <= user_vision_size, (
+                    f"Image resolution (height: {h}, width: {w}, num_frames: {f}) cannot exceed the vision_size. Please adjust the image resolution or increase the vision_size"
+                )
 
             vision.append(
                 {
@@ -1100,7 +1104,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
-                    "vision_size": min_vision_size if not user_vision_size else user_vision_size,
+                    "vision_size": max_vision_size if not user_vision_size else user_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "vision_batch_size": batch_size,
                 }
@@ -1119,7 +1123,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "vision_size": min_vision_size if not user_vision_size else user_vision_size,
+                    "vision_size": max_vision_size if not user_vision_size else user_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "vision_batch_size": batch_size,
                 }
@@ -1135,7 +1139,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "vision_size": min_vision_size if not user_vision_size else user_vision_size,
+                "vision_size": max_vision_size if not user_vision_size else user_vision_size,
                 "vision_batch_size": batch_size,
             }
 
@@ -1150,7 +1154,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
-                "vision_size": min_vision_size if not user_vision_size else user_vision_size,
+                "vision_size": max_vision_size if not user_vision_size else user_vision_size,
                 "vision_batch_size": batch_size,
             }
 
