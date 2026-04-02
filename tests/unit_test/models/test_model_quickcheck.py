@@ -52,6 +52,7 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModelForSpeechSeq2Seq,
 )
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
+from QEfficient.utils._utils import _infer_specialization_name, to_named_specializations
 from QEfficient.utils.run_utils import ApiRunner
 
 ort.set_default_logger_severity(3)
@@ -700,3 +701,472 @@ def test_proxy_toggle_onnx_transform_policy_for_vlm():
 
     _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+# ---------------------------------------------------------------------------
+# Tests for the named-specializations format (backend team feature request)
+# ---------------------------------------------------------------------------
+
+
+class TestInferSpecializationName:
+    """Unit tests for _infer_specialization_name."""
+
+    # --- _graph_name tag (authoritative, set at creation time) ---
+
+    def test_graph_name_tag_takes_priority(self):
+        """_graph_name in spec overrides all heuristics."""
+        spec = {"_graph_name": "Vision", "batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 0) == "Vision"
+
+    def test_graph_name_tag_whisper_encoder(self):
+        spec = {
+            "_graph_name": "Encoder",
+            "batch_size": "1",
+            "seq_len": "1",
+            "encoder_ctx_len": "1500",
+            "feature_len": "3000",
+        }
+        assert _infer_specialization_name(spec, 0) == "Encoder"
+
+    def test_graph_name_tag_whisper_decode(self):
+        spec = {
+            "_graph_name": "Decode",
+            "batch_size": "1",
+            "seq_len": "1",
+            "encoder_ctx_len": "1500",
+            "feature_len": "1",
+        }
+        assert _infer_specialization_name(spec, 1) == "Decode"
+
+    def test_graph_name_tag_prefill(self):
+        spec = {"_graph_name": "Prefill", "batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 0) == "Prefill"
+
+    def test_graph_name_tag_decode(self):
+        spec = {"_graph_name": "Decode", "batch_size": "1", "seq_len": "1", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 1) == "Decode"
+
+    def test_graph_name_tag_embedding_with_seq_len(self):
+        spec = {"_graph_name": "Embedding", "batch_size": "1", "seq_len": "128"}
+        assert _infer_specialization_name(spec, 0) == "Embedding"
+
+    # --- module_name hint (diffusers path) ---
+
+    def test_module_name_used_when_no_tag(self):
+        spec = {"batch_size": "1", "seq_len": "77"}
+        assert _infer_specialization_name(spec, 0, module_name="text_encoder") == "text_encoder"
+
+    def test_module_name_with_model_type(self):
+        spec = {"batch_size": "1", "model_type": 1}
+        assert _infer_specialization_name(spec, 0, module_name="transformer") == "transformer_model_type_1"
+
+    # --- seq_len heuristic fallback (plain causal LM raw dicts) ---
+
+    def test_prefill_detected_by_seq_len_gt_1(self):
+        spec = {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 0) == "Prefill"
+
+    def test_decode_detected_by_seq_len_1_string(self):
+        spec = {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"}
+        assert _infer_specialization_name(spec, 1) == "Decode"
+
+    def test_decode_detected_by_seq_len_1_int(self):
+        spec = {"batch_size": 1, "seq_len": 1, "ctx_len": 4096}
+        assert _infer_specialization_name(spec, 1) == "Decode"
+
+    def test_encoder_detected_by_encoder_ctx_len_no_seq_len(self):
+        spec = {"batch_size": "1", "encoder_ctx_len": "1500"}
+        assert _infer_specialization_name(spec, 0) == "Encoder"
+
+    def test_legacy_embedding_detected_by_sequence_length(self):
+        spec = {"batch_size": "1", "sequence_length": "128"}
+        assert _infer_specialization_name(spec, 0) == "Embedding"
+
+    def test_generic_fallback_for_unknown_shape(self):
+        spec = {"custom_dim": "42"}
+        assert _infer_specialization_name(spec, 3) == "Graph_3"
+
+
+class TestToNamedSpecializations:
+    """Unit tests for to_named_specializations — the main serialization helper."""
+
+    def test_llm_prefill_decode_pair(self):
+        """Standard LLM: two specializations → Prefill + Decode."""
+        flat = [
+            {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+        ]
+        result = to_named_specializations(flat)
+        assert len(result) == 2
+        assert result[0] == {
+            "name": "Prefill",
+            "symbols": {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+        }
+        assert result[1] == {
+            "name": "Decode",
+            "symbols": {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+        }
+
+    def test_llm_continuous_batching_with_full_batch_size(self):
+        """Continuous-batching LLM: full_batch_size present in both entries."""
+        flat = [
+            {"batch_size": "1", "full_batch_size": "16", "seq_len": "128", "ctx_len": "4096"},
+            {"batch_size": "16", "full_batch_size": "16", "seq_len": "1", "ctx_len": "4096"},
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Prefill"
+        assert result[1]["name"] == "Decode"
+        assert result[0]["symbols"]["full_batch_size"] == "16"
+        assert result[1]["symbols"]["batch_size"] == "16"
+
+    def test_prefill_only_single_entry(self):
+        """When prompt_len == 1 the decode entry is dropped; only one entry remains."""
+        flat = [{"batch_size": "1", "seq_len": "1", "ctx_len": "128"}]
+        result = to_named_specializations(flat)
+        assert len(result) == 1
+        assert result[0]["name"] == "Decode"
+
+    def test_vlm_vision_specialization(self):
+        """VLM vision encoder: _graph_name tag set at source → 'Vision', tag stripped from symbols."""
+        flat = [
+            {
+                "_graph_name": "Vision",
+                "batch_size": "1",
+                "vision_size": "247",
+                "grid_height": "988",
+                "grid_width": "1176",
+                "grid_h": "26",
+                "grid_w": "38",
+            }
+        ]
+        result = to_named_specializations(flat)
+        assert len(result) == 1
+        assert result[0]["name"] == "Vision"
+        assert result[0]["symbols"]["vision_size"] == "247"
+        assert "_graph_name" not in result[0]["symbols"]
+
+    def test_vlm_lang_prefill_decode(self):
+        """VLM language side: prefill + decode with vision_batch_size."""
+        flat = [
+            {
+                "batch_size": "1",
+                "ctx_len": "4096",
+                "seq_len": "128",
+                "vision_batch_size": "1",
+                "vision_size": "247",
+            },
+            {
+                "batch_size": "1",
+                "ctx_len": "4096",
+                "seq_len": "1",
+                "vision_batch_size": "1",
+                "vision_size": "247",
+            },
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Prefill"
+        assert result[1]["name"] == "Decode"
+        assert result[0]["symbols"]["vision_size"] == "247"
+        assert result[1]["symbols"]["vision_size"] == "247"
+
+    def test_all_values_coerced_to_strings(self):
+        """Integer values in the flat dict must be stringified in symbols."""
+        flat = [{"batch_size": 1, "seq_len": 32, "ctx_len": 128}]
+        result = to_named_specializations(flat)
+        symbols = result[0]["symbols"]
+        assert all(isinstance(v, str) for v in symbols.values())
+
+    def test_output_structure_keys(self):
+        """Every entry must have exactly 'name' and 'symbols' keys."""
+        flat = [
+            {"batch_size": "1", "seq_len": "64", "ctx_len": "256"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "256"},
+        ]
+        result = to_named_specializations(flat)
+        for entry in result:
+            assert set(entry.keys()) == {"name", "symbols"}
+
+    def test_whisper_encoder_specialization_simplified(self):
+        """Simplified Whisper spec: encoder_ctx_len, no seq_len → 'Encoder' via heuristic."""
+        flat = [
+            {"batch_size": "1", "encoder_ctx_len": "1500"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "448"},
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Encoder"
+        assert result[1]["name"] == "Decode"
+        assert result[0]["symbols"]["encoder_ctx_len"] == "1500"
+
+    def test_whisper_encoder_specialization_real_spec(self):
+        """Real Whisper spec: _graph_name tags set at source distinguish Encoder from Decode."""
+        flat = [
+            {
+                "_graph_name": "Encoder",
+                "batch_size": "1",
+                "seq_len": "1",
+                "encoder_ctx_len": "1500",
+                "decoder_ctx_len": "150",
+                "feature_len": "3000",
+            },
+            {
+                "_graph_name": "Decode",
+                "batch_size": "1",
+                "seq_len": "1",
+                "encoder_ctx_len": "1500",
+                "decoder_ctx_len": "150",
+                "feature_len": "1",
+            },
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Encoder"
+        assert result[1]["name"] == "Decode"
+        assert result[0]["symbols"]["feature_len"] == "3000"
+        assert result[1]["symbols"]["feature_len"] == "1"
+        assert "_graph_name" not in result[0]["symbols"]
+        assert "_graph_name" not in result[1]["symbols"]
+
+    def test_graph_name_tag_stripped_from_symbols(self):
+        """_graph_name must never appear in the serialized symbols dict."""
+        flat = [{"_graph_name": "Prefill", "batch_size": "1", "seq_len": "128", "ctx_len": "4096"}]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Prefill"
+        assert "_graph_name" not in result[0]["symbols"]
+
+    def test_text_embedding_specialization_actual_compile_path(self):
+        """Text embedding compile path: _graph_name + seq_len should serialize as Embedding."""
+        flat = [{"_graph_name": "Embedding", "batch_size": "1", "seq_len": "128"}]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Embedding"
+        assert result[0]["symbols"]["seq_len"] == "128"
+
+    def test_legacy_text_embedding_specialization(self):
+        """Legacy BERT-like raw dict: sequence_length fallback still resolves to Embedding."""
+        flat = [{"batch_size": "1", "sequence_length": "128"}]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Embedding"
+        assert result[0]["symbols"]["sequence_length"] == "128"
+
+    def test_roundtrip_via_json(self):
+        """Serializing to JSON and back must preserve the named format exactly."""
+        import json
+
+        flat = [
+            {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+        ]
+        named = to_named_specializations(flat)
+        payload = {"specializations": named}
+        roundtripped = json.loads(json.dumps(payload))
+        assert roundtripped["specializations"][0]["name"] == "Prefill"
+        assert roundtripped["specializations"][1]["name"] == "Decode"
+        assert roundtripped["specializations"][0]["symbols"]["seq_len"] == "128"
+
+    def test_compile_helper_create_and_dump_specializations(self, tmp_path):
+        """create_and_dump_specializations must write the new named format to disk."""
+        import json
+
+        from QEfficient.compile.compile_helper import create_and_dump_specializations
+
+        out_path = tmp_path / "specializations.json"
+        create_and_dump_specializations(
+            batch_size=1,
+            prompt_len=128,
+            ctx_len=4096,
+            path=str(out_path),
+        )
+        data = json.loads(out_path.read_text())
+        specs = data["specializations"]
+        assert len(specs) == 2
+        assert specs[0]["name"] == "Prefill"
+        assert specs[1]["name"] == "Decode"
+        assert "symbols" in specs[0]
+        assert specs[0]["symbols"]["seq_len"] == "128"
+        assert specs[1]["symbols"]["seq_len"] == "1"
+
+    def test_compile_helper_prefill_only_when_prompt_len_1(self, tmp_path):
+        """When prompt_len==1 and no full_batch_size, only one entry is written."""
+        import json
+
+        from QEfficient.compile.compile_helper import create_and_dump_specializations
+
+        out_path = tmp_path / "specializations_prefill_only.json"
+        create_and_dump_specializations(
+            batch_size=1,
+            prompt_len=1,
+            ctx_len=128,
+            path=str(out_path),
+        )
+        data = json.loads(out_path.read_text())
+        specs = data["specializations"]
+        assert len(specs) == 1
+        assert specs[0]["name"] == "Decode"
+
+    def test_compile_helper_continuous_batching(self, tmp_path):
+        """With full_batch_size, both entries carry full_batch_size in symbols."""
+        import json
+
+        from QEfficient.compile.compile_helper import create_and_dump_specializations
+
+        out_path = tmp_path / "specializations_cb.json"
+        create_and_dump_specializations(
+            batch_size=1,
+            prompt_len=128,
+            ctx_len=4096,
+            path=str(out_path),
+            full_batch_size=16,
+        )
+        data = json.loads(out_path.read_text())
+        specs = data["specializations"]
+        assert len(specs) == 2
+        assert specs[0]["name"] == "Prefill"
+        assert specs[1]["name"] == "Decode"
+        assert specs[0]["symbols"]["full_batch_size"] == "16"
+        assert specs[1]["symbols"]["full_batch_size"] == "16"
+        assert specs[1]["symbols"]["batch_size"] == "16"
+
+
+class TestGetCompilationDims:
+    """Verify get_compilation_dims handles both flat (legacy) and named (new) formats."""
+
+    def _write_spec(self, tmp_path, payload):
+        import json
+
+        spec_dir = tmp_path / "qpc-hash"
+        spec_dir.mkdir()
+        qpc_dir = spec_dir / "qpc"
+        qpc_dir.mkdir()
+        (spec_dir / "specializations.json").write_text(json.dumps(payload))
+        return str(qpc_dir)
+
+    def test_new_named_format(self, tmp_path):
+        from QEfficient.generation.text_generation_inference import get_compilation_dims
+
+        qpc_path = self._write_spec(
+            tmp_path,
+            {
+                "specializations": [
+                    {"name": "Prefill", "symbols": {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}},
+                    {"name": "Decode", "symbols": {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"}},
+                ]
+            },
+        )
+        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        assert bs == 1
+        assert ctx == 4096
+        assert fbs is None
+
+    def test_new_named_format_with_full_batch_size(self, tmp_path):
+        from QEfficient.generation.text_generation_inference import get_compilation_dims
+
+        qpc_path = self._write_spec(
+            tmp_path,
+            {
+                "specializations": [
+                    {
+                        "name": "Prefill",
+                        "symbols": {"batch_size": "1", "full_batch_size": "16", "seq_len": "128", "ctx_len": "4096"},
+                    },
+                    {
+                        "name": "Decode",
+                        "symbols": {"batch_size": "16", "full_batch_size": "16", "seq_len": "1", "ctx_len": "4096"},
+                    },
+                ]
+            },
+        )
+        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        assert bs == 1
+        assert ctx == 4096
+        assert fbs == 16
+
+    def test_legacy_flat_format_still_works(self, tmp_path):
+        from QEfficient.generation.text_generation_inference import get_compilation_dims
+
+        qpc_path = self._write_spec(
+            tmp_path,
+            {
+                "specializations": [
+                    {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+                    {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+                ]
+            },
+        )
+        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        assert bs == 1
+        assert ctx == 4096
+        assert fbs is None
+
+
+class TestDiffusersNamedSpecializations:
+    """Named-specialization format for diffusers pipeline modules via _graph_name tag."""
+
+    def _tag(self, specs, module_name):
+        """Simulate what pipeline_utils does: tag each spec with _graph_name."""
+        return [
+            {**s, "_graph_name": f"{module_name}_model_type_{s['model_type']}" if "model_type" in s else module_name}
+            for s in specs
+        ]
+
+    def test_flux_text_encoder(self):
+        flat = self._tag([{"batch_size": 1, "seq_len": 77}], "text_encoder")
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "text_encoder"
+        assert result[0]["symbols"] == {"batch_size": "1", "seq_len": "77"}
+        assert "_graph_name" not in result[0]["symbols"]
+
+    def test_flux_text_encoder_2(self):
+        flat = self._tag([{"batch_size": 1, "seq_len": 256}], "text_encoder_2")
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "text_encoder_2"
+
+    def test_flux_transformer(self):
+        flat = self._tag([{"batch_size": 1, "seq_len": 256, "steps": 1}], "transformer")
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "transformer"
+
+    def test_flux_vae_decoder(self):
+        flat = self._tag([{"batch_size": 1, "channels": 16}], "vae_decoder")
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "vae_decoder"
+
+    def test_wan_transformer_model_type_naming(self):
+        """Wan transformer: two model_type entries → transformer_model_type_1 / _2."""
+        flat = self._tag(
+            [
+                {"batch_size": "1", "num_channels": "16", "steps": "1", "sequence_length": "512", "model_type": 1},
+                {"batch_size": "1", "num_channels": "16", "steps": "1", "sequence_length": "512", "model_type": 2},
+            ],
+            "transformer",
+        )
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "transformer_model_type_1"
+        assert result[1]["name"] == "transformer_model_type_2"
+
+    def test_wan_vae_decoder(self):
+        flat = self._tag([{"batch_size": 1, "num_channels": 16}], "vae_decoder")
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "vae_decoder"
+
+    def test_wan_i2v_vae_encoder(self):
+        flat = self._tag([{"batch_size": 1, "num_channels": 16}], "vae_encoder")
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "vae_encoder"
+
+    def test_graph_name_tag_stripped_from_symbols(self):
+        flat = self._tag([{"batch_size": 1, "seq_len": 77}], "text_encoder")
+        result = to_named_specializations(flat)
+        assert "_graph_name" not in result[0]["symbols"]
+
+    def test_idempotent_already_named_entries(self):
+        already = [{"name": "transformer", "symbols": {"batch_size": "1", "steps": "1"}}]
+        result = to_named_specializations(already)
+        assert result == already
+
+    def test_no_tag_falls_back_to_lm_rules(self):
+        """Without _graph_name tag, seq_len heuristic applies."""
+        flat = [
+            {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"},
+            {"batch_size": "1", "seq_len": "1", "ctx_len": "4096"},
+        ]
+        result = to_named_specializations(flat)
+        assert result[0]["name"] == "Prefill"
+        assert result[1]["name"] == "Decode"
