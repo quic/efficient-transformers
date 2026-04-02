@@ -116,8 +116,8 @@ class QEffGPT2Attention(GPT2Attention):
         shape_q = (*query_states.shape[:-1], -1, self.head_dim)
         query_states = query_states.view(shape_q).transpose(1, 2)
 
-        if (past_key_value is not None and not is_cross_attention) or (
-            past_key_value is not None and is_cross_attention and not is_updated
+        if (past_key_values is not None and not is_cross_attention) or (
+            past_key_values is not None and is_cross_attention and not is_updated
         ):
             # save all key/value_layer to cache to be re-used for fast auto-regressive generation
             # Update the cache_kwargs with position_ids for Cloud AI 100
@@ -131,7 +131,7 @@ class QEffGPT2Attention(GPT2Attention):
             )
             # set flag that curr layer for cross-attn is already updated so we can re-use in subsequent calls
             if is_cross_attention:
-                past_key_value.is_updated[self.layer_idx] = True
+                past_key_values.is_updated[self.layer_idx] = True
 
         attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(

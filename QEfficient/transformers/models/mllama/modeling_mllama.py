@@ -267,20 +267,9 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
 
         query_states, key_states = qeff_apply_rotary_pos_emb(
             query_states, key_states, cos_cached, sin_cached, position_ids
-<<<<<<< HEAD
         )
 
-        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
-        blocking_config = getattr(self, "attn_blocking_config", None)
-        if blocking_config is None and num_kv_blocks is not None:
-            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_kv_blocked = (
-            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
-=======
->>>>>>> 992cfa2 (removed incomplete blocking code from untested models, added generic blocked interface to further models.)
-        )
-
-        if past_key_value is not None:
+        if past_key_values is not None:
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
@@ -288,7 +277,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface = eager_self_attention_forward
 

@@ -867,10 +867,10 @@ class QEffGptOssAttention(GptOssAttention):
         query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        if not (max_seq_len_cached := getattr(self.config, "max_seq_len_cached")):
-            max_seq_len_cached = 32 * 1024
-        past_seen_tokens = past_key_value.get_seq_length(self.layer_idx) if past_key_value is not None else 0
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached, position_ids)
+        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
         if self.sliding_window is not None:
             attention_mask = sliding_mask
@@ -890,7 +890,7 @@ class QEffGptOssAttention(GptOssAttention):
                 attention_mask=attention_mask,
                 scaling=self.scaling,
                 layer_idx=self.layer_idx,
-                past_key_value=past_key_value,
+                past_key_value=past_key_values,
                 blocking_config=blocking_config,
                 comp_ctx_length=comp_ctx_lengths,
                 batch_index=batch_index,
@@ -905,7 +905,7 @@ class QEffGptOssAttention(GptOssAttention):
                 key=key_states,
                 value=value_states,
                 attention_mask=attention_mask,
-                past_key_value=past_key_value,
+                past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
