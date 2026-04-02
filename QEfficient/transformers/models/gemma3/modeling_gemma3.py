@@ -27,8 +27,6 @@ from transformers.models.gemma3.modeling_gemma3 import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import supports_blocked_kv
-from QEfficient.blocking.blocked_attention_forwards import blocked_kv_attention_forward
 from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask

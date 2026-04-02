@@ -30,7 +30,12 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, generic_blocked_attention_interface
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 # from transformers import Qw
@@ -451,14 +456,14 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
             )
         else:
             key_states, value_states, _ = past_key_value_update(
-                module=self, 
-                key=key_states, 
-                value=value_states, 
-                attention_mask=attention_mask, 
-                past_key_value=past_key_value, 
-                comp_ctx_lengths=comp_ctx_lengths, 
+                module=self,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                past_key_value=past_key_value,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
-                position_ids=position_ids
+                position_ids=position_ids,
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,

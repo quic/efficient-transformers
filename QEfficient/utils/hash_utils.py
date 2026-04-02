@@ -64,7 +64,7 @@ def create_export_hash(**kwargs):
 
     blocking_kwargs = export_hash_params.pop("blocking_kwargs", None)
     if blocking_kwargs:
-        export_hash_params.update(blocking_kwargs)
+        export_hash_params.update(asdict(blocking_kwargs))
 
     export_kwargs = kwargs.get("export_kwargs")
     if export_kwargs:

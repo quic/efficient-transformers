@@ -28,7 +28,12 @@ from transformers.models.qwen3.modeling_qwen3 import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode, generic_blocked_attention_interface, past_key_value_update
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -142,11 +147,8 @@ class QEffQwen3Attention(Qwen3Attention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
-<<<<<<< HEAD
         cos_cached: Optional[torch.Tensor] = None,
         sin_cached: Optional[torch.Tensor] = None,
-=======
->>>>>>> 4c15c08 (nit: add kv+q blocking generalize support for qwen3/qwen3_moe/mllama)
         num_kv_blocks: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -192,14 +194,14 @@ class QEffQwen3Attention(Qwen3Attention):
             )
         else:
             key_states, value_states, _ = past_key_value_update(
-                module=self, 
-                key=key_states, 
-                value=value_states, 
-                attention_mask=attention_mask, 
-                past_key_value=past_key_value, 
-                comp_ctx_lengths=comp_ctx_lengths, 
+                module=self,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                past_key_value=past_key_value,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
-                position_ids=position_ids
+                position_ids=position_ids,
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,

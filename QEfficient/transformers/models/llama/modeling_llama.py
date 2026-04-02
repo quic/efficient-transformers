@@ -25,7 +25,12 @@ from transformers.models.llama.modeling_llama import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode, generic_blocked_attention_interface, past_key_value_update
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -144,55 +149,8 @@ class QEffLlamaAttention(LlamaAttention):
 
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-<<<<<<< HEAD
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids
-=======
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
-
-<<<<<<< HEAD
-        num_kv_blocks = num_kv_blocks if num_kv_blocks is not None else getattr(self, "num_kv_blocks", None)
-        blocking_config = getattr(self, "attn_blocking_config", None)
-        if blocking_config is None and num_kv_blocks is not None:
-            blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=int(num_kv_blocks))
-        use_kv_blocked = (
-<<<<<<< HEAD
-<<<<<<< HEAD
-            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
->>>>>>> a4afae2 (Initial changes for moving transforms out of pretrained)
-=======
-            blocking_config is not None and "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
->>>>>>> e17646f (fixed CB issue with skip futures and added additional support for different kinds of blocking)
-=======
-            blocking_config is not None and blocking_config.mode == "kv" and supports_blocked_kv(past_key_value)
->>>>>>> 7d75e65 (Fixed merge mistake)
-        )
-
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached, position_ids)
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-<<<<<<< HEAD
-
-=======
-        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-
->>>>>>> 8c7223c (Restructured blocking changes to have generic blocked attention interface and calls to blocking directory)
-        attn_output, attn_weights = generic_blocked_attention_interface(
-            module=self,
-            query=query_states,
-            key=key_states,
-            value=value_states,
-            attention_mask=attention_mask,
-            scaling=self.scaling,
-            layer_idx=self.layer_idx,
-            past_key_value=past_key_value,
-            blocking_config=blocking_config,
-            comp_ctx_length=comp_ctx_lengths,
-            batch_index=batch_index,
-            position_ids=position_ids,
-            past_seen_tokens=past_seen_tokens,
-            non_blocked_forward=eager_attention_forward,
-        )
-=======
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(
@@ -212,14 +170,14 @@ class QEffLlamaAttention(LlamaAttention):
             )
         else:
             key, value, _ = past_key_value_update(
-                module=self, 
-                key=key_states, 
-                value=value_states, 
-                attention_mask=attention_mask, 
-                past_key_value=past_key_value, 
-                comp_ctx_lengths=comp_ctx_lengths, 
+                module=self,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                past_key_value=past_key_value,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
-                position_ids=position_ids
+                position_ids=position_ids,
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,
@@ -230,7 +188,6 @@ class QEffLlamaAttention(LlamaAttention):
                 scaling=self.scaling,
                 **kwargs,
             )
->>>>>>> fa22100 (fixing generic blocked attention based on code reviews)
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output, **kwargs)
 
