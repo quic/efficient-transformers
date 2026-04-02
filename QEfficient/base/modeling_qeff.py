@@ -18,7 +18,12 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import BaseOnnxTransform, OnnxTransformPipeline
+from QEfficient.base.onnx_transforms import (
+    BaseOnnxTransform,
+    FP16ClipTransform,
+    OnnxTransformPipeline,
+    SplitTensorsTransform,
+)
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -30,6 +35,7 @@ from QEfficient.utils import (
     generate_mdp_partition_config,
     hash_dict_params,
     load_json,
+    to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
 
@@ -49,9 +55,8 @@ class QEFFBaseModel(ABC):
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
-    @classmethod
-    def _transform_names(cls) -> List[str]:
-        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
+    def _transform_names(self) -> List[str]:
+        return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -242,9 +247,7 @@ class QEFFBaseModel(ABC):
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
 
-        # Export directly into export_dir so any external data files are retained.
         export_dir.mkdir(parents=True, exist_ok=True)
-        tmp_onnx_path = onnx_path
 
         # Create input_names from example_inputs
         input_names = []
@@ -274,7 +277,7 @@ class QEFFBaseModel(ABC):
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
-                str(tmp_onnx_path),
+                str(onnx_path),
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -283,11 +286,13 @@ class QEFFBaseModel(ABC):
             )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
+            model = onnx.load(onnx_path, load_external_data=False)
 
-            # Clear temporary references
+            needs_external_tensor_data = any(
+                transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
+            )
             transform_kwargs = {
-                "onnx_base_dir": str(export_dir),
+                "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
@@ -302,7 +307,9 @@ class QEFFBaseModel(ABC):
             )
             logger.info("ONNX transforms applied")
 
-            onnx.save(model, onnx_path)
+            onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
+            onnx.save(model, onnx_path_tmp)
+            onnx_path_tmp.replace(onnx_path)
             del model
             gc.collect()
             logger.info("Transformed ONNX saved")
@@ -493,9 +500,7 @@ class QEFFBaseModel(ABC):
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
-            specializations_data = {
-                "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
-            }
+            specializations_data = {"specializations": to_named_specializations(specializations)}
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
 

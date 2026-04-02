@@ -1,18 +1,45 @@
 {
-  "description": "Default configuration for Wan pipeline with unified transformer (model_type: 1 for high noise; model_type:2 for low noise)",
+  "description": "Default configuration for Wan image-to-video pipeline with unified transformer (model_type: 1 for high noise; model_type:2 for low noise)",
   "modules": {
+    "vae_encoder":
+                  {
+                    "specializations":
+                                      {
+                                          "batch_size": 1,
+                                          "num_channels": 16
+                                      },
+                    "compilation":
+                                      {
+                                        "onnx_path": null,
+                                        "compile_dir": null,
+                                        "mdp_ts_num_devices": 8,
+                                        "mxfp6_matmul": false,
+                                        "convert_to_fp16": true,
+                                        "aic_num_cores": 16,
+                                        "aic-enable-depth-first": true,
+                                        "compile_only":true,
+                                        "mos": 1,
+                                        "mdts_mos": 1,
+                                        "node_precision_info" : "QEfficient/diffusers/pipelines/configs/npi_wan_i2v_vae_encoder.yaml"
+                                      },
+                    "execute":
+                                      {
+                                        "device_ids": null,
+                                        "qpc_path" : null
+                                      }
+                   },
     "transformer": {
                     "specializations": [
                                         {
                                             "batch_size": "1",
-                                            "num_channels": "16",
+                                            "num_channels": "36",
                                             "steps": "1",
                                             "sequence_length": "512",
                                             "model_type": 1
                                         },
                                         {
                                             "batch_size": "1",
-                                            "num_channels": "16",
+                                            "num_channels": "36",
                                             "steps": "1",
                                             "sequence_length": "512",
                                             "model_type": 2
@@ -33,14 +60,14 @@
                                         "device_ids": null,
                                         "qpc_path" : null
                                     }
-    },
+                   },
     "vae_decoder":
                   {
                     "specializations":
-                                        {
+                                      {
                                           "batch_size": 1,
                                           "num_channels": 16
-                                        },
+                                      },
                     "compilation":
                                       {
                                         "onnx_path": null,

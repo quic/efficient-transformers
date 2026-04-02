@@ -131,6 +131,16 @@ def set_execute_params(cls):
                 )
 
 
+def update_npi_path(cls, npi_full_path, module_name):
+    """To Set NPI for path in compilation config"""
+    if module_name in cls.custom_config["modules"]:
+        # Check if the NPI file exists
+        if not os.path.exists(npi_full_path):
+            raise FileNotFoundError(f"Node precision info file not found: {npi_full_path}")
+
+        cls.custom_config["modules"][module_name]["compilation"]["node_precision_info"] = npi_full_path
+
+
 def compile_modules_parallel(
     modules: Dict[str, Any],
     config: Dict[str, Any],
@@ -162,6 +172,12 @@ def compile_modules_parallel(
                 specializations = [specializations]
         else:
             specializations = [specializations]
+
+        # Tag each spec with the module name so _compile knows the graph name.
+        specializations = [
+            {**s, "_graph_name": f"{module_name}_model_type_{s['model_type']}" if "model_type" in s else module_name}
+            for s in specializations
+        ]
 
         if module_obj.qpc_path is None:
             # Compile with prepared specializations
@@ -215,6 +231,12 @@ def compile_modules_sequential(
                 specializations = [specializations]
         else:
             specializations = [specializations]
+
+        # Tag each spec with the module name so _compile knows the graph name.
+        specializations = [
+            {**s, "_graph_name": f"{module_name}_model_type_{s['model_type']}" if "model_type" in s else module_name}
+            for s in specializations
+        ]
 
         if module_obj.qpc_path is None:
             # Compile with prepared specializations

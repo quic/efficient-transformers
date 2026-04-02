@@ -837,3 +837,119 @@ def custom_format_warning(msg, category, *args, **kwargs):
     YELLOW = "\033[93m"
     RESET = "\033[0m"
     return f"{YELLOW}[Warning]: {msg}{RESET}\n"
+
+
+def _infer_specialization_name(spec: Dict, index: int, module_name: Optional[str] = None) -> str:
+    """
+    Infer a human-readable name for a specialization entry.
+
+    Priority order:
+    1. ``_graph_name`` key inside ``spec`` — set at the point of creation by
+       ``build_prefill_specialization``, ``build_decode_specialization``,
+       VLM ``get_specializations``, Whisper ``get_specializations``, and
+       ``pipeline_utils`` compile helpers.  This is the authoritative source
+       and requires no heuristics.
+    2. ``module_name`` argument — used by diffusers pipeline modules where the
+       module name itself is the graph name (e.g. ``"text_encoder"``).
+    3. ``seq_len`` heuristic — reliable fallback for plain causal LM specs that
+       do not carry ``_graph_name`` (e.g. user-supplied raw dicts, legacy paths).
+       ``seq_len != 1`` → ``"Prefill"``, ``seq_len == 1`` → ``"Decode"``.
+    4. ``encoder_ctx_len`` with no ``seq_len`` → ``"Encoder"`` (simplified
+       Whisper-like spec without ``feature_len``).
+    5. Legacy ``sequence_length`` with no ``seq_len`` → ``"Embedding"``
+       (older BERT-like raw dicts). Current embedding compile paths set
+       ``_graph_name="Embedding"`` and still use ``seq_len``.
+    6. Generic fallback ``f"Graph_{index}"``.
+
+    Parameters
+    ----------
+    spec : Dict
+        A single flat specialization dictionary (key → value).  May contain
+        the reserved ``_graph_name`` key which is consumed here and never
+        written to ``symbols``.
+    index : int
+        Zero-based position in the specializations list, used only for the
+        generic fallback name.
+    module_name : str, optional
+        Explicit graph name hint for diffusers pipeline modules.
+
+    Returns
+    -------
+    str
+        The inferred graph name.
+    """
+    # 1. Authoritative tag set at creation time — no heuristics needed.
+    if "_graph_name" in spec:
+        return spec["_graph_name"]
+
+    # 2. Explicit module name (diffusers pipeline path).
+    if module_name is not None:
+        if "model_type" in spec:
+            return f"{module_name}_model_type_{spec['model_type']}"
+        return module_name
+
+    # 3-6. Heuristic fallback — only reached for raw/legacy dicts.
+    if "seq_len" not in spec:
+        if "encoder_ctx_len" in spec:
+            return "Encoder"
+        # Legacy fallback for older BERT-style raw dicts. Current embedding
+        # compile paths set _graph_name="Embedding" and use seq_len.
+        if "sequence_length" in spec:
+            return "Embedding"
+        return f"Graph_{index}"
+    seq_len = spec["seq_len"]
+    if str(seq_len) == "1":
+        return "Decode"
+    return "Prefill"
+
+
+def to_named_specializations(specializations: List[Dict], module_name: Optional[str] = None) -> List[Dict]:
+    """
+    Convert flat specialization dicts to the nested ``{name, symbols}`` format
+    expected by the backend compiler.
+
+    Example output (one entry)::
+
+        {"name": "Prefill", "symbols": {"batch_size": "1", "seq_len": "128", "ctx_len": "4096"}}
+
+    For diffusers pipeline modules pass ``module_name`` so the graph name reflects
+    the module (e.g. ``"text_encoder"``, ``"vae_decoder"``, ``"transformer_model_type_1"``).
+
+    Parameters
+    ----------
+    specializations : List[Dict]
+        List of flat specialization dicts (values may be int or str).
+    module_name : str, optional
+        Pipeline module name forwarded to ``_infer_specialization_name``.
+
+    Returns
+    -------
+    List[Dict]
+        List of ``{"name": str, "symbols": Dict[str, str]}`` dicts.
+    """
+    result = []
+    for index, spec in enumerate(specializations):
+        # Idempotent: already in named format, pass through unchanged.
+        if set(spec.keys()) == {"name", "symbols"}:
+            result.append(spec)
+            continue
+        name = _infer_specialization_name(spec, index, module_name=module_name)
+        # Strip the internal _graph_name tag — it must not appear in symbols.
+        symbols = {k: str(v) for k, v in spec.items() if k != "_graph_name"}
+        result.append({"name": name, "symbols": symbols})
+
+    # Deduplicate names: if two entries share the same inferred name (e.g. both
+    # have seq_len=1 in a raw-dict override path), append a positional suffix so
+    # the compiler never sees duplicate graph names.
+    seen: Dict[str, int] = {}
+    for entry in result:
+        name = entry["name"]
+        if name in seen:
+            # Rename the first occurrence retroactively on its second encounter
+            if seen[name] == 1:
+                first_idx = next(i for i, e in enumerate(result) if e["name"] == name)
+                result[first_idx] = {**result[first_idx], "name": f"{name}_0"}
+            entry["name"] = f"{name}_{seen[name]}"
+        seen[name] = seen.get(name, 0) + 1
+
+    return result

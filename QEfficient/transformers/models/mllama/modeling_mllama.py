@@ -123,16 +123,6 @@ class QEffMllamaRotaryEmbedding(MllamaRotaryEmbedding):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
-
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
@@ -241,9 +231,6 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         - add new args cache idx for the kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -255,6 +242,8 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         position_embeddings: torch.Tensor = None,
         use_cache: bool = False,
         cache_position=None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ):
         bsz, q_len, _ = hidden_states.size()
@@ -274,10 +263,11 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+            # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
         if past_key_value is not None:
             cache_kwargs = {
@@ -326,6 +316,8 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        sin_cached=None,
+        cos_cached=None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -361,6 +353,8 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
         hidden_states = residual + hidden_states
 
@@ -465,6 +459,8 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[torch.Tensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -602,6 +598,11 @@ class QEffMllamaTextModel(MllamaTextModel):
         - add new args cache idx for the kv retention
     """
 
+    def __qeff_init__(self):
+        self.rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -676,6 +677,8 @@ class QEffMllamaTextModel(MllamaTextModel):
                 comp_ctx_lengths=comp_ctx_lengths,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
         hidden_states = self.norm(hidden_states)
