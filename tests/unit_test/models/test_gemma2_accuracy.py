@@ -187,9 +187,7 @@ class TestQEffGemma2Architecture:
         qeff_params = sum(p.numel() for p in qeff.model.parameters())
         # QEffGemma2Model registers sin_cached and cos_cached as nn.Parameter,
         # which adds extra parameters compared to the HF model. Allow for this.
-        assert qeff_params >= hf_params, (
-            f"QEff parameter count should be >= HF: HF={hf_params}, QEff={qeff_params}"
-        )
+        assert qeff_params >= hf_params, f"QEff parameter count should be >= HF: HF={hf_params}, QEff={qeff_params}"
 
 
 # ---------------------------------------------------------------------------
