@@ -953,8 +953,8 @@ def to_named_specializations(specializations: List[Dict], module_name: Optional[
         seen[name] = seen.get(name, 0) + 1
 
     return result
-    
-    
+
+
 def get_attr_or_key(obj: Any, names: Tuple[str, ...], default: Any = None) -> Any:
     if obj is None:
         return default
