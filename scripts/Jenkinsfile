@@ -199,16 +199,31 @@ pipeline {
     post {
         always {
             script {
-                // Fix ownership of workspace files created by Docker (root → Jenkins user)
-                sh '''
-                sudo chown -R ubuntu:ubuntu .
-                '''
+                try {
+                    sh '''
+                    sudo chown -R ubuntu .
+                    '''
+                } catch (error) {
+                    echo "Failed to change ownership: ${error}"
+                }
             }
-
-            junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
-
-            sh 'sudo docker rm -f ${BUILD_TAG} || true'
-
+            script {
+                try {
+                    junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
+                } catch (error) {
+                    echo "No test results file found or parsing failed: ${error}"
+                }
+            }
+            script {
+                try {
+                    sh '''
+                    sudo docker rm -f ${BUILD_TAG}
+                    '''
+                } catch (error) {
+                    echo "Failed to delete container ${BUILD_TAG}: ${error}"
+                }
+            }
+            echo 'Cleaning Workspace'
             deleteDir()
         }
     }
