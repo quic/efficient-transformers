@@ -38,11 +38,16 @@ def testFilter(String profile) {
 }
 
 pipeline {
-    agent { node { label 'qeff_node' } }
+    agent { node { label params.NODE_LABEL } }
 
     options { disableConcurrentBuilds() }
 
     parameters {
+        string(
+            name: 'NODE_LABEL',
+            defaultValue: 'qeff_node',
+            description: 'Jenkins agent/node label to run this pipeline on'
+        )
         choice(
             name: 'TEST_PROFILE',
             choices: [

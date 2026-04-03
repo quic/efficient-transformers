@@ -10,18 +10,18 @@ import shutil
 
 from transformers import logging
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.cache import QEFF_HOME
 
 
 def qeff_models_clean_up():
-    if os.path.exists(QEFF_MODELS_DIR):
-        shutil.rmtree(QEFF_MODELS_DIR)
-        logger.info(f"\n.............Cleaned up {QEFF_MODELS_DIR}")
+    qeff_dir = QEFF_HOME
+    if os.path.exists(qeff_dir):
+        shutil.rmtree(qeff_dir)
+        print(f"\n.............Cleaned up {qeff_dir}")
 
 
 def pytest_sessionstart(session):
-    logger.info("PYTEST Session Starting ...")
+    print("\n############################### Pytest Session Starting ###############################\n")
 
     # Suppress transformers warnings about unused weights when loading models with fewer layers
     logging.set_verbosity_error()
@@ -37,8 +37,13 @@ def pytest_configure(config):
     )
 
 
+def pytest_runtest_teardown(item, nextitem):
+    """Clean up after each test case."""
+    qeff_models_clean_up()
+
+
 def pytest_sessionfinish(session, exitstatus):
     inside_worker = getattr(session.config, "workerinput", None)
     if inside_worker is None:
         qeff_models_clean_up()
-        logger.info("...PYTEST Session Ended.")
+        print("\n############################### Pytest Session Ended ###############################\n")
