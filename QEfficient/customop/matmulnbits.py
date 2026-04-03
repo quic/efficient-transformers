@@ -32,7 +32,7 @@ class QuantLinearTorchFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
         if qself_qzeros is None:
-            qself_qzeros = 2^(bits-1)
+            qself_qzeros = 2 ^ (bits - 1)
         if torch.onnx.is_in_onnx_export():
             # For faster export
             return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype).float()
@@ -189,10 +189,22 @@ class QuantLinearORT(nn.Module):
 
 class QMOE(torch.autograd.Function):
     @staticmethod
-    def symbolic(g, x, router_weights, fc1_experts_weights, fc1_scales,
-                 fc2_experts_weights, fc2_scales, fc3_experts_weights, fc3_scales,
-                 router_probs,
-                 activation_type, block_size, expert_weight_bits, k):
+    def symbolic(
+        g,
+        x,
+        router_weights,
+        fc1_experts_weights,
+        fc1_scales,
+        fc2_experts_weights,
+        fc2_scales,
+        fc3_experts_weights,
+        fc3_scales,
+        router_probs,
+        activation_type,
+        block_size,
+        expert_weight_bits,
+        k,
+    ):
         qmoe_out = g.op(
             "com.microsoft::QMoE",
             x,
@@ -205,7 +217,7 @@ class QMOE(torch.autograd.Function):
             fc3_experts_weights,
             fc3_scales,
             outputs=1,
-            activation_type_s=activation_type,      # <-- _s suffix for string
+            activation_type_s=activation_type,  # <-- _s suffix for string
             block_size_i=block_size,
             expert_weight_bits_i=expert_weight_bits,
             k_i=k,
@@ -222,10 +234,22 @@ class QMOE(torch.autograd.Function):
         # return g.op("Mul", qmoe_out, router_probs_mean))
 
     @staticmethod
-    def forward(ctx, x, router_weights, fc1_experts_weights, fc1_scales,
-                fc2_experts_weights, fc2_scales, fc3_experts_weights, fc3_scales,
-                router_probs,
-                activation_type, block_size, expert_weight_bits, k):
+    def forward(
+        ctx,
+        x,
+        router_weights,
+        fc1_experts_weights,
+        fc1_scales,
+        fc2_experts_weights,
+        fc2_scales,
+        fc3_experts_weights,
+        fc3_scales,
+        router_probs,
+        activation_type,
+        block_size,
+        expert_weight_bits,
+        k,
+    ):
         # Dummy forward: simulate qmoe_out as zeros_like(x), then apply ReduceMean * Mul
         qmoe_out = torch.zeros_like(x)
         router_probs_mean = router_probs.mean(dim=-1, keepdim=True)

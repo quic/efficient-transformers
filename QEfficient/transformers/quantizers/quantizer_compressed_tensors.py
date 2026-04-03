@@ -4,15 +4,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import List
 
 import torch
 from transformers.quantizers.quantizer_compressed_tensors import CompressedTensorsHfQuantizer
-from transformers.utils.quantization_config import CompressedTensorsConfig, QuantizationConfigMixin, QuantizationMethod
 from transformers.utils import is_compressed_tensors_available
+from transformers.utils.quantization_config import CompressedTensorsConfig, QuantizationConfigMixin, QuantizationMethod
+
 from QEfficient.transformers.quantizers.quantizer_utils import get_keys_to_not_convert
 from QEfficient.utils.logging_utils import logger
 
@@ -223,7 +223,6 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
 
 
 class QEffCompressedTensorsConfig(CompressedTensorsConfig):
-    
     def handle_pack_quantized_init(
         self,
         config_groups=None,
@@ -362,7 +361,6 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
 
         self.quant_method = QuantizationMethod.COMPRESSED_TENSORS
 
-        
     def __init__(
         self,
         config_groups=None,
@@ -403,11 +401,10 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
                 **kwargs,
             )
 
-
     def to_dict(self):
-        if self.quantization_config.format=="pack-quantized":
+        if self.quantization_config.format == "pack-quantized":
             return super().to_dict()
-    
+
         return {
             "quantization_config": {
                 "config_groups": self.config_groups,
@@ -427,10 +424,14 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
 
 class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
     requires_calibration = False
-    
+
     @staticmethod
     def is_pack_quantized(quant_config):
-        return hasattr(quant_config, "quantization_config") and hasattr(quant_config.quantization_config, "format") and quant_config.quantization_config.format == "pack-quantized"
+        return (
+            hasattr(quant_config, "quantization_config")
+            and hasattr(quant_config.quantization_config, "format")
+            and quant_config.quantization_config.format == "pack-quantized"
+        )
 
     def __init__(self, quantization_config, **kwargs):
         if self.is_pack_quantized(quantization_config):
@@ -467,7 +468,7 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
     def update_torch_dtype(self, torch_dtype):
         if self.is_pack_quantized(self.quantization_config):
             return super().update_torch_dtype(torch_dtype)
-        
+
         if torch_dtype not in [None, torch.float32]:
             logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
         return None
@@ -512,7 +513,7 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
     def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
         if self.is_pack_quantized(self.quantization_config):
             return super().update_missing_keys_after_loading(model, missing_keys=missing_keys, prefix=prefix)
-            
+
         return missing_keys
 
     def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str) -> List[str]:

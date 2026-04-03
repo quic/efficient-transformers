@@ -4,13 +4,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import torch
 import onnxscript
+import torch
 from onnx import TensorProto
 
 from QEfficient.utils import constants
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def UnpackUInt8ToUInt4Script(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
@@ -78,11 +79,15 @@ class UnpackUInt8ToUInt4(torch.autograd.Function):
 
     @staticmethod
     def forward(weight_packed: torch.Tensor) -> torch.Tensor:
-        w_x = (weight_packed & 0x0F)          # lower nibble, (..., in//2), range [0, 15]
-        w_y = ((weight_packed >> 4) & 0x0F)   # upper nibble, (..., in//2), range [0, 15]
+        w_x = weight_packed & 0x0F  # lower nibble, (..., in//2), range [0, 15]
+        w_y = (weight_packed >> 4) & 0x0F  # upper nibble, (..., in//2), range [0, 15]
         # New shape: all leading dims unchanged, last dim doubled
         new_shape = list(weight_packed.shape[:-1]) + [weight_packed.shape[-1] * 2]
-        return torch.stack([w_x, w_y], dim=-1).reshape(new_shape)  # Can't add a cast operation to uint4 here, as its not supported in pytorch; The ONNX export will handle the cast to UINT4 in the symbolic method.
+        return torch.stack(
+            [w_x, w_y], dim=-1
+        ).reshape(
+            new_shape
+        )  # Can't add a cast operation to uint4 here, as its not supported in pytorch; The ONNX export will handle the cast to UINT4 in the symbolic method.
 
     @staticmethod
     def setup_context(ctx, inputs, outputs):
@@ -114,10 +119,9 @@ class DequantizeLinearFunc(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(weight_unpacked: torch.Tensor,
-                scale: torch.Tensor,
-                zeros: torch.Tensor,
-                block_size: int) -> torch.Tensor:
+    def forward(
+        weight_unpacked: torch.Tensor, scale: torch.Tensor, zeros: torch.Tensor, block_size: int
+    ) -> torch.Tensor:
         # Expand per-block scale → per-element scale along last dim
         scale_expanded = scale.repeat_interleave(block_size, dim=-1)
         zeros_expanded = zeros.repeat_interleave(block_size, dim=-1)
@@ -128,11 +132,9 @@ class DequantizeLinearFunc(torch.autograd.Function):
         pass
 
     @staticmethod
-    def symbolic(g: torch.Graph,
-                 weight_unpacked: torch.Value,
-                 scale: torch.Value,
-                 zeros: torch.Value,
-                 block_size: int) -> torch.Value:
+    def symbolic(
+        g: torch.Graph, weight_unpacked: torch.Value, scale: torch.Value, zeros: torch.Value, block_size: int
+    ) -> torch.Value:
         # Standard DequantizeLinear: symmetric (no zero_point), blockwise.
         # Input is 3D: (2, out_features, in_features) → axis=2 (last dim).
         # DequantizeLinear natively supports batch dimensions.

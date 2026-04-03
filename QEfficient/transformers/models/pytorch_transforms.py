@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import warnings
-from functools import partial
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
@@ -706,16 +705,16 @@ class ReplicateKVHeadTransform:
     def _duplicate_weights_for_linear_layer(
         layer: nn.Module, orig_kv_heads: int, repeat: int, dim: int, hidden_size: int
     ):
-        new_kv_heads = repeat #for mla
+        new_kv_heads = repeat  # for mla
 
         layer.weight.data = torch.repeat_interleave(
             layer.weight.data.view(orig_kv_heads, dim, hidden_size), repeat, 0
         ).view(new_kv_heads * dim, hidden_size)
 
         if layer.bias is not None:
-            layer.bias.data = torch.repeat_interleave(
-                layer.bias.data.view(orig_kv_heads, dim), repeat, 0
-            ).view(new_kv_heads * dim)
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, dim), repeat, 0).view(
+                new_kv_heads * dim
+            )
 
     def _get_text_model(model):
         """
@@ -748,12 +747,12 @@ class ReplicateKVHeadTransform:
         if n_repeat is not None and n_repeat > 1:
             text_model = cls._get_text_model(model)
 
-            orig_kv_heads = 1 # for mla #text_model.config.num_key_value_heads
-            new_kv_heads = n_repeat*orig_kv_heads
+            orig_kv_heads = 1  # for mla #text_model.config.num_key_value_heads
+            new_kv_heads = n_repeat * orig_kv_heads
             text_model.config.orig_kv_heads = orig_kv_heads
             text_model.config.num_key_value_heads = new_kv_heads
 
-            num_attention_heads = text_model.config.num_attention_heads
+            # num_attention_heads = text_model.config.num_attention_heads
             hidden_size = text_model.config.hidden_size
 
             logger.warning(f"Original KV heads: {orig_kv_heads}")
@@ -972,15 +971,17 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
     }
 
+
 class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
     _match_string_replace_method = {
         "DeepseekV3MoE": {
             "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
             "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
-            #"__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
+            # "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
         },
     }
+
 
 class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
@@ -991,10 +992,11 @@ class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransfo
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
     }
-    '''_match_string_replace_method = {
+    """_match_string_replace_method = {
         **{v: k for k, v in PrefillOnlyExternalModuleMapperTransform._match_string_replace_method.items()},
     }
-    '''
+    """
+
 
 class T5ModelTransform(ModuleMappingTransform):
     # supported architectures

@@ -23,8 +23,8 @@ from QEfficient.base.onnx_transforms import (
     OnnxTransformPipeline,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
-from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
 from QEfficient.utils import (
@@ -371,7 +371,6 @@ class QEFFBaseModel(ABC):
         self.export(**kwargs)
         return self.onnx_path
 
-
     def transform(
         self,
         ctx_len: Optional[int] = None,
@@ -410,7 +409,6 @@ class QEFFBaseModel(ABC):
                 blocking_kwargs["num_q_blocks"] = blocking_config.num_q_blocks
             if blocking_config.head_block_size:
                 blocking_kwargs["head_block_size"] = blocking_config.head_block_size
-
 
     @dump_qconfig
     def _compile(

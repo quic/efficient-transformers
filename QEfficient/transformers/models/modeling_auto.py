@@ -47,13 +47,13 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
-    PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyChunkedTransform,
+    PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyTransform,
     ReplicateKVHeadTransform,
     RevertPrefillKeepAttentionTransform,
-    RevertPrefillOnlyTransform,
     RevertPrefillOnlyExternalModuleMapperTransform,
+    RevertPrefillOnlyTransform,
     SamplerTransform,
     SpDTransform,
     VlmKVOffloadTransform,
@@ -2647,8 +2647,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # kv_cache_shape = get_padding_shape_from_config(
         #     self.model.config, fbs if self.continuous_batching else bs, seq_len
         # )
-        ckv_shape = (1, seq_len, 512)
-        k_pe_shape = (1, 1, seq_len, 64)
+        # ckv_shape = (1, seq_len, 512)
+        # k_pe_shape = (1, 1, seq_len, 64)
         kv_cache_shape = (1, 64, seq_len, 192)
         kv_cache_shape_v = (1, 64, seq_len, 128)
         enable_chunking = kwargs.get("enable_chunking", False)
@@ -2787,8 +2787,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names = [v for v in output_names if "past" not in v]
             example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
             for i in range(self.num_layers):
-                ckv = torch.zeros((bs, mdp_ts_num_devices, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32)
-                k_pe = torch.zeros((bs, mdp_ts_num_devices, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32)
+                ckv = torch.zeros(
+                    (bs, mdp_ts_num_devices, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32
+                )
+                k_pe = torch.zeros(
+                    (bs, mdp_ts_num_devices, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32
+                )
                 example_inputs["compressed_kvs"][i].append(ckv)
                 example_inputs["compressed_kvs"][i].append(k_pe)
                 dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}

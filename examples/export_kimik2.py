@@ -1,11 +1,4 @@
 import torch
-
-torch.set_printoptions(
-    precision=4,
-    edgeitems=2,
-    threshold=50,  # max number of elements printed
-    linewidth=120,
-)
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM

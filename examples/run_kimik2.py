@@ -5,17 +5,19 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 
 prompt = "Once upon a time,"
-num_kv_heads_repeat=4 #TS=4
-num_hidden_layers=2
-enable_mla=True
-mla_absorption_config={"enable": False, "online": False}
+num_kv_heads_repeat = 4  # TS=4
+num_hidden_layers = 2
+enable_mla = True
+mla_absorption_config = {"enable": False, "online": False}
 
-#model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
-model_path ="/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
+# model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
+model_path = (
+    "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
+)
 model = AutoModelForCausalLM.from_pretrained(
     model_path, torch_dtype=torch.float32, num_hidden_layers=num_hidden_layers, trust_remote_code=True
 )
-qeff_model.compile(prefill_seq_len=1, num_cores=16, num_devices=1, mxfp6_matmul=True, mxint8_kv_cache=True)
+# qeff_model.compile(prefill_seq_len=1, num_cores=16, num_devices=1, mxfp6_matmul=True, mxint8_kv_cache=True)
 
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
 
@@ -29,9 +31,9 @@ padded_len = inputs["input_ids"].shape[1]
 num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
-# with torch.no_grad():
-#     out = model(**inputs)
-#     predictions = torch.argmax(out.logits, dim=-1)
+with torch.no_grad():
+    out = model(**inputs)
+    predictions = torch.argmax(out.logits, dim=-1)
 
 qeff_model = QEFFAutoModelForCausalLM(model, num_kv_heads_repeat=num_kv_heads_repeat)
 qeff_model.mla(enable_mla=enable_mla, mla_absorption_config=mla_absorption_config)
@@ -62,7 +64,7 @@ for i in range(qeff_model.model.config.num_hidden_layers):
 
 
 inputs["compressed_kvs"] = compressed_kvs
-#inputs["past_key_values"] = past_key_values
+# inputs["past_key_values"] = past_key_values
 
 prefill_qeff_out = qeff_model.model(**inputs)
 
@@ -80,7 +82,7 @@ for _ in range(1, generation_len):
         "input_ids": next_token_id,
         "position_ids": position_ids,
         "compressed_kvs": qeff_out["past_key_values"],
-        #"past_key_values": qeff_out["past_key_values"],
+        # "past_key_values": qeff_out["past_key_values"],
     }
     qeff_out = qeff_model.model(**decode_inputs)
 
@@ -90,9 +92,6 @@ predicted_string = tokenizer.batch_decode(qeff_generated_ids, skip_special_token
 print("QEFF Transformed Model Outputs (Torch CPU): \n")
 print("Prompt:", repr(prompt))
 print("Completion:", repr(predicted_string))
-
-
-
 
 
 qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}
@@ -109,7 +108,7 @@ qpc_path = qeff_model.compile(
     mxint8_kv_cache=False,
     num_devices=num_kv_heads_repeat,
     num_cores=16,
-    #prefill_only=True,
+    # prefill_only=True,
     qaic_config=qaic_config,
 )
 
