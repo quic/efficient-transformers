@@ -40,9 +40,12 @@ from transformers import (
     AutoModelForSequenceClassification,
     AutoModelForSpeechSeq2Seq,
     AutoTokenizer,
+    LlamaConfig,
+    LlamaForCausalLM,
     Qwen2Config,
 )
 
+from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,
@@ -183,6 +186,17 @@ def _run_embedding_ort(onnx_path: Path, inputs: Dict[str, torch.Tensor]) -> np.n
     return session.run(None, ort_inputs)[0]
 
 
+def _make_zero_kv_cache(config: LlamaConfig, batch_size: int, ctx_len: int):
+    head_dim = getattr(config, "head_dim", None) or (config.hidden_size // config.num_attention_heads)
+    return tuple(
+        (
+            torch.zeros(batch_size, config.num_key_value_heads, ctx_len, head_dim, dtype=torch.float32),
+            torch.zeros(batch_size, config.num_key_value_heads, ctx_len, head_dim, dtype=torch.float32),
+        )
+        for _ in range(config.num_hidden_layers)
+    )
+
+
 def _run_whisper_export_smoke(qeff_model: QEFFAutoModelForSpeechSeq2Seq, out_dir: Path) -> Path:
     onnx_path = _exported_onnx_path(qeff_model.export(out_dir))
     _assert_has_retained_state_outputs(onnx_path)
@@ -299,6 +313,79 @@ def test_causal_lm_cpu_runtime_parity_with_api_runner(model_type, model_id, tmp_
 
     assert np.array_equal(hf_tokens, kv_tokens.squeeze(0))
     assert np.array_equal(kv_tokens, ort_tokens)
+
+
+@pytest.mark.llm_model
+def test_llama_gqa_prefill_runtime_parity_and_export(tmp_path, monkeypatch):
+    torch.manual_seed(0)
+    ctx_len = 32
+    seq_len = 8
+    config = LlamaConfig(
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=256,
+        max_position_embeddings=ctx_len,
+    )
+    model_hf = LlamaForCausalLM(config).to(torch.float32)
+    model_hf.eval()
+    monkeypatch.setenv("QEFF_LLAMA_GQA_SHARED_KV", "1")
+
+    input_ids = torch.randint(0, config.vocab_size, (1, seq_len), dtype=torch.long)
+    position_ids = torch.arange(seq_len, dtype=torch.long).unsqueeze(0)
+
+    with torch.no_grad():
+        hf_logits = model_hf(input_ids=input_ids).logits[:, -1, :].detach().numpy()
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    qeff_inputs = {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        "past_key_values": _make_zero_kv_cache(config, batch_size=1, ctx_len=ctx_len),
+    }
+    with torch.no_grad():
+        qeff_logits = qeff_model.model(**qeff_inputs).logits[:, -1, :].detach().numpy()
+
+    assert np.allclose(hf_logits, qeff_logits, atol=1e-5)
+
+    InvalidIndexProvider.SUBFUNC_ENABLED = True
+    try:
+        onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "llama-gqa", offload_pt_weights=False))
+    finally:
+        InvalidIndexProvider.SUBFUNC_ENABLED = False
+
+    session = _ort_session(onnx_path)
+    ort_inputs = {
+        "input_ids": input_ids.detach().numpy(),
+        "position_ids": position_ids.detach().numpy(),
+    }
+    for i in range(config.num_hidden_layers):
+        ort_inputs[f"past_key.{i}"] = np.zeros(
+            (
+                1,
+                config.num_key_value_heads,
+                ctx_len,
+                config.hidden_size // config.num_attention_heads,
+            ),
+            dtype=np.float32,
+        )
+        ort_inputs[f"past_value.{i}"] = np.zeros(
+            (
+                1,
+                config.num_key_value_heads,
+                ctx_len,
+                config.hidden_size // config.num_attention_heads,
+            ),
+            dtype=np.float32,
+        )
+
+    output_names = [output.name for output in session.get_outputs()]
+    ort_outputs = dict(zip(output_names, session.run(output_names, ort_inputs)))
+    ort_logits = ort_outputs["logits"][:, -1, :]
+
+    assert np.allclose(qeff_logits, ort_logits, atol=1e-5)
 
 
 @pytest.mark.llm_model

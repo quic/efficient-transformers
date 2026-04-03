@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
@@ -95,17 +96,35 @@ def eager_attention_forward(
     scaling: float,
     **kwargs,
 ):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
+    enable_gqa_shared_kv = os.environ.get("QEFF_LLAMA_GQA_SHARED_KV", "0") == "1" and module.num_key_value_groups > 1
 
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    if enable_gqa_shared_kv:
+        batch_size, num_heads, query_length, head_dim = query.shape
+        _, num_key_value_heads, key_length, _ = key.shape
+
+        query_grouped = query.reshape(
+            batch_size, num_key_value_heads, module.num_key_value_groups * query_length, head_dim
+        )
+        attn_weights = torch.matmul(query_grouped, key.transpose(2, 3)) * scaling
+        attn_weights = attn_weights.reshape(batch_size, num_heads, query_length, key_length)
+    else:
+        key_states = repeat_kv(key, module.num_key_value_groups)
+        value_states = repeat_kv(value, module.num_key_value_groups)
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_output = torch.matmul(attn_weights, value_states)
+    if enable_gqa_shared_kv:
+        attn_weights = attn_weights.reshape(
+            batch_size, num_key_value_heads, module.num_key_value_groups * query_length, key_length
+        )
+        attn_output = torch.matmul(attn_weights, value)
+        attn_output = attn_output.reshape(batch_size, num_heads, query_length, head_dim)
+    else:
+        attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
