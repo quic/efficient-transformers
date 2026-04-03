@@ -35,7 +35,6 @@ from QEfficient.utils import (
     generate_mdp_partition_config,
     hash_dict_params,
     load_json,
-    to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
 
@@ -541,7 +540,9 @@ class QEFFBaseModel(ABC):
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
-            specializations_data = {"specializations": to_named_specializations(specializations)}
+            specializations_data = {
+                "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
+            }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
 
