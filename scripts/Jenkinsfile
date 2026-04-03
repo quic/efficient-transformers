@@ -193,8 +193,17 @@ pipeline {
 
     post {
         always {
+            script {
+                // Fix ownership of workspace files created by Docker (root → Jenkins user)
+                sh '''
+                sudo chown -R ubuntu:ubuntu .
+                '''
+            }
+
             junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
+
             sh 'sudo docker rm -f ${BUILD_TAG} || true'
+
             deleteDir()
         }
     }
