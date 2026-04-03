@@ -18,11 +18,56 @@ from QEfficient.benchmarking.causal_lm_microbenchmark import (
 )
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
+CAUSAL_RUNTIME_MODEL_IDS = {
+    "gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
+    "codegen": "hf-internal-testing/tiny-random-CodeGenForCausalLM",
+    "falcon": "hf-internal-testing/tiny-random-FalconForCausalLM",
+    "gptj": "hf-internal-testing/tiny-random-GPTJForCausalLM",
+    "llama": "hf-internal-testing/tiny-random-LlamaForCausalLM",
+    "mistral": "hf-internal-testing/tiny-random-MistralForCausalLM",
+    "mixtral": "hf-internal-testing/tiny-random-MixtralForCausalLM",
+    "mpt": "hf-internal-testing/tiny-random-MptForCausalLM",
+    "phi": "hf-internal-testing/tiny-random-PhiForCausalLM",
+    "phi3": "tiny-random/phi-4",
+    "qwen2": "yujiepan/qwen2-tiny-random",
+    "starcoder2": "hf-internal-testing/tiny-random-Starcoder2ForCausalLM",
+    "granite": "hf-internal-testing/tiny-random-GraniteForCausalLM",
+    "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
+    "gpt_oss": "tiny-random/gpt-oss-bf16",
+}
+
+EXPECTED_DECODE_MODULES = {
+    "gpt2": ["attention", "decoder"],
+    "codegen": ["attention", "decoder"],
+    "falcon": ["attention", "decoder"],
+    "gptj": ["attention", "decoder"],
+    "llama": ["attention", "decoder"],
+    "mistral": ["attention", "decoder"],
+    "mixtral": ["attention", "decoder", "moe"],
+    "mpt": ["attention", "decoder"],
+    "phi": ["attention", "decoder"],
+    "phi3": ["attention", "decoder"],
+    "qwen2": ["attention", "decoder"],
+    "starcoder2": ["attention", "decoder"],
+    "granite": ["attention", "decoder"],
+    "olmo2": ["attention", "decoder"],
+    "gpt_oss": ["swa_attention", "swa_decoder", "full_attention", "full_decoder", "moe"],
+}
+
 
 def test_resolve_model_id_alias():
     alias, model_id = resolve_model_id("llama")
     assert alias == "llama"
     assert model_id == "hf-internal-testing/tiny-random-LlamaForCausalLM"
+
+
+@pytest.mark.parametrize(
+    "model_key,model_id", sorted(CAUSAL_RUNTIME_MODEL_IDS.items()), ids=sorted(CAUSAL_RUNTIME_MODEL_IDS)
+)
+def test_tiny_causal_models_have_benchmark_inventory(model_key: str, model_id: str):
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, enable_benchmark=True)
+    specs = qeff_model.get_benchmark_module_specs(mode="decode", seq_len=4, ctx_len=16)
+    assert [spec.module_name for spec in specs] == EXPECTED_DECODE_MODULES[model_key]
 
 
 def test_enable_benchmark_flag_is_required():

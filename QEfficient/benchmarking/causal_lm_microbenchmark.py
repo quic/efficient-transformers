@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -275,19 +276,35 @@ def _next_position_ids(position_ids: np.ndarray) -> np.ndarray:
     return (np.max(position_ids, axis=1, keepdims=True) + 1).astype(np.int64)
 
 
+def _invoke_with_supported_kwargs(module: nn.Module, kwargs: Dict[str, object]):
+    signature = inspect.signature(module.forward)
+    filtered_kwargs = {name: value for name, value in kwargs.items() if name in signature.parameters}
+    return module(**filtered_kwargs)
+
+
 class LlamaCacheModuleBenchmarkWrapper(BenchmarkWrapperBase):
     benchmark_input_kind = "cache"
     past_key_input_name = "past_key.0"
     past_value_input_name = "past_value.0"
 
-    def __init__(self, config, cos_cached: torch.Tensor, sin_cached: torch.Tensor):
+    def __init__(
+        self,
+        config,
+        cos_cached: torch.Tensor,
+        sin_cached: torch.Tensor,
+        cache_len: Optional[int] = None,
+    ):
         super().__init__()
         self.config = config
+        self.cache_len = cache_len
         self.register_buffer("cos_cached", cos_cached.detach().clone(), persistent=False)
         self.register_buffer("sin_cached", sin_cached.detach().clone(), persistent=False)
 
+    def _effective_ctx_len(self, ctx_len: int) -> int:
+        return self.cache_len if self.cache_len is not None else ctx_len
+
     def _kv_shape(self, batch_size: int, ctx_len: int) -> Tuple[int, ...]:
-        return get_padding_shape_from_config(self.config, batch_size, ctx_len)
+        return get_padding_shape_from_config(self.config, batch_size, self._effective_ctx_len(ctx_len))
 
     def _example_cache(self, batch_size: int, ctx_len: int):
         kv_shape = self._kv_shape(batch_size, ctx_len)
@@ -310,9 +327,10 @@ class LlamaCacheModuleBenchmarkWrapper(BenchmarkWrapperBase):
 
     def build_example_inputs(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, object]:
         position_ids = _build_torch_position_ids(batch_size, seq_len)
+        effective_ctx_len = self._effective_ctx_len(ctx_len)
         return {
             "hidden_states": torch.zeros((batch_size, seq_len, self.config.hidden_size), dtype=torch.float32),
-            "attention_mask": _build_torch_causal_mask(position_ids, ctx_len),
+            "attention_mask": _build_torch_causal_mask(position_ids, effective_ctx_len),
             "position_ids": position_ids,
             "past_key_values": self._example_cache(batch_size, ctx_len),
         }
@@ -320,10 +338,11 @@ class LlamaCacheModuleBenchmarkWrapper(BenchmarkWrapperBase):
     def numpy_inputs(self, batch_size: int, seq_len: int, ctx_len: int, seed: int) -> Dict[str, np.ndarray]:
         rng = np.random.default_rng(seed)
         position_ids = _build_position_ids(batch_size, seq_len)
+        effective_ctx_len = self._effective_ctx_len(ctx_len)
         past_key, past_value = self._numpy_cache(batch_size, ctx_len)
         return {
             "hidden_states": rng.standard_normal((batch_size, seq_len, self.config.hidden_size), dtype=np.float32),
-            "attention_mask": _build_numpy_causal_mask(position_ids, ctx_len),
+            "attention_mask": _build_numpy_causal_mask(position_ids, effective_ctx_len),
             "position_ids": position_ids,
             "past_key.0": past_key,
             "past_value.0": past_value,
@@ -331,9 +350,10 @@ class LlamaCacheModuleBenchmarkWrapper(BenchmarkWrapperBase):
 
     def input_shapes(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, List[int]]:
         kv_shape = list(self._kv_shape(batch_size, ctx_len))
+        effective_ctx_len = self._effective_ctx_len(ctx_len)
         return {
             "hidden_states": [batch_size, seq_len, self.config.hidden_size],
-            "attention_mask": [batch_size, 1, seq_len, ctx_len],
+            "attention_mask": [batch_size, 1, seq_len, effective_ctx_len],
             "position_ids": [batch_size, seq_len],
             "past_key.0": kv_shape,
             "past_value.0": kv_shape,
@@ -420,6 +440,183 @@ class LlamaDecoderBenchmarkWrapper(LlamaCacheModuleBenchmarkWrapper):
             self.past_key_input_name: outputs["past_key_RetainedState"],
             self.past_value_input_name: outputs["past_value_RetainedState"],
         }
+
+
+class GenericAttentionBenchmarkWrapper(LlamaCacheModuleBenchmarkWrapper):
+    def __init__(
+        self,
+        attention_module: nn.Module,
+        config,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
+        rotary_emb: Optional[nn.Module] = None,
+        cache_len: Optional[int] = None,
+    ):
+        if cos_cached is None or sin_cached is None:
+            if rotary_emb is not None and hasattr(rotary_emb, "inv_freq"):
+                max_pos = getattr(config, "max_position_embeddings", 4096)
+                seq = torch.arange(max_pos, dtype=torch.int64).to(rotary_emb.inv_freq.device)
+                freqs = torch.outer(seq.type_as(rotary_emb.inv_freq), rotary_emb.inv_freq)
+                emb = torch.cat((freqs, freqs), dim=-1)
+                cos_cached = emb.cos().to(torch.float32)
+                sin_cached = emb.sin().to(torch.float32)
+            else:
+                head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+                max_pos = getattr(config, "max_position_embeddings", 4096)
+                cos_cached = torch.ones((max_pos, head_dim), dtype=torch.float32)
+                sin_cached = torch.zeros((max_pos, head_dim), dtype=torch.float32)
+        super().__init__(config=config, cos_cached=cos_cached, sin_cached=sin_cached, cache_len=cache_len)
+        self.attention = attention_module
+        self.rotary_emb = rotary_emb
+
+    def _position_embeddings(self, hidden_states: torch.Tensor, position_ids: torch.LongTensor):
+        if self.rotary_emb is None:
+            return None
+        try:
+            return self.rotary_emb(hidden_states, position_ids)
+        except TypeError:
+            return None
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.LongTensor,
+        past_key_values,
+    ):
+        past_key_value = QEffDynamicCache.from_legacy_cache(past_key_values)
+        call_kwargs = {
+            "hidden_states": hidden_states,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "past_key_value": past_key_value,
+            "past_key_values": past_key_value,
+            "use_cache": True,
+            "cache_position": position_ids,
+            "cos_cached": self.cos_cached,
+            "sin_cached": self.sin_cached,
+            "position_embeddings": self._position_embeddings(hidden_states, position_ids),
+            "alibi": None,
+            "position_bias": None,
+        }
+        outputs = _invoke_with_supported_kwargs(self.attention, call_kwargs)
+        attention_output = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+        present_key, present_value = past_key_value.to_legacy_cache()[0]
+        return attention_output, present_key, present_value
+
+
+class GenericDecoderBenchmarkWrapper(LlamaCacheModuleBenchmarkWrapper):
+    def __init__(
+        self,
+        decoder_layer: nn.Module,
+        config,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
+        rotary_emb: Optional[nn.Module] = None,
+        cache_len: Optional[int] = None,
+    ):
+        if cos_cached is None or sin_cached is None:
+            if rotary_emb is not None and hasattr(rotary_emb, "inv_freq"):
+                max_pos = getattr(config, "max_position_embeddings", 4096)
+                seq = torch.arange(max_pos, dtype=torch.int64).to(rotary_emb.inv_freq.device)
+                freqs = torch.outer(seq.type_as(rotary_emb.inv_freq), rotary_emb.inv_freq)
+                emb = torch.cat((freqs, freqs), dim=-1)
+                cos_cached = emb.cos().to(torch.float32)
+                sin_cached = emb.sin().to(torch.float32)
+            else:
+                head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+                max_pos = getattr(config, "max_position_embeddings", 4096)
+                cos_cached = torch.ones((max_pos, head_dim), dtype=torch.float32)
+                sin_cached = torch.zeros((max_pos, head_dim), dtype=torch.float32)
+        super().__init__(config=config, cos_cached=cos_cached, sin_cached=sin_cached, cache_len=cache_len)
+        self.decoder_layer = decoder_layer
+        self.rotary_emb = rotary_emb
+
+    def _position_embeddings(self, hidden_states: torch.Tensor, position_ids: torch.LongTensor):
+        if self.rotary_emb is None:
+            return None
+        try:
+            return self.rotary_emb(hidden_states, position_ids)
+        except TypeError:
+            return None
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.LongTensor,
+        past_key_values,
+    ):
+        past_key_value = QEffDynamicCache.from_legacy_cache(past_key_values)
+        call_kwargs = {
+            "hidden_states": hidden_states,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "past_key_value": past_key_value,
+            "past_key_values": past_key_value,
+            "use_cache": True,
+            "cache_position": position_ids,
+            "cos_cached": self.cos_cached,
+            "sin_cached": self.sin_cached,
+            "position_embeddings": self._position_embeddings(hidden_states, position_ids),
+            "output_attentions": False,
+            "alibi": None,
+            "position_bias": None,
+        }
+        outputs = _invoke_with_supported_kwargs(self.decoder_layer, call_kwargs)
+        if isinstance(outputs, (tuple, list)):
+            hidden_states = outputs[0]
+        else:
+            hidden_states = outputs
+        present_key, present_value = past_key_value.to_legacy_cache()[0]
+        return hidden_states, present_key, present_value
+
+    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
+        next_position_ids = _next_position_ids(position_ids)
+        next_ctx_len = outputs["past_key_RetainedState"].shape[2]
+        return {
+            "hidden_states": outputs["decoder_output"][:, -1:, :],
+            "attention_mask": _build_numpy_causal_mask(next_position_ids, next_ctx_len),
+            "position_ids": next_position_ids,
+            self.past_key_input_name: outputs["past_key_RetainedState"],
+            self.past_value_input_name: outputs["past_value_RetainedState"],
+        }
+
+
+class MixtralMoeBenchmarkWrapper(BenchmarkWrapperBase):
+    benchmark_input_kind = "hidden"
+
+    def __init__(self, moe_module: nn.Module, config):
+        super().__init__()
+        self.moe = moe_module
+        self.config = config
+
+    def forward(self, hidden_states: torch.Tensor):
+        outputs = self.moe(hidden_states)
+        if isinstance(outputs, (tuple, list)):
+            hidden_states = outputs[0]
+        else:
+            hidden_states = outputs
+        return hidden_states
+
+    def build_example_inputs(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, object]:
+        return {"hidden_states": torch.zeros((batch_size, seq_len, self.config.hidden_size), dtype=torch.float32)}
+
+    def dynamic_axes(self, output_name: str) -> Dict[str, Dict[int, str]]:
+        return {"hidden_states": {0: "batch_size", 1: "seq_len"}, output_name: {0: "batch_size", 1: "seq_len"}}
+
+    def numpy_inputs(self, batch_size: int, seq_len: int, ctx_len: int, seed: int) -> Dict[str, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        return {"hidden_states": rng.standard_normal((batch_size, seq_len, self.config.hidden_size), dtype=np.float32)}
+
+    def input_shapes(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, List[int]]:
+        return {"hidden_states": [batch_size, seq_len, self.config.hidden_size]}
+
+    def output_shapes(self, batch_size: int, seq_len: int, ctx_len: int, output_name: str) -> Dict[str, List[int]]:
+        return {output_name: [batch_size, seq_len, self.config.hidden_size]}
+
+    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
+        return {"hidden_states": outputs["moe_output"][:, -1:, :]}
 
 
 class GptOssCacheModuleBenchmarkWrapper(BenchmarkWrapperBase):
@@ -779,6 +976,211 @@ class LlamaArchitectureAdapter:
         return specs
 
 
+def _get_source_decoder_model(qeff_model: "QEFFAutoModelForCausalLM") -> nn.Module:
+    if hasattr(qeff_model.model, "model"):
+        return qeff_model.model.model
+    if hasattr(qeff_model.model, "transformer"):
+        return qeff_model.model.transformer
+    raise NotImplementedError(
+        f"Unable to resolve source decoder model for benchmarking from {type(qeff_model.model).__name__}"
+    )
+
+
+def _get_decoder_layers(source_model: nn.Module):
+    if hasattr(source_model, "layers"):
+        return source_model.layers
+    if hasattr(source_model, "h"):
+        return source_model.h
+    if hasattr(source_model, "blocks"):
+        return source_model.blocks
+    raise NotImplementedError(f"Unable to resolve decoder layers for benchmarking from {type(source_model).__name__}")
+
+
+def _get_attention_module(layer: nn.Module) -> nn.Module:
+    if hasattr(layer, "self_attn"):
+        return layer.self_attn
+    if hasattr(layer, "self_attention"):
+        return layer.self_attention
+    if hasattr(layer, "attn"):
+        return layer.attn
+    raise NotImplementedError(f"Unable to resolve attention module from {type(layer).__name__}")
+
+
+class UniversalCausalArchitectureAdapter:
+    benchmarkable_types = {"attention", "decoder"}
+    supports_combined_prefill_decode = True
+    supported_model_types = {
+        "gpt2",
+        "codegen",
+        "falcon",
+        "gptj",
+        "mistral",
+        "mpt",
+        "phi",
+        "phi3",
+        "qwen2",
+        "starcoder2",
+        "granite",
+        "olmo2",
+    }
+
+    @staticmethod
+    def matches(qeff_model: "QEFFAutoModelForCausalLM") -> bool:
+        return (
+            getattr(qeff_model.model.config, "model_type", None)
+            in UniversalCausalArchitectureAdapter.supported_model_types
+        )
+
+    @staticmethod
+    def resolved_dims(qeff_model: "QEFFAutoModelForCausalLM") -> Dict[str, int]:
+        config = qeff_model.model.config
+        num_attention_heads = getattr(config, "num_attention_heads", 0)
+        num_key_value_heads = getattr(config, "num_key_value_heads", num_attention_heads)
+        head_dim = getattr(
+            config,
+            "head_dim",
+            (config.hidden_size // num_attention_heads) if num_attention_heads else 0,
+        )
+        return {
+            "hidden_size": config.hidden_size,
+            "num_attention_heads": num_attention_heads,
+            "num_key_value_heads": num_key_value_heads,
+            "head_dim": head_dim,
+            "num_hidden_layers": config.num_hidden_layers,
+            "intermediate_size": getattr(config, "intermediate_size", 0),
+        }
+
+    @staticmethod
+    def list_specs(
+        qeff_model: "QEFFAutoModelForCausalLM",
+        mode: str,
+        layer_index: int,
+        seq_len: int,
+        ctx_len: int,
+        enable_chunking: bool = False,
+    ) -> List[BenchmarkModuleSpec]:
+        source_model = _get_source_decoder_model(qeff_model)
+        layers = _get_decoder_layers(source_model)
+        layer = layers[layer_index]
+        model_type = getattr(qeff_model.model.config, "model_type", None)
+        cache_len = seq_len if model_type in {"codegen", "gptj", "mpt"} else None
+        rotary_emb = getattr(source_model, "rotary_emb", None)
+        cos_cached = getattr(source_model, "cos_cached", None)
+        sin_cached = getattr(source_model, "sin_cached", None)
+        return [
+            BenchmarkModuleSpec(
+                benchmark_type="attention",
+                module_name="attention",
+                mode=mode,
+                layer_index=layer_index,
+                wrapper=GenericAttentionBenchmarkWrapper(
+                    attention_module=_get_attention_module(layer),
+                    config=qeff_model.model.config,
+                    cos_cached=cos_cached,
+                    sin_cached=sin_cached,
+                    rotary_emb=rotary_emb,
+                    cache_len=cache_len,
+                ),
+                output_name="attention_output",
+            ),
+            BenchmarkModuleSpec(
+                benchmark_type="decoder",
+                module_name="decoder",
+                mode=mode,
+                layer_index=layer_index,
+                wrapper=GenericDecoderBenchmarkWrapper(
+                    decoder_layer=layer,
+                    config=qeff_model.model.config,
+                    cos_cached=cos_cached,
+                    sin_cached=sin_cached,
+                    rotary_emb=rotary_emb,
+                    cache_len=cache_len,
+                ),
+                output_name="decoder_output",
+            ),
+        ]
+
+
+class MixtralArchitectureAdapter:
+    benchmarkable_types = {"attention", "decoder", "moe"}
+    supports_combined_prefill_decode = True
+
+    @staticmethod
+    def matches(qeff_model: "QEFFAutoModelForCausalLM") -> bool:
+        return getattr(qeff_model.model.config, "model_type", None) == "mixtral"
+
+    @staticmethod
+    def resolved_dims(qeff_model: "QEFFAutoModelForCausalLM") -> Dict[str, int]:
+        config = qeff_model.model.config
+        num_attention_heads = config.num_attention_heads
+        num_key_value_heads = getattr(config, "num_key_value_heads", num_attention_heads)
+        head_dim = getattr(config, "head_dim", config.hidden_size // num_attention_heads)
+        return {
+            "hidden_size": config.hidden_size,
+            "num_attention_heads": num_attention_heads,
+            "num_key_value_heads": num_key_value_heads,
+            "head_dim": head_dim,
+            "num_hidden_layers": config.num_hidden_layers,
+            "intermediate_size": getattr(config, "intermediate_size", 0),
+            "num_local_experts": getattr(config, "num_local_experts", 0),
+        }
+
+    @staticmethod
+    def list_specs(
+        qeff_model: "QEFFAutoModelForCausalLM",
+        mode: str,
+        layer_index: int,
+        seq_len: int,
+        ctx_len: int,
+        enable_chunking: bool = False,
+    ) -> List[BenchmarkModuleSpec]:
+        source_model = _get_source_decoder_model(qeff_model)
+        layers = _get_decoder_layers(source_model)
+        layer = layers[layer_index]
+        rotary_emb = getattr(source_model, "rotary_emb", None)
+        return [
+            BenchmarkModuleSpec(
+                benchmark_type="attention",
+                module_name="attention",
+                mode=mode,
+                layer_index=layer_index,
+                wrapper=GenericAttentionBenchmarkWrapper(
+                    attention_module=_get_attention_module(layer),
+                    config=qeff_model.model.config,
+                    cos_cached=source_model.cos_cached,
+                    sin_cached=source_model.sin_cached,
+                    rotary_emb=rotary_emb,
+                ),
+                output_name="attention_output",
+            ),
+            BenchmarkModuleSpec(
+                benchmark_type="decoder",
+                module_name="decoder",
+                mode=mode,
+                layer_index=layer_index,
+                wrapper=GenericDecoderBenchmarkWrapper(
+                    decoder_layer=layer,
+                    config=qeff_model.model.config,
+                    cos_cached=source_model.cos_cached,
+                    sin_cached=source_model.sin_cached,
+                    rotary_emb=rotary_emb,
+                ),
+                output_name="decoder_output",
+            ),
+            BenchmarkModuleSpec(
+                benchmark_type="moe",
+                module_name="moe",
+                mode=mode,
+                layer_index=layer_index,
+                wrapper=MixtralMoeBenchmarkWrapper(
+                    moe_module=layer.block_sparse_moe,
+                    config=qeff_model.model.config,
+                ),
+                output_name="moe_output",
+            ),
+        ]
+
+
 class GptOssArchitectureAdapter:
     benchmarkable_types = {"attention", "decoder", "mlp", "moe"}
     supports_combined_prefill_decode = False
@@ -1002,11 +1404,16 @@ class CausalLMModuleBenchmarkModel(QEFFBaseModel):
 
 
 def _resolve_adapter(qeff_model: "QEFFAutoModelForCausalLM"):
-    for adapter in (LlamaArchitectureAdapter, GptOssArchitectureAdapter):
+    for adapter in (
+        GptOssArchitectureAdapter,
+        MixtralArchitectureAdapter,
+        LlamaArchitectureAdapter,
+        UniversalCausalArchitectureAdapter,
+    ):
         if adapter.matches(qeff_model):
             return adapter
     raise NotImplementedError(
-        f"Microbenchmarking currently supports Llama and GPT-OSS via QEFFAutoModelForCausalLM. "
+        f"Microbenchmarking currently supports GPT-OSS, Mixtral, Llama and selected CausalLM decoder architectures via QEFFAutoModelForCausalLM. "
         f"Got model_type={getattr(qeff_model.model.config, 'model_type', None)}."
     )
 
