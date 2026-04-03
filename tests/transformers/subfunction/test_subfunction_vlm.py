@@ -19,7 +19,7 @@ from transformers import (
     AutoProcessor,
 )
 
-from QEfficient.utils.test_utils import get_qeff_vlm_model
+from QEfficient.utils.test_utils import load_vlm_qeff_model
 
 NEW_GENERATION_TOKENS = 10
 
@@ -56,7 +56,7 @@ def check_image_text_to_text_subfunction_core(
     qnn_config = None
     num_devices = 1
 
-    qeff_model = get_qeff_vlm_model(
+    qeff_model = load_vlm_qeff_model(
         model_name, kv_offload=kv_offload, num_hidden_layers=num_hidden_layers, config=config
     )
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
