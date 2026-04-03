@@ -435,14 +435,8 @@ class QEFFAutoModel(QEFFTransformersBase):
         if isinstance(seq_len, list) and len(seq_len) >= 15:
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
-        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {
-                "_graph_name": "Embedding" if len(_seq_lens) == 1 else f"Embedding_{i}",
-                "batch_size": batch_size,
-                "seq_len": sl,
-            }
-            for i, sl in enumerate(_seq_lens)
+            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
         return self._compile(
@@ -781,14 +775,8 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         if isinstance(seq_len, list) and len(seq_len) >= 15:
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
-        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {
-                "_graph_name": "SeqClassification" if len(_seq_lens) == 1 else f"SeqClassification_{i}",
-                "batch_size": batch_size,
-                "seq_len": sl,
-            }
-            for i, sl in enumerate(_seq_lens)
+            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
         return self._compile(
@@ -1495,7 +1483,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.vision_model._compile(
                 compile_dir=compile_dir,
                 compile_only=True,
-                specializations=[{**s, "_graph_name": "Vision"} for s in specializations["vision"]],
+                specializations=specializations["vision"],
                 convert_to_fp16=True,
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
@@ -3115,9 +3103,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: remove this; not required
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
-        result = {k: v for k, v in spec.items() if v is not None}
-        result["_graph_name"] = "Prefill"
-        return result
+        return {k: v for k, v in spec.items() if v is not None}
 
     def build_decode_specialization(
         self,
@@ -3175,9 +3161,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
-        result = {k: v for k, v in spec.items() if v is not None}
-        result["_graph_name"] = "Decode"
-        return result
+        return {k: v for k, v in spec.items() if v is not None}
 
     def compile(
         self,
@@ -4096,10 +4080,8 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :str: Path of the compiled ``qpc`` package.
         """
 
-        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {"_graph_name": "CTC" if len(_seq_lens) == 1 else f"CTC_{i}", "batch_size": batch_size, "seq_len": sl}
-            for i, sl in enumerate(_seq_lens)
+            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
         return self._compile(
