@@ -76,6 +76,14 @@ CAUSAL_RUNTIME_MODEL_IDS = {
     "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
     "gpt_oss": "tiny-random/gpt-oss-bf16",
 }
+CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
+    "codegen",
+    "phi",
+    "starcoder2",
+    "mixtral",
+    "gpt_oss",
+    # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
+}
 
 VLM_TEXT_RUNTIME_MODEL_ID = "tiny-random/gemma-3"
 VLM_EXPORT_MODEL_IDS = {
@@ -170,6 +178,22 @@ def _exported_onnx_path(export_result) -> Path:
     return onnx_path
 
 
+def _count_decoder_block_subfunctions(onnx_model, qeff_model) -> int:
+    get_submodules = getattr(qeff_model.model, "get_submodules_for_export", None)
+    if not callable(get_submodules):
+        return 0
+
+    submodules = get_submodules()
+    if not submodules:
+        return 0
+
+    if not isinstance(submodules, (set, list, tuple)):
+        submodules = [submodules]
+
+    block_names = {module.__name__ for module in submodules if hasattr(module, "__name__")}
+    return sum(any(block_name in func.name for block_name in block_names) for func in onnx_model.functions)
+
+
 def _assert_has_retained_state_outputs(onnx_path: Path) -> None:
     onnx_model = onnx.load(onnx_path, load_external_data=False)
     retained_outputs = [output.name for output in onnx_model.graph.output if output.name.endswith("_RetainedState")]
@@ -214,7 +238,7 @@ def _export_vlm_with_text_fallback(model_id: str, out_dir: Path) -> Path:
     try:
         config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
         model_type = getattr(config, "model_type", "")
-        use_text_only_first = model_type in {"qwen2_5_vl", "internvl_chat"}
+        use_text_only_first = model_type in {"qwen2_5_vl", "qwen2_5_vl_text", "internvl_chat"}
 
         if not use_text_only_first:
             try:
@@ -224,7 +248,7 @@ def _export_vlm_with_text_fallback(model_id: str, out_dir: Path) -> Path:
                 pass
 
         try:
-            if model_type == "qwen2_5_vl" and getattr(config, "text_config", None) is not None:
+            if model_type in {"qwen2_5_vl", "qwen2_5_vl_text"} and getattr(config, "text_config", None) is not None:
                 qwen2_cfg_dict = config.text_config.to_dict()
                 qwen2_cfg_dict["model_type"] = "qwen2"
                 qwen2_allowed_keys = set(Qwen2Config().to_dict().keys())
@@ -504,15 +528,71 @@ def test_causal_compile_with_subfunctions_all_models(model_type, model_id, tmp_p
     ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
 )
 def test_causal_subfunction_export_smoke_all_models(model_type, model_id, tmp_path):
-    del model_type
+    if model_type == "gpt_oss":
+        pytest.skip("Subfunction runtime parity is currently excluded for gpt_oss in quickcheck.")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    if hasattr(tokenizer, "model_input_names"):
+        tokenizer.model_input_names = ["input_ids", "attention_mask"]
+    prompt = ["hello world"]
+    prompt_len = 8
+    ctx_len = 12
+
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        **MODEL_KWARGS,
+        low_cpu_mem_usage=False,
+        trust_remote_code=True,
+        torch_dtype=torch.float32,
+    )
+    model_hf.eval()
+
+    api_runner = ApiRunner(
+        batch_size=1,
+        tokenizer=tokenizer,
+        config=model_hf.config,
+        prompt=prompt,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        full_batch_size=None,
+    )
+
+    hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "with-subfunctions-all", use_onnx_subfunctions=True))
+    ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
+
+    assert np.array_equal(hf_tokens, kv_tokens.squeeze(0))
+    assert np.array_equal(kv_tokens, ort_tokens)
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("model_type", "model_id"),
+    sorted(CAUSAL_RUNTIME_MODEL_IDS.items()),
+    ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
+)
+def test_causal_subfunction_count_with_onnx_subfunctions(model_type, model_id, tmp_path):
     try:
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
-    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "with-subfunctions-all", use_onnx_subfunctions=True))
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / f"subfunction-count-{model_type}", use_onnx_subfunctions=True)
+    )
     onnx_model = onnx.load(onnx_path, load_external_data=False)
-    assert len(onnx_model.functions) > 0
+    subfunction_count = _count_decoder_block_subfunctions(onnx_model, qeff_model)
+
+    if model_type in CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES:
+        assert subfunction_count > 1, (
+            f"{model_type} expected multiple decoder-block subfunctions (>1), but found {subfunction_count}"
+        )
+    else:
+        assert subfunction_count == 1, (
+            f"{model_type} expected a single decoder-block subfunction (1), but found {subfunction_count}"
+        )
 
 
 @pytest.mark.llm_model

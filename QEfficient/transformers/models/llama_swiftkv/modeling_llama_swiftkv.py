@@ -86,7 +86,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_ids: torch.LongTensor,
-        past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        past_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: torch.Tensor = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -100,7 +100,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         query_states = query.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
 
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-        if past_key_value is not None:
+        if past_key_values is not None:
             if self.layer_idx is None:
                 raise ValueError(
                     f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
@@ -111,7 +111,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
             # kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
-        key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
+        key_states, value_states = past_key_values.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
         position_ids = position_ids[torch.arange(bsz), position_ids.to(torch.int32).argmax(1)].unsqueeze(1)
         query_states, _ = qeff_apply_rotary_pos_emb(
@@ -140,7 +140,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
         attn_output = self.o_proj(attn_output)
 
-        return attn_output, past_key_value
+        return attn_output, past_key_values
 
 
 class QEffLlamaSwiftKVDecoderLayer(nn.Module):
@@ -177,7 +177,7 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         hidden_states, past_key_values = self.self_attn(
             hidden_states=hidden_states,
             position_ids=position_ids,
-            past_key_value=past_key_values,
+            past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
             attention_mask=causal_mask,
             batch_index=batch_index,
