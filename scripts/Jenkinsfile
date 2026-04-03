@@ -175,6 +175,12 @@ pipeline {
             when { expression { params.RUN_FINETUNE } }
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
+                    dockerExec(env.BUILD_TAG, """
+                        cd /efficient-transformers &&
+                        . preflight_qeff/bin/activate &&
+                        pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
+                        pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu
+                    """)
                     runPytest(
                         env.BUILD_TAG,
                         "(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)",
