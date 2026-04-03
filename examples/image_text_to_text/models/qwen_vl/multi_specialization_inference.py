@@ -94,7 +94,12 @@ else:  # Vision + Text
     widths = [s["width"] for s in resolutions]
     heights = [s["height"] for s in resolutions]
     num_frames = [s["num_frames"] for s in resolutions]
-    user_vision_size = 9216
+    vision_size = 9216  # vision_size is the maximum visual-token budget that limits the ViT
+    # (Vision Transformer) embeddings passed to the language decoder, together
+    # with the text prompt. Increasing this value preserves more visual detail,
+    # but consumes more of the model’s context length.
+    # This argument is **optional**; if not provided, vision_size is automatically
+    # derived from the input image resolutions to support the largest resolution.
 
     qeff_model.compile(
         batch_size=batch_size,
@@ -109,7 +114,7 @@ else:  # Vision + Text
             "min_pixels": 4 * 28 * 28,
             "max_pixels": 16384 * 28 * 28,
         },
-        vision_size=user_vision_size,
+        vision_size=vision_size,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
