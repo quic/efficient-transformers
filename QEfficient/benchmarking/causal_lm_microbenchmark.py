@@ -1,0 +1,1915 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from time import perf_counter
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+import numpy as np
+import torch
+from torch import nn
+
+from QEfficient.base.modeling_qeff import QEFFBaseModel
+from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffHybridCacheForGPTOSS
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils._utils import get_padding_shape_from_config
+
+if TYPE_CHECKING:
+    from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+
+SUPPORTED_CAUSAL_RUNTIME_MODEL_IDS = {
+    "gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
+    "codegen": "hf-internal-testing/tiny-random-CodeGenForCausalLM",
+    "falcon": "hf-internal-testing/tiny-random-FalconForCausalLM",
+    "gptj": "hf-internal-testing/tiny-random-GPTJForCausalLM",
+    "llama": "hf-internal-testing/tiny-random-LlamaForCausalLM",
+    "mistral": "hf-internal-testing/tiny-random-MistralForCausalLM",
+    "mixtral": "hf-internal-testing/tiny-random-MixtralForCausalLM",
+    "mpt": "hf-internal-testing/tiny-random-MptForCausalLM",
+    "phi": "hf-internal-testing/tiny-random-PhiForCausalLM",
+    "phi3": "tiny-random/phi-4",
+    "qwen2": "yujiepan/qwen2-tiny-random",
+    "starcoder2": "hf-internal-testing/tiny-random-Starcoder2ForCausalLM",
+    "granite": "hf-internal-testing/tiny-random-GraniteForCausalLM",
+    "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
+    "gpt_oss": "tiny-random/gpt-oss-bf16",
+}
+
+BENCHMARK_TYPES = ("attention", "decoder", "mlp", "moe")
+BENCHMARK_MODES = ("prefill", "decode", "both")
+
+
+@dataclass
+class RuntimeStats:
+    iterations: int
+    mean_ms: float
+    min_ms: float
+    max_ms: float
+    total_ms: float
+    p50_ms: Optional[float] = None
+    p99_ms: Optional[float] = None
+    throughput_ips: Optional[float] = None
+    tokens_per_second: Optional[float] = None
+
+
+@dataclass
+class BenchmarkSummary:
+    benchmark_type: str
+    module_name: str
+    mode: str
+    model_name: str
+    model_id: str
+    architecture: str
+    layer_index: int
+    batch_size: int
+    seq_len: int
+    ctx_len: int
+    resolved_dims: Dict[str, int]
+    input_shapes: Dict[str, List[int]]
+    output_shapes: Dict[str, List[int]]
+    onnx_path: str
+    qpc_path: Optional[str]
+    prefill_runtime: Optional[RuntimeStats]
+    seed_prefill_ms: Optional[float]
+    first_decode_ms: Optional[float]
+    decode_runtime: Optional[RuntimeStats]
+
+
+@dataclass
+class BenchmarkManifest:
+    prefill_only: Optional[bool]
+    enable_chunking: bool
+    batch_size: int
+    seq_len: int
+    ctx_len: int
+    num_cores: int
+    num_devices: int
+    warmup_runs: int
+    benchmark_runs: int
+    summaries: List[BenchmarkSummary]
+
+
+@dataclass
+class BenchmarkModuleSpec:
+    benchmark_type: str
+    module_name: str
+    mode: str
+    layer_index: int
+    wrapper: nn.Module
+    output_name: str
+
+
+def _mode_label(prefill_only: Optional[bool]) -> str:
+    if prefill_only is True:
+        return "prefill"
+    if prefill_only is False:
+        return "decode"
+    return "both"
+
+
+def _safe_benchmark_root(summaries: List[BenchmarkSummary]) -> Path:
+    if not summaries:
+        return Path.cwd()
+    onnx_path = Path(summaries[0].onnx_path)
+    parent = onnx_path.parent
+    grandparent = parent.parent
+    return parent if grandparent == Path(onnx_path.anchor) else grandparent
+
+
+def _manifest_file_name(manifest: BenchmarkManifest, *, kind: str) -> str:
+    chunk_label = "-chunked" if manifest.enable_chunking else ""
+    return (
+        f"benchmark-{kind}-{_mode_label(manifest.prefill_only)}"
+        f"-bs{manifest.batch_size}-pl{manifest.seq_len}-cl{manifest.ctx_len}{chunk_label}.json"
+    )
+
+
+def resolve_model_id(model_name_or_path: str) -> Tuple[str, str]:
+    resolved = SUPPORTED_CAUSAL_RUNTIME_MODEL_IDS.get(model_name_or_path, model_name_or_path)
+    return model_name_or_path, resolved
+
+
+def _build_position_ids(batch_size: int, seq_len: int, start: int = 0) -> np.ndarray:
+    position_ids = np.arange(start, start + seq_len, dtype=np.int64).reshape(1, seq_len)
+    return np.repeat(position_ids, batch_size, axis=0)
+
+
+def _zeros_kv_cache(config, batch_size: int, ctx_len: int) -> Tuple[np.ndarray, np.ndarray]:
+    kv_shape = get_padding_shape_from_config(config, batch_size, ctx_len)
+    return np.zeros(kv_shape, dtype=np.float32), np.zeros(kv_shape, dtype=np.float32)
+
+
+def _timed_session_runs(
+    session: QAICInferenceSession,
+    build_inputs,
+    warmup_runs: int,
+    benchmark_runs: int,
+) -> RuntimeStats:
+    for _ in range(warmup_runs):
+        _ = _run_session(session, build_inputs())
+
+    timings_ms = []
+    for _ in range(benchmark_runs):
+        inputs = build_inputs()
+        start = perf_counter()
+        _ = _run_session(session, inputs)
+        timings_ms.append((perf_counter() - start) * 1000.0)
+
+    total_ms = float(sum(timings_ms))
+    timings_array = np.asarray(timings_ms, dtype=np.float64)
+    return RuntimeStats(
+        iterations=benchmark_runs,
+        mean_ms=total_ms / benchmark_runs,
+        min_ms=float(min(timings_ms)),
+        max_ms=float(max(timings_ms)),
+        total_ms=total_ms,
+        p50_ms=float(np.percentile(timings_array, 50)),
+        p99_ms=float(np.percentile(timings_array, 99)),
+        throughput_ips=(benchmark_runs / (total_ms / 1000.0)) if total_ms else None,
+    )
+
+
+def _cast_inputs_for_session(session: QAICInferenceSession, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    casted_inputs = {}
+    for input_name, value in inputs.items():
+        if input_name not in session.binding_index_map:
+            continue
+        binding = session.bindings[session.binding_index_map[input_name]]
+        dtype = session.aic_to_np_dtype_mapping[binding.type]
+        casted_inputs[input_name] = np.ascontiguousarray(value.astype(dtype, copy=False))
+    return casted_inputs
+
+
+def _matching_allowed_shape_index(session: QAICInferenceSession, inputs: Dict[str, np.ndarray]) -> Optional[int]:
+    if not session.allowed_shapes:
+        return None
+    for shape_index, allowed_shape in enumerate(session.allowed_shapes):
+        matches = True
+        for binding in session.bindings:
+            if binding.name not in inputs:
+                continue
+            if list(inputs[binding.name].shape) != allowed_shape[binding.index][1]:
+                matches = False
+                break
+        if matches:
+            return shape_index
+    return None
+
+
+def _run_session(session: QAICInferenceSession, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    casted_inputs = _cast_inputs_for_session(session, inputs)
+    allowed_shape_index = _matching_allowed_shape_index(session, casted_inputs)
+    if allowed_shape_index is not None:
+        output_buffers = {}
+        allowed_shape = session.allowed_shapes[allowed_shape_index]
+        for output_name in session.output_names:
+            binding_index = session.binding_index_map[output_name]
+            binding = session.bindings[binding_index]
+            dtype = session.aic_to_np_dtype_mapping[binding.type]
+            output_shape = tuple(allowed_shape[binding_index][1])
+            output_buffers[output_name] = np.empty(output_shape, dtype=dtype)
+        session.set_buffers(output_buffers)
+    return session.run(casted_inputs)
+
+
+class BenchmarkWrapperBase(nn.Module):
+    benchmark_input_kind = "hidden"
+
+    def build_example_inputs(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, object]:
+        raise NotImplementedError
+
+    def dynamic_axes(self, output_name: str) -> Dict[str, Dict[int, str]]:
+        raise NotImplementedError
+
+    def numpy_inputs(self, batch_size: int, seq_len: int, ctx_len: int, seed: int) -> Dict[str, np.ndarray]:
+        raise NotImplementedError
+
+    def input_shapes(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, List[int]]:
+        raise NotImplementedError
+
+    def output_shapes(self, batch_size: int, seq_len: int, ctx_len: int, output_name: str) -> Dict[str, List[int]]:
+        raise NotImplementedError
+
+    def specialization_values(self, batch_size: int, seq_len: int, ctx_len: int, mode: str) -> Dict[str, int]:
+        return {"batch_size": batch_size, "seq_len": seq_len, "ctx_len": ctx_len}
+
+    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
+        raise NotImplementedError
+
+
+def _build_torch_position_ids(batch_size: int, seq_len: int, start: int = 0) -> torch.Tensor:
+    return torch.arange(start, start + seq_len, dtype=torch.int64).view(1, seq_len).repeat(batch_size, 1)
+
+
+def _build_torch_causal_mask(
+    position_ids: torch.Tensor,
+    target_length: int,
+    *,
+    sliding_window: Optional[int] = None,
+) -> torch.Tensor:
+    return _create_causal_mask(position_ids=position_ids, target_length=target_length, sliding_window=sliding_window)
+
+
+def _build_numpy_causal_mask(
+    position_ids: np.ndarray,
+    target_length: int,
+    *,
+    sliding_window: Optional[int] = None,
+) -> np.ndarray:
+    position_ids_t = torch.from_numpy(position_ids.astype(np.int64, copy=False))
+    return _build_torch_causal_mask(position_ids_t, target_length, sliding_window=sliding_window).cpu().numpy()
+
+
+def _next_position_ids(position_ids: np.ndarray) -> np.ndarray:
+    return (np.max(position_ids, axis=1, keepdims=True) + 1).astype(np.int64)
+
+
+class LlamaCacheModuleBenchmarkWrapper(BenchmarkWrapperBase):
+    benchmark_input_kind = "cache"
+    past_key_input_name = "past_key.0"
+    past_value_input_name = "past_value.0"
+
+    def __init__(self, config, cos_cached: torch.Tensor, sin_cached: torch.Tensor):
+        super().__init__()
+        self.config = config
+        self.register_buffer("cos_cached", cos_cached.detach().clone(), persistent=False)
+        self.register_buffer("sin_cached", sin_cached.detach().clone(), persistent=False)
+
+    def _kv_shape(self, batch_size: int, ctx_len: int) -> Tuple[int, ...]:
+        return get_padding_shape_from_config(self.config, batch_size, ctx_len)
+
+    def _example_cache(self, batch_size: int, ctx_len: int):
+        kv_shape = self._kv_shape(batch_size, ctx_len)
+        return [[torch.zeros(kv_shape, dtype=torch.float32), torch.zeros(kv_shape, dtype=torch.float32)]]
+
+    def _numpy_cache(self, batch_size: int, ctx_len: int) -> Tuple[np.ndarray, np.ndarray]:
+        return _zeros_kv_cache(self.config, batch_size, ctx_len)
+
+    def dynamic_axes(self, output_name: str) -> Dict[str, Dict[int, str]]:
+        return {
+            "hidden_states": {0: "batch_size", 1: "seq_len"},
+            "attention_mask": {0: "batch_size", 2: "seq_len", 3: "ctx_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "past_key.0": {0: "batch_size", 2: "ctx_len"},
+            "past_value.0": {0: "batch_size", 2: "ctx_len"},
+            output_name: {0: "batch_size", 1: "seq_len"},
+            "past_key_RetainedState": {0: "batch_size", 2: "ctx_len"},
+            "past_value_RetainedState": {0: "batch_size", 2: "ctx_len"},
+        }
+
+    def build_example_inputs(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, object]:
+        position_ids = _build_torch_position_ids(batch_size, seq_len)
+        return {
+            "hidden_states": torch.zeros((batch_size, seq_len, self.config.hidden_size), dtype=torch.float32),
+            "attention_mask": _build_torch_causal_mask(position_ids, ctx_len),
+            "position_ids": position_ids,
+            "past_key_values": self._example_cache(batch_size, ctx_len),
+        }
+
+    def numpy_inputs(self, batch_size: int, seq_len: int, ctx_len: int, seed: int) -> Dict[str, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        position_ids = _build_position_ids(batch_size, seq_len)
+        past_key, past_value = self._numpy_cache(batch_size, ctx_len)
+        return {
+            "hidden_states": rng.standard_normal((batch_size, seq_len, self.config.hidden_size), dtype=np.float32),
+            "attention_mask": _build_numpy_causal_mask(position_ids, ctx_len),
+            "position_ids": position_ids,
+            "past_key.0": past_key,
+            "past_value.0": past_value,
+        }
+
+    def input_shapes(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, List[int]]:
+        kv_shape = list(self._kv_shape(batch_size, ctx_len))
+        return {
+            "hidden_states": [batch_size, seq_len, self.config.hidden_size],
+            "attention_mask": [batch_size, 1, seq_len, ctx_len],
+            "position_ids": [batch_size, seq_len],
+            "past_key.0": kv_shape,
+            "past_value.0": kv_shape,
+        }
+
+    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
+        next_position_ids = _next_position_ids(position_ids)
+        next_ctx_len = outputs["past_key_RetainedState"].shape[2]
+        return {
+            "hidden_states": outputs["attention_output"][:, -1:, :],
+            "attention_mask": _build_numpy_causal_mask(next_position_ids, next_ctx_len),
+            "position_ids": next_position_ids,
+            self.past_key_input_name: outputs["past_key_RetainedState"],
+            self.past_value_input_name: outputs["past_value_RetainedState"],
+        }
+
+    def output_shapes(self, batch_size: int, seq_len: int, ctx_len: int, output_name: str) -> Dict[str, List[int]]:
+        kv_shape = list(self._kv_shape(batch_size, ctx_len))
+        return {
+            output_name: [batch_size, seq_len, self.config.hidden_size],
+            "past_key_RetainedState": kv_shape,
+            "past_value_RetainedState": kv_shape,
+        }
+
+
+class LlamaAttentionBenchmarkWrapper(LlamaCacheModuleBenchmarkWrapper):
+    def __init__(self, attention_module: nn.Module, cos_cached: torch.Tensor, sin_cached: torch.Tensor, config):
+        super().__init__(config=config, cos_cached=cos_cached, sin_cached=sin_cached)
+        self.attention = attention_module
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.LongTensor,
+        past_key_values,
+    ):
+        past_key_value = QEffDynamicCache.from_legacy_cache(past_key_values)
+        attention_output, _ = self.attention(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            use_cache=True,
+            cos_cached=self.cos_cached,
+            sin_cached=self.sin_cached,
+        )
+        present_key, present_value = past_key_value.to_legacy_cache()[0]
+        return attention_output, present_key, present_value
+
+
+class LlamaDecoderBenchmarkWrapper(LlamaCacheModuleBenchmarkWrapper):
+    def __init__(self, decoder_layer: nn.Module, cos_cached: torch.Tensor, sin_cached: torch.Tensor, config):
+        super().__init__(config=config, cos_cached=cos_cached, sin_cached=sin_cached)
+        self.decoder_layer = decoder_layer
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.LongTensor,
+        past_key_values,
+    ):
+        past_key_value = QEffDynamicCache.from_legacy_cache(past_key_values)
+        hidden_states = self.decoder_layer(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            use_cache=True,
+            cos_cached=self.cos_cached,
+            sin_cached=self.sin_cached,
+        )
+        present_key, present_value = past_key_value.to_legacy_cache()[0]
+        return hidden_states, present_key, present_value
+
+    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
+        next_position_ids = _next_position_ids(position_ids)
+        next_ctx_len = outputs["past_key_RetainedState"].shape[2]
+        return {
+            "hidden_states": outputs["decoder_output"][:, -1:, :],
+            "attention_mask": _build_numpy_causal_mask(next_position_ids, next_ctx_len),
+            "position_ids": next_position_ids,
+            self.past_key_input_name: outputs["past_key_RetainedState"],
+            self.past_value_input_name: outputs["past_value_RetainedState"],
+        }
+
+
+class GptOssCacheModuleBenchmarkWrapper(BenchmarkWrapperBase):
+    benchmark_input_kind = "cache"
+    past_key_input_name = "past_key"
+    past_value_input_name = "past_value"
+
+    def __init__(
+        self,
+        attention_module: nn.Module,
+        config,
+        cos_cached: torch.Tensor,
+        sin_cached: torch.Tensor,
+        ctx_len: int,
+        cache_len: Optional[int] = None,
+        layer_index: int = 0,
+    ):
+        super().__init__()
+        self.attention = attention_module
+        self.config = config
+        self.ctx_len = ctx_len
+        self.cache_len = cache_len if cache_len is not None else ctx_len
+        self.layer_index = layer_index
+        self.register_buffer("cos_cached", cos_cached.detach().clone(), persistent=False)
+        self.register_buffer("sin_cached", sin_cached.detach().clone(), persistent=False)
+
+    @property
+    def sliding_window_len(self) -> int:
+        return self.cache_len
+
+    @property
+    def uses_sliding_window(self) -> bool:
+        return getattr(self.attention, "sliding_window", None) is not None
+
+    @property
+    def cache_axis_name(self) -> str:
+        return "sliding_window" if self.uses_sliding_window else "ctx_len"
+
+    def _build_cache(self, past_key: torch.Tensor, past_value: torch.Tensor):
+        cache = QEffHybridCacheForGPTOSS(
+            self.config,
+            batch_size=past_key.shape[0],
+            max_cache_len=self.cache_len,
+            sliding_window_len=self.sliding_window_len,
+        )
+        for _ in range(self.layer_index):
+            cache.key_cache.append(torch.zeros_like(past_key))
+            cache.value_cache.append(torch.zeros_like(past_value))
+        cache.key_cache.append(past_key)
+        cache.value_cache.append(past_value)
+        return cache
+
+    def _attention_mask_shape(self, batch_size: int, seq_len: int) -> List[int]:
+        return [batch_size, 1, seq_len, self.cache_len]
+
+    def _sliding_mask_shape(self, batch_size: int, seq_len: int) -> List[int]:
+        return [batch_size, 1, seq_len, self.sliding_window_len]
+
+    def build_example_inputs(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, object]:
+        position_ids = _build_torch_position_ids(batch_size, seq_len)
+        inputs = {
+            "hidden_states": torch.zeros((batch_size, seq_len, self.config.hidden_size), dtype=torch.float32),
+            "attention_mask": _build_torch_causal_mask(position_ids, self.cache_len),
+            "position_ids": position_ids,
+            "past_key": torch.zeros(
+                get_padding_shape_from_config(self.config, batch_size, self.sliding_window_len), dtype=torch.float32
+            ),
+            "past_value": torch.zeros(
+                get_padding_shape_from_config(self.config, batch_size, self.sliding_window_len), dtype=torch.float32
+            ),
+        }
+        if self.uses_sliding_window:
+            inputs["sliding_mask"] = _build_torch_causal_mask(
+                position_ids,
+                self.sliding_window_len,
+                sliding_window=self.sliding_window_len,
+            )
+        return inputs
+
+    def dynamic_axes(self, output_name: str) -> Dict[str, Dict[int, str]]:
+        axes = {
+            "hidden_states": {0: "batch_size", 1: "seq_len"},
+            "attention_mask": {0: "batch_size", 2: "seq_len", 3: self.cache_axis_name},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "past_key": {0: "batch_size", 2: self.cache_axis_name},
+            "past_value": {0: "batch_size", 2: self.cache_axis_name},
+            output_name: {0: "batch_size", 1: "seq_len"},
+            "past_key_RetainedState": {0: "batch_size", 2: self.cache_axis_name},
+            "past_value_RetainedState": {0: "batch_size", 2: self.cache_axis_name},
+        }
+        if self.uses_sliding_window:
+            axes["sliding_mask"] = {0: "batch_size", 2: "seq_len", 3: "sliding_window"}
+        return axes
+
+    def numpy_inputs(self, batch_size: int, seq_len: int, ctx_len: int, seed: int) -> Dict[str, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        position_ids = _build_position_ids(batch_size, seq_len)
+        past_key, past_value = _zeros_kv_cache(self.config, batch_size, self.sliding_window_len)
+        inputs = {
+            "hidden_states": rng.standard_normal((batch_size, seq_len, self.config.hidden_size), dtype=np.float32),
+            "attention_mask": _build_numpy_causal_mask(position_ids, self.cache_len),
+            "position_ids": position_ids,
+            "past_key": past_key,
+            "past_value": past_value,
+        }
+        if self.uses_sliding_window:
+            inputs["sliding_mask"] = _build_numpy_causal_mask(
+                position_ids,
+                self.sliding_window_len,
+                sliding_window=self.sliding_window_len,
+            )
+        return inputs
+
+    def input_shapes(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, List[int]]:
+        kv_shape = list(get_padding_shape_from_config(self.config, batch_size, self.sliding_window_len))
+        shapes = {
+            "hidden_states": [batch_size, seq_len, self.config.hidden_size],
+            "attention_mask": self._attention_mask_shape(batch_size, seq_len),
+            "position_ids": [batch_size, seq_len],
+            "past_key": kv_shape,
+            "past_value": kv_shape,
+        }
+        if self.uses_sliding_window:
+            shapes["sliding_mask"] = self._sliding_mask_shape(batch_size, seq_len)
+        return shapes
+
+    def output_shapes(self, batch_size: int, seq_len: int, ctx_len: int, output_name: str) -> Dict[str, List[int]]:
+        kv_shape = list(get_padding_shape_from_config(self.config, batch_size, self.sliding_window_len))
+        return {
+            output_name: [batch_size, seq_len, self.config.hidden_size],
+            "past_key_RetainedState": kv_shape,
+            "past_value_RetainedState": kv_shape,
+        }
+
+    def specialization_values(self, batch_size: int, seq_len: int, ctx_len: int, mode: str) -> Dict[str, int]:
+        specializations = {
+            "batch_size": batch_size,
+            "seq_len": seq_len,
+            "ctx_len": self.cache_len,
+        }
+        if self.uses_sliding_window:
+            specializations["sliding_window"] = self.cache_len
+        return specializations
+
+    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
+        next_position_ids = _next_position_ids(position_ids)
+        inputs = {
+            "hidden_states": outputs["attention_output"][:, -1:, :],
+            "attention_mask": _build_numpy_causal_mask(next_position_ids, self.cache_len),
+            "position_ids": next_position_ids,
+            self.past_key_input_name: outputs["past_key_RetainedState"],
+            self.past_value_input_name: outputs["past_value_RetainedState"],
+        }
+        if self.uses_sliding_window:
+            inputs["sliding_mask"] = _build_numpy_causal_mask(
+                next_position_ids,
+                outputs["past_key_RetainedState"].shape[2],
+                sliding_window=outputs["past_key_RetainedState"].shape[2],
+            )
+        return inputs
+
+
+class GptOssAttentionBenchmarkWrapper(GptOssCacheModuleBenchmarkWrapper):
+    def __init__(
+        self,
+        attention_module: nn.Module,
+        config,
+        cos_cached: torch.Tensor,
+        sin_cached: torch.Tensor,
+        ctx_len: int,
+        cache_len: Optional[int] = None,
+        layer_index: int = 0,
+    ):
+        super().__init__(attention_module, config, cos_cached, sin_cached, ctx_len, cache_len, layer_index)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.LongTensor,
+        past_key: torch.Tensor,
+        past_value: torch.Tensor,
+        sliding_mask: Optional[torch.Tensor] = None,
+    ):
+        past_key_value = self._build_cache(past_key, past_value)
+        attn_output, _, past_key_value = self.attention(
+            hidden_states=hidden_states,
+            position_embeddings=None,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            use_cache=True,
+            sliding_mask=sliding_mask,
+            sin_cached=self.sin_cached,
+            cos_cached=self.cos_cached,
+        )
+        return attn_output, past_key_value.key_cache[self.layer_index], past_key_value.value_cache[self.layer_index]
+
+
+class GptOssDecoderBenchmarkWrapper(GptOssCacheModuleBenchmarkWrapper):
+    def __init__(
+        self,
+        decoder_layer: nn.Module,
+        config,
+        cos_cached: torch.Tensor,
+        sin_cached: torch.Tensor,
+        ctx_len: int,
+        cache_len: Optional[int] = None,
+        layer_index: int = 0,
+    ):
+        super().__init__(decoder_layer.self_attn, config, cos_cached, sin_cached, ctx_len, cache_len, layer_index)
+        self.decoder_layer = decoder_layer
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.LongTensor,
+        past_key: torch.Tensor,
+        past_value: torch.Tensor,
+        sliding_mask: Optional[torch.Tensor] = None,
+    ):
+        past_key_value = self._build_cache(past_key, past_value)
+        outputs = self.decoder_layer(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            use_cache=True,
+            sliding_mask=sliding_mask,
+            sin_cached=self.sin_cached,
+            cos_cached=self.cos_cached,
+        )
+        return outputs[0], past_key_value.key_cache[self.layer_index], past_key_value.value_cache[self.layer_index]
+
+    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
+        next_position_ids = _next_position_ids(position_ids)
+        inputs = {
+            "hidden_states": outputs["decoder_output"][:, -1:, :],
+            "attention_mask": _build_numpy_causal_mask(next_position_ids, self.cache_len),
+            "position_ids": next_position_ids,
+            self.past_key_input_name: outputs["past_key_RetainedState"],
+            self.past_value_input_name: outputs["past_value_RetainedState"],
+        }
+        if self.uses_sliding_window:
+            inputs["sliding_mask"] = _build_numpy_causal_mask(
+                next_position_ids,
+                outputs["past_key_RetainedState"].shape[2],
+                sliding_window=outputs["past_key_RetainedState"].shape[2],
+            )
+        return inputs
+
+
+class GptOssMlpBenchmarkWrapper(BenchmarkWrapperBase):
+    benchmark_input_kind = "hidden"
+
+    def __init__(self, mlp_module: nn.Module, config):
+        super().__init__()
+        self.mlp = mlp_module
+        self.config = config
+
+    def forward(self, hidden_states: torch.Tensor):
+        mlp_output, _ = self.mlp(hidden_states)
+        if mlp_output.dim() == 2:
+            mlp_output = mlp_output.view(hidden_states.shape)
+        return mlp_output
+
+    def build_example_inputs(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, object]:
+        return {"hidden_states": torch.zeros((batch_size, seq_len, self.config.hidden_size), dtype=torch.float32)}
+
+    def dynamic_axes(self, output_name: str) -> Dict[str, Dict[int, str]]:
+        return {
+            "hidden_states": {0: "batch_size", 1: "seq_len"},
+            output_name: {0: "batch_size", 1: "seq_len"},
+        }
+
+    def numpy_inputs(self, batch_size: int, seq_len: int, ctx_len: int, seed: int) -> Dict[str, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        return {"hidden_states": rng.standard_normal((batch_size, seq_len, self.config.hidden_size), dtype=np.float32)}
+
+    def input_shapes(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, List[int]]:
+        return {"hidden_states": [batch_size, seq_len, self.config.hidden_size]}
+
+    def output_shapes(self, batch_size: int, seq_len: int, ctx_len: int, output_name: str) -> Dict[str, List[int]]:
+        return {output_name: [batch_size, seq_len, self.config.hidden_size]}
+
+    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
+        return {"hidden_states": outputs["mlp_output"][:, -1:, :]}
+
+
+class LlamaArchitectureAdapter:
+    benchmarkable_types = {"attention", "decoder"}
+    supports_combined_prefill_decode = True
+
+    @staticmethod
+    def matches(qeff_model: "QEFFAutoModelForCausalLM") -> bool:
+        return getattr(qeff_model.model.config, "model_type", None) == "llama"
+
+    @staticmethod
+    def resolved_dims(qeff_model: "QEFFAutoModelForCausalLM") -> Dict[str, int]:
+        config = qeff_model.model.config
+        num_attention_heads = config.num_attention_heads
+        num_key_value_heads = getattr(config, "num_key_value_heads", num_attention_heads)
+        head_dim = getattr(config, "head_dim", config.hidden_size // num_attention_heads)
+        return {
+            "hidden_size": config.hidden_size,
+            "num_attention_heads": num_attention_heads,
+            "num_key_value_heads": num_key_value_heads,
+            "head_dim": head_dim,
+            "num_hidden_layers": config.num_hidden_layers,
+            "intermediate_size": getattr(config, "intermediate_size", 0),
+        }
+
+    @staticmethod
+    def list_specs(
+        qeff_model: "QEFFAutoModelForCausalLM",
+        mode: str,
+        layer_index: int,
+        seq_len: int,
+        ctx_len: int,
+        enable_chunking: bool = False,
+    ) -> List[BenchmarkModuleSpec]:
+        source_model = qeff_model.model.model
+        layer = source_model.layers[layer_index]
+        specs = []
+        if mode in {"prefill", "decode", "both"}:
+            specs.append(
+                BenchmarkModuleSpec(
+                    benchmark_type="attention",
+                    module_name="attention",
+                    mode=mode,
+                    layer_index=layer_index,
+                    wrapper=LlamaAttentionBenchmarkWrapper(
+                        attention_module=layer.self_attn,
+                        cos_cached=source_model.cos_cached,
+                        sin_cached=source_model.sin_cached,
+                        config=qeff_model.model.config,
+                    ),
+                    output_name="attention_output",
+                )
+            )
+            specs.append(
+                BenchmarkModuleSpec(
+                    benchmark_type="decoder",
+                    module_name="decoder",
+                    mode=mode,
+                    layer_index=layer_index,
+                    wrapper=LlamaDecoderBenchmarkWrapper(
+                        decoder_layer=layer,
+                        cos_cached=source_model.cos_cached,
+                        sin_cached=source_model.sin_cached,
+                        config=qeff_model.model.config,
+                    ),
+                    output_name="decoder_output",
+                )
+            )
+        return specs
+
+
+class GptOssArchitectureAdapter:
+    benchmarkable_types = {"attention", "decoder", "mlp", "moe"}
+    supports_combined_prefill_decode = False
+
+    @staticmethod
+    def matches(qeff_model: "QEFFAutoModelForCausalLM") -> bool:
+        return getattr(qeff_model.model.config, "model_type", None) == "gpt_oss"
+
+    @staticmethod
+    def resolved_dims(qeff_model: "QEFFAutoModelForCausalLM") -> Dict[str, int]:
+        config = qeff_model.model.config
+        num_attention_heads = config.num_attention_heads
+        num_key_value_heads = getattr(config, "num_key_value_heads", num_attention_heads)
+        head_dim = getattr(config, "head_dim", config.hidden_size // num_attention_heads)
+        return {
+            "hidden_size": config.hidden_size,
+            "num_attention_heads": num_attention_heads,
+            "num_key_value_heads": num_key_value_heads,
+            "head_dim": head_dim,
+            "num_hidden_layers": config.num_hidden_layers,
+            "intermediate_size": getattr(config, "intermediate_size", 0),
+            "sliding_window": getattr(config, "sliding_window", 0),
+            "num_local_experts": getattr(config, "num_local_experts", 0),
+        }
+
+    @staticmethod
+    def list_specs(
+        qeff_model: "QEFFAutoModelForCausalLM",
+        mode: str,
+        layer_index: int,
+        seq_len: int,
+        ctx_len: int,
+        enable_chunking: bool = False,
+    ) -> List[BenchmarkModuleSpec]:
+        if mode == "prefill":
+            qeff_model.prefill(enable=True, enable_chunking=enable_chunking)
+        elif mode == "decode":
+            qeff_model.prefill(enable=False)
+
+        source_model = qeff_model.model.model
+        layer_variants = []
+        for variant_index, variant_name in [
+            ("sliding_attention", "swa_attention"),
+            ("full_attention", "full_attention"),
+        ]:
+            match_index = None
+            for i, layer_type in enumerate(getattr(qeff_model.model.config, "layer_types", [])):
+                if layer_type == variant_index:
+                    match_index = i
+                    break
+            if match_index is None:
+                continue
+            layer_variants.append((match_index, variant_name))
+
+        if not layer_variants:
+            layer_variants.append((layer_index, "attention"))
+
+        specs = []
+        for variant_layer_index, variant_name in layer_variants:
+            layer = source_model.layers[variant_layer_index]
+            if mode == "prefill":
+                effective_cache_len = (
+                    seq_len + getattr(qeff_model.model.config, "sliding_window", 0) if enable_chunking else seq_len
+                )
+            elif variant_name == "swa_attention":
+                effective_cache_len = getattr(qeff_model.model.config, "sliding_window", ctx_len)
+            else:
+                effective_cache_len = ctx_len
+            if mode == "prefill" and enable_chunking:
+                attn_name = f"prefill_chunked_{variant_name}"
+                decoder_name = f"prefill_chunked_{variant_name.replace('_attention', '')}_decoder"
+            elif mode == "prefill":
+                attn_name = f"prefill_{variant_name}"
+                decoder_name = f"prefill_{variant_name.replace('_attention', '')}_decoder"
+            else:
+                attn_name = variant_name
+                decoder_name = f"{variant_name.replace('_attention', '')}_decoder"
+
+            specs.append(
+                BenchmarkModuleSpec(
+                    benchmark_type="attention",
+                    module_name=attn_name,
+                    mode=mode,
+                    layer_index=variant_layer_index,
+                    wrapper=GptOssAttentionBenchmarkWrapper(
+                        attention_module=layer.self_attn,
+                        config=qeff_model.model.config,
+                        cos_cached=source_model.cos_cached,
+                        sin_cached=source_model.sin_cached,
+                        ctx_len=ctx_len,
+                        cache_len=effective_cache_len,
+                        layer_index=variant_layer_index,
+                    ),
+                    output_name="attention_output",
+                )
+            )
+            specs.append(
+                BenchmarkModuleSpec(
+                    benchmark_type="decoder",
+                    module_name=decoder_name,
+                    mode=mode,
+                    layer_index=variant_layer_index,
+                    wrapper=GptOssDecoderBenchmarkWrapper(
+                        decoder_layer=layer,
+                        config=qeff_model.model.config,
+                        cos_cached=source_model.cos_cached,
+                        sin_cached=source_model.sin_cached,
+                        ctx_len=ctx_len,
+                        cache_len=effective_cache_len,
+                        layer_index=variant_layer_index,
+                    ),
+                    output_name="decoder_output",
+                )
+            )
+
+        mlp_layer = source_model.layers[layer_variants[0][0]]
+        if mode == "prefill" and enable_chunking:
+            mlp_name = "prefill_chunked_moe"
+        elif mode == "prefill":
+            mlp_name = "prefill_moe"
+        else:
+            mlp_name = "moe"
+        specs.append(
+            BenchmarkModuleSpec(
+                benchmark_type="moe",
+                module_name=mlp_name,
+                mode=mode,
+                layer_index=layer_variants[0][0],
+                wrapper=GptOssMlpBenchmarkWrapper(mlp_module=mlp_layer.mlp, config=qeff_model.model.config),
+                output_name="mlp_output",
+            )
+        )
+        return specs
+
+
+class CausalLMModuleBenchmarkModel(QEFFBaseModel):
+    _pytorch_transforms: List = []
+
+    def __init__(self, model: BenchmarkWrapperBase, output_name: str, model_name: str, model_id: str):
+        self._benchmark_model_name = model_name
+        self._benchmark_model_id = model_id
+        self._output_name = output_name
+        super().__init__(model)
+        self.hash_params["benchmark_output_name"] = output_name
+        self.hash_params["benchmark_model_name"] = model_name
+        self.hash_params["benchmark_model_id"] = model_id
+
+    @property
+    def get_model_config(self) -> Dict:
+        return self.model.config.to_dict()
+
+    def export(
+        self,
+        export_dir: Optional[str] = None,
+        *,
+        batch_size: int = 1,
+        seq_len: int = 32,
+        ctx_len: int = 128,
+        offload_pt_weights: bool = False,
+    ) -> str:
+        example_inputs = self.model.build_example_inputs(batch_size=batch_size, seq_len=seq_len, ctx_len=ctx_len)
+        output_names = [self._output_name]
+        if self.model.benchmark_input_kind == "cache":
+            output_names.extend(["past_key_RetainedState", "past_value_RetainedState"])
+        return self._export(
+            example_inputs=example_inputs,
+            output_names=output_names,
+            dynamic_axes=self.model.dynamic_axes(self._output_name),
+            export_dir=export_dir,
+            offload_pt_weights=offload_pt_weights,
+        )
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        batch_size: int = 1,
+        seq_len: int = 32,
+        ctx_len: int = 128,
+        mode: str = "both",
+        num_devices: int = 1,
+        num_cores: int = 16,
+        mxint8_kv_cache: bool = False,
+        **compiler_options,
+    ) -> str:
+        specializations = []
+        prefill_specialization = self.model.specialization_values(batch_size, seq_len, ctx_len, "prefill")
+        decode_specialization = self.model.specialization_values(batch_size, 1, ctx_len, "decode")
+
+        if mode == "prefill":
+            specializations.append(prefill_specialization)
+        elif mode == "decode":
+            specializations.append(decode_specialization)
+        else:
+            specializations.extend([prefill_specialization, decode_specialization])
+        specializations = _dedupe_specializations(specializations)
+
+        custom_io = None
+        if self.model.benchmark_input_kind == "cache":
+            kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+            custom_io = {
+                self.model.past_key_input_name: kv_cache_dtype,
+                self.model.past_value_input_name: kv_cache_dtype,
+                "past_key_RetainedState": kv_cache_dtype,
+                "past_value_RetainedState": kv_cache_dtype,
+            }
+        return self._compile(
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
+            compile_only=True,
+            retained_state=self.model.benchmark_input_kind == "cache",
+            specializations=specializations,
+            convert_to_fp16=True,
+            custom_io=custom_io,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            mxint8_kv_cache=mxint8_kv_cache,
+            **compiler_options,
+        )
+
+
+def _resolve_adapter(qeff_model: "QEFFAutoModelForCausalLM"):
+    for adapter in (LlamaArchitectureAdapter, GptOssArchitectureAdapter):
+        if adapter.matches(qeff_model):
+            return adapter
+    raise NotImplementedError(
+        f"Microbenchmarking currently supports Llama and GPT-OSS via QEFFAutoModelForCausalLM. "
+        f"Got model_type={getattr(qeff_model.model.config, 'model_type', None)}."
+    )
+
+
+def _resolve_benchmark_modes(adapter, requested_mode: str) -> Tuple[str, ...]:
+    if requested_mode != "both":
+        return (requested_mode,)
+    if getattr(adapter, "supports_combined_prefill_decode", False):
+        return ("both",)
+    return ("prefill", "decode")
+
+
+def _dedupe_specializations(specializations: List[Dict[str, int]]) -> List[Dict[str, int]]:
+    deduped = []
+    seen = set()
+    for spec in specializations:
+        key = tuple(sorted(spec.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(spec)
+    return deduped
+
+
+def get_benchmark_module_specs(
+    qeff_model: "QEFFAutoModelForCausalLM",
+    *,
+    mode: str = "decode",
+    layer_index: int = 0,
+    seq_len: int = 32,
+    ctx_len: int = 128,
+    enable_chunking: bool = False,
+) -> List[BenchmarkModuleSpec]:
+    if mode not in {"prefill", "decode", "both"}:
+        raise ValueError("get_benchmark_module_specs supports `prefill`, `decode`, or `both`.")
+    adapter = _resolve_adapter(qeff_model)
+    return adapter.list_specs(
+        qeff_model=qeff_model,
+        mode=mode,
+        layer_index=layer_index,
+        seq_len=seq_len,
+        ctx_len=ctx_len,
+        enable_chunking=enable_chunking,
+    )
+
+
+def export_benchmark_modules(
+    qeff_model: "QEFFAutoModelForCausalLM",
+    *,
+    mode: str = "both",
+    benchmark_type: Optional[str] = None,
+    batch_size: int = 1,
+    seq_len: int = 32,
+    ctx_len: int = 128,
+    layer_index: int = 0,
+    export_dir: Optional[str] = None,
+    enable_chunking: bool = False,
+) -> List[BenchmarkSummary]:
+    model_name = getattr(qeff_model, "benchmark_model_name", qeff_model.model_name)
+    model_id = qeff_model.hash_params.get("pretrained_model_name_or_path", model_name)
+    adapter = _resolve_adapter(qeff_model)
+    concrete_modes = _resolve_benchmark_modes(adapter, mode)
+    summaries = []
+
+    for concrete_mode in concrete_modes:
+        specs = get_benchmark_module_specs(
+            qeff_model,
+            mode=concrete_mode,
+            layer_index=layer_index,
+            seq_len=seq_len,
+            ctx_len=ctx_len,
+            enable_chunking=enable_chunking,
+        )
+        for spec in specs:
+            if benchmark_type and spec.benchmark_type != benchmark_type:
+                continue
+            benchmark_model = CausalLMModuleBenchmarkModel(
+                model=spec.wrapper,
+                output_name=spec.output_name,
+                model_name=model_name,
+                model_id=model_id,
+            )
+            onnx_path = benchmark_model.export(
+                export_dir=export_dir,
+                batch_size=batch_size,
+                seq_len=seq_len,
+                ctx_len=ctx_len,
+                offload_pt_weights=False,
+            )
+            summaries.append(
+                BenchmarkSummary(
+                    benchmark_type=spec.benchmark_type,
+                    module_name=spec.module_name,
+                    mode=concrete_mode,
+                    model_name=model_name,
+                    model_id=model_id,
+                    architecture=getattr(qeff_model.model.config, "model_type", "unknown"),
+                    layer_index=spec.layer_index,
+                    batch_size=batch_size,
+                    seq_len=seq_len,
+                    ctx_len=ctx_len,
+                    resolved_dims=adapter.resolved_dims(qeff_model),
+                    input_shapes=spec.wrapper.input_shapes(batch_size, seq_len, ctx_len),
+                    output_shapes=spec.wrapper.output_shapes(batch_size, seq_len, ctx_len, spec.output_name),
+                    onnx_path=str(onnx_path),
+                    qpc_path=None,
+                    prefill_runtime=None,
+                    seed_prefill_ms=None,
+                    first_decode_ms=None,
+                    decode_runtime=None,
+                )
+            )
+    return summaries
+
+
+def compile_benchmark_modules(
+    qeff_model: "QEFFAutoModelForCausalLM",
+    *,
+    prefill_only: Optional[bool] = None,
+    batch_size: int = 1,
+    seq_len: int = 32,
+    ctx_len: int = 128,
+    layer_index: int = 0,
+    num_cores: int = 16,
+    num_devices: int = 1,
+    warmup_runs: int = 2,
+    benchmark_runs: int = 10,
+    export_dir: Optional[str] = None,
+    compile_dir: Optional[str] = None,
+    export_only: bool = False,
+    benchmark_type: Optional[str] = None,
+    mxint8_kv_cache: bool = False,
+    seed: int = 13,
+    enable_chunking: bool = False,
+    **compiler_options,
+) -> BenchmarkManifest:
+    adapter = _resolve_adapter(qeff_model)
+    if prefill_only is True:
+        concrete_modes = ("prefill",)
+    elif prefill_only is False:
+        concrete_modes = ("decode",)
+    else:
+        concrete_modes = _resolve_benchmark_modes(adapter, "both")
+
+    summaries = []
+    for concrete_mode in concrete_modes:
+        specs = get_benchmark_module_specs(
+            qeff_model,
+            mode=concrete_mode,
+            layer_index=layer_index,
+            seq_len=seq_len,
+            ctx_len=ctx_len,
+            enable_chunking=enable_chunking if concrete_mode == "prefill" else False,
+        )
+        for spec in specs:
+            if benchmark_type and spec.benchmark_type != benchmark_type:
+                continue
+            benchmark_model = CausalLMModuleBenchmarkModel(
+                model=spec.wrapper,
+                output_name=spec.output_name,
+                model_name=getattr(qeff_model, "benchmark_model_name", qeff_model.model_name),
+                model_id=qeff_model.hash_params.get("pretrained_model_name_or_path", qeff_model.model_name),
+            )
+            onnx_path = benchmark_model.export(
+                export_dir=export_dir,
+                batch_size=batch_size,
+                seq_len=seq_len,
+                ctx_len=ctx_len,
+                offload_pt_weights=False,
+            )
+            qpc_path = None
+            if not export_only:
+                qpc_path = benchmark_model.compile(
+                    onnx_path=onnx_path,
+                    compile_dir=compile_dir,
+                    batch_size=batch_size,
+                    seq_len=seq_len,
+                    ctx_len=ctx_len,
+                    mode=spec.mode,
+                    num_cores=num_cores,
+                    num_devices=num_devices,
+                    mxint8_kv_cache=mxint8_kv_cache,
+                    **compiler_options,
+                )
+            summaries.append(
+                BenchmarkSummary(
+                    benchmark_type=spec.benchmark_type,
+                    module_name=spec.module_name,
+                    mode=spec.mode,
+                    model_name=getattr(qeff_model, "benchmark_model_name", qeff_model.model_name),
+                    model_id=qeff_model.hash_params.get("pretrained_model_name_or_path", qeff_model.model_name),
+                    architecture=getattr(qeff_model.model.config, "model_type", "unknown"),
+                    layer_index=spec.layer_index,
+                    batch_size=batch_size,
+                    seq_len=seq_len,
+                    ctx_len=ctx_len,
+                    resolved_dims=adapter.resolved_dims(qeff_model),
+                    input_shapes=spec.wrapper.input_shapes(batch_size, seq_len, ctx_len),
+                    output_shapes=spec.wrapper.output_shapes(batch_size, seq_len, ctx_len, spec.output_name),
+                    onnx_path=str(onnx_path),
+                    qpc_path=str(qpc_path) if qpc_path else None,
+                    prefill_runtime=None,
+                    seed_prefill_ms=None,
+                    first_decode_ms=None,
+                    decode_runtime=None,
+                )
+            )
+
+    manifest = BenchmarkManifest(
+        prefill_only=prefill_only,
+        enable_chunking=enable_chunking,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        ctx_len=ctx_len,
+        num_cores=num_cores,
+        num_devices=num_devices,
+        warmup_runs=warmup_runs,
+        benchmark_runs=benchmark_runs,
+        summaries=summaries,
+    )
+    qeff_model._benchmark_manifest = manifest
+    qeff_model._benchmark_manifest_path = save_benchmark_manifest(manifest)
+    return manifest
+
+
+def _run_decode_benchmark(
+    session: QAICInferenceSession,
+    wrapper: BenchmarkWrapperBase,
+    output_name: str,
+    seed_outputs: Dict[str, np.ndarray],
+    seed_position_ids: np.ndarray,
+    warmup_runs: int,
+    benchmark_runs: int,
+) -> Tuple[float, RuntimeStats]:
+    decode_inputs = wrapper.build_decode_inputs(seed_outputs, seed_position_ids)
+    start = perf_counter()
+    outputs = _run_session(session, decode_inputs)
+    first_decode_ms = (perf_counter() - start) * 1000.0
+    next_position_ids = decode_inputs.get("position_ids", seed_position_ids)
+    decode_inputs = wrapper.build_decode_inputs(outputs, next_position_ids)
+
+    for _ in range(warmup_runs):
+        outputs = _run_session(session, decode_inputs)
+        next_position_ids = decode_inputs.get("position_ids", next_position_ids)
+        decode_inputs = wrapper.build_decode_inputs(outputs, next_position_ids)
+
+    timings_ms = []
+    for _ in range(benchmark_runs):
+        start = perf_counter()
+        outputs = _run_session(session, decode_inputs)
+        timings_ms.append((perf_counter() - start) * 1000.0)
+        next_position_ids = decode_inputs.get("position_ids", next_position_ids)
+        decode_inputs = wrapper.build_decode_inputs(outputs, next_position_ids)
+
+    total_ms = float(sum(timings_ms))
+    timings_array = np.asarray(timings_ms, dtype=np.float64)
+    stats = RuntimeStats(
+        iterations=benchmark_runs,
+        mean_ms=total_ms / benchmark_runs,
+        min_ms=float(min(timings_ms)),
+        max_ms=float(max(timings_ms)),
+        total_ms=total_ms,
+        p50_ms=float(np.percentile(timings_array, 50)),
+        p99_ms=float(np.percentile(timings_array, 99)),
+        throughput_ips=(benchmark_runs / (total_ms / 1000.0)) if total_ms else None,
+        tokens_per_second=(benchmark_runs / (total_ms / 1000.0)) if total_ms else None,
+    )
+    return first_decode_ms, stats
+
+
+def _run_prefill_and_decode_benchmark(
+    session: QAICInferenceSession,
+    wrapper: BenchmarkWrapperBase,
+    *,
+    batch_size: int,
+    seq_len: int,
+    ctx_len: int,
+    seed: int,
+    warmup_runs: int,
+    benchmark_runs: int,
+) -> Tuple[RuntimeStats, float, float, RuntimeStats]:
+    prefill_runtime = _timed_session_runs(
+        session=session,
+        build_inputs=lambda: wrapper.numpy_inputs(batch_size, seq_len, ctx_len, seed),
+        warmup_runs=warmup_runs,
+        benchmark_runs=benchmark_runs,
+    )
+    raw_seed_inputs = wrapper.numpy_inputs(batch_size, seq_len, ctx_len, seed)
+    seed_position_ids = raw_seed_inputs.get("position_ids", _build_position_ids(batch_size, seq_len))
+    start = perf_counter()
+    seed_outputs = _run_session(session, raw_seed_inputs)
+    seed_prefill_ms = (perf_counter() - start) * 1000.0
+    first_decode_ms, decode_runtime = _run_decode_benchmark(
+        session=session,
+        wrapper=wrapper,
+        output_name="",
+        seed_outputs=seed_outputs,
+        seed_position_ids=seed_position_ids,
+        warmup_runs=warmup_runs,
+        benchmark_runs=benchmark_runs,
+    )
+    return prefill_runtime, seed_prefill_ms, first_decode_ms, decode_runtime
+
+
+def benchmark_module_spec(
+    qeff_model: "QEFFAutoModelForCausalLM",
+    spec: BenchmarkModuleSpec,
+    *,
+    batch_size: int,
+    seq_len: int,
+    ctx_len: int,
+    num_cores: int = 16,
+    num_devices: int = 1,
+    warmup_runs: int = 2,
+    benchmark_runs: int = 10,
+    export_dir: Optional[str] = None,
+    compile_dir: Optional[str] = None,
+    mxint8_kv_cache: bool = False,
+    seed: int = 13,
+    **compiler_options,
+) -> BenchmarkSummary:
+    adapter = _resolve_adapter(qeff_model)
+    model_name = getattr(qeff_model, "benchmark_model_name", qeff_model.model_name)
+    model_id = qeff_model.hash_params.get("pretrained_model_name_or_path", model_name)
+
+    benchmark_model = CausalLMModuleBenchmarkModel(
+        model=spec.wrapper,
+        output_name=spec.output_name,
+        model_name=model_name,
+        model_id=model_id,
+    )
+    onnx_path = benchmark_model.export(
+        export_dir=export_dir,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        ctx_len=ctx_len,
+        offload_pt_weights=False,
+    )
+    qpc_path = benchmark_model.compile(
+        onnx_path=onnx_path,
+        compile_dir=compile_dir,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        ctx_len=ctx_len,
+        mode=spec.mode,
+        num_cores=num_cores,
+        num_devices=num_devices,
+        mxint8_kv_cache=mxint8_kv_cache,
+        **compiler_options,
+    )
+
+    session = QAICInferenceSession(qpc_path)
+    prefill_runtime = None
+    seed_prefill_ms = None
+    first_decode_ms = None
+    decode_runtime = None
+
+    if spec.mode == "prefill":
+        prefill_runtime = _timed_session_runs(
+            session=session,
+            build_inputs=lambda: spec.wrapper.numpy_inputs(batch_size, seq_len, ctx_len, seed),
+            warmup_runs=warmup_runs,
+            benchmark_runs=benchmark_runs,
+        )
+    elif spec.mode == "decode":
+        raw_seed_inputs = spec.wrapper.numpy_inputs(batch_size, 1 if spec.mode == "decode" else seq_len, ctx_len, seed)
+        seed_position_ids = raw_seed_inputs.get("position_ids", _build_position_ids(batch_size, 1))
+        start = perf_counter()
+        seed_outputs = _run_session(session, raw_seed_inputs)
+        seed_runtime_ms = (perf_counter() - start) * 1000.0
+        if spec.mode == "decode":
+            seed_prefill_ms = None
+        else:
+            seed_prefill_ms = seed_runtime_ms
+        first_decode_ms, decode_runtime = _run_decode_benchmark(
+            session=session,
+            wrapper=spec.wrapper,
+            output_name=spec.output_name,
+            seed_outputs=seed_outputs,
+            seed_position_ids=seed_position_ids,
+            warmup_runs=warmup_runs,
+            benchmark_runs=benchmark_runs,
+        )
+    else:
+        prefill_runtime, seed_prefill_ms, first_decode_ms, decode_runtime = _run_prefill_and_decode_benchmark(
+            session=session,
+            wrapper=spec.wrapper,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            ctx_len=ctx_len,
+            seed=seed,
+            warmup_runs=warmup_runs,
+            benchmark_runs=benchmark_runs,
+        )
+
+    return BenchmarkSummary(
+        benchmark_type=spec.benchmark_type,
+        module_name=spec.module_name,
+        mode=spec.mode,
+        model_name=model_name,
+        model_id=model_id,
+        architecture=getattr(qeff_model.model.config, "model_type", "unknown"),
+        layer_index=spec.layer_index,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        ctx_len=ctx_len,
+        resolved_dims=adapter.resolved_dims(qeff_model),
+        input_shapes=spec.wrapper.input_shapes(batch_size, seq_len, ctx_len),
+        output_shapes=spec.wrapper.output_shapes(batch_size, seq_len, ctx_len, spec.output_name),
+        onnx_path=str(onnx_path),
+        qpc_path=str(qpc_path),
+        prefill_runtime=prefill_runtime,
+        seed_prefill_ms=seed_prefill_ms,
+        first_decode_ms=first_decode_ms,
+        decode_runtime=decode_runtime,
+    )
+
+
+def benchmark_modules(
+    qeff_model: "QEFFAutoModelForCausalLM",
+    *,
+    mode: str = "both",
+    benchmark_type: Optional[str] = None,
+    batch_size: int = 1,
+    seq_len: int = 32,
+    ctx_len: int = 128,
+    layer_index: int = 0,
+    num_cores: int = 16,
+    num_devices: int = 1,
+    warmup_runs: int = 2,
+    benchmark_runs: int = 10,
+    export_dir: Optional[str] = None,
+    compile_dir: Optional[str] = None,
+    mxint8_kv_cache: bool = False,
+    seed: int = 13,
+    enable_chunking: bool = False,
+    **compiler_options,
+) -> List[BenchmarkSummary]:
+    adapter = _resolve_adapter(qeff_model)
+    concrete_modes = _resolve_benchmark_modes(adapter, mode)
+    summaries = []
+    for concrete_mode in concrete_modes:
+        specs = get_benchmark_module_specs(
+            qeff_model,
+            mode=concrete_mode,
+            layer_index=layer_index,
+            seq_len=seq_len,
+            ctx_len=ctx_len,
+            enable_chunking=enable_chunking,
+        )
+        for spec in specs:
+            if benchmark_type and spec.benchmark_type != benchmark_type:
+                continue
+            summaries.append(
+                benchmark_module_spec(
+                    qeff_model,
+                    spec,
+                    batch_size=batch_size,
+                    seq_len=seq_len,
+                    ctx_len=ctx_len,
+                    num_cores=num_cores,
+                    num_devices=num_devices,
+                    warmup_runs=warmup_runs,
+                    benchmark_runs=benchmark_runs,
+                    export_dir=export_dir,
+                    compile_dir=compile_dir,
+                    mxint8_kv_cache=mxint8_kv_cache,
+                    seed=seed,
+                    **compiler_options,
+                )
+            )
+    return summaries
+
+
+def generate_benchmark_report(
+    qeff_model: "QEFFAutoModelForCausalLM",
+    *,
+    warmup_runs: Optional[int] = None,
+    benchmark_runs: Optional[int] = None,
+    seed: int = 13,
+    device_id: Optional[List[int]] = None,
+) -> List[BenchmarkSummary]:
+    manifest = getattr(qeff_model, "_benchmark_manifest", None)
+    if manifest is None or not manifest.summaries:
+        raise TypeError("Please run compile(export_only=False) first in benchmark mode.")
+
+    if any(summary.qpc_path is None for summary in manifest.summaries):
+        raise TypeError("Benchmark manifest contains ONNX-only exports. Re-run compile with export_only=False.")
+
+    adapter = _resolve_adapter(qeff_model)
+    resolved = []
+    warmup_runs = manifest.warmup_runs if warmup_runs is None else warmup_runs
+    benchmark_runs = manifest.benchmark_runs if benchmark_runs is None else benchmark_runs
+
+    summary_map = {(summary.mode, summary.module_name): summary for summary in manifest.summaries}
+    if manifest.prefill_only is True:
+        concrete_modes = ("prefill",)
+    elif manifest.prefill_only is False:
+        concrete_modes = ("decode",)
+    else:
+        concrete_modes = _resolve_benchmark_modes(adapter, "both")
+
+    for concrete_mode in concrete_modes:
+        specs = get_benchmark_module_specs(
+            qeff_model,
+            mode=concrete_mode,
+            layer_index=manifest.summaries[0].layer_index,
+            seq_len=manifest.seq_len,
+            ctx_len=manifest.ctx_len,
+            enable_chunking=manifest.enable_chunking if concrete_mode == "prefill" else False,
+        )
+        for spec in specs:
+            key = (spec.mode, spec.module_name)
+            if key not in summary_map:
+                continue
+            summary = summary_map[key]
+            session = QAICInferenceSession(summary.qpc_path, device_ids=device_id)
+
+            if spec.mode == "prefill":
+                prefill_runtime = _timed_session_runs(
+                    session=session,
+                    build_inputs=lambda w=spec.wrapper: w.numpy_inputs(
+                        manifest.batch_size,
+                        manifest.seq_len,
+                        manifest.ctx_len,
+                        seed,
+                    ),
+                    warmup_runs=warmup_runs,
+                    benchmark_runs=benchmark_runs,
+                )
+                summary.prefill_runtime = prefill_runtime
+            elif spec.mode == "decode":
+                raw_seed_inputs = spec.wrapper.numpy_inputs(manifest.batch_size, 1, manifest.ctx_len, seed)
+                seed_position_ids = raw_seed_inputs.get("position_ids", _build_position_ids(manifest.batch_size, 1))
+                start = perf_counter()
+                seed_outputs = _run_session(session, raw_seed_inputs)
+                seed_runtime_ms = (perf_counter() - start) * 1000.0
+                summary.seed_prefill_ms = seed_runtime_ms
+                first_decode_ms, decode_runtime = _run_decode_benchmark(
+                    session=session,
+                    wrapper=spec.wrapper,
+                    output_name=spec.output_name,
+                    seed_outputs=seed_outputs,
+                    seed_position_ids=seed_position_ids,
+                    warmup_runs=warmup_runs,
+                    benchmark_runs=benchmark_runs,
+                )
+                summary.first_decode_ms = first_decode_ms
+                summary.decode_runtime = decode_runtime
+                if decode_runtime and decode_runtime.tokens_per_second is None and decode_runtime.mean_ms:
+                    decode_runtime.tokens_per_second = 1000.0 / decode_runtime.mean_ms
+            else:
+                (
+                    summary.prefill_runtime,
+                    summary.seed_prefill_ms,
+                    summary.first_decode_ms,
+                    summary.decode_runtime,
+                ) = _run_prefill_and_decode_benchmark(
+                    session=session,
+                    wrapper=spec.wrapper,
+                    batch_size=manifest.batch_size,
+                    seq_len=manifest.seq_len,
+                    ctx_len=manifest.ctx_len,
+                    seed=seed,
+                    warmup_runs=warmup_runs,
+                    benchmark_runs=benchmark_runs,
+                )
+            summary.resolved_dims = adapter.resolved_dims(qeff_model)
+            resolved.append(summary)
+
+    qeff_model._benchmark_manifest.summaries = resolved
+    qeff_model._benchmark_report_path = save_benchmark_report(qeff_model._benchmark_manifest)
+    return resolved
+
+
+def _summary_to_dict(summary: BenchmarkSummary) -> Dict[str, object]:
+    result = asdict(summary)
+    for key in ("prefill_runtime", "decode_runtime"):
+        if result[key] is None:
+            continue
+        result[key] = {
+            metric_name: round(metric_value, 4) if isinstance(metric_value, float) else metric_value
+            for metric_name, metric_value in result[key].items()
+        }
+    for key in ("seed_prefill_ms", "first_decode_ms"):
+        if result[key] is not None:
+            result[key] = round(result[key], 4)
+    return result
+
+
+def manifest_to_dict(manifest: BenchmarkManifest) -> Dict[str, object]:
+    return {
+        "prefill_only": manifest.prefill_only,
+        "enable_chunking": manifest.enable_chunking,
+        "batch_size": manifest.batch_size,
+        "seq_len": manifest.seq_len,
+        "ctx_len": manifest.ctx_len,
+        "num_cores": manifest.num_cores,
+        "num_devices": manifest.num_devices,
+        "warmup_runs": manifest.warmup_runs,
+        "benchmark_runs": manifest.benchmark_runs,
+        "summaries": [_summary_to_dict(summary) for summary in manifest.summaries],
+    }
+
+
+def save_benchmark_manifest(
+    manifest: BenchmarkManifest,
+    *,
+    output_path: Optional[Path | str] = None,
+) -> str:
+    output_path = (
+        Path(output_path)
+        if output_path is not None
+        else _safe_benchmark_root(manifest.summaries)
+        / _manifest_file_name(
+            manifest,
+            kind="manifest",
+        )
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(manifest_to_dict(manifest), indent=2) + "\n", encoding="utf-8")
+    return str(output_path)
+
+
+def save_benchmark_report(
+    manifest: BenchmarkManifest,
+    *,
+    output_path: Optional[Path | str] = None,
+) -> str:
+    output_path = (
+        Path(output_path)
+        if output_path is not None
+        else _safe_benchmark_root(manifest.summaries)
+        / _manifest_file_name(
+            manifest,
+            kind="report",
+        )
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(manifest_to_dict(manifest), indent=2) + "\n", encoding="utf-8")
+    return str(output_path)
+
+
+def _print_summaries(summaries: List[BenchmarkSummary], as_json: bool) -> None:
+    summary_dicts = [_summary_to_dict(summary) for summary in summaries]
+    if as_json:
+        print(json.dumps(summary_dicts, indent=2))
+        return
+    for summary in summary_dicts:
+        print(f"module_name: {summary['module_name']}")
+        print(f"benchmark_type: {summary['benchmark_type']}")
+        print(f"mode: {summary['mode']}")
+        print(f"model: {summary['model_name']} -> {summary['model_id']}")
+        print(f"architecture: {summary['architecture']}")
+        print(f"resolved_dims: {json.dumps(summary['resolved_dims'], sort_keys=True)}")
+        print(f"input_shapes: {json.dumps(summary['input_shapes'], sort_keys=True)}")
+        print(f"output_shapes: {json.dumps(summary['output_shapes'], sort_keys=True)}")
+        print(f"onnx_path: {summary['onnx_path']}")
+        if summary["qpc_path"] is not None:
+            print(f"qpc_path: {summary['qpc_path']}")
+        if summary["prefill_runtime"] is not None:
+            print(f"prefill_runtime: {json.dumps(summary['prefill_runtime'], sort_keys=True)}")
+        if summary["seed_prefill_ms"] is not None:
+            print(f"seed_prefill_ms: {summary['seed_prefill_ms']}")
+        if summary["first_decode_ms"] is not None:
+            print(f"first_decode_ms: {summary['first_decode_ms']}")
+        if summary["decode_runtime"] is not None:
+            print(f"decode_runtime: {json.dumps(summary['decode_runtime'], sort_keys=True)}")
+        print("")
+
+
+def format_benchmark_table(summaries: List[BenchmarkSummary]) -> str:
+    headers = ["Mode", "Module", "Type", "Prefill ms", "Decode ms"]
+    rows = []
+    for summary in summaries:
+        prefill_ms = f"{summary.prefill_runtime.mean_ms:.4f}" if summary.prefill_runtime else "-"
+        decode_ms = f"{summary.decode_runtime.mean_ms:.4f}" if summary.decode_runtime else "-"
+        rows.append([summary.mode, summary.module_name, summary.benchmark_type, prefill_ms, decode_ms])
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
+
+    def render_row(values):
+        return " | ".join(str(value).ljust(widths[i]) for i, value in enumerate(values))
+
+    divider = "-+-".join("-" * width for width in widths)
+    lines = [render_row(headers), divider]
+    lines.extend(render_row(row) for row in rows)
+
+    for summary in summaries:
+        lines.append("")
+        lines.append(f"{summary.mode} | {summary.module_name} | {summary.benchmark_type}")
+        lines.append(f"inputs:  {json.dumps(summary.input_shapes, sort_keys=True)}")
+        lines.append(f"outputs: {json.dumps(summary.output_shapes, sort_keys=True)}")
+        if summary.prefill_runtime is not None:
+            lines.append(
+                "prefill_stats: "
+                + json.dumps(
+                    {
+                        "mean_ms": round(summary.prefill_runtime.mean_ms, 4),
+                        "p50_ms": round(summary.prefill_runtime.p50_ms, 4)
+                        if summary.prefill_runtime.p50_ms is not None
+                        else None,
+                        "p99_ms": round(summary.prefill_runtime.p99_ms, 4)
+                        if summary.prefill_runtime.p99_ms is not None
+                        else None,
+                        "throughput_ips": round(summary.prefill_runtime.throughput_ips, 4)
+                        if summary.prefill_runtime.throughput_ips is not None
+                        else None,
+                    },
+                    sort_keys=True,
+                )
+            )
+        if summary.decode_runtime is not None:
+            lines.append(
+                "decode_stats: "
+                + json.dumps(
+                    {
+                        "mean_ms": round(summary.decode_runtime.mean_ms, 4),
+                        "p50_ms": round(summary.decode_runtime.p50_ms, 4)
+                        if summary.decode_runtime.p50_ms is not None
+                        else None,
+                        "p99_ms": round(summary.decode_runtime.p99_ms, 4)
+                        if summary.decode_runtime.p99_ms is not None
+                        else None,
+                        "throughput_ips": round(summary.decode_runtime.throughput_ips, 4)
+                        if summary.decode_runtime.throughput_ips is not None
+                        else None,
+                    },
+                    sort_keys=True,
+                )
+            )
+
+    return "\n".join(lines)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Micro-benchmark isolated QEff causal LM modules on QAIC hardware.")
+    parser.add_argument("--model", required=True, help="HF model id or a known tiny-model alias such as `llama`.")
+    parser.add_argument("--benchmark-type", choices=BENCHMARK_TYPES)
+    parser.add_argument("--mode", default="both", choices=BENCHMARK_MODES)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--seq-len", type=int, default=32)
+    parser.add_argument("--ctx-len", type=int, default=128)
+    parser.add_argument("--layer-index", type=int, default=0)
+    parser.add_argument("--num-cores", type=int, default=16)
+    parser.add_argument("--num-devices", type=int, default=1)
+    parser.add_argument("--warmup-runs", type=int, default=2)
+    parser.add_argument("--benchmark-runs", type=int, default=10)
+    parser.add_argument("--export-dir")
+    parser.add_argument("--compile-dir")
+    parser.add_argument("--mxint8-kv-cache", action="store_true")
+    parser.add_argument("--seed", type=int, default=13)
+    parser.add_argument("--enable-chunking", action="store_true")
+    parser.add_argument("--aic-enable-depth-first", action="store_true")
+    parser.add_argument("--mos", type=int)
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--action",
+        default="benchmark",
+        choices=("list", "export", "benchmark"),
+        help="List module inventory, export all selected module wrappers, or compile and benchmark them.",
+    )
+    return parser
+
+
+def run_benchmark(
+    *,
+    model_name_or_path: str,
+    benchmark_type: Optional[str] = None,
+    mode: str = "both",
+    batch_size: int = 1,
+    seq_len: int = 32,
+    ctx_len: int = 128,
+    layer_index: int = 0,
+    num_cores: int = 16,
+    num_devices: int = 1,
+    warmup_runs: int = 2,
+    benchmark_runs: int = 10,
+    export_dir: Optional[str] = None,
+    compile_dir: Optional[str] = None,
+    mxint8_kv_cache: bool = False,
+    seed: int = 13,
+    enable_chunking: bool = False,
+    action: str = "benchmark",
+    **compiler_options,
+) -> List[BenchmarkSummary]:
+    from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+    model_name, model_id = resolve_model_id(model_name_or_path)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, enable_benchmark=True)
+    qeff_model.benchmark_model_name = model_name
+
+    if action == "list":
+        summaries = []
+        adapter = _resolve_adapter(qeff_model)
+        concrete_modes = _resolve_benchmark_modes(adapter, mode)
+        for concrete_mode in concrete_modes:
+            specs = get_benchmark_module_specs(
+                qeff_model,
+                mode=concrete_mode,
+                layer_index=layer_index,
+                seq_len=seq_len,
+                ctx_len=ctx_len,
+                enable_chunking=enable_chunking,
+            )
+            for spec in specs:
+                if benchmark_type and spec.benchmark_type != benchmark_type:
+                    continue
+                summaries.append(
+                    BenchmarkSummary(
+                        benchmark_type=spec.benchmark_type,
+                        module_name=spec.module_name,
+                        mode=spec.mode,
+                        model_name=model_name,
+                        model_id=model_id,
+                        architecture=getattr(qeff_model.model.config, "model_type", "unknown"),
+                        layer_index=spec.layer_index,
+                        batch_size=batch_size,
+                        seq_len=seq_len,
+                        ctx_len=ctx_len,
+                        resolved_dims=adapter.resolved_dims(qeff_model),
+                        input_shapes=spec.wrapper.input_shapes(batch_size, seq_len, ctx_len),
+                        output_shapes=spec.wrapper.output_shapes(batch_size, seq_len, ctx_len, spec.output_name),
+                        onnx_path="",
+                        qpc_path=None,
+                        prefill_runtime=None,
+                        seed_prefill_ms=None,
+                        first_decode_ms=None,
+                        decode_runtime=None,
+                    )
+                )
+        return summaries
+
+    if action == "export":
+        return export_benchmark_modules(
+            qeff_model,
+            mode=mode,
+            benchmark_type=benchmark_type,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            ctx_len=ctx_len,
+            layer_index=layer_index,
+            export_dir=export_dir,
+            enable_chunking=enable_chunking,
+        )
+
+    return benchmark_modules(
+        qeff_model,
+        mode=mode,
+        benchmark_type=benchmark_type,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        ctx_len=ctx_len,
+        layer_index=layer_index,
+        num_cores=num_cores,
+        num_devices=num_devices,
+        warmup_runs=warmup_runs,
+        benchmark_runs=benchmark_runs,
+        export_dir=export_dir,
+        compile_dir=compile_dir,
+        mxint8_kv_cache=mxint8_kv_cache,
+        seed=seed,
+        enable_chunking=enable_chunking,
+        **compiler_options,
+    )
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    compiler_options = {}
+    if args.aic_enable_depth_first:
+        compiler_options["aic_enable_depth_first"] = True
+    if args.mos is not None:
+        compiler_options["mos"] = args.mos
+
+    summaries = run_benchmark(
+        model_name_or_path=args.model,
+        benchmark_type=args.benchmark_type,
+        mode=args.mode,
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
+        ctx_len=args.ctx_len,
+        layer_index=args.layer_index,
+        num_cores=args.num_cores,
+        num_devices=args.num_devices,
+        warmup_runs=args.warmup_runs,
+        benchmark_runs=args.benchmark_runs,
+        export_dir=args.export_dir,
+        compile_dir=args.compile_dir,
+        mxint8_kv_cache=args.mxint8_kv_cache,
+        seed=args.seed,
+        enable_chunking=args.enable_chunking,
+        action=args.action,
+        **compiler_options,
+    )
+    _print_summaries(summaries, as_json=args.json)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

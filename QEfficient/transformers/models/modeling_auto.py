@@ -2792,6 +2792,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
         max_seq_len_cached: Optional[int] = None,
+        enable_benchmark: bool = False,
         **kwargs,
     ):
         """
@@ -2857,6 +2858,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
+        self.enable_benchmark = enable_benchmark
 
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
@@ -2925,6 +2927,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             An instance initialized with the pretrained weights.
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
+        enable_benchmark = kwargs.pop("enable_benchmark", False)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -2953,6 +2956,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
                 qaic_config=qaic_config,
                 continuous_batching=continuous_batching,
+                enable_benchmark=enable_benchmark,
                 **kwargs,
             )
         return cls(
@@ -2961,6 +2965,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             max_seq_len_cached=max_seq_len_cached,
+            enable_benchmark=enable_benchmark,
             **kwargs,
         )
 
@@ -2975,6 +2980,98 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             The configuration dictionary of the underlying HuggingFace model.
         """
         return self.model.config.__dict__
+
+    def get_benchmark_module_specs(
+        self,
+        *,
+        mode: str = "decode",
+        layer_index: int = 0,
+        ctx_len: int = 128,
+        enable_chunking: bool = False,
+    ):
+        if not self.enable_benchmark:
+            raise ValueError("Benchmark mode is disabled. Load the model with `enable_benchmark=True`.")
+        from QEfficient.benchmarking.causal_lm_microbenchmark import get_benchmark_module_specs
+
+        return get_benchmark_module_specs(
+            self,
+            mode=mode,
+            layer_index=layer_index,
+            ctx_len=ctx_len,
+            enable_chunking=enable_chunking,
+        )
+
+    def export_benchmark_modules(
+        self,
+        *,
+        mode: str = "both",
+        benchmark_type: Optional[str] = None,
+        batch_size: int = 1,
+        seq_len: int = 32,
+        ctx_len: int = 128,
+        layer_index: int = 0,
+        export_dir: Optional[str] = None,
+        enable_chunking: bool = False,
+    ):
+        if not self.enable_benchmark:
+            raise ValueError("Benchmark mode is disabled. Load the model with `enable_benchmark=True`.")
+        from QEfficient.benchmarking.causal_lm_microbenchmark import export_benchmark_modules
+
+        return export_benchmark_modules(
+            self,
+            mode=mode,
+            benchmark_type=benchmark_type,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            ctx_len=ctx_len,
+            layer_index=layer_index,
+            export_dir=export_dir,
+            enable_chunking=enable_chunking,
+        )
+
+    def benchmark_modules(
+        self,
+        *,
+        mode: str = "both",
+        benchmark_type: Optional[str] = None,
+        batch_size: int = 1,
+        seq_len: int = 32,
+        ctx_len: int = 128,
+        layer_index: int = 0,
+        num_cores: int = 16,
+        num_devices: int = 1,
+        warmup_runs: int = 2,
+        benchmark_runs: int = 10,
+        export_dir: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        mxint8_kv_cache: bool = False,
+        seed: int = 13,
+        enable_chunking: bool = False,
+        **compiler_options,
+    ):
+        if not self.enable_benchmark:
+            raise ValueError("Benchmark mode is disabled. Load the model with `enable_benchmark=True`.")
+        from QEfficient.benchmarking.causal_lm_microbenchmark import benchmark_modules
+
+        return benchmark_modules(
+            self,
+            mode=mode,
+            benchmark_type=benchmark_type,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            ctx_len=ctx_len,
+            layer_index=layer_index,
+            num_cores=num_cores,
+            num_devices=num_devices,
+            warmup_runs=warmup_runs,
+            benchmark_runs=benchmark_runs,
+            export_dir=export_dir,
+            compile_dir=compile_dir,
+            mxint8_kv_cache=mxint8_kv_cache,
+            seed=seed,
+            enable_chunking=enable_chunking,
+            **compiler_options,
+        )
 
     def get_seq_len_and_handle_specialized_prefill_model(
         self, prefill_seq_len: Optional[int] = None, enable_chunking=False
@@ -3338,6 +3435,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        export_only: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -3418,6 +3516,29 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        if self.enable_benchmark:
+            from QEfficient.benchmarking.causal_lm_microbenchmark import compile_benchmark_modules
+
+            compile_benchmark_modules(
+                self,
+                prefill_only=prefill_only,
+                batch_size=batch_size,
+                seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
+                num_cores=num_cores,
+                num_devices=num_devices,
+                compile_dir=compile_dir,
+                export_only=export_only,
+                mxint8_kv_cache=mxint8_kv_cache,
+                enable_chunking=enable_chunking,
+                mxfp6_matmul=mxfp6_matmul,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                offload_pt_weights=offload_pt_weights,
+                retain_full_kv=retain_full_kv,
+                **compiler_options,
+            )
+            return self._benchmark_manifest_path
+
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
                 "`kv_cache_batch_size` or `full_batch_size` is being passed"
@@ -3615,6 +3736,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         NotImplementedError
             If `runtime_ai100` is False.
         """
+        if self.enable_benchmark:
+            from QEfficient.benchmarking.causal_lm_microbenchmark import generate_benchmark_report
+
+            generate_benchmark_report(
+                self,
+                warmup_runs=kwargs.pop("warmup_runs", None),
+                benchmark_runs=kwargs.pop("benchmark_runs", None),
+                seed=kwargs.pop("seed", 13),
+                device_id=device_id,
+            )
+            return self._benchmark_report_path
+
         write_io = kwargs.pop("write_io", False)
         self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
 
