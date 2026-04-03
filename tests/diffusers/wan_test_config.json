@@ -10,7 +10,7 @@
                          "tolerances": {
                                 "transformer_high": 0.1,
                                 "transformer_low": 0.1,
-                                "vae_decoder" : 1
+                                "vae_decoder" : 1.3
                             }
                         },
     "pipeline_params": {

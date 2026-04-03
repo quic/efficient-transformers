@@ -11,7 +11,7 @@ import os
 import shutil
 from typing import Dict, List, Optional
 
-from QEfficient.utils._utils import create_json, execute_command, load_json, to_named_specializations
+from QEfficient.utils._utils import create_json, execute_command, load_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.generate_qnn_network_specialization_config import (
     generate_data_format_config,
@@ -423,7 +423,7 @@ def compile(
             specializations_json = qpc_base_path / "specializations.json"
             with open(specializations_json, "w") as fp:
                 json.dump(
-                    {"specializations": to_named_specializations(specializations)},
+                    {"specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]},
                     fp,
                     indent=4,
                 )

@@ -835,7 +835,6 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         feature_len = encoder_ctx_len * 2
 
         encoder_specializations = {
-            "_graph_name": "Encoder",
             "batch_size": batch_size,
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
@@ -844,7 +843,6 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         }
 
         decoder_specializations = {
-            "_graph_name": "Decode",
             "batch_size": batch_size,
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
