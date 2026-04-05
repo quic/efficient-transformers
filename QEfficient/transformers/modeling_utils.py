@@ -36,6 +36,14 @@ from transformers.models.gemma2.modeling_gemma2 import (
     Gemma2Model,
     Gemma2RMSNorm,
 )
+from transformers.models.gemma4.modeling_gemma4 import (
+    Gemma4ForCausalLM,
+    Gemma4TextAttention,
+    Gemma4TextDecoderLayer,
+    Gemma4TextExperts,
+    Gemma4TextModel,
+    Gemma4TextRouter,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -116,6 +124,14 @@ from .models.gemma2.modeling_gemma2 import (
     QEffGemma2ForCausalLM,
     QEffGemma2Model,
 )
+from .models.gemma4.modeling_gemma4 import (
+    QEffGemma4ForCausalLM,
+    QEffGemma4TextAttention,
+    QEffGemma4TextDecoderLayer,
+    QEffGemma4TextExperts,
+    QEffGemma4TextModel,
+    QEffGemma4TextRouter,
+)
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.gpt_bigcode.modeling_gpt_bigcode import (
     QEffGPTBigCodeAttention,
@@ -178,6 +194,7 @@ qeff_supported_architectures = ModelArchitectures(
         LlamaForCausalLM.__name__,
         GemmaForCausalLM.__name__,
         Gemma2ForCausalLM.__name__,
+        Gemma4ForCausalLM.__name__,
         MistralForCausalLM.__name__,
         MixtralForCausalLM.__name__,
         Phi3ForCausalLM.__name__,
@@ -193,7 +210,7 @@ qeff_supported_architectures = ModelArchitectures(
 
 
 # This is for supporting different seq_len for different layers for Sliding window attn, chunked attn etc.
-DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "llama4", "gemma3_text", "llama4_text"}
+DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "gemma3_text", "gemma4_text", "llama4", "llama4_text"}
 
 # This is for supporting different modelling classes specially written for prefill-only model
 SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss"}
@@ -252,6 +269,13 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Gemma2ForCausalLM: QEffGemma2ForCausalLM,
     Gemma2DecoderLayer: QEffGemma2DecoderLayer,
     Gemma2RMSNorm: CustomRMSNormAIC,
+    # Gemma4 model layers
+    Gemma4TextAttention: QEffGemma4TextAttention,
+    Gemma4TextModel: QEffGemma4TextModel,
+    Gemma4ForCausalLM: QEffGemma4ForCausalLM,
+    Gemma4TextDecoderLayer: QEffGemma4TextDecoderLayer,
+    Gemma4TextExperts: QEffGemma4TextExperts,
+    Gemma4TextRouter: QEffGemma4TextRouter,
     # MPT model layers
     MptAttention: QEffMptAttention,
     MptBlock: QEffMptBlock,

@@ -2987,7 +2987,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
+                    cache_idx = 0 if kv == "key" else 1
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(pkv_cache[i][cache_idx].shape, dtype=torch.float32)
+                    )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 

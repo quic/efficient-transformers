@@ -18,6 +18,26 @@ os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 # Placeholder for all non-transformer models registered in QEfficient
 import warnings  # noqa: I001
 
+import transformers
+import transformers.utils as transformers_utils
+
+try:
+    from transformers import HybridCache as _TransformersHybridCache  # noqa: F401
+except ImportError:
+    from transformers.cache_utils import DynamicCache
+
+    class HybridCache(DynamicCache):
+        pass
+
+    class HybridChunkedCache(HybridCache):
+        pass
+
+    transformers.HybridCache = HybridCache
+    transformers.HybridChunkedCache = HybridChunkedCache
+
+if not hasattr(transformers_utils, "FLAX_WEIGHTS_NAME"):
+    transformers_utils.FLAX_WEIGHTS_NAME = "flax_model.msgpack"
+
 import QEfficient.utils.model_registery  # noqa: F401
 from QEfficient.base import (
     QEFFAutoModel,
@@ -29,15 +49,25 @@ from QEfficient.base import (
     QEFFCommonLoader,
 )
 from QEfficient.compile.compile_helper import compile
-from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
-from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
-from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.peft import QEffAutoPeftModelForCausalLM
 from QEfficient.transformers.transform import transform
 from QEfficient.utils import custom_format_warning
 from QEfficient.utils.logging_utils import logger
+
+try:
+    from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
+    from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
+    from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
+except Exception:
+    QEffFluxPipeline = None
+    QEffWanPipeline = None
+    QEffWanImageToVideoPipeline = None
+
+try:
+    from QEfficient.peft import QEffAutoPeftModelForCausalLM
+except Exception:
+    QEffAutoPeftModelForCausalLM = None
 
 # custom warning for the better logging experience
 warnings.formatwarning = custom_format_warning

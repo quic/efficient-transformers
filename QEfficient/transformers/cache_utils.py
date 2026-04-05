@@ -10,7 +10,26 @@ from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache, HybridCache, HybridChunkedCache
+
+try:
+    from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache, HybridCache, HybridChunkedCache
+except ImportError:
+    from transformers.cache_utils import Cache, CacheLayerMixin, DynamicCache, EncoderDecoderCache
+
+    class HybridCache(DynamicCache):
+        def __init__(self, config=None, batch_size=None, max_cache_len=None, *args, **kwargs):
+            super().__init__(config=config, *args, **kwargs)
+            self.key_cache = []
+            self.value_cache = []
+
+    class HybridChunkedCache(HybridCache):
+        def __init__(self, config=None, max_batch_size=None, max_cache_len=None, *args, **kwargs):
+            super().__init__(config=config, batch_size=max_batch_size, max_cache_len=max_cache_len, *args, **kwargs)
+            self.is_sliding = torch.tensor(
+                [False] * getattr(config, "num_hidden_layers", 0),
+                dtype=torch.bool,
+            )
+
 
 from QEfficient.customop import (
     CtxGatherFunc,
@@ -69,7 +88,12 @@ class QEffDynamicLayer(CacheLayerMixin):
 
     def get_mask_sizes(self, cache_position: torch.Tensor) -> tuple[int, int]:
         kv_offset = 0
-        query_length = cache_position.shape[0]
+        if isinstance(cache_position, (tuple, list)):
+            query_length = cache_position[0]
+        elif hasattr(cache_position, "shape"):
+            query_length = cache_position.shape[0] if len(cache_position.shape) > 0 else cache_position
+        else:
+            query_length = cache_position
         kv_length = self.get_seq_length() + query_length
         return kv_length, kv_offset
 
@@ -237,6 +261,11 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.values = value_states
             self._mark_initialized(self.keys)
             k_out, v_out = self.keys, self.values
+        elif cache_kwargs is None:
+            self._mark_initialized(self.keys)
+            self.keys = torch.cat((self.keys, key_states), dim=-2)
+            self.values = torch.cat((self.values, value_states), dim=-2)
+            k_out, v_out = self.keys, self.values
         else:
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
@@ -301,6 +330,11 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.keys = key_states
             self.values = value_states
             self._mark_initialized(self.keys)
+            k_out, v_out = self.keys, self.values
+        elif cache_kwargs is None:
+            self._mark_initialized(self.keys)
+            self.keys = torch.cat((self.keys, key_states), dim=1)
+            self.values = torch.cat((self.values, value_states), dim=1)
             k_out, v_out = self.keys, self.values
         else:
             self._mark_initialized(self.keys)
