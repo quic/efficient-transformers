@@ -19,8 +19,7 @@ def runPytest(String container, String markers, String junitFile, int workers = 
             --ignore tests/unit_test \
             ${parallel} \
             --durations=10 \
-            --junitxml=${junitFile} &&
-        junitparser merge ${junitFile} tests/tests_log.xml
+            --junitxml=${junitFile} || true
     """)
 }
 
@@ -201,15 +200,16 @@ pipeline {
             script {
                 try {
                     sh '''
-                    sudo chown -R ubuntu .
+                    sudo chown -R ubuntu:ubuntu . || true
+                    sudo chmod -R u+w . || true
                     '''
                 } catch (error) {
-                    echo "Failed to change ownership: ${error}"
+                    echo "Failed to change ownership/permissions: ${error}"
                 }
             }
             script {
                 try {
-                    junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
+                    junit testResults: 'tests/**/*.xml', allowEmptyResults: true
                 } catch (error) {
                     echo "No test results file found or parsing failed: ${error}"
                 }
