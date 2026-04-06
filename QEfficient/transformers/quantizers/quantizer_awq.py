@@ -7,8 +7,6 @@
 
 import torch
 from transformers.quantizers.quantizer_awq import AwqQuantizer
-
-# from transformers.utils.quantization_config import AwqConfig
 from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM

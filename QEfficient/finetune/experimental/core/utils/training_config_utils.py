@@ -35,7 +35,6 @@ def prepare_training_config(
 
     # Handle dtype conversion
     # To do: (For Tanisha) Check if torch_dtype should rather be added directly in model_config only in config_manager.py
-
     # TODO: Add PC here
     parallelism_config = {}
     if training_config.get("tp_degree", 1) > 1:

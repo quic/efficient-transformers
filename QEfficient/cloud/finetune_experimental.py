@@ -211,7 +211,6 @@ class FineTuningPipeline:
                 if peft_config_dataclass is not None:
                     peft_config = convert_peft_config_to_lora_config(peft_config_dataclass)
                 # Apply PEFT to the model and include PEFT layers in TP plan
-
                 model_instance.model = apply_peft_to_model(
                     model_instance.model, tp_mesh=tp_mesh, peft_config=peft_config
                 )
