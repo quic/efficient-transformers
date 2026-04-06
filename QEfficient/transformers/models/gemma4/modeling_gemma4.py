@@ -509,6 +509,98 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             yaml.safe_dump(npi_data, fp, sort_keys=False)
         return str(npi_path)
 
+    def get_specializations(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
+        **kwargs,
+    ):
+        del kwargs
+        batch_size = batch_size if batch_size else 1
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
+        ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
+
+        def build_prefill_spec(comp_ctx_lengths: Optional[int] = None):
+            spec = {
+                "batch_size": 1 if continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "sliding_window": self.config.sliding_window,
+            }
+            if comp_ctx_lengths is not None:
+                spec["comp_ctx_lengths"] = comp_ctx_lengths
+            if continuous_batching:
+                spec["full_batch_size"] = kv_cache_batch_size
+            else:
+                spec["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                spec["full_batch_exec_size"] = full_batch_size
+            return spec
+
+        def build_decode_spec(comp_ctx_lengths: Optional[int] = None):
+            spec = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": "1",
+                "ctx_len": ctx_len,
+                "sliding_window": self.config.sliding_window,
+            }
+            if comp_ctx_lengths is not None:
+                spec["comp_ctx_lengths"] = comp_ctx_lengths
+            if continuous_batching:
+                spec["full_batch_size"] = kv_cache_batch_size
+            else:
+                spec["batch_size"] = kv_cache_batch_size
+            return spec
+
+        if comp_ctx_lengths_prefill and comp_ctx_lengths_decode:
+            specializations = [build_prefill_spec(length) for length in comp_ctx_lengths_prefill]
+            specializations.extend(build_decode_spec(length) for length in comp_ctx_lengths_decode)
+            return specializations
+
+        return [build_prefill_spec(), build_decode_spec()]
+
+    def get_pkv_dynamic_axes(
+        self,
+        retain_full_kv: Optional[bool] = False,
+        continuous_batching: Optional[bool] = False,
+    ):
+        del retain_full_kv
+        return [
+            (
+                {0: "full_batch_size" if continuous_batching else "batch_size", 2: "sliding_window"}
+                if layer_type == "sliding_attention"
+                else {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
+            )
+            for layer_type in self.config.layer_types
+        ]
+
+    def get_onnx_dynamic_axes(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        continuous_batching: bool = False,
+    ):
+        dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+        }
+        if continuous_batching:
+            dynamic_axes["batch_index"] = {0: "batch_size"}
+
+        for i, ctx_axis in enumerate(self.get_pkv_dynamic_axes(continuous_batching=continuous_batching)):
+            for kv in ("key", "value"):
+                dynamic_axes[f"past_{kv}.{i}"] = ctx_axis
+
+        if comp_ctx_lengths is not None:
+            dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
+        return dynamic_axes
+
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffGemma4TextDecoderLayer}
 

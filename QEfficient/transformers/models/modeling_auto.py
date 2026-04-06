@@ -3200,13 +3200,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             pkv_cache = self.model.get_dummy_pkv_cache(
                 self.model.config, fbs if self.continuous_batching else bs, seq_len
             )
+            layer_pkv_dynamic_axes = (
+                self.model.get_pkv_dynamic_axes(
+                    retain_full_kv=kwargs.get("retain_full_kv", False)
+                    or (prefill_only and kwargs.get("enable_chunking", False)),
+                    continuous_batching=self.continuous_batching,
+                )
+                if hasattr(self.model, "get_pkv_dynamic_axes")
+                else [pkv_dynamic_axes] * self.num_layers
+            )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     cache_idx = 0 if kv == "key" else 1
                     example_inputs["past_key_values"][i].append(
                         torch.zeros(pkv_cache[i][cache_idx].shape, dtype=torch.float32)
                     )
-                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    dynamic_axes[f"past_{kv}.{i}"] = layer_pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         else:
