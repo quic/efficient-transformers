@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 
 import onnx
 import torch
+from onnx import TensorProto
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
@@ -306,8 +307,24 @@ class QEFFBaseModel(ABC):
             )
             logger.info("ONNX transforms applied")
 
+            has_external_tensors = any(
+                tensor.data_location == TensorProto.EXTERNAL or len(tensor.external_data) > 0
+                for tensor in onnx.external_data_helper._get_all_tensors(model)
+            )
+            save_with_external_data = has_external_tensors or SplitTensorsTransform in self._onnx_transforms
+
             onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
-            onnx.save(model, onnx_path_tmp)
+            if save_with_external_data:
+                onnx.save_model(
+                    model,
+                    onnx_path_tmp,
+                    save_as_external_data=True,
+                    all_tensors_to_one_file=False,
+                    size_threshold=1024,
+                    convert_attribute=False,
+                )
+            else:
+                onnx.save(model, onnx_path_tmp)
             onnx_path_tmp.replace(onnx_path)
             del model
             gc.collect()

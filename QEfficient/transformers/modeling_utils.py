@@ -38,6 +38,7 @@ from transformers.models.gemma2.modeling_gemma2 import (
 )
 from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4ForCausalLM,
+    Gemma4RMSNorm,
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
     Gemma4TextExperts,
@@ -125,6 +126,7 @@ from .models.gemma2.modeling_gemma2 import (
     QEffGemma2Model,
 )
 from .models.gemma4.modeling_gemma4 import (
+    QEffGemma4CustomRMSNormAIC,
     QEffGemma4ForCausalLM,
     QEffGemma4TextAttention,
     QEffGemma4TextDecoderLayer,
@@ -276,6 +278,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Gemma4TextDecoderLayer: QEffGemma4TextDecoderLayer,
     Gemma4TextExperts: QEffGemma4TextExperts,
     Gemma4TextRouter: QEffGemma4TextRouter,
+    Gemma4RMSNorm: QEffGemma4CustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
     MptBlock: QEffMptBlock,

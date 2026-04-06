@@ -50,6 +50,8 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4ForCausalLM,
+    Gemma4ForConditionalGeneration,
+    Gemma4RMSNorm,
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
     Gemma4TextExperts,
@@ -264,7 +266,9 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3TextModel,
 )
 from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
+    QEffGemma4CustomRMSNormAIC,
     QEffGemma4ForCausalLM,
+    QEffGemma4ForConditionalGeneration,
     QEffGemma4TextAttention,
     QEffGemma4TextDecoderLayer,
     QEffGemma4TextExperts,
@@ -481,6 +485,7 @@ class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
         Gemma2RMSNorm: GemmaCustomRMSNormAIC,
+        Gemma4RMSNorm: QEffGemma4CustomRMSNormAIC,
         GptOssRMSNorm: CustomRMSNormAIC,
         LlamaRMSNorm: CustomRMSNormAIC,
         Llama4TextRMSNorm: CustomRMSNormAIC,
@@ -572,6 +577,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma4TextDecoderLayer: QEffGemma4TextDecoderLayer,
         Gemma4TextModel: QEffGemma4TextModel,
         Gemma4ForCausalLM: QEffGemma4ForCausalLM,
+        Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
         Gemma4TextExperts: QEffGemma4TextExperts,
         Gemma4TextRouter: QEffGemma4TextRouter,
         # GPT_OSS

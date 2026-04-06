@@ -5,14 +5,20 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Optional, Type, Union
+from collections import defaultdict
+from pathlib import Path
+from typing import List, Optional, Type, Union
 
+import onnx
 import torch
 import torch.nn as nn
+import yaml
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4ForCausalLM,
+    Gemma4ForConditionalGeneration,
+    Gemma4RMSNorm,
     Gemma4TextAttention,
     Gemma4TextConfig,
     Gemma4TextDecoderLayer,
@@ -23,11 +29,54 @@ from transformers.models.gemma4.modeling_gemma4 import (
     eager_attention_forward,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils import constants
+
+_FP16_CLAMP_MIN = -65504.0
+_FP16_CLAMP_MAX = 65504.0
+
+
+def _is_onnx_export() -> bool:
+    return torch.onnx.is_in_onnx_export()
+
+
+def _clamp_to_fp16_range(hidden_states: torch.Tensor) -> torch.Tensor:
+    if not _is_onnx_export():
+        return hidden_states
+    return hidden_states.clamp(_FP16_CLAMP_MIN, _FP16_CLAMP_MAX)
+
+
+def _saturating_residual_add(residual: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
+    if not _is_onnx_export():
+        return residual + hidden_states
+    return (residual.float() + hidden_states.float()).clamp(_FP16_CLAMP_MIN, _FP16_CLAMP_MAX).to(hidden_states.dtype)
+
+
+def _build_additive_attention_mask(
+    position_ids: torch.Tensor,
+    target_length: int,
+    dtype: torch.dtype,
+    sliding_window: Optional[int] = None,
+) -> torch.Tensor:
+    causal_mask = _create_causal_mask(
+        position_ids=position_ids,
+        target_length=target_length,
+        sliding_window=sliding_window,
+    )
+    return causal_mask.to(dtype=dtype) * torch.finfo(dtype).min
 
 
 class QEffGemma4TextRouter(Gemma4TextRouter):
+    def __qeff_init__(self):
+        if (
+            hasattr(self, "norm")
+            and not getattr(self.norm, "with_scale", True)
+            and not hasattr(self.norm, "_qeff_unit_weight")
+        ):
+            self.norm.register_buffer("_qeff_unit_weight", torch.ones(self.hidden_size))
+
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         hidden_states = self.norm(hidden_states)
         hidden_states = hidden_states * self.scale * self.scalar_root_size
@@ -43,6 +92,20 @@ class QEffGemma4TextRouter(Gemma4TextRouter):
         top_k_weights = top_k_weights * self.per_expert_scale[top_k_index]
 
         return router_probabilities, top_k_weights, top_k_index
+
+
+class QEffGemma4CustomRMSNormAIC(Gemma4RMSNorm):
+    """
+    Gemma4 RMSNorm replacement that preserves `with_scale=False` behavior while
+    still exporting through the compiler-known custom RMSNorm op.
+    """
+
+    def __qeff_init__(self):
+        pass
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        weight = self.weight if getattr(self, "with_scale", True) else self._qeff_unit_weight
+        return CustomRMSNormFunc.apply(hidden_states, weight, self.eps)
 
 
 class QEffGemma4TextExperts(Gemma4TextExperts):
@@ -70,6 +133,12 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
 
 
 class QEffGemma4TextAttention(Gemma4TextAttention):
+    def __qeff_init__(self):
+        for norm_name in ("q_norm", "k_norm", "v_norm"):
+            norm = getattr(self, norm_name, None)
+            if norm is not None and not getattr(norm, "with_scale", True) and not hasattr(norm, "_qeff_unit_weight"):
+                norm.register_buffer("_qeff_unit_weight", torch.ones(self.head_dim))
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -135,7 +204,60 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
-    pass
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        per_layer_input: torch.Tensor = None,
+        position_embeddings: torch.Tensor = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        hidden_states = _clamp_to_fp16_range(hidden_states)
+        residual = hidden_states
+
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states, _ = self.self_attn(
+            hidden_states=hidden_states,
+            position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            **kwargs,
+        )
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = _saturating_residual_add(residual, hidden_states)
+
+        residual = hidden_states
+        hidden_states = self.pre_feedforward_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+
+        if self.enable_moe_block:
+            hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)
+
+            hidden_states_flat = residual.reshape(-1, residual.shape[-1])
+            _, top_k_weights, top_k_index = self.router(hidden_states_flat)
+            hidden_states_2 = self.pre_feedforward_layernorm_2(hidden_states_flat)
+            hidden_states_2 = self.experts(hidden_states_2, top_k_index, top_k_weights)
+            hidden_states_2 = hidden_states_2.reshape(residual.shape)
+            hidden_states_2 = self.post_feedforward_layernorm_2(hidden_states_2)
+            hidden_states = hidden_states_1 + hidden_states_2
+
+        hidden_states = self.post_feedforward_layernorm(hidden_states)
+        hidden_states = _saturating_residual_add(residual, hidden_states)
+
+        if self.hidden_size_per_layer_input:
+            residual = hidden_states
+            hidden_states = self.per_layer_input_gate(hidden_states)
+            hidden_states = self.act_fn(hidden_states)
+            hidden_states = hidden_states * per_layer_input
+            hidden_states = self.per_layer_projection(hidden_states)
+            hidden_states = self.post_per_layer_input_norm(hidden_states)
+            hidden_states = _saturating_residual_add(residual, hidden_states)
+
+        hidden_states *= self.layer_scalar
+        return hidden_states
 
 
 class QEffGemma4TextModel(Gemma4TextModel):
@@ -165,10 +287,12 @@ class QEffGemma4TextModel(Gemma4TextModel):
                 per_layer_inputs = self.get_per_layer_inputs(input_ids, inputs_embeds)
             per_layer_inputs = self.project_per_layer_inputs(inputs_embeds, per_layer_inputs)
 
-        if use_cache and not isinstance(past_key_values, Cache):
-            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+        if use_cache and isinstance(past_key_values, Cache) and not isinstance(past_key_values, QEffGemma4DynamicCache):
+            past_key_values = QEffGemma4DynamicCache.from_cache(self.config, past_key_values)
+        elif use_cache and not isinstance(past_key_values, Cache):
+            past_key_values = QEffGemma4DynamicCache.from_legacy_cache(self.config, past_key_values)
         elif use_cache and past_key_values is None:
-            past_key_values = QEffDynamicCache(config=self.config)
+            past_key_values = QEffGemma4DynamicCache(config=self.config)
 
         if position_ids is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -183,29 +307,32 @@ class QEffGemma4TextModel(Gemma4TextModel):
 
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             per_layer_input = per_layer_inputs[:, :, i, :] if per_layer_inputs is not None else None
+            layer_type = self.config.layer_types[i]
             layer_attention_mask = attention_mask
             if not isinstance(attention_mask, dict):
-                target_length = inputs_embeds.shape[1]
+                sliding_window = self.config.sliding_window if layer_type == "sliding_attention" else None
+                target_length = (
+                    min(self.config.sliding_window, self.config.max_position_embeddings)
+                    if sliding_window
+                    else inputs_embeds.shape[1]
+                )
                 if past_key_values is not None and len(past_key_values.layers) > i:
                     layer_keys = past_key_values.layers[i].keys
                     if layer_keys is not None and layer_keys.numel() > 0:
                         target_length = layer_keys.shape[-2]
-
-                sliding_window = (
-                    self.config.sliding_window if self.config.layer_types[i] == "sliding_attention" else None
-                )
-                layer_attention_mask = _create_causal_mask(
+                layer_attention_mask = _build_additive_attention_mask(
                     position_ids=position_ids,
                     target_length=target_length,
+                    dtype=hidden_states.dtype,
                     sliding_window=sliding_window,
                 )
             else:
-                layer_attention_mask = attention_mask[self.config.layer_types[i]]
+                layer_attention_mask = attention_mask[layer_type]
 
             hidden_states = decoder_layer(
                 hidden_states,
                 per_layer_input,
-                position_embeddings=position_embeddings[self.config.layer_types[i]],
+                position_embeddings=position_embeddings[layer_type],
                 attention_mask=layer_attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
@@ -219,12 +346,192 @@ class QEffGemma4TextModel(Gemma4TextModel):
 
 
 class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
+    _NPI_FP32_OPS = {"Cast", "Pow", "ReduceMean", "Add", "Mul", "Div", "Softmax", "Tanh", "Clip", "MatMul"}
+    _NPI_SEMANTIC_NAMES = ("attn_weights", "top_k_weights", "experts_out")
+    _NPI_ATTENTION_NAMES = ("query_states", "key_states", "value_states", "key", "value")
+    _NPI_BAD_OUTPUT_TOKENS = ("Shape", "Equal", "Unsqueeze", "Slice", "Gather", "Transpose")
+    _NPI_EXCLUDED_OPS = {
+        "Constant",
+        "ConstantOfShape",
+        "Concat",
+        "CustomRMSNorm",
+        "Equal",
+        "Gather",
+        "Range",
+        "Reshape",
+        "Shape",
+        "Slice",
+        "Transpose",
+        "Unsqueeze",
+    }
+
     def __qeff_init__(self):
         if hasattr(self.config, "_experts_implementation"):
             self.config._experts_implementation = "eager"
 
+    @staticmethod
+    def _matches_semantic_name(output_name: str, semantic_name: str) -> bool:
+        return output_name == semantic_name or output_name.startswith(f"{semantic_name}.")
+
+    @classmethod
+    def _find_output_name(cls, output_names: list[str], semantic_name: str) -> Optional[str]:
+        for output_name in output_names:
+            if cls._matches_semantic_name(output_name, semantic_name):
+                return output_name
+        return None
+
+    @staticmethod
+    def _find_consumer(consumers: dict[str, list], input_name: Optional[str], op_type: str):
+        if input_name is None:
+            return None
+        for node in consumers.get(input_name, []):
+            if node.op_type == op_type:
+                return node
+        return None
+
+    @classmethod
+    def _collect_attention_fp32_names(cls, function) -> list[str]:
+        consumers = defaultdict(list)
+        output_names = []
+
+        def add_output(name: Optional[str]):
+            if name is not None:
+                output_names.append(name)
+
+        for node in function.node:
+            for input_name in node.input:
+                consumers[input_name].append(node)
+
+            for semantic_name in cls._NPI_ATTENTION_NAMES:
+                add_output(cls._find_output_name(list(node.output), semantic_name))
+
+        attn_weights = None
+        for node in function.node:
+            attn_weights = cls._find_output_name(list(node.output), "attn_weights")
+            if attn_weights is not None:
+                add_output(attn_weights)
+                break
+
+        if attn_weights is None:
+            return output_names
+
+        softmax_node = cls._find_consumer(consumers, attn_weights, "Softmax")
+        softmax_output = softmax_node.output[0] if softmax_node is not None else None
+        add_output(softmax_output)
+
+        softmax_cast_output = None
+        if softmax_output is not None:
+            cast_node = cls._find_consumer(consumers, softmax_output, "Cast")
+            if cast_node is not None:
+                softmax_cast_output = cast_node.output[0]
+                add_output(softmax_cast_output)
+
+        attention_probs = softmax_cast_output or softmax_output
+        if softmax_cast_output is not None:
+            cast_node = cls._find_consumer(consumers, softmax_cast_output, "Cast")
+            if cast_node is not None:
+                attention_probs = cast_node.output[0]
+                add_output(attention_probs)
+
+        query_states = None
+        for node in function.node:
+            query_states = cls._find_output_name(list(node.output), "query_states")
+            if query_states is not None:
+                break
+
+        qk_matmul_node = cls._find_consumer(consumers, query_states, "MatMul")
+        qk_logits = qk_matmul_node.output[0] if qk_matmul_node is not None else None
+        add_output(qk_logits)
+
+        scaled_logits = None
+        if qk_logits is not None:
+            mul_node = cls._find_consumer(consumers, qk_logits, "Mul")
+            if mul_node is not None:
+                scaled_logits = mul_node.output[0]
+                add_output(scaled_logits)
+
+        for node in function.node:
+            if node.op_type == "Cast" and "attention_mask" in node.input:
+                add_output(node.output[0])
+                break
+
+        context_node = cls._find_consumer(consumers, attention_probs, "MatMul")
+        context_output = context_node.output[0] if context_node is not None else None
+        add_output(context_output)
+
+        transpose_node = cls._find_consumer(consumers, context_output, "Transpose")
+        transposed_context = transpose_node.output[0] if transpose_node is not None else None
+        add_output(transposed_context)
+
+        reshape_node = cls._find_consumer(consumers, transposed_context, "Reshape")
+        reshaped_context = reshape_node.output[0] if reshape_node is not None else None
+        add_output(reshaped_context)
+
+        projected_context_node = cls._find_consumer(consumers, reshaped_context, "MatMul")
+        projected_context = projected_context_node.output[0] if projected_context_node is not None else None
+        add_output(projected_context)
+
+        return output_names
+
+    def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
+        del model_name
+        onnx_path = onnx_path or self.onnx_path
+        if onnx_path is None:
+            raise ValueError("ONNX path is required to generate Gemma4 NPI file.")
+        onnx_path = Path(onnx_path)
+        npi_path = onnx_path.with_name(f"{onnx_path.stem}_gemma4_npi.yaml")
+
+        model = onnx.load(str(onnx_path), load_external_data=False)
+        fp32_names = []
+
+        for node in model.graph.node:
+            fp32_names.extend(
+                out_name for out_name in node.output if out_name and not out_name.endswith("_RetainedState")
+            )
+
+        for function in model.functions:
+            if "DecoderLayer" not in function.name:
+                continue
+
+            for node in function.node:
+                if node.op_type in self._NPI_EXCLUDED_OPS:
+                    continue
+                fp32_names.extend(output_name for output_name in node.output if output_name)
+
+        fp32_names = list(dict.fromkeys(fp32_names))
+
+        npi_data = {"FP32NodeInstanceNames": fp32_names}
+        with open(npi_path, "w") as fp:
+            yaml.safe_dump(npi_data, fp, sort_keys=False)
+        return str(npi_path)
+
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffGemma4TextDecoderLayer}
+
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        past_key_values = []
+        for layer_type in config.layer_types:
+            if layer_type == "sliding_attention":
+                n_heads = config.num_key_value_heads
+                d_head = config.head_dim
+                layer_seq_len = min(config.sliding_window, seq_len)
+            else:
+                use_alternative_attention = getattr(config, "attention_k_eq_v", False)
+                n_heads = (
+                    config.num_global_key_value_heads
+                    if use_alternative_attention and getattr(config, "num_global_key_value_heads", None) is not None
+                    else config.num_key_value_heads
+                )
+                d_head = config.global_head_dim if getattr(config, "global_head_dim", None) else config.head_dim
+                layer_seq_len = seq_len
+            cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
+            past_key_values.append(
+                (
+                    torch.zeros(cache_shape, dtype=torch.float32),
+                    torch.zeros(cache_shape, dtype=torch.float32),
+                )
+            )
+        return past_key_values
 
     def forward(
         self,
@@ -262,6 +569,193 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             logits = torch.tanh(logits)
             logits = logits * self.config.final_logit_softcapping
         logits = logits.float()
+        return CausalLMOutputWithPast(
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+        )
+
+
+class QEffGemma4DecoderWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.language_model = self.model.model.language_model
+        self.config = self.model.config
+        self.lm_head = self.model.lm_head
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        return {QEffGemma4TextDecoderLayer}
+
+    def forward(
+        self,
+        input_ids,
+        position_ids,
+        image_idx,
+        past_key_values,
+        mm_token_type_ids=None,
+        batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        **kwargs,
+    ):
+        del batch_index, comp_ctx_lengths, kwargs
+        outputs = self.language_model(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            use_cache=True,
+        )
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        logits = self.lm_head(hidden_states)
+        if self.config.text_config.final_logit_softcapping is not None:
+            logits = logits / self.config.text_config.final_logit_softcapping
+            logits = torch.tanh(logits)
+            logits = logits * self.config.text_config.final_logit_softcapping
+        logits = logits.float()
+        if image_idx is None:
+            image_idx = torch.zeros((1, 1), dtype=torch.int64, device=logits.device)
+        return logits, image_idx, outputs.past_key_values
+
+
+class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
+    def get_qeff_language_decoder(self):
+        return QEffGemma4DecoderWrapper(self)
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        img_size: int,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
+        **compiler_options,
+    ):
+        del comp_ctx_lengths_prefill, comp_ctx_lengths_decode
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
+        ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        img_size = img_size if img_size is not None else 896
+
+        lang_prefill = {
+            "batch_size": 1 if continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+            "sliding_window": self.model.language_model.config.sliding_window,
+            "img_size": img_size,
+            "mm_tokens_per_image": getattr(self.config, "vision_soft_tokens_per_image", 280),
+            "vision_batch_size": batch_size,
+        }
+        if continuous_batching:
+            lang_prefill["full_batch_size"] = kv_cache_batch_size or batch_size
+        else:
+            lang_prefill["batch_size"] = kv_cache_batch_size or batch_size
+        if full_batch_size:
+            lang_prefill["full_batch_exec_size"] = full_batch_size
+
+        lang_decode = {
+            "batch_size": full_batch_size if continuous_batching else batch_size,
+            "seq_len": "1",
+            "ctx_len": ctx_len,
+            "sliding_window": self.model.language_model.config.sliding_window,
+            "img_size": img_size,
+            "mm_tokens_per_image": getattr(self.config, "vision_soft_tokens_per_image", 280),
+            "vision_batch_size": batch_size,
+        }
+        if continuous_batching:
+            lang_decode["full_batch_size"] = kv_cache_batch_size or batch_size
+        else:
+            lang_decode["batch_size"] = kv_cache_batch_size or batch_size
+
+        lang = [lang_prefill, lang_decode]
+        if kv_offload:
+            vision = [{"batch_size": batch_size, "img_size": img_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len}]
+            return {"vision": vision, "lang": lang}, compiler_options
+        return lang, compiler_options
+
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
+        del comp_ctx_lengths
+        lang_dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
+        }
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+
+        for i in range(self.model.language_model.config.num_hidden_layers):
+            layer_type = self.model.language_model.config.layer_types[i]
+            if layer_type == "sliding_attention":
+                ctx_axis = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "sliding_window"}
+            else:
+                ctx_axis = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
+            for kv in ("key", "value"):
+                lang_dynamic_axes[f"past_{kv}.{i}"] = ctx_axis
+
+        if kv_offload:
+            return {"vision": {}, "lang": lang_dynamic_axes}
+        return lang_dynamic_axes
+
+    def get_output_names(self, kv_offload: bool = False):
+        lang_output_names = ["logits", "image_idx_output"]
+        for i in range(self.model.language_model.config.num_hidden_layers):
+            for kv in ("key", "value"):
+                lang_output_names.append(f"past_{kv}.{i}_RetainedState")
+        if kv_offload:
+            return {"vision": [], "lang": lang_output_names}
+        return lang_output_names
+
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        past_key_values = []
+        for i, layer_type in enumerate(config.layer_types):
+            if layer_type == "sliding_attention":
+                n_heads = config.num_key_value_heads
+                d_head = config.head_dim
+                layer_seq_len = min(config.sliding_window, seq_len)
+            else:
+                use_alternative_attention = getattr(config, "attention_k_eq_v", False)
+                n_heads = (
+                    config.num_global_key_value_heads
+                    if use_alternative_attention and getattr(config, "num_global_key_value_heads", None) is not None
+                    else config.num_key_value_heads
+                )
+                d_head = config.global_head_dim if getattr(config, "global_head_dim", None) else config.head_dim
+                layer_seq_len = seq_len
+            cache_shape = [batch_size, n_heads, layer_seq_len, d_head]
+            past_key_values.append(
+                (
+                    torch.zeros(cache_shape, dtype=torch.float32),
+                    torch.zeros(cache_shape, dtype=torch.float32),
+                )
+            )
+        return past_key_values
+
+    def get_dummy_inputs(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
+        del comp_ctx_lengths
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
+        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        lang_inputs = {
+            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
+            "mm_token_type_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "past_key_values": self.get_dummy_pkv_cache(
+                config=self.model.language_model.config,
+                batch_size=fbs if continuous_batching else bs,
+                seq_len=seq_len,
+            ),
+        }
+        if kv_offload:
+            return {"vision": {}, "lang": lang_inputs}
+        return lang_inputs
 
         return CausalLMOutputWithPast(
             loss=None,

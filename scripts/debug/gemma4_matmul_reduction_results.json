@@ -1,0 +1,189 @@
+{
+  "model_id": "tiny-random/gemma-4-dense",
+  "rendered_prompt": "<bos><|turn>system\nYou are a helpful assistant.<turn|>\n<|turn>user\nHi, Who are you?<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+  "generation_len": 4,
+  "baseline_npi_path": "/home/ubuntu/.cache/qeff_models/Gemma4ForCausalLM/Gemma4ForCausalLM-a69fdc5edef790ff/Gemma4ForCausalLM_gemma4_npi.yaml",
+  "saved_baseline_npi_path": "scripts/debug/gemma4_working_baseline_npi.yaml",
+  "baseline_total_count": 566,
+  "baseline_matmul_entries": [
+    "/model/rotary_emb/MatMul_output_0",
+    "/model/rotary_emb_1/MatMul_output_0",
+    "/lm_head/MatMul_output_0",
+    "onnx::MatMul_536",
+    "onnx::MatMul_849",
+    "onnx::MatMul_1236",
+    "onnx::MatMul_1544"
+  ],
+  "hf_ids": [
+    [
+      239871,
+      2315,
+      239871,
+      2315
+    ]
+  ],
+  "trials": [],
+  "baseline_match": true,
+  "baseline_qaic_ids": [
+    [
+      239871,
+      2315,
+      239871,
+      2315
+    ]
+  ],
+  "greedy_steps": [
+    {
+      "phase": "greedy_single_removal",
+      "candidate_removed": "/model/rotary_emb/MatMul_output_0",
+      "remaining_matmuls": [
+        "/model/rotary_emb_1/MatMul_output_0",
+        "/lm_head/MatMul_output_0",
+        "onnx::MatMul_536",
+        "onnx::MatMul_849",
+        "onnx::MatMul_1236",
+        "onnx::MatMul_1544"
+      ],
+      "final_npi_count": 565,
+      "qaic_ids": [
+        [
+          239871,
+          2315,
+          239871,
+          2315
+        ]
+      ],
+      "match": true
+    },
+    {
+      "phase": "greedy_single_removal",
+      "candidate_removed": "/model/rotary_emb_1/MatMul_output_0",
+      "remaining_matmuls": [
+        "/lm_head/MatMul_output_0",
+        "onnx::MatMul_536",
+        "onnx::MatMul_849",
+        "onnx::MatMul_1236",
+        "onnx::MatMul_1544"
+      ],
+      "final_npi_count": 564,
+      "qaic_ids": [
+        [
+          239871,
+          2315,
+          239871,
+          2315
+        ]
+      ],
+      "match": true
+    },
+    {
+      "phase": "greedy_single_removal",
+      "candidate_removed": "/lm_head/MatMul_output_0",
+      "remaining_matmuls": [
+        "onnx::MatMul_536",
+        "onnx::MatMul_849",
+        "onnx::MatMul_1236",
+        "onnx::MatMul_1544"
+      ],
+      "final_npi_count": 563,
+      "qaic_ids": [
+        [
+          239871,
+          2315,
+          239871,
+          2315
+        ]
+      ],
+      "match": true
+    },
+    {
+      "phase": "greedy_single_removal",
+      "candidate_removed": "onnx::MatMul_536",
+      "remaining_matmuls": [
+        "onnx::MatMul_849",
+        "onnx::MatMul_1236",
+        "onnx::MatMul_1544"
+      ],
+      "final_npi_count": 562,
+      "qaic_ids": [
+        [
+          239871,
+          2315,
+          239871,
+          2315
+        ]
+      ],
+      "match": true
+    },
+    {
+      "phase": "greedy_single_removal",
+      "candidate_removed": "onnx::MatMul_849",
+      "remaining_matmuls": [
+        "onnx::MatMul_1236",
+        "onnx::MatMul_1544"
+      ],
+      "final_npi_count": 561,
+      "qaic_ids": [
+        [
+          239871,
+          2315,
+          239871,
+          2315
+        ]
+      ],
+      "match": true
+    },
+    {
+      "phase": "greedy_single_removal",
+      "candidate_removed": "onnx::MatMul_1236",
+      "remaining_matmuls": [
+        "onnx::MatMul_1544"
+      ],
+      "final_npi_count": 560,
+      "qaic_ids": [
+        [
+          239871,
+          2315,
+          239871,
+          2315
+        ]
+      ],
+      "match": true
+    },
+    {
+      "phase": "greedy_single_removal",
+      "candidate_removed": "onnx::MatMul_1544",
+      "remaining_matmuls": [],
+      "final_npi_count": 559,
+      "qaic_ids": [
+        [
+          239871,
+          2315,
+          239871,
+          2315
+        ]
+      ],
+      "match": true
+    }
+  ],
+  "greedy_remaining_matmuls": [],
+  "exhaustive_steps": [
+    {
+      "phase": "exhaustive_subset_search",
+      "subset_size": 0,
+      "matmul_subset": [],
+      "final_npi_count": 559,
+      "qaic_ids": [
+        [
+          239871,
+          2315,
+          239871,
+          2315
+        ]
+      ],
+      "match": true
+    }
+  ],
+  "minimal_verified_matmuls": [],
+  "minimal_verified_npi_count": 559
+}

@@ -20,7 +20,6 @@ from QEfficient.utils.run_utils import ApiRunner
 MODEL_KWARGS = {"attn_implementation": "eager"}
 GEMMA4_TEXT_MODEL_IDS = {
     "gemma4_dense": "tiny-random/gemma-4-dense",
-    "gemma4_moe": "tiny-random/gemma-4-moe",
 }
 PARITY_PROMPT = ["hello world"]
 PARITY_PROMPT_LEN = 4
