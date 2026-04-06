@@ -19,8 +19,10 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLModel,
     Qwen3VLModelOutputWithPast,
     Qwen3VLTextAttention,
+    Qwen3VLTextConfig,
     Qwen3VLTextDecoderLayer,
     Qwen3VLTextModel,
+    Qwen3VLTextRotaryEmbedding,
     Qwen3VLVisionAttention,
     Qwen3VLVisionModel,
     apply_rotary_pos_emb_vision,
@@ -34,6 +36,29 @@ from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+
+
+def qeff_apply_interleaved_mrope(freqs, mrope_section):
+    """Apply interleaved MRoPE to 3D rotary embeddings.
+    Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
+    interleaved [THWTHWTHW...TT], preserving frequency continuity.
+    args:
+        x: (3, bs, seq_len, head_dim // 2)
+        mrope_section: (3,)
+    returns:
+        x_t: (bs, seq_len, head_dim // 2)
+    """
+    freqs_t = freqs[0]  # just overwrite the first dimension T
+    half_shape = freqs.shape[-1] // 2
+    for dim, offset in enumerate((1, 2), start=1):  # H, W
+        length = mrope_section[dim] * 3
+        idx = slice(offset, length, 3)
+        freqs_t[..., idx] = freqs[dim, ..., idx]
+        offset += half_shape
+        length += half_shape
+        idx = slice(offset, length, 3)
+        freqs_t[..., idx] = freqs[dim, ..., idx]
+    return freqs_t
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqueeze_dim=1):
@@ -68,11 +93,41 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    cos = cos[position_ids]
+    sin = sin[position_ids]
+    cos = qeff_apply_interleaved_mrope(cos, mrope_section)
+    sin = qeff_apply_interleaved_mrope(sin, mrope_section)
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
+
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
+
+
+class QEffQwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
+    """
+    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    The only differences are:
+    - Add static sin/cos computations.
+    """
+
+    def __init__(self, config: Qwen3VLTextConfig, device=None):
+        super().__init__(config=config)
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
+
+        freqs = torch.outer(t, self.inv_freq)
+
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
 class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
@@ -321,6 +376,8 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -330,17 +387,28 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        cos, sin = position_embeddings
+        # cos, sin = position_embeddings
+        # kv_seq_len = key_states.shape[-2]
+        # kv_seq_len = past_key_value.get_seq_length()
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+
         query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos, sin, position_ids[1:], self.config.rope_scaling["mrope_section"]
+            query_states,
+            key_states,
+            cos_cached,
+            sin_cached,
+            position_ids[1:],
+            self.config.rope_scaling["mrope_section"],
         )
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
+                "sin": sin_cached,
+                "cos": cos_cached,
                 "batch_index": batch_index,
                 "position_ids": position_ids[0],
+                "past_seen_tokens": past_seen_tokens,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
@@ -383,6 +451,8 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
         use_cache: Optional[bool] = False,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         # position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
@@ -423,6 +493,8 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
         hidden_states = residual + hidden_states
 
@@ -443,6 +515,11 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
 
 
 class QEffQwen3VLTextModel(Qwen3VLTextModel):
+    def __qeff_init__(self):
+        self.rotary_emb = QEffQwen3VLTextRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -508,6 +585,8 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
                 **kwargs,
             )
 

@@ -232,13 +232,11 @@ class QEffDynamicLayer(CacheLayerMixin):
             A tuple containing the updated key and value states.
         """
         # Update the cache
-
         if self.keys is None:
             self.keys = key_states
             self.values = value_states
             self._mark_initialized(self.keys)
             k_out, v_out = self.keys, self.values
-            self.is_initialized = True
         else:
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
@@ -371,11 +369,8 @@ class QEffDynamicCache(Cache):
             # transformers<=4.56
             Cache.__init__(self, *args, layer_classes=QEffDynamicLayer, **kwargs)
         if ddp_cache_data is not None:
-            for layer_idx, (key_states, value_states) in enumerate(ddp_cache_data):
-                # If the config was not passed above, initialize a DynamicLayer for each entry of the ddp_data
-                layers.append(QEffDynamicLayer())
-                # Update the layer with the data
-                _, _ = layers[layer_idx].update(key_states, value_states)
+            for key_states, value_states in ddp_cache_data:
+                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
 
     def append_new_layers(self, layer_idx: int) -> None:
         while len(self.layers) <= layer_idx:
