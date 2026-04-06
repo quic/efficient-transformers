@@ -188,7 +188,7 @@ class QEffQwen3Attention(Qwen3Attention):
                 key=key_states,
                 value=value_states,
                 attention_mask=attention_mask,
-                past_key_value=past_key_value,
+                past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,

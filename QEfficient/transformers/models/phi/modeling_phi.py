@@ -104,7 +104,7 @@ class QEffPhiAttention(PhiAttention):
         query_states = torch.cat((query_rot, query_pass), dim=-1)
         key_states = torch.cat((key_rot, key_pass), dim=-1)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             # Update the cache_kwargs with position_ids for Cloud AI 100
             cache_kwargs = {
                 "sin": sin,

@@ -90,7 +90,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
@@ -102,7 +102,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
                 attention_mask=attention_mask,
                 scaling=self.scaling,
                 layer_idx=self.layer_idx,
-                past_key_value=past_key_value,
+                past_key_value=past_key_values,
                 blocking_config=blocking_config,
                 comp_ctx_length=comp_ctx_lengths,
                 batch_index=batch_index,
@@ -115,7 +115,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
                 key=key_states,
                 value=value_states,
                 attention_mask=attention_mask,
-                past_key_value=past_key_value,
+                past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,

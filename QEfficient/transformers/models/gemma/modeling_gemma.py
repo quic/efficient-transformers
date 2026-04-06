@@ -187,7 +187,6 @@ class QEffGemmaAttention(GemmaAttention):
                 scaling=self.scaling,
             )
 
-
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
 
