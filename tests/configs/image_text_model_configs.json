@@ -251,8 +251,8 @@
             "https://picsum.photos/id/237/536/354"
         ],
       "text_prompt_list": [
-            "Can you describe the image in detail?",
-            "What are the objects in the image?"
+            "Can you describe the image in detail.",
+            "Can you describe the image in detail."
         ],
       "full_batch_size": 2,
       "additional_params": {}

@@ -107,16 +107,6 @@ else:
         },
     ]
 
-    # messages_2 = [
-    #     {
-    #         "role": "user",
-    #         "content": [
-    #             {"type": "image", "image": image},
-    #             {"type": "text", "text": "Describe about the color of the dog."},
-    #         ],
-    #     },
-    # ]
-
     messages = [messages_1] * batch_size
 
     texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]

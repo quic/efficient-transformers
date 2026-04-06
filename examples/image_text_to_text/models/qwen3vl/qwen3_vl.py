@@ -16,9 +16,9 @@ from QEfficient import QEFFAutoModelForImageTextToText
 model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
-config.vision_config.depth = 9
-config.text_config.num_hidden_layers = 1
-config.vision_config.deepstack_visual_indexes = [8]
+# config.vision_config.depth = 9
+# config.text_config.num_hidden_layers = 1
+# config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -45,7 +45,7 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
     )
 
     messages = [
