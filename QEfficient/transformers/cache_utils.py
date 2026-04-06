@@ -7,21 +7,17 @@
 
 from abc import ABC
 from collections.abc import Iterable
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 
 from QEfficient.customop import (
     CtxGatherFunc,
-    CtxGatherFunc3D,
     CtxGatherFuncBlockedKV,
     CtxGatherFuncBlockedKVCB,
     CtxGatherFuncCB,
-    CtxGatherFuncCB3D,
     CtxScatterFunc,
-    CtxScatterFunc3D,
     CtxScatterFuncCB,
-    CtxScatterFuncCB3D,
 )
 from QEfficient.utils.constants import INVALID_IDX
 
