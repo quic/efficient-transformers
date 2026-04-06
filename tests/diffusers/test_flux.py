@@ -28,6 +28,7 @@ from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
 # Test Configuration for 256x256 resolution with 2 layers # update mad tolerance
 CONFIG_PATH = "tests/diffusers/flux_test_config.json"
 INITIAL_TEST_CONFIG = load_json(CONFIG_PATH)
+TEST_SEED = 42
 
 
 def flux_pipeline_call_with_mad_validation(
@@ -164,7 +165,7 @@ def flux_pipeline_call_with_mad_validation(
 
     # Allocate output buffer for transformer
     output_buffer = {
-        "output": np.random.rand(batch_size, cl, pipeline.transformer.model.config.in_channels).astype(np.float32),
+        "output": np.zeros((batch_size, cl, pipeline.transformer.model.config.in_channels), dtype=np.float32),
     }
     pipeline.transformer.qpc_session.set_buffers(output_buffer)
 
@@ -276,7 +277,7 @@ def flux_pipeline_call_with_mad_validation(
             )
 
         # Allocate output buffer for VAE decoder
-        output_buffer = {"sample": np.random.rand(batch_size, 3, height, width).astype(np.float32)}
+        output_buffer = {"sample": np.zeros((batch_size, 3, height, width), dtype=np.float32)}
         pipeline.vae_decode.qpc_session.set_buffers(output_buffer)
 
         # MAD Validation for VAE
@@ -315,6 +316,9 @@ def flux_pipeline_call_with_mad_validation(
 @pytest.fixture(scope="session")
 def flux_pipeline():
     """Setup Flux test pipelines with random-initialized (dummy) weights."""
+    torch.manual_seed(TEST_SEED)
+    np.random.seed(TEST_SEED)
+
     config = INITIAL_TEST_CONFIG["model_setup"]
     model_id = "black-forest-labs/FLUX.1-schnell"
 
@@ -351,6 +355,10 @@ def flux_pipeline():
         tokenizer_2=tokenizer_2,
         transformer=transformer,
     )
+    vae.eval()
+    transformer.eval()
+    text_encoder.eval()
+    text_encoder_2.eval()
 
     # Use QEff wrapper on a copy of the random-init reference model.
     import copy
@@ -387,7 +395,7 @@ def test_flux_pipeline(flux_pipeline):
     max_sequence_length = config["pipeline_params"]["max_sequence_length"]
 
     # Generate with MAD validation
-    generator = torch.manual_seed(42)
+    generator = torch.Generator(device="cpu").manual_seed(TEST_SEED)
     start_time = time.time()
 
     try:
