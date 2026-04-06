@@ -1,5 +1,6 @@
 import argparse
 import json
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -7,6 +8,7 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.base.onnx_transforms import FP16ClipTransform
+from QEfficient.utils.run_utils import ApiRunner
 
 torch.manual_seed(42)
 
@@ -21,6 +23,12 @@ def normalize_generated_ids(generated_ids):
     elif array.ndim > 2:
         array = array.reshape(array.shape[0], -1)
     return array.astype(np.int64, copy=False)
+
+
+def exported_onnx_path(export_result):
+    if isinstance(export_result, (list, tuple)):
+        export_result = export_result[-1]
+    return Path(export_result)
 
 
 def parse_device_group(device_ids):
@@ -68,6 +76,34 @@ def run_hf_verification(model_name: str, inputs, generation_len: int, reference_
     return outputs[:, prompt_len:].cpu()
 
 
+def run_ort_verification(
+    model,
+    tokenizer,
+    rendered_prompt: str,
+    generation_len: int,
+    use_onnx_subfunctions: bool,
+):
+    prompt_len = tokenizer(rendered_prompt, return_tensors="np")["input_ids"].shape[1]
+    ort_ctx_len = prompt_len + generation_len
+    api_runner = ApiRunner(
+        batch_size=1,
+        tokenizer=tokenizer,
+        config=model.lang_model.model.config,
+        prompt=[rendered_prompt],
+        prompt_len=prompt_len,
+        ctx_len=ort_ctx_len,
+        full_batch_size=None,
+    )
+    onnx_path = exported_onnx_path(
+        model.lang_model.export(
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            offload_pt_weights=False,
+        )
+    )
+    ort_ids = api_runner.run_kv_model_on_ort(str(onnx_path))
+    return onnx_path, normalize_generated_ids(ort_ids)[:, :generation_len]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Gemma4 processor/chat-template bring-up using QEFFAutoModelForImageTextToText with skip_vision=True."
@@ -88,6 +124,7 @@ def main():
     parser.add_argument("--enable-fp16clip", action="store_true")
     parser.add_argument("--enable-npi", action="store_true")
     parser.add_argument("--verify-runtime", action="store_true")
+    parser.add_argument("--verify-ort", action="store_true")
     parser.add_argument("--reference-dtype", choices=("fp16", "fp32"), default="fp16")
     args = parser.parse_args()
 
@@ -95,6 +132,7 @@ def main():
     tokenizer = processor.tokenizer
     rendered_prompt, inputs = prepare_inputs(processor, args.system_prompt, args.prompt)
     hf_inputs = {k: v.clone() if hasattr(v, "clone") else v for k, v in inputs.items()}
+    hf_ids = None
 
     model = QEFFAutoModelForImageTextToText.from_pretrained(
         args.model_name,
@@ -109,6 +147,41 @@ def main():
             model.vision_model._onnx_transforms = [
                 t for t in model.vision_model._onnx_transforms if t is not FP16ClipTransform
             ]
+
+    if args.verify_runtime or args.verify_ort:
+        hf_ids = run_hf_verification(args.model_name, hf_inputs, args.generation_len, args.reference_dtype)
+
+    ort_ids = None
+    onnx_path = None
+    if args.verify_ort:
+        onnx_path, ort_ids = run_ort_verification(
+            model=model,
+            tokenizer=tokenizer,
+            rendered_prompt=rendered_prompt,
+            generation_len=args.generation_len,
+            use_onnx_subfunctions=args.use_onnx_subfunctions,
+        )
+        ort_text = tokenizer.batch_decode(ort_ids, skip_special_tokens=True)
+        print("\nORT generated ids:")
+        print(ort_ids.tolist())
+        print("ORT generated text:")
+        print(ort_text)
+        print("\nHF vs ORT parity:")
+        print(
+            json.dumps(
+                {
+                    "rendered_prompt": rendered_prompt,
+                    "reference_dtype": args.reference_dtype,
+                    "onnx_path": str(onnx_path),
+                    "hf_ids": hf_ids.tolist(),
+                    "ort_ids": ort_ids.tolist(),
+                    "hf_text": tokenizer.batch_decode(hf_ids, skip_special_tokens=True),
+                    "ort_text": ort_text,
+                    "match": bool(np.array_equal(hf_ids, ort_ids)),
+                },
+                indent=2,
+            )
+        )
 
     compile_kwargs = dict(
         prefill_seq_len=args.prefill_seq_len,
@@ -161,7 +234,6 @@ def main():
     print(qeff_text)
 
     if args.verify_runtime:
-        hf_ids = run_hf_verification(args.model_name, hf_inputs, args.generation_len, args.reference_dtype)
         hf_text = tokenizer.batch_decode(hf_ids, skip_special_tokens=True)
         qeff_prefix = qeff_ids[:, : hf_ids.shape[1]]
         payload = {
@@ -173,6 +245,10 @@ def main():
             "qeff_text_prefix": tokenizer.batch_decode(qeff_prefix, skip_special_tokens=True),
             "match": bool(np.array_equal(hf_ids, qeff_prefix)),
         }
+        if ort_ids is not None:
+            payload["ort_ids"] = ort_ids.tolist()
+            payload["ort_text"] = tokenizer.batch_decode(ort_ids, skip_special_tokens=True)
+            payload["ort_match"] = bool(np.array_equal(hf_ids, ort_ids))
         print("\nHF vs QEff parity:")
         print(json.dumps(payload, indent=2))
 
