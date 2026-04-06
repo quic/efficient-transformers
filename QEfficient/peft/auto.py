@@ -18,11 +18,15 @@ from transformers import GenerationConfig, StoppingCriteria, StoppingCriteriaLis
 from transformers.generation.streamers import BaseStreamer
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransform, SplitTensorsTransform
+from QEfficient.base.onnx_transforms import (
+    AdapterWeightsToInputsTransform,
+    BaseOnnxTransform,
+    FP16ClipTransform,
+    SplitTensorsTransform,
+)
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
-from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import constants
@@ -66,7 +70,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     """
 
     _pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
-    _onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, AdapterWeightsToInputsTransform, SplitTensorsTransform]
+    _onnx_transforms: List[BaseOnnxTransform] = [
+        FP16ClipTransform,
+        AdapterWeightsToInputsTransform,
+        SplitTensorsTransform,
+    ]
     _hf_auto_class = AutoPeftModelForCausalLM
 
     def __init__(self, model: nn.Module):
@@ -245,7 +253,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)
         return obj
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model with the active adapter to ONNX format.
 
@@ -281,11 +289,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         return self._export(
             example_inputs,
-            output_names,
-            dynamic_axes,
-            export_kwargs={"do_constant_folding": False},  # To avoid merging adapter weights with base weights
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            do_constant_folding=False,  # To avoid merging adapter weights with base weights
             onnx_transform_kwargs={"adapter_name": self.model.active_adapter},
             export_dir=export_dir,
+            **kwargs,
         )
 
     def compile(
@@ -300,6 +309,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         num_cores: int = 16,
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
+        use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -320,7 +330,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             mxint8_kv_cache (bool, optional): Use MXINT8 compression for KV cache. Default is False.
             **compiler_options: Additional compiler options for QAIC.
 
-                **For QAIC Compiler:** Extra arguments for qaic-exec can be passed. Some common options include:
+                **For QAIC Compiler:** Extra arguments for qaic-compile can be passed. Some common options include:
 
                 - mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. Defaults to -1.
                 - aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
@@ -367,6 +377,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             **compiler_options,
         )
 

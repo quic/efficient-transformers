@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+from typing import List
 
 import numpy as np
 import onnx
@@ -277,6 +278,54 @@ class ApiRunnerVlm:
         self.gen_len = max_gen_len
 
     @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch_CB(self, model, images, queries):
+        """
+        Function responsible for running HuggingFace ``PyTorch`` model for continuous batching
+        and return the output tokens for each prompt/image pair.
+
+        ``Mandatory`` Args:
+            :model (torch.nn.module): Original ``PyTorch`` model
+            :images (List[PIL.Image]): List of input images
+            :queries (List[str]): List of input queries
+
+        Return:
+            :List[numpy.ndarray]: List of generated output tokens for each prompt
+        """
+        generated_ids = []
+
+        for idx, (image, query) in enumerate(zip(images, queries)):
+            # Prepare conversation format for each image-query pair
+            conversation = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": query},
+                        {"type": "image"},
+                    ],
+                },
+            ]
+            prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
+
+            # Process inputs
+            inputs = self.processor(images=image, text=prompt, return_tensors="pt")
+            if "pixel_values" in inputs:
+                inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+
+            # Generate tokens
+            output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)
+            offset_output = output[0, inputs["input_ids"].shape[1] :]
+
+            # Decode and print output
+            py_output = self.processor.tokenizer.decode(offset_output).strip()
+            print(f"Original HF Model Outputs (Torch CPU) for prompt {idx}:")
+            print("Query:", repr(query))
+            print("Completion:", repr(py_output))
+
+            generated_ids.append(offset_output.numpy())
+
+        return generated_ids
+
+    @torch.no_grad()
     def run_vlm_hf_model_on_pytorch(self, model, inputs):
         output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)
         offset_output = output[0, inputs["input_ids"].shape[1] :]
@@ -449,6 +498,57 @@ class ApiRunnerInternVL(ApiRunnerVlm):
         self.gen_len = max_gen_len
 
     @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch_CB(self, model, images, queries):
+        """
+        Function responsible for running HuggingFace ``PyTorch`` model for continuous batching
+        and return the output tokens for each prompt/image pair.
+
+        ``Mandatory`` Args:
+            :model (torch.nn.module): Original ``PyTorch`` model
+            :images (List[PIL.Image]): List of input images
+            :queries (List[str]): List of input queries
+
+        Return:
+            :List[numpy.ndarray]: List of generated output tokens for each prompt
+        """
+        generated_ids = []
+
+        for idx, (image, query) in enumerate(zip(images, queries)):
+            num_patches_list = []
+            pixel_values = []
+            questions = []
+
+            pixel_value = self.processor.load_image(image, max_num=12)
+            num_patches_list.append(pixel_value.shape[0])
+            question = "<image>\n" + query
+
+            pixel_values.append(pixel_value)
+            pixel_values = torch.cat(pixel_values, dim=0)
+            questions.append(question)
+
+            # Chat Template information for prompt preprocessing
+            messages: List[List[str]] = []
+            roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+            prompt = self.processor(pixel_values, questions, messages, roles, num_patches_list=num_patches_list)
+
+            inputs = self.processor.tokenizer(prompt, return_tensors="pt")
+            inputs["pixel_values"] = pixel_values.clone()
+
+            generation_config = dict(max_new_tokens=self.gen_len, do_sample=False)
+            generation_config["eos_token_id"] = self.processor.tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
+
+            # Decode and print output
+            outputs = model.generate(**inputs, **generation_config)
+            offset_output = outputs[0].detach().numpy()
+
+            py_output = self.processor.tokenizer.decode(offset_output, skip_special_tokens=True).strip()
+            print(f"Original HF Model Outputs (Torch CPU) for prompt {idx}:")
+            print("Completion:", repr(py_output))
+            generated_ids.append(offset_output)
+
+        return generated_ids
+
+    @torch.no_grad()
     def run_vlm_hf_model_on_pytorch(self, model, inputs, generation_config):
         outputs = model.generate(**inputs, **generation_config)
         generated_ids = outputs[0].detach().numpy()
@@ -489,4 +589,35 @@ class ApiRunnerMolmo(ApiRunnerVlm):
         py_output = self.processor.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
         print("Original HF Model Outputs (Torch CPU):")
         print("Completion:", repr(py_output))
+        return generated_ids
+
+    @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch_CB(self, model, images, queries, generation_config):
+        """
+        Function responsible for running HuggingFace ``PyTorch`` model for continuous batching
+        and return the output tokens for each prompt/image pair.
+
+        ``Mandatory`` Args:
+            :model (torch.nn.module): Original ``PyTorch`` model
+            :images (List[PIL.Image]): List of input images
+            :queries (List[str]): List of input queries
+            :generation_config (dict): Generation configuration parameters
+
+        Return:
+            :List[numpy.ndarray]: List of generated output tokens for each prompt
+        """
+        generated_ids = []
+        for idx, (image, query) in enumerate(zip(images, queries)):
+            inputs = self.processor.process(images=[image], text=query)
+            inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
+            outputs = model.generate_from_batch(
+                inputs, generation_config, tokenizer=self.processor.tokenizer, do_sample=False
+            )
+
+            offset_output = outputs[0, inputs["input_ids"].size(1) :]
+
+            py_output = self.processor.tokenizer.decode(offset_output, skip_special_tokens=True).strip()
+            print(f"Original HF Model Outputs (Torch CPU) for prompt {idx}:")
+            print("Completion:", repr(py_output))
+            generated_ids.append(offset_output)
         return generated_ids

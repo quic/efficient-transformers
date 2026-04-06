@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Type
 
 import torch
 import torch.nn.functional as F
@@ -49,16 +49,6 @@ class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
-        )
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -104,7 +94,6 @@ def eager_attention_forward(
     key_states = repeat_kv(key, module.num_key_value_groups)
 
     value_states = repeat_kv(value, module.num_key_value_groups)
-
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
@@ -116,6 +105,36 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
+
+
+class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, H = hidden_states.shape
+        T = B * S
+        x = hidden_states.view(T, H)
+        router_logits = self.gate(x)  # [T, E]
+        prob = F.softmax(router_logits, -1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, -1)
+        if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
+            top_w /= top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(hidden_states.dtype)
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, top_i, top_w)
+        # Routing weights for each expert [T, E]
+        routing_weights = masked_logits
+        # ────────────────── allocate the output tensor ─────
+        expert_out = x.new_zeros((T, H))  # accumulation buffer
+        # ───────────────────────── Expert computation loop ─────────────────────────────
+        for e in range(self.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+            W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T  # [H, I], [H, I]
+            W_d = self.experts[e].down_proj.weight.T  # [I, H]
+            gate = x @ W_g  # [T, I]
+            up = x @ W_u  # [T, I]
+            down = (up * self.experts[e].act_fn(gate)) @ W_d  # [T, H]
+            masked_down = down * routing_weight
+            expert_out += masked_down
+        return expert_out.view(B, S, H), router_logits
 
 
 class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
@@ -132,39 +151,6 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             self.up_proj_w = torch.stack(self.up_proj_w)
             self.down_proj_w = torch.stack(self.down_proj_w)
 
-    def alt_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-
-        router_logits = self.gate(x)  # [T, E]
-        prob = F.softmax(router_logits, -1, dtype=torch.float)
-        top_w, top_i = torch.topk(prob, self.top_k, -1)
-        if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
-            top_w /= top_w.sum(-1, keepdim=True)
-        top_w = top_w.to(x.dtype)
-        masked_logits = torch.zeros_like(router_logits)
-        masked_logits.scatter_(1, top_i, top_w)
-
-        # Routing weights for each expert [T, E]
-        routing_weights = masked_logits
-
-        # ────────────────── allocate the output tensor ─────
-        expert_out = x.new_zeros((T, H))  # accumulation buffer
-
-        # ───────────────────────── Expert computation loop ─────────────────────────────
-        for e in range(self.num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
-            W_g, W_u = self.experts[e].gate_proj, self.experts[e].up_proj  # [H, I], [H, I]
-            W_d = self.experts[e].down_proj  # [I, H]
-            gate = W_g(x)  # [T, I]
-            up = W_u(x)  # [T, I]
-            down = W_d(up * self.experts[e].act_fn(gate))  # [T, H]
-
-            masked_down = torch.where(routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out))
-            expert_out += masked_down
-        return expert_out.view(B, S, H), router_logits
-
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
@@ -173,7 +159,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         prob = F.softmax(router_logits, -1, dtype=torch.float)
         top_w, top_i = torch.topk(prob, self.top_k, -1)
         if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
-            top_w /= top_w.sum(-1, keepdim=True)
+            top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(hidden_states.dtype)
 
         gate_proj_w = self.gate_proj_w[top_i.flatten()]
@@ -187,23 +173,22 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         experts_out = torch.bmm(intermediate, down_proj_w)
         experts_out = experts_out.view(B * S, self.top_k, H)
         experts_out = experts_out * top_w.unsqueeze(-1)
-        experts_out = experts_out.sum(dim=1)
+        experts_out = torch.einsum("bnd->bd", experts_out)
         return experts_out.view(B, S, H), router_logits
 
 
 class QEffQwen3MoeAttention(Qwen3MoeAttention):
-    def __qeff_init__(self):
-        self.rotary_emb = QEffQwen3MoeRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        past_key_values: Optional[Tuple[torch.Tensor]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -213,16 +198,16 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface = eager_attention_forward
 
@@ -251,6 +236,8 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -278,11 +265,13 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
         hidden_states = residual + hidden_states
 
@@ -300,6 +289,11 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
 
 
 class QEffQwen3MoeModel(Qwen3MoeModel):
+    def __qeff_init__(self):
+        self.rotary_emb = QEffQwen3MoeRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -353,6 +347,8 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
         hidden_states = self.norm(hidden_states)
@@ -371,6 +367,15 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
 
 
 class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffQwen3MoeDecoderLayer}
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,

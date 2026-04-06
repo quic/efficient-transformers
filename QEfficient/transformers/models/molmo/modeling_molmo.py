@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -43,14 +43,14 @@ def eager_attention_forward(
     if num_q_heads != num_kv_heads:
         assert num_q_heads % num_kv_heads == 0
         repeat_factor = num_q_heads // num_kv_heads
-        _, _, S, D = k.shape
+        B, _, S, D = k.shape
         k = k.unsqueeze(2)
         k = k.expand(-1, -1, repeat_factor, -1, -1)
-        k = k.reshape(1, num_q_heads, S, D)
+        k = k.reshape(B, num_q_heads, S, D)
 
         v = v.unsqueeze(2)
         v = v.expand(-1, -1, repeat_factor, -1, -1)
-        v = v.reshape(1, num_q_heads, S, D)
+        v = v.reshape(B, num_q_heads, S, D)
 
     attn_weights = torch.matmul(q, k.transpose(2, 3)) * scale_factor
 
@@ -250,6 +250,8 @@ class QEffMolmoBlock(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         B, T, C = q.size()  # batch size, sequence length, d_model
         dtype = k.dtype
+        cache_position = kwargs.get("cache_position")
+        cos, sin = None, None
 
         # Optionally apply layer norm to keys and queries.
         if self.q_norm is not None and self.k_norm is not None:
@@ -264,26 +266,19 @@ class QEffMolmoBlock(nn.Module):
         # shape: (B, n_kv_h, T, hs)
         v = v.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads).transpose(1, 2)
 
-        if self.config.use_position_ids and self.config.rope:
-            kv_seq_len = layer_past.get_seq_length(self.layer_id)
-            # Apply rotary embeddings
-            cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
-            q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
-
-        if not self.config.use_position_ids and self.config.rope:
-            kv_seq_len = layer_past.get_seq_length(self.layer_id)
+        if self.config.rope:
+            kv_seq_len = k.shape[-2]
+            if layer_past is not None:
+                kv_seq_len = layer_past.get_seq_length(self.layer_id, cache_position)
             # Apply rotary embeddings
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
 
         if layer_past is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-            }
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            # sin/cos are specific to RoPE models and are needed for some static cache paths.
+            if self.config.rope:
+                cache_kwargs.update({"sin": sin, "cos": cos})
             if comp_ctx_lengths is not None:
                 attention_bias = attention_bias[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_bias.shape[-1]
@@ -566,6 +561,15 @@ class QEffMolmoEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.model.transformer.blocks[0].__class__}
+
     def forward(self, pixel_values, image_masks, image_input_idx, valid_idx):
         image_features, _ = self.model.model.vision_backbone(pixel_values, image_masks)
         num_image, num_patch = image_features.shape[1:3]
@@ -586,6 +590,15 @@ class QEffMolmoDecoderWrapper(nn.Module):
         # self.language_model = self.model.language_model
         self.config = self.model.config
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.model.vision_backbone.image_vit.transformer.resblocks[0].__class__}
+
     def forward(
         self,
         input_ids,
@@ -594,6 +607,7 @@ class QEffMolmoDecoderWrapper(nn.Module):
         image_idx,
         past_key_values,
         comp_ctx_lengths: Optional[List[int]] = None,
+        batch_index: Optional[torch.LongTensor] = None,
     ):
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
@@ -611,6 +625,7 @@ class QEffMolmoDecoderWrapper(nn.Module):
             position_ids=position_ids,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             use_cache=True,
         )
         next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
@@ -692,6 +707,9 @@ class QEffMolmoModel(nn.Module):
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         valid_size: int = None,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 1024
@@ -723,12 +741,20 @@ class QEffMolmoModel(nn.Module):
 
             for i in range(0, len(comp_ctx_lengths_prefill)):
                 lang_prefill = {
-                    "batch_size": batch_size,
+                    "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "valid_size": valid_size,
+                    "vision_batch_size": batch_size,
                 }
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
                 if kv_offload:
                     values = {
                         "img_size": img_size,
@@ -744,12 +770,17 @@ class QEffMolmoModel(nn.Module):
 
             for i in range(0, len(comp_ctx_lengths_decode)):
                 lang_decode = {
-                    "batch_size": batch_size,
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "valid_size": valid_size,
+                    "vision_batch_size": batch_size,
                 }
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
                 if kv_offload:
                     values = {
                         "img_size": img_size,
@@ -765,13 +796,33 @@ class QEffMolmoModel(nn.Module):
 
         else:
             lang_prefill = {
-                "batch_size": batch_size,
+                "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "valid_size": valid_size,
+                "vision_batch_size": batch_size,
             }
 
-            lang_decode = {"batch_size": batch_size, "seq_len": "1", "ctx_len": ctx_len, "valid_size": valid_size}
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
+
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": "1",
+                "ctx_len": ctx_len,
+                "valid_size": valid_size,
+                "vision_batch_size": batch_size,
+            }
+
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
 
             if kv_offload:
                 values = {
@@ -785,9 +836,7 @@ class QEffMolmoModel(nn.Module):
                     lang_prefill[key] = value
                     lang_decode[key] = value
 
-            lang = []
-            lang.append(lang_prefill)
-            lang.append(lang_decode)
+            lang = [lang_prefill, lang_decode]
 
         specializations = {}
 
@@ -798,13 +847,15 @@ class QEffMolmoModel(nn.Module):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "valid_size"}
+        lang_dynamic_axes["vision_embeds"] = {0: "vision_batch_size", 1: "valid_size"}
 
         vision_dynamic_axes["pixel_values"] = {0: "batch_size", 1: "num_images", 2: "img_tile", 3: "img_size"}
         vision_dynamic_axes["image_input_idx"] = {0: "batch_size", 1: "num_images", 2: "num_patch"}
@@ -814,8 +865,17 @@ class QEffMolmoModel(nn.Module):
         num_layers = self.model.config.n_layers
 
         for i in range(num_layers):
-            lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+            lang_dynamic_axes[f"past_key.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+            lang_dynamic_axes[f"past_value.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
 
         if comp_ctx_lengths is not None:
             lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
@@ -849,7 +909,13 @@ class QEffMolmoModel(nn.Module):
             return lang_output_names
         return output_names
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        **kwargs,
+    ):
         inputs_shapes = {}
         inputs_shapes_lang = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -900,10 +966,14 @@ class QEffMolmoModel(nn.Module):
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
+
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
         # Add data for KV
         kv_cache_shape = get_padding_shape_from_config(
             config=self.config,
-            batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
@@ -913,7 +983,9 @@ class QEffMolmoModel(nn.Module):
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         inputs = {}
         if kv_offload:

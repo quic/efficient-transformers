@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -28,7 +28,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
@@ -214,7 +214,7 @@ class QEffGemma3Attention(Gemma3Attention):
         position_embeddings: Optional[torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -232,7 +232,7 @@ class QEffGemma3Attention(Gemma3Attention):
         query_states = self.q_norm(query_states)
         key_states = self.k_norm(key_states)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             if self.layer_idx is None:
                 raise ValueError(
                     f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
@@ -245,7 +245,7 @@ class QEffGemma3Attention(Gemma3Attention):
             cos, sin = self.rotary_emb(value_states, seq_len=self.config.max_position_embeddings)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
-        if past_key_value is not None:
+        if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
@@ -254,11 +254,12 @@ class QEffGemma3Attention(Gemma3Attention):
                 "position_ids": position_ids,
                 "is_sliding": self.is_sliding,
                 "sliding_window_pattern": self.config.sliding_window_pattern,
+                "sliding_window": past_key_values.sliding_window_len,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -311,10 +312,12 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+        # past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         if self.self_attn.is_sliding:
             attention_mask = _create_causal_mask(
-                position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window
+                position_ids=position_ids,
+                target_length=past_key_value.sliding_window_len,
+                sliding_window=past_key_value.sliding_window_len,
             )
         else:
             attention_mask = _create_causal_mask(
@@ -327,7 +330,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
             position_embeddings=None,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
@@ -401,7 +404,9 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             # return_legacy_cache = True
-            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+            past_key_values = QEffSlidingWindowCache.from_legacy_cache(
+                config=self.config, past_key_values=past_key_values
+            )
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
@@ -589,6 +594,15 @@ class QEffGemma3EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.vision_tower
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+
     def forward(self, pixel_values):
         image_features = self.model.get_image_features(pixel_values=pixel_values)
         return image_features
@@ -602,6 +616,15 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.config = self.model.config
         self.lm_head = self.model.lm_head
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffGemma3DecoderLayer}
+
     def forward(
         self,
         input_ids,
@@ -610,6 +633,7 @@ class QEffGemma3DecoderWrapper(nn.Module):
         image_idx,
         past_key_values,
         comp_ctx_lengths: Optional[List[int]] = None,
+        batch_index: Optional[torch.LongTensor] = None,
     ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
@@ -625,6 +649,7 @@ class QEffGemma3DecoderWrapper(nn.Module):
             position_ids=position_ids,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             use_cache=True,
         )
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
@@ -675,6 +700,14 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         logits = logits.float()
         return logits, pixel_values, image_idx, outputs.past_key_values
 
+    def get_npi_file(self, model_name: str) -> str:
+        if constants.NPI_MAPPING[model_name] is not None:
+            return constants.NPI_MAPPING[model_name]
+        else:
+            raise ValueError(
+                f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added for this particular model. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
+            )
+
     def get_specializations(
         self,
         batch_size: int,
@@ -684,6 +717,9 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
@@ -707,50 +743,72 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             lang = []
 
             for i in range(0, len(comp_ctx_lengths_prefill)):
-                lang.append(
-                    {
-                        "batch_size": batch_size,
-                        "seq_len": prefill_seq_len,
-                        "ctx_len": ctx_len,
-                        "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
-                        "sliding_window": self.language_model.config.sliding_window,
-                        "img_size": img_size,
-                        "mm_tokens_per_image": mm_tokens_per_image,
-                    }
-                )
-
-            for i in range(0, len(comp_ctx_lengths_decode)):
-                lang.append(
-                    {
-                        "batch_size": batch_size,
-                        "seq_len": "1",
-                        "ctx_len": ctx_len,
-                        "comp_ctx_lengths": comp_ctx_lengths_decode[i],
-                        "sliding_window": self.language_model.config.sliding_window,
-                        "img_size": img_size,
-                        "mm_tokens_per_image": mm_tokens_per_image,
-                    }
-                )
-
-        else:
-            lang = [
-                {
-                    "batch_size": batch_size,
+                lang_prefill = {
+                    "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "sliding_window": self.language_model.config.sliding_window,
                     "img_size": img_size,
                     "mm_tokens_per_image": mm_tokens_per_image,
-                },
-                {
-                    "batch_size": batch_size,
+                    "vision_batch_size": batch_size,
+                }
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
+                lang.append(lang_prefill)
+
+            for i in range(0, len(comp_ctx_lengths_decode)):
+                lang_decode = {
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
+                    "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "sliding_window": self.language_model.config.sliding_window,
                     "img_size": img_size,
                     "mm_tokens_per_image": mm_tokens_per_image,
-                },
-            ]
+                    "vision_batch_size": batch_size,
+                }
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
+                lang.append(lang_decode)
+
+        else:
+            lang_prefill = {
+                "batch_size": 1 if continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "sliding_window": self.language_model.config.sliding_window,
+                "img_size": img_size,
+                "mm_tokens_per_image": mm_tokens_per_image,
+                "vision_batch_size": batch_size,
+            }
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
+
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": "1",
+                "ctx_len": ctx_len,
+                "sliding_window": self.language_model.config.sliding_window,
+                "img_size": img_size,
+                "mm_tokens_per_image": mm_tokens_per_image,
+                "vision_batch_size": batch_size,
+            }
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
+            lang = [lang_prefill, lang_decode]
 
         specializations = {}
 
@@ -761,17 +819,21 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "mm_tokens_per_image"}
+        lang_dynamic_axes["vision_embeds"] = {0: "vision_batch_size", 1: "mm_tokens_per_image"}
+        if continuous_batching:
+            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
         vision_dynamic_axes["pixel_values"] = {0: "batch_size", 2: "img_size", 3: "img_size"}
 
-        pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
-        pkv_dynamic_sliding_axes = {0: "batch_size", 2: "sliding_window"}
+        pkv_dynamic_axes = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "ctx_len"}
+        pkv_dynamic_sliding_axes = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "sliding_window"}
         layer_switch = (
             self.language_model.config.sliding_window_pattern
             if hasattr(self.language_model.config, "sliding_window_pattern")
@@ -837,7 +899,9 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             past_key_values.append(pkv)
         return past_key_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_dummy_inputs(
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+    ):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 896)
         else:
@@ -876,15 +940,21 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
+
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
         # Add data for KV
         lang_inputs["past_key_values"] = self.get_dummy_pkv_cache(
             config=self.language_model.config,
-            batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         inputs = {}
         if kv_offload:

@@ -11,7 +11,7 @@ For QEfficient Library : https://github.com/quic/efficient-transformers
 
 For torch_qaic, assuming QEfficient is already installed,
 ```bash
-pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
+pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-linux_x86_64.whl
 ```
 If qeff-env inside docker is used then torch_qaic and accelerate packages are already installed.
 
@@ -66,6 +66,98 @@ python -m QEfficient.cloud.finetune -h
 QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.finetune --device qaic --enable_ddp  --num_epochs 2  --model_name "meta-llama/Llama-3.2-1B"
 ```
 **nproc-per-node is number of workers(QAIC devices) running locally.
+
+---
+
+### Multi Node(across multiple servers) finetuning on QAIC
+
+This enables scaling training across multiple nodes.
+
+Use servers with compatible/same network interface(eg:ethernet).
+
+And supported only for linux servers now. Use servers connected to same switch for benefits in time while scaling.
+
+```
+PYTHONUNBUFFERED: make python prints unbuffered, especially useful to identify progress (or lack thereof) for distributed tasks.This is optional and not compulsory
+```
+```
+GLOO_SOCKET_IFNAME: specify which network interface gloo (and indirectly qccl) uses for inter-host communication (eg: eno1, eth0 etc)
+```
+```
+--nnodes: total number of hosts participating in the task
+```
+```
+--nproc-per-node: number of processes launched on this host, usually coincides with number of accelerators on this host
+```
+```
+--master_addr: ip of the host designated with node_rank=0 ($ ip addr)
+```
+```
+--master_port: port on which host will be listening for other nodes to connect. (eg: 8888, 8000 etc)
+```
+
+Use --node-rank 0 on the host server and --node-rank 1 on client server(for dual server setup). When running distributed training across multiple servers, the --node-rank parameter must be assigned a unique value for each server, starting from 0 and incrementing by 1 for each additional server. For a setup with N servers it range from 0 to N-1.
+
+Steps to run Multi Node Finetuning:
+
+1. Launch Docker Containers on Each Node:
+
+Run the following docker setup commands on both machines (server and client).
+
+#### Expose QAIC accelerator devices
+
+```
+devices=(/dev/accel/*)
+```
+
+#### Start Docker container
+
+```
+sudo docker run -it \
+    --name qaic_ddp1 \
+    --net=host \
+    --ipc=host \
+    --add-host gb-292-blr-06:10.131.26.213 \
+    --add-host gb-292-blr-30:10.131.30.207 \
+    -v /home/ubuntu/:/home/ubuntu/ \
+    "${devices[@]/#/--device=}" \
+    docker-registry.qualcomm.com/qraniumtest/qranium:1.22.0.17-ubuntu22-x86_64 \
+    /bin/bash
+```
+** Note :
+In distributed ML setups, all nodes must resolve each other’s hostnames. If DNS in the environment does not resolve internal hostnames, we must manually force name resolution using --add-host.
+
+2. Set QAIC Device Visibility
+
+``` 
+export QAIC_VISIBLE_DEVICES=$(seq -s, 0 63)
+
+```
+
+For example this sample command exposes devices 0–63 to the training process.
+
+3. Activate the TORCH_QAIC Environment Inside the Container
+
+```
+source /opt/torch-qaic-env/bin/activate
+```
+
+4. Verify that the Qefficient Library is installed:
+
+```
+pip install -e .
+```
+
+
+5. Use below command on host server
+```
+QAIC_VISIBLE_DEVICES=0,1 GLOO_SOCKET_IFNAME=* torchrun --nnodes=2 --nproc-per-node=2 --node-rank=0 --master_addr=* --master_port=8888 -m QEfficient.cloud.finetune --device qaic --seed 0 --enable_ddp --num_epochs 2 --model_name "meta-llama/Llama-3.2-1B" --dataset gsm8k_dataset --output_dir training_results
+```
+
+6. Use below command on client server
+```
+QAIC_VISIBLE_DEVICES=0,1 GLOO_SOCKET_IFNAME=* torchrun --nnodes=2 --nproc-per-node=2 --node-rank=1 --master_addr=* --master_port=8888 -m QEfficient.cloud.finetune --device qaic --seed 0 --enable_ddp --num_epochs 2 --model_name "meta-llama/Llama-3.2-1B" --dataset gsm8k_dataset --output_dir training_results
+```
 
 ---
 

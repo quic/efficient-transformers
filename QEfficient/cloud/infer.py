@@ -138,6 +138,8 @@ def main(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     trust_remote_code: Optional[bool] = False,
+    ccl_enabled: Optional[bool] = False,
+    use_onnx_subfunctions: bool = False,
     **kwargs,
 ) -> None:
     """
@@ -204,9 +206,11 @@ def main(
         Path of the QNN Config parameters file. Default is None.
     trust_remote_code : bool, optional
         If True, trusts remote code when loading models from HuggingFace. Default is False.
+    use_onnx_subfunctions : bool, optional
+        Enables ONNX subfunctions during export and compile. Default is False.
     **kwargs :
-        Additional compiler options passed directly to `qaic-exec`. Any flag supported by
-        `qaic-exec` can be passed. Parameters are converted to flags as follows:
+        Additional compiler options passed directly to `qaic-compile`. Any flag supported by
+        `qaic-compile` can be passed. Parameters are converted to flags as follows:
 
         - ``-allocator_dealloc_delay=1`` -> ``-allocator-dealloc-delay=1``
         - ``-qpc_crc=True`` -> ``-qpc-crc``
@@ -230,12 +234,12 @@ def main(
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
-    if "--mxfp6" in sys.argv:
-        if args.mxfp6:
-            logger.warning("mxfp6 is going to be deprecated in a future release, use -mxfp6_matmul instead.")
-    if "--mxint8" in sys.argv:
-        if args.mxint8:
-            logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
+    if "--mxfp6" in sys.argv and mxfp6:
+        logger.warning("mxfp6 is going to be deprecated in a future release, use -mxfp6_matmul instead.")
+    if "--mxint8" in sys.argv and mxint8:
+        logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
+
+    qaic_config = {"ccl_enabled": True} if ccl_enabled else None
 
     qeff_model = QEFFCommonLoader.from_pretrained(
         pretrained_model_name_or_path=model_name,
@@ -244,6 +248,7 @@ def main(
         full_batch_size=full_batch_size,
         local_model_dir=local_model_dir,
         trust_remote_code=trust_remote_code,
+        qaic_config=qaic_config,
     )
 
     image_path = kwargs.pop("image_path", None)
@@ -276,6 +281,7 @@ def main(
         allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        use_onnx_subfunctions=use_onnx_subfunctions,
         **kwargs,
     )
 
@@ -343,14 +349,20 @@ if __name__ == "__main__":
     parser.add_argument(
         "--comp-ctx-lengths-prefill",
         type=lambda comp_ctx_lengths_prefill: [int(x) for x in comp_ctx_lengths_prefill.split(",")],
-        default=[512],
+        default=None,
         help="Define ccl list in csv format (e.g.,--comp-ctx-lengths 512,1024,2048).",
     )
     parser.add_argument(
         "--comp-ctx-lengths-decode",
         type=lambda comp_ctx_lengths_decode: [int(x) for x in comp_ctx_lengths_decode.split(",")],
-        default=[2048],
+        default=None,
         help="Define ccl list in csv format (e.g.,--comp-ctx-lengths 512,1024,2048).",
+    )
+    parser.add_argument(
+        "--ccl_enabled",
+        "--ccl-enabled",
+        action="store_true",
+        help="If passed, ccl feature will be activated",
     )
     parser.add_argument(
         "--mxfp6",
@@ -373,6 +385,14 @@ if __name__ == "__main__":
         help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
     )
     parser.add_argument(
+        "--use-onnx-subfunctions",
+        "--use_onnx_subfunctions",
+        dest="use_onnx_subfunctions",
+        action="store_true",
+        default=False,
+        help="Enable ONNX subfunctions during export/compile.",
+    )
+    parser.add_argument(
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
     )
     parser.add_argument(
@@ -390,7 +410,7 @@ if __name__ == "__main__":
         "--prompts_txt_file_path",
         "--prompts-txt-file-path",
         type=str,
-        help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
+        help="File path for taking input prompts from txt file, sample prompts.txt file present in examples/sample_prompts folder",
     )
     parser.add_argument("--generation_len", "--generation-len", type=int, help="Number of tokens to generate")
     parser.add_argument(

@@ -7,7 +7,7 @@
 
 """PyTorch Phi model."""
 
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -66,7 +66,7 @@ class QEffPhiAttention(PhiAttention):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
@@ -104,7 +104,7 @@ class QEffPhiAttention(PhiAttention):
         query_states = torch.cat((query_rot, query_pass), dim=-1)
         key_states = torch.cat((key_rot, key_pass), dim=-1)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             # Update the cache_kwargs with position_ids for Cloud AI 100
             cache_kwargs = {
                 "sin": sin,
@@ -115,7 +115,7 @@ class QEffPhiAttention(PhiAttention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
@@ -190,7 +190,7 @@ class QEffPhiDecoderLayer(PhiDecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -322,6 +322,15 @@ class QEffPhiForCausalLM(PhiForCausalLM):
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model
     """
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffPhiDecoderLayer}
 
     def forward(
         self,

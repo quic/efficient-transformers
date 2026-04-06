@@ -36,6 +36,7 @@ from QEfficient.generation.text_generation_inference import (
     write_io_files,
 )
 from QEfficient.utils import LRUCache
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -88,9 +89,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         full_batch_size: Optional[int] = None,
+        image_height: Optional[int] = None,
+        image_width: Optional[int] = None,
         is_tlm: bool = False,
         include_sampler: bool = False,
         return_pdfs: bool = False,
+        include_guided_decoding: bool = False,
         sampling_params: Optional[Dict[str, Any]] = None,
     ):
         """
@@ -107,9 +111,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             enable_debug_logs: Enable debug logging
             write_io_dir: Directory for I/O file writing
             full_batch_size: Enable continuous batching (new feature)
+            image_height: Desired image height for resizing
+            image_width: Desired image width for resizing
             is_tlm: Target language model flag
             include_sampler: Enable on-device sampling (new feature)
             return_pdfs: Return probability distributions
+            include_guided_decoding: Enable guided decoding in on-device sampling
             sampling_params: Sampling parameters for on-device sampling
         """
         # Validate required parameters
@@ -133,6 +140,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             is_tlm=is_tlm,
             include_sampler=include_sampler,
             return_pdfs=return_pdfs,
+            include_guided_decoding=include_guided_decoding,
             sampling_params=sampling_params,
             activate=False,  # vision components need to be initialized first
         )
@@ -143,6 +151,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
         self.qeff_model = qeff_model
         self.processor = processor
+        self.tokenizer = tokenizer
+        self.image_height = image_height
+        self.image_width = image_width
         self._vision_qpc_path = vision_qpc_path
         self.device_id = device_id  # Store device_id for vision components
         self.enable_debug_logs = enable_debug_logs  # Store for vision components
@@ -173,6 +184,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             qeff_model=self.qeff_model,
             vision_session=self._vision_session,
             processor=self.processor,
+            tokenizer=self.tokenizer,
+            image_height=self.image_height,
+            image_width=self.image_width,
             config=vision_config,
             lang_session=self._session,  # Pass language session for coordination
         )
@@ -299,9 +313,18 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         chunk_image_idx = None
 
         if self.comp_ctx_lengths_prefill is not None:
-            self.list_of_comp_ctx_lengths_prefill = [np.zeros(length) for length in self.comp_ctx_lengths_prefill]
+            self.list_of_comp_ctx_lengths_prefill = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+            ]
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
+        if self.include_sampler:
+            for op in Constants.SAMPLER_OPS | ({"token_bitmasks"} if self.include_guided_decoding else set()):
+                if decode_batch_id is not None:
+                    lang_inputs[op] = self.sampling_params[op][decode_batch_id.flatten()]
+                else:
+                    lang_inputs[op] = self.sampling_params[op]
 
         for i in range(num_chunks):
             input_ids_slice = lang_inputs["input_ids"][:, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len]
@@ -327,6 +350,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                     lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
                 chunk_inputs["comp_ctx_lengths"] = lang_inputs["comp_ctx_lengths"]
+
+            if self.include_sampler:
+                chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
+                for op in Constants.SAMPLER_OPS | ({"token_bitmasks"} if self.include_guided_decoding else set()):
+                    chunk_inputs[op] = lang_inputs[op]
 
             outputs = self._session.run(chunk_inputs)
 
@@ -780,6 +808,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             is_tlm=self.is_tlm,
             include_sampler=self.include_sampler,
             return_pdfs=self.return_pdfs,
+            include_guided_decoding=self.include_guided_decoding,
             sampling_params=self.sampling_params,
         )
 

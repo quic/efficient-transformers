@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from transformers import AutoConfig
 
-from QEfficient.finetune.utils.helper import get_rank
+from QEfficient.finetune.utils.helper import get_local_rank
 from QEfficient.utils._utils import get_num_layers_from_config
 
 
@@ -81,9 +81,9 @@ def custom_device_map(train_config):
     model_config = AutoConfig.from_pretrained(train_config.model_name)
     num_layers = get_num_layers_from_config(model_config)
     num_pp_stages = train_config.num_pp_stages
-    rank = get_rank()
-    first_device = rank * num_pp_stages
-    last_device = rank * num_pp_stages + (num_pp_stages - 1)
+    local_rank = get_local_rank()
+    first_device = local_rank * num_pp_stages
+    last_device = local_rank * num_pp_stages + (num_pp_stages - 1)
 
     if model_config.tie_word_embeddings:
         lm_head_device = first_device
@@ -102,6 +102,6 @@ def custom_device_map(train_config):
     pp_device_map = np.repeat(pp_stage_ids, n_layer_per_stage)
 
     for i in range(num_layers):
-        device_map[f"model.layers.{i}"] = pp_device_map[i] + rank * num_pp_stages
+        device_map[f"model.layers.{i}"] = pp_device_map[i] + local_rank * num_pp_stages
 
     return device_map

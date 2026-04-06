@@ -6,18 +6,26 @@
 ---
 
 *Latest news* :fire: <br>
-
+- [12/2025] Enabled [disaggregated serving](examples/disagg_serving) for GPT-OSS model
+- [12/2025] Added support for wav2vec2 Audio Model [facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h)
+- [12/2025] Added support for diffuser video generation model [WAN 2.2 Model Card](https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers)
+- [12/2025] Added support for diffuser image generation model [FLUX.1 Model Card](https://huggingface.co/black-forest-labs/FLUX.1-schnell)
+- [12/2025] Added support for [openai/gpt-oss-20b](https://huggingface.co/openai/gpt-oss-20b)
+- [12/2025] Added support for [OpenGVLab/InternVL3_5-1B](https://huggingface.co/OpenGVLab/InternVL3_5-1B)
+- [12/2025] Added support for Olmo Model [allenai/OLMo-2-0425-1B](https://huggingface.co/allenai/OLMo-2-0425-1B)
+- [10/2025] Added support for Qwen3 MOE Model [Qwen/Qwen3-30B-A3B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507)
 - [10/2025] Added support for Qwen2.5VL Multi-Model [Qwen/Qwen2.5-VL-32B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct)
 - [10/2025] Added support for Mistral3 Multi-Model [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)
 - [10/2025] Added support for Molmo Multi-Model [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924)
-- [06/2025] Added support for Llama4 Multi-Model [meta-llama/Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)
-- [06/2025] Added support for Gemma3 Multi-Modal-Model [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
-- [06/2025] Added support of model `hpcai-tech/grok-1` [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)
-- [06/2025] Added support for sentence embedding which improves efficiency, Flexible/Custom Pooling configuration and compilation with multiple sequence lengths, [Embedding model](https://github.com/quic/efficient-transformers/pull/424).
+
 
 <details>
 <summary>More</summary>
 
+- [06/2025] Added support for Llama4 Multi-Model [meta-llama/Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)
+- [06/2025] Added support for Gemma3 Multi-Modal-Model [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
+- [06/2025] Added support of model `hpcai-tech/grok-1` [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)
+- [06/2025] Added support for sentence embedding which improves efficiency, Flexible/Custom Pooling configuration and compilation with multiple sequence lengths, [Embedding model](https://github.com/quic/efficient-transformers/pull/424)
 - [04/2025] Support for [SpD, multiprojection heads](https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding). Implemented post-attention hidden size projections to speculate tokens ahead of the base model
 - [04/2025] [QNN Compilation support](https://github.com/quic/efficient-transformers/pull/374) for AutoModel classes. QNN compilation capabilities for multi-models, embedding models and causal models.
 - [04/2025] Added support for separate prefill and decode compilation for encoder (vision) and language models. This feature will be utilized for [disaggregated serving](https://github.com/quic/efficient-transformers/pull/365).
@@ -87,14 +95,18 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ## Quick Installation
 ```bash
 
-# Create Python virtual env and activate it. (Recommended Python 3.10)
-sudo apt install python3.10-venv
-python3.10 -m venv qeff_env
+# Create Python virtual env and activate it. (Recommended Python 3.12)
+sudo apt install python3.12-venv
+python3.12 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
-# Clone and Install the QEfficient Repo.
+# Clone and Install the QEfficient repository from the mainline branch
 pip install git+https://github.com/quic/efficient-transformers
+
+# Clone and Install the QEfficient repository from a specific branch, tag or commit by appending @ref
+# Release branch (e.g., release/v1.20.0):
+pip install "git+https://github.com/quic/efficient-transformers@release/v1.20.0"
 
 # Or build wheel package using the below command.
 pip install build wheel
@@ -124,4 +136,4 @@ Thanks to:
 If you run into any problems with the code, please file Github issues directly to this repo.
 
 ## Contributing
-This project welcomes contributions and suggestions. Please check the License. Integration with a CLA Bot is underway. 
+This project welcomes contributions and suggestions. Please check the License. Integration with a CLA Bot is underway.

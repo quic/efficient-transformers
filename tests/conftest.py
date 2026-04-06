@@ -5,46 +5,62 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 import shutil
 
-import pytest
-from transformers import AutoConfig
+from transformers import logging
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
-from QEfficient.utils.test_utils import ModelConfig
 
-
-def get_custom_model_config_dict(configs):
-    """
-    Converts a list of custom model configuration dictionaries into a dictionary
-    mapping model names to their corresponding AutoConfig objects.
-
-    Args:
-        configs (List[Dict]): A list of dictionaries, each containing model configuration parameters.
-
-    Returns:
-        Dict[str, AutoConfig]: A dictionary where keys are model names and values are AutoConfig objects.
-    """
-    config_dict = {}
-    for config in configs:
-        model_name = config["model_name"]
-        config_dict[model_name] = AutoConfig.from_pretrained(
-            model_name,
-            trust_remote_code=config["model_name"] in ModelConfig.EXTERNAL_MODELS,
-            **config.get("additional_params", {}),
-        )
-    return config_dict
-
-
-# Pytest fixture to load custom model configs from a JSON file
-@pytest.fixture(scope="session")
-def custom_causal_model_config_dict():
-    with open("tests/transformers/models/custom_tiny_model_configs.json", "r") as f:
-        custom_model_configs_data = json.load(f)
-    return get_custom_model_config_dict(custom_model_configs_data)
+_QUICKCHECK_FILE = "tests/unit_test/models/test_model_quickcheck.py"
+_QUICKCHECK_SUMMARY = {}
+_QUICKCHECK_META = {
+    "test_causal_lm_cpu_runtime_parity_with_api_runner": (
+        "Causal LM",
+        "Full parity: HF PyTorch vs QEff PyTorch vs ORT tokens",
+    ),
+    "test_vlm_text_side_runtime_parity_and_full_export": (
+        "VLM",
+        "Text-side full parity + full VLM export smoke",
+    ),
+    "test_vlm_export_smoke_additional_models": (
+        "VLM",
+        "Export smoke with text-side fallback when needed",
+    ),
+    "test_text_embedding_cpu_parity_and_export": (
+        "Text Embedding",
+        "Tensor parity: HF vs QEff PyTorch vs ORT",
+    ),
+    "test_audio_embedding_ctc_cpu_parity_and_export": (
+        "Audio CTC",
+        "Logits parity: HF vs ORT + export",
+    ),
+    "test_seq_classification_cpu_parity_and_export": (
+        "Sequence Classification",
+        "Logits parity: HF vs QEff PyTorch vs ORT",
+    ),
+    "test_whisper_export_smoke": (
+        "Whisper",
+        "Export smoke + retained-state outputs check",
+    ),
+    "test_causal_subfunction_export_smoke": (
+        "Causal LM",
+        "Subfunction export check (with/without QEffGPT2Block)",
+    ),
+    "test_causal_subfunction_export_smoke_all_models": (
+        "Causal LM",
+        "Full parity: HF PyTorch vs QEff PyTorch vs ORT tokens (subfunctions)",
+    ),
+    "test_prefix_caching_continuous_batching_export_and_ort_smoke": (
+        "Prefix Caching",
+        "Continuous-batching export structural checks",
+    ),
+    "test_awq_export_smoke": (
+        "AWQ",
+        "Export smoke + MatMulNBits presence check",
+    ),
+}
 
 
 def qeff_models_clean_up():
@@ -55,7 +71,19 @@ def qeff_models_clean_up():
 
 def pytest_sessionstart(session):
     logger.info("PYTEST Session Starting ...")
+
+    # Suppress transformers warnings about unused weights when loading models with fewer layers
+    logging.set_verbosity_error()
+
     qeff_models_clean_up()
+
+
+def pytest_configure(config):
+    """Register custom markers for test categorization."""
+    config.addinivalue_line("markers", "llm_model: mark test as a pure LLM model inference test")
+    config.addinivalue_line(
+        "markers", "feature: mark test as a feature-specific test (SPD, sampler, prefix caching, LoRA, etc.)"
+    )
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -63,3 +91,32 @@ def pytest_sessionfinish(session, exitstatus):
     if inside_worker is None:
         qeff_models_clean_up()
         logger.info("...PYTEST Session Ended.")
+
+
+def pytest_runtest_logreport(report):
+    if _QUICKCHECK_FILE not in report.nodeid:
+        return
+
+    if report.when == "call":
+        _QUICKCHECK_SUMMARY[report.nodeid] = report.outcome
+        return
+
+    if report.when == "setup" and report.outcome == "skipped":
+        _QUICKCHECK_SUMMARY.setdefault(report.nodeid, report.outcome)
+
+
+def pytest_terminal_summary(terminalreporter):
+    if not _QUICKCHECK_SUMMARY:
+        return
+
+    terminalreporter.section("Quickcheck Coverage Summary", sep="=")
+    header = f"{'Status':7}  {'Test Case':58}  {'Category':24}  Validation"
+    terminalreporter.write_line(header)
+    terminalreporter.write_line("-" * len(header))
+
+    for nodeid in sorted(_QUICKCHECK_SUMMARY):
+        test_case = nodeid.split("::", 1)[1]
+        base_name = test_case.split("[", 1)[0]
+        category, validation = _QUICKCHECK_META.get(base_name, ("Other", "N/A"))
+        status = _QUICKCHECK_SUMMARY[nodeid].upper()
+        terminalreporter.write_line(f"{status:7}  {test_case:58}  {category:24}  {validation}")
