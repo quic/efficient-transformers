@@ -241,6 +241,9 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get("head_block_size", False) and enable_blocking and "h" in blocking_mode:
             mode_from_config = "h" + mode_from_config
             blocking_config.head_block_size = _get_valid_num_blocks(qaic_config, "head_block_size")
+        if qaic_config.get("num_batch_blocks", False) and enable_blocking and "b" in blocking_mode:
+            mode_from_config = "b" + mode_from_config
+            blocking_config.num_batch_blocks = _get_valid_num_blocks(qaic_config, "num_batch_blocks")
 
         # check if qaic config did not provide any blocking details
         if mode_from_config == "":

@@ -15,6 +15,7 @@ import torch
 from transformers.cache_utils import Cache
 
 from QEfficient.blocking.blocked_attention_forwards import (
+    blocked_bhqkv_attention_forward,
     blocked_h_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
@@ -30,6 +31,7 @@ class BlockingMode(str, Enum):
     H = "h"
     QKV = "qkv"
     HQKV = "hqkv"
+    BHQKV = "bhqkv"
 
 
 @dataclass
@@ -39,6 +41,7 @@ class AttentionBlockingConfig:
     num_q_blocks: Optional[int] = None
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = False
+    num_batch_blocks: Optional[int] = None
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -51,6 +54,7 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.H: blocked_h_attention_forward,
     BlockingMode.QKV: blocked_qkv_attention_forward,
     BlockingMode.HQKV: blocked_hqkv_attention_forward,
+    BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
 }
 
 
@@ -153,6 +157,7 @@ def generic_blocked_attention_interface(
         num_kv_blocks=blocking_config.num_kv_blocks,
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
+        num_batch_blocks=blocking_config.num_batch_blocks,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
