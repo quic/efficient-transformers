@@ -346,7 +346,7 @@ class QEffGemma4TextModel(Gemma4TextModel):
 
 
 class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
-    _NPI_FP32_OPS = {"Cast", "Pow", "ReduceMean", "Add", "Mul", "Div", "Softmax", "Tanh", "Clip", "MatMul"}
+    _NPI_FP32_OPS = {"Cast", "Pow", "ReduceMean", "Add", "Mul", "Div", "Softmax", "Tanh", "Clip"}
     _NPI_SEMANTIC_NAMES = ("attn_weights", "top_k_weights", "experts_out")
     _NPI_ATTENTION_NAMES = ("query_states", "key_states", "value_states", "key", "value")
     _NPI_BAD_OUTPUT_TOKENS = ("Shape", "Equal", "Unsqueeze", "Slice", "Gather", "Transpose")
@@ -357,6 +357,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         "CustomRMSNorm",
         "Equal",
         "Gather",
+        "MatMul",
         "Range",
         "Reshape",
         "Shape",
@@ -485,6 +486,8 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         fp32_names = []
 
         for node in model.graph.node:
+            if node.op_type in self._NPI_EXCLUDED_OPS:
+                continue
             fp32_names.extend(
                 out_name for out_name in node.output if out_name and not out_name.endswith("_RetainedState")
             )
@@ -499,6 +502,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
                 fp32_names.extend(output_name for output_name in node.output if output_name)
 
         fp32_names = list(dict.fromkeys(fp32_names))
+        fp32_names = [name for name in fp32_names if "MatMul" not in name]
 
         npi_data = {"FP32NodeInstanceNames": fp32_names}
         with open(npi_path, "w") as fp:
