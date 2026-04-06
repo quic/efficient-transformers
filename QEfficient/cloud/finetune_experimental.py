@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import torch
+import torch.distributed as dist
 from accelerate.utils import ParallelismConfig
 
 from QEfficient.finetune.experimental.core.callbacks import replace_progress_callback
@@ -63,7 +64,9 @@ class FineTuningPipeline:
 
         # Prepare training configuration
         self.training_config = prepare_training_config(config_manager=self.config_manager)
-
+        self.tp_enabled = self.training_config["tp_degree"] > 1
+        if self.tp_enabled:
+            self._initialize_dist_tp()
         # Create datasets
         logger.log_rank_zero("Creating datasets...")
         self.train_dataset, self.eval_dataset = self._create_datasets()
@@ -114,6 +117,21 @@ class FineTuningPipeline:
         os.environ["OUTPUT_DIR"] = str(self.output_dir)
         os.environ["TRACKIO_DIR"] = str(self.output_dir / "trackio_logs")
         os.environ["TENSORBOARD_LOGGING_DIR"] = str(self.output_dir)
+
+    def _initialize_dist_tp(self):
+        WORLD_SIZE = int(os.getenv("WORLD_SIZE", "1"))
+        LOCAL_RANK = int(os.getenv("LOCAL_RANK", "0"))
+
+        if self.training_config["device"] == "cuda":
+            backend = "nccl"
+        else:
+            backend = "cpu:gloo,qaic:qccl"
+
+        dist.init_process_group(
+            backend=backend,  # "nccl" for GPUs, "gloo" for CPUs
+            world_size=WORLD_SIZE,  # total number of processes
+            rank=LOCAL_RANK,  # unique ID for this process
+        )
 
     def _create_datasets(self) -> Tuple[Any, Any]:
         """
