@@ -35,6 +35,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
     PerfMetrics,
+    QEffTextGenerationBase,
     calculate_latency,
     get_compilation_dims,
     write_io_files,
@@ -252,7 +253,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         if pooling:
             self.model, _ = PoolingTransform.apply(self.model, pooling)
 
-        self.model.base_model.config.use_cache = True
+        # self.model.base_model.config.use_cache = True
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -3486,6 +3487,129 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
+
+    def generate_logits(
+        self,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompts: Union[str, List[str]],
+        device_id: Optional[List[int]] = None,
+        generation_len: int = 1,
+        ctx_len: Optional[int] = None,
+    ) -> np.ndarray:
+        """
+        Run embedding/reranker scoring prompts on QAIC and return prefill logits.
+
+        This method is intended for use-cases where the model is loaded through
+        ``QEFFAutoModelForCausalLM`` but used like an embedding/reranker scorer
+        (for example yes/no relevance scoring) and decode generation is not needed.
+
+        Parameters
+        ----------
+        tokenizer : PreTrainedTokenizer or PreTrainedTokenizerFast
+            Tokenizer corresponding to the compiled model.
+        prompts : str or list of str
+            Prompt(s) to run through prefill.
+        device_id : list of int, optional
+            Device IDs for running the QPC. Defaults to auto-device selection.
+        generation_len : int, optional
+            Target generation length used for prefill bookkeeping. Default is 1.
+        ctx_len : int, optional
+            Context length for prefill runtime. If not provided, inferred from prompt lengths.
+
+        Returns
+        -------
+        np.ndarray
+            Logits tensor with shape [batch_size, seq_len, vocab_size].
+
+        Raises
+        ------
+        TypeError
+            If compile has not been run.
+        ValueError
+            If prompts are empty or logits are not available in model outputs.
+        """
+        if not isinstance(self.qpc_path, Path):
+            raise TypeError("Please run compile API first!")
+
+        if isinstance(prompts, str):
+            prompts = [prompts]
+        if not prompts:
+            raise ValueError("`prompts` cannot be empty.")
+
+        if ctx_len is None:
+            prompt_tokens = tokenizer(prompts, return_tensors="np", padding=True)
+            prompt_lengths = prompt_tokens["attention_mask"].sum(axis=1)
+            ctx_len = int(prompt_lengths.max()) + generation_len
+
+        prefill_runtime = QEffTextGenerationBase(
+            tokenizer=tokenizer,
+            qpc_path=str(self.qpc_path),
+            ctx_len=ctx_len,
+            device_id=device_id,
+        )
+        outputs, _, _ = prefill_runtime.run_prefill(
+            prompt=prompts,
+            generation_len=generation_len,
+            prefill_logit_bs=len(prompts),
+        )
+
+        if "logits" not in outputs:
+            raise ValueError(
+                "No `logits` found in outputs. Ensure the model is compiled without on-device sampler outputs."
+            )
+
+        logits = outputs["logits"]
+        if len(logits.shape) == 2:
+            logits = np.expand_dims(logits, 1)
+        return logits
+
+    def get_reranker_prefill_logits(
+        self,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompts: Union[str, List[str]],
+        device_id: Optional[List[int]] = None,
+        generation_len: int = 1,
+        ctx_len: Optional[int] = None,
+    ) -> np.ndarray:
+        """
+        Deprecated alias for ``generate_logits``.
+        """
+        warnings.warn(
+            "`get_reranker_prefill_logits` is deprecated. Use `generate_logits`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.generate_logits(
+            tokenizer=tokenizer,
+            prompts=prompts,
+            device_id=device_id,
+            generation_len=generation_len,
+            ctx_len=ctx_len,
+        )
+
+    def get_prefill_logits(
+        self,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompts: Union[str, List[str]],
+        device_id: Optional[List[int]] = None,
+        generation_len: int = 1,
+        ctx_len: Optional[int] = None,
+    ) -> np.ndarray:
+        """
+        Deprecated alias for ``generate_logits``.
+        """
+        warnings.warn(
+            "`get_prefill_logits` is deprecated. Use `generate_logits`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.generate_logits(
+            tokenizer=tokenizer,
+            prompts=prompts,
+            device_id=device_id,
+            generation_len=generation_len,
+            ctx_len=ctx_len,
+        )
 
     def check_and_get_num_speculative_tokens(self, num_speculative_tokens: Optional[int], prefill_seq_len: int):
         """

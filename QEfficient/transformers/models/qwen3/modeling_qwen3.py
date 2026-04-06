@@ -27,6 +27,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
     repeat_kv,
     rotate_half,
 )
+from transformers.models.qwen3.modeling_qwen3 import Qwen3RMSNorm
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
