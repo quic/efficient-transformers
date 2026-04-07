@@ -146,9 +146,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
 
         # Vision-specific initialization
-        self.is_qwen2_5_vl = (
-            hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl"
-        )
+        self.is_qwen_vl = hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in {
+            "qwen2_5_vl",
+            "qwen3_vl_moe",
+            "qwen3_vl",
+        }
         self.qeff_model = qeff_model
         self.processor = processor
         self.tokenizer = tokenizer
@@ -256,13 +258,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             outputs, position_ids, generation_len = self.run_prefill(
                 next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1)
             )
-
-            if self.is_qwen2_5_vl:
-                _ = self.update_decode_inputs_qwen2_5_vl(outputs, position_ids, generation_len, decode_batch_id)
+            if self.is_qwen_vl:
+                _ = self.update_decode_inputs_qwen_vl(outputs, position_ids, generation_len, decode_batch_id)
             else:
                 _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
-    def update_decode_inputs_qwen2_5_vl(self, outputs, position_ids, generation_len, decode_batch_id=None):
+    def update_decode_inputs_qwen_vl(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
         Updates the decode input with the generated values.
         Args:
@@ -581,14 +582,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
 
         self.initialize_decode_inputs(num_prompts, execution_batch_size, max_gen_length)
-        if self.is_qwen2_5_vl:
+        if self.is_qwen_vl:
             self.decode_pos_ids = np.zeros((4, execution_batch_size, 1), np.int64)
-
         # Create prompt queue
         prompt_queue = deque(vision_prompts)
 
         start = perf_counter()
-
         # Pre-process ALL vision inputs and cache them
         logger.info("Pre-processing all vision inputs...")
         for batch_id in range(min(self.full_batch_size, len(vision_prompts))):
@@ -610,7 +609,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
         # Reset prompt queue for prefill
         prompt_queue = deque(vision_prompts)
-
         self.batch_index = None
 
         # Run prefill for all inputs using cached vision
@@ -692,8 +690,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 generation_len_final = self._fetch_generation_len(generation_len, max_gen_len)
 
                 # Update decode inputs
-                if self.is_qwen2_5_vl:
-                    self.update_decode_inputs_qwen2_5_vl(
+                if self.is_qwen_vl:
+                    self.update_decode_inputs_qwen_vl(
                         outputs, position_ids_decode, generation_len_final, decode_batch_id
                     )
                 else:
