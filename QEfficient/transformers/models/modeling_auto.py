@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from transformers import (
+    AutoConfig,
     AutoImageProcessor,
     AutoModel,
     AutoModelForCausalLM,
@@ -474,6 +475,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         runtime_ai100: bool = True,
         write_io: bool = False,
         dtype: Optional[torch.dtype] = torch.float32,
+        capture_trace: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output by executing the compiled QPC on Cloud AI 100 hardware or using PyTorch runtime.
@@ -497,17 +499,25 @@ class QEFFAutoModel(QEFFTransformersBase):
         torch.Tensor or np.ndarray
             Output from the AI 100 or PyTorch runtime. The type depends on the runtime and model.
         """
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
-        # AI_100 runtime
-        if runtime_ai100:
-            if not isinstance(self.qpc_path, Path):
-                raise TypeError("Please run compile API first!")
-
-            return self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids)
-        # PyTorch runtime
-        else:
-            return self.pytorch_feature_generate(model=self.model, inputs=inputs)
+        onnx_parent = os.path.dirname(self.onnx_path) if self.onnx_path else os.getcwd()
+        self._prepare_trace_runtime(
+            onnx_parent=onnx_parent,
+            write_io=write_io,
+            capture_trace=capture_trace,
+        )
+        try:
+            if runtime_ai100:
+                if not isinstance(self.qpc_path, Path):
+                    raise TypeError("Please run compile API first!")
+                outputs = self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids)
+                self._finalize_trace_runtime()
+                return outputs
+            outputs = self.pytorch_feature_generate(model=self.model, inputs=inputs)
+            self._abort_trace_runtime()
+            return outputs
+        except Exception:
+            self._abort_trace_runtime()
+            raise
 
     def cloud_ai_100_feature_generate(
         self,
@@ -815,6 +825,8 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         self,
         inputs: torch.Tensor,
         device_ids: List[int] = None,
+        write_io: bool = False,
+        capture_trace: bool = False,
     ) -> dict:
         """
         Generate classification output using the Cloud AI 100 hardware runtime.
@@ -832,35 +844,44 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         dict
             Dictionary containing the classification logits.
         """
-        if self.qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
-            self.batch_size = self.qpc_session.bindings[0].dims[0]
-
-        # Dynamic switching to closest seq_len based on input_ids_len
-        input_ids_len = inputs["input_ids"].shape[1]
-
-        for allowed_shape in self.qpc_session.allowed_shapes:
-            seq_len_allowed = allowed_shape[1][1][1]
-            if seq_len_allowed >= input_ids_len:
-                self.seq_len = seq_len_allowed
-                break
-
-        # To handle single seq_len as we can't fetch allowed shapes for single seq_len
-        self.seq_len = self.qpc_session.bindings[0].dims[1] if not hasattr(self, "seq_len") else self.seq_len
-
-        input_ids = np.array(
-            torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - input_ids_len), "constant", 0)
+        self._prepare_trace_runtime(
+            onnx_parent=os.path.dirname(self.onnx_path),
+            write_io=write_io,
+            capture_trace=capture_trace,
         )
-        attention_mask = np.array(
-            torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+        try:
+            if self.qpc_session is None:
+                self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+                self.batch_size = self.qpc_session.bindings[0].dims[0]
+
+            input_ids_len = inputs["input_ids"].shape[1]
+
+            for allowed_shape in self.qpc_session.allowed_shapes:
+                seq_len_allowed = allowed_shape[1][1][1]
+                if seq_len_allowed >= input_ids_len:
+                    self.seq_len = seq_len_allowed
+                    break
+
+            self.seq_len = self.qpc_session.bindings[0].dims[1] if not hasattr(self, "seq_len") else self.seq_len
+
+            input_ids = np.array(
+                torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - input_ids_len), "constant", 0)
             )
-        )
+            attention_mask = np.array(
+                torch.nn.functional.pad(
+                    inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+                )
+            )
 
-        inputs_np = dict(input_ids=input_ids, attention_mask=attention_mask)
-        outputs = self.qpc_session.run(inputs_np)
-
-        return {"logits": torch.from_numpy(outputs["logits"])}
+            inputs_np = dict(input_ids=input_ids, attention_mask=attention_mask)
+            outputs = self.qpc_session.run(inputs_np)
+            if self._write_io_dir is not None:
+                write_io_files(inputs_np, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
+            self._finalize_trace_runtime()
+            return {"logits": torch.from_numpy(outputs["logits"])}
+        except Exception:
+            self._abort_trace_runtime()
+            raise
 
 
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
@@ -1701,41 +1722,48 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
         write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path[1]), "io_dir") if write_io else None
-
-        # Use VisionLanguageGeneration for image-prompt pairs
-        if (processor and images) or (tokenizer and prompts):
-            # Create VisionLanguageGeneration instance
-            batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
-            vlm_gen = VisionLanguageGeneration(
-                qeff_model=self,
-                lang_qpc_path=self.lang_model.qpc_path,
-                vision_qpc_path=self.vision_model.qpc_path,
-                tokenizer=tokenizer,
-                processor=processor,
-                device_id=device_ids,  # if device_ids is not None else [0],
-                ctx_len=ctx_len_comp,
-                full_batch_size=fbs,
-                comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
-                comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
-                image_height=image_height,
-                image_width=image_width,
-                write_io_dir=self._write_io_dir,
-                **kwargs,
-            )
-
-            # Call generate method
-            return vlm_gen.generate(
-                images=images,
-                prompts=prompts,
-                generation_len=generation_len,
-                stream=streamer is not None,
-            )
-
-        # Fallback to kv_offload_generate for direct inputs (backward compatibility)
-        return self.kv_offload_generate(
-            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+        capture_trace = kwargs.pop("capture_trace", False)
+        self._prepare_trace_runtime(
+            onnx_parent=os.path.dirname(self.onnx_path[1]),
+            write_io=write_io,
+            capture_trace=capture_trace,
         )
+        try:
+            if (processor and images) or (tokenizer and prompts):
+                batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
+                vlm_gen = VisionLanguageGeneration(
+                    qeff_model=self,
+                    lang_qpc_path=self.lang_model.qpc_path,
+                    vision_qpc_path=self.vision_model.qpc_path,
+                    tokenizer=tokenizer,
+                    processor=processor,
+                    device_id=device_ids,
+                    ctx_len=ctx_len_comp,
+                    full_batch_size=fbs,
+                    comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
+                    comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
+                    image_height=image_height,
+                    image_width=image_width,
+                    write_io_dir=self._write_io_dir,
+                    **kwargs,
+                )
+                outputs = vlm_gen.generate(
+                    images=images,
+                    prompts=prompts,
+                    generation_len=generation_len,
+                    stream=streamer is not None,
+                )
+                self._finalize_trace_runtime()
+                return outputs
+
+            outputs = self.kv_offload_generate(
+                inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+            )
+            self._finalize_trace_runtime()
+            return outputs
+        except Exception:
+            self._abort_trace_runtime()
+            raise
 
     def kv_offload_generate(
         self,
@@ -2301,6 +2329,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         runtime_ai100: bool = True,
         generation_len: Optional[int] = None,
         write_io: bool = False,
+        capture_trace: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generates output by executing the compiled single QPC on Cloud AI 100 Hardware cards.
@@ -2334,11 +2363,20 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
-        return self.cloud_ai_100_generate(
-            inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
+        self._prepare_trace_runtime(
+            onnx_parent=os.path.dirname(self.onnx_path),
+            write_io=write_io,
+            capture_trace=capture_trace,
         )
+        try:
+            outputs = self.cloud_ai_100_generate(
+                inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
+            )
+            self._finalize_trace_runtime()
+            return outputs
+        except Exception:
+            self._abort_trace_runtime()
+            raise
 
     def cloud_ai_100_generate(
         self,
@@ -2874,6 +2912,53 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         return self.__class__.__name__ + "\n" + self.model.__repr__()
 
     @classmethod
+    def _from_benchmark_config_only(
+        cls,
+        *,
+        pretrained_model_name_or_path: str,
+        config,
+        continuous_batching: bool = False,
+        qaic_config: Optional[dict] = None,
+        max_seq_len_cached: Optional[int] = None,
+    ):
+        arch_name = (
+            (architectures := getattr(config, "architectures", None)) and len(architectures) > 0 and architectures[0]
+        ) or "BenchmarkForCausalLM"
+        stub_cls = type(arch_name, (nn.Module,), {})
+        stub_model = stub_cls()
+        stub_model.config = config
+        stub_model.qaic_config = qaic_config
+        stub_model.config.use_cache = True
+        setattr(stub_model.config, "max_seq_len_cached", max_seq_len_cached)
+
+        instance = cls.__new__(cls)
+        instance.model = stub_model
+        instance.hash_params = {
+            "pretrained_model_name_or_path": pretrained_model_name_or_path,
+            "qeff_auto_class": cls.__name__,
+            "max_seq_len_cached": max_seq_len_cached,
+        }
+        instance.onnx_path = None
+        instance.qpc_path = None
+        instance.trace_dir = None
+        instance._pending_trace_capture = False
+        instance.qpc_session = None
+        instance.model_architecture = arch_name
+        instance._is_weights_offloaded = False
+        instance.num_layers = getattr(config, "num_hidden_layers", 0)
+        instance.continuous_batching = continuous_batching
+        instance.model.qaic_config = qaic_config
+        instance.is_tlm = False
+        instance.ccl_enabled = qaic_config.get("ccl_enabled", False) if qaic_config else False
+        instance.comp_ctx_lengths_prefill = None
+        instance.comp_ctx_lengths_decode = None
+        instance.enable_benchmark = True
+        instance._benchmark_manifest = None
+        instance._benchmark_manifest_path = None
+        instance._benchmark_report_path = None
+        return instance
+
+    @classmethod
     @with_replaced_quantizers
     def from_pretrained(
         cls,
@@ -2928,6 +3013,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
         enable_benchmark = kwargs.pop("enable_benchmark", False)
+        benchmark_config_only = kwargs.pop("benchmark_config_only", enable_benchmark)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -2941,6 +3027,26 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kv_offload = kwargs.pop("kv_offload", None)
+
+        if enable_benchmark and benchmark_config_only:
+            config = AutoConfig.from_pretrained(
+                pretrained_model_name_or_path,
+                cache_dir=kwargs.get("cache_dir"),
+                force_download=kwargs.get("force_download", False),
+                local_files_only=kwargs.get("local_files_only", False),
+                revision=kwargs.get("revision"),
+                token=kwargs.get("token"),
+                trust_remote_code=kwargs.get("trust_remote_code", False),
+            )
+            if qaic_config is not None:
+                qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
+            return cls._from_benchmark_config_only(
+                pretrained_model_name_or_path=pretrained_model_name_or_path,
+                config=config,
+                continuous_batching=continuous_batching,
+                qaic_config=qaic_config,
+                max_seq_len_cached=max_seq_len_cached,
+            )
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
@@ -2986,7 +3092,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         *,
         mode: str = "decode",
         layer_index: int = 0,
-        seq_len: int = 32,
         ctx_len: int = 128,
         enable_chunking: bool = False,
     ):
@@ -2998,7 +3103,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self,
             mode=mode,
             layer_index=layer_index,
-            seq_len=seq_len,
             ctx_len=ctx_len,
             enable_chunking=enable_chunking,
         )
@@ -3739,40 +3843,55 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `runtime_ai100` is False.
         """
         if self.enable_benchmark:
-            from QEfficient.benchmarking.causal_lm_microbenchmark import generate_benchmark_report
+            from QEfficient.benchmarking.causal_lm_microbenchmark import (
+                format_benchmark_table,
+                generate_benchmark_report,
+                save_benchmark_report,
+            )
 
-            generate_benchmark_report(
+            summaries = generate_benchmark_report(
                 self,
                 warmup_runs=kwargs.pop("warmup_runs", None),
                 benchmark_runs=kwargs.pop("benchmark_runs", None),
                 seed=kwargs.pop("seed", 13),
                 device_id=device_id,
             )
+            print(format_benchmark_table(summaries))
+            save_benchmark_report(self, summaries)
             return self._benchmark_report_path
 
         write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
-        if runtime_ai100:
-            if not isinstance(self.qpc_path, Path):
-                raise TypeError("Please run compile API first!")
-            generation_len = kwargs.pop("generation_len", None)
-            return QEfficient.cloud_ai_100_exec_kv(
-                tokenizer=tokenizer,
-                qpc_path=self.qpc_path,
-                prompt=prompts,
-                comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
-                comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
-                device_id=device_id,
-                generation_len=generation_len,
-                automation=kwargs.pop("automation", False),
-                iteration=kwargs.pop("iteration", 1),
-                is_tlm=self.is_tlm,
-                write_io_dir=self._write_io_dir,
-                **kwargs,
-            )
-        else:
+        capture_trace = kwargs.pop("capture_trace", False)
+        self._prepare_trace_runtime(
+            onnx_parent=os.path.dirname(self.onnx_path),
+            write_io=write_io,
+            capture_trace=capture_trace,
+        )
+        try:
+            if runtime_ai100:
+                if not isinstance(self.qpc_path, Path):
+                    raise TypeError("Please run compile API first!")
+                generation_len = kwargs.pop("generation_len", None)
+                outputs = QEfficient.cloud_ai_100_exec_kv(
+                    tokenizer=tokenizer,
+                    qpc_path=self.qpc_path,
+                    prompt=prompts,
+                    comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
+                    comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
+                    device_id=device_id,
+                    generation_len=generation_len,
+                    automation=kwargs.pop("automation", False),
+                    iteration=kwargs.pop("iteration", 1),
+                    is_tlm=self.is_tlm,
+                    write_io_dir=self._write_io_dir,
+                    **kwargs,
+                )
+                self._finalize_trace_runtime()
+                return outputs
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
+        except Exception:
+            self._abort_trace_runtime()
+            raise
 
     def check_and_get_num_speculative_tokens(self, num_speculative_tokens: Optional[int], prefill_seq_len: int):
         """
@@ -4072,6 +4191,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
         write_io: bool = False,
+        capture_trace: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output until ``<|endoftext|>`` token or `generation_len` is reached,
@@ -4109,80 +4229,88 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
 
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
-        inputs = self.auto_correct_inputs(inputs)
-        if self.qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
-            self.batch_size = self.qpc_session.bindings[0].dims[0]
-
-        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
-
-        # add start token id and initial position ids to inputs
-        seq_len = 1
-        inputs["input_ids"] = (
-            torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
-        ).numpy()
-        inputs["position_ids"] = (
-            torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
+        self._prepare_trace_runtime(
+            onnx_parent=os.path.dirname(self.onnx_path),
+            write_io=write_io,
+            capture_trace=capture_trace,
         )
+        try:
+            inputs = self.auto_correct_inputs(inputs)
+            if self.qpc_session is None:
+                self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+                self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        self.qpc_session.skip_buffers(
-            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
-        )
+            inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
 
-        outputs = {
-            "logits": np.random.randn(self.batch_size, 1, self.model.config.vocab_size).astype(np.float32),
-        }
-        self.qpc_session.set_buffers(outputs)
+            # add start token id and initial position ids to inputs
+            seq_len = 1
+            inputs["input_ids"] = (
+                torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
+            ).numpy()
+            inputs["position_ids"] = (
+                torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
+            )
 
-        # encoder run
-        start = perf_counter()
-        outputs = self.qpc_session.run(inputs)
+            self.qpc_session.skip_buffers(
+                [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
+            )
 
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+            outputs = {
+                "logits": np.random.randn(self.batch_size, 1, self.model.config.vocab_size).astype(np.float32),
+            }
+            self.qpc_session.set_buffers(outputs)
 
-        # array to hold generated tokens
-        generated_ids = np.full((self.batch_size, generation_len + 1), self.model.config.eos_token_id)
-        generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
-        logits = outputs["logits"]
-        next_token = logits.argmax(-1)
-        generated_ids[:, 1] = next_token.squeeze(1)
-
-        if streamer:
-            streamer.put(next_token)
-
-        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float16)
-
-        loop_start = perf_counter()
-        for num_tokens in range(generation_len):
+            # encoder run
+            start = perf_counter()
             outputs = self.qpc_session.run(inputs)
-            if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
 
+            if self._write_io_dir is not None:
+                write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+
+            # array to hold generated tokens
+            generated_ids = np.full((self.batch_size, generation_len + 1), self.model.config.eos_token_id)
+            generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
             logits = outputs["logits"]
             next_token = logits.argmax(-1)
-            generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
-
-            if next_token[0][0] == self.model.config.eos_token_id:
-                break
-
-            inputs["input_ids"] = next_token
-            inputs["position_ids"] += 1
+            generated_ids[:, 1] = next_token.squeeze(1)
 
             if streamer:
                 streamer.put(next_token)
-        end = perf_counter()
 
-        prefill_time, decode_perf, total_perf, total_time = calculate_latency(num_tokens, loop_start, start, end)
+            inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float16)
 
-        return CloudAI100ExecInfoNew(
-            batch_size=self.batch_size,
-            generated_ids=generated_ids,
-            perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
-        )
+            loop_start = perf_counter()
+            for num_tokens in range(generation_len):
+                outputs = self.qpc_session.run(inputs)
+                if self._write_io_dir is not None:
+                    write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
+                    self._write_io_dir = None
+
+                logits = outputs["logits"]
+                next_token = logits.argmax(-1)
+                generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
+
+                if next_token[0][0] == self.model.config.eos_token_id:
+                    break
+
+                inputs["input_ids"] = next_token
+                inputs["position_ids"] += 1
+
+                if streamer:
+                    streamer.put(next_token)
+            end = perf_counter()
+
+            prefill_time, decode_perf, total_perf, total_time = calculate_latency(num_tokens, loop_start, start, end)
+            outputs = CloudAI100ExecInfoNew(
+                batch_size=self.batch_size,
+                generated_ids=generated_ids,
+                perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
+            )
+            self._finalize_trace_runtime()
+            return outputs
+        except Exception:
+            self._abort_trace_runtime()
+            raise
 
 
 class QEFFAutoModelForCTC(QEFFTransformersBase):
@@ -4395,6 +4523,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
         write_io: bool = False,
+        capture_trace: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -4407,17 +4536,24 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
-
-        # AI_100 runtime
-        if runtime_ai100:
-            if not isinstance(self.qpc_path, Path):
-                raise TypeError("Please run compile API first!")
-
-            return self.cloud_ai_100_feature_generate(processor, inputs=inputs, device_ids=device_ids)
-        # PyTorch runtime
-        else:
-            return self.pytorch_feature_generate(processor, model=self.model, inputs=inputs)
+        self._prepare_trace_runtime(
+            onnx_parent=os.path.dirname(self.onnx_path),
+            write_io=write_io,
+            capture_trace=capture_trace,
+        )
+        try:
+            if runtime_ai100:
+                if not isinstance(self.qpc_path, Path):
+                    raise TypeError("Please run compile API first!")
+                outputs = self.cloud_ai_100_feature_generate(processor, inputs=inputs, device_ids=device_ids)
+                self._finalize_trace_runtime()
+                return outputs
+            outputs = self.pytorch_feature_generate(processor, model=self.model, inputs=inputs)
+            self._abort_trace_runtime()
+            return outputs
+        except Exception:
+            self._abort_trace_runtime()
+            raise
 
     def cloud_ai_100_feature_generate(
         self,

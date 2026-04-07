@@ -12,62 +12,18 @@ import onnx
 import pytest
 
 from QEfficient.benchmarking.causal_lm_microbenchmark import (
+    BenchmarkManifest,
     BenchmarkSummary,
     RuntimeStats,
     resolve_model_id,
 )
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
-CAUSAL_RUNTIME_MODEL_IDS = {
-    "gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
-    "codegen": "hf-internal-testing/tiny-random-CodeGenForCausalLM",
-    "falcon": "hf-internal-testing/tiny-random-FalconForCausalLM",
-    "gptj": "hf-internal-testing/tiny-random-GPTJForCausalLM",
-    "llama": "hf-internal-testing/tiny-random-LlamaForCausalLM",
-    "mistral": "hf-internal-testing/tiny-random-MistralForCausalLM",
-    "mixtral": "hf-internal-testing/tiny-random-MixtralForCausalLM",
-    "mpt": "hf-internal-testing/tiny-random-MptForCausalLM",
-    "phi": "hf-internal-testing/tiny-random-PhiForCausalLM",
-    "phi3": "tiny-random/phi-4",
-    "qwen2": "yujiepan/qwen2-tiny-random",
-    "starcoder2": "hf-internal-testing/tiny-random-Starcoder2ForCausalLM",
-    "granite": "hf-internal-testing/tiny-random-GraniteForCausalLM",
-    "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
-    "gpt_oss": "tiny-random/gpt-oss-bf16",
-}
-
-EXPECTED_DECODE_MODULES = {
-    "gpt2": ["attention", "decoder"],
-    "codegen": ["attention", "decoder"],
-    "falcon": ["attention", "decoder"],
-    "gptj": ["attention", "decoder"],
-    "llama": ["attention", "decoder"],
-    "mistral": ["attention", "decoder"],
-    "mixtral": ["attention", "decoder", "moe"],
-    "mpt": ["attention", "decoder"],
-    "phi": ["attention", "decoder"],
-    "phi3": ["attention", "decoder"],
-    "qwen2": ["attention", "decoder"],
-    "starcoder2": ["attention", "decoder"],
-    "granite": ["attention", "decoder"],
-    "olmo2": ["attention", "decoder"],
-    "gpt_oss": ["swa_attention", "swa_decoder", "full_attention", "full_decoder", "moe"],
-}
-
 
 def test_resolve_model_id_alias():
     alias, model_id = resolve_model_id("llama")
     assert alias == "llama"
     assert model_id == "hf-internal-testing/tiny-random-LlamaForCausalLM"
-
-
-@pytest.mark.parametrize(
-    "model_key,model_id", sorted(CAUSAL_RUNTIME_MODEL_IDS.items()), ids=sorted(CAUSAL_RUNTIME_MODEL_IDS)
-)
-def test_tiny_causal_models_have_benchmark_inventory(model_key: str, model_id: str):
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, enable_benchmark=True)
-    specs = qeff_model.get_benchmark_module_specs(mode="decode", seq_len=4, ctx_len=16)
-    assert [spec.module_name for spec in specs] == EXPECTED_DECODE_MODULES[model_key]
 
 
 def test_enable_benchmark_flag_is_required():
@@ -82,27 +38,19 @@ def test_llama_benchmark_inventory():
         enable_benchmark=True,
     )
     specs = qeff_model.get_benchmark_module_specs(mode="decode", ctx_len=8)
-    assert [spec.module_name for spec in specs] == ["attention", "decoder"]
+    assert [spec.module_name for spec in specs] == ["attention", "mlp"]
 
 
 def test_gpt_oss_benchmark_inventory_prefill_and_decode():
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained("tiny-random/gpt-oss-bf16", enable_benchmark=True)
 
     decode_specs = qeff_model.get_benchmark_module_specs(mode="decode", ctx_len=16)
-    assert [spec.module_name for spec in decode_specs] == [
-        "swa_attention",
-        "swa_decoder",
-        "full_attention",
-        "full_decoder",
-        "moe",
-    ]
+    assert [spec.module_name for spec in decode_specs] == ["swa_attention", "full_attention", "moe"]
 
     prefill_specs = qeff_model.get_benchmark_module_specs(mode="prefill", ctx_len=16, enable_chunking=True)
     assert [spec.module_name for spec in prefill_specs] == [
         "prefill_chunked_swa_attention",
-        "prefill_chunked_swa_decoder",
         "prefill_chunked_full_attention",
-        "prefill_chunked_full_decoder",
         "prefill_chunked_moe",
     ]
 
@@ -116,7 +64,7 @@ def test_llama_export_benchmark_modules_smoke(tmp_path: Path):
         mode="decode", batch_size=1, seq_len=4, ctx_len=8, export_dir=tmp_path
     )
 
-    assert [summary.module_name for summary in summaries] == ["attention", "decoder"]
+    assert [summary.module_name for summary in summaries] == ["attention", "mlp"]
     attention_summary = summaries[0]
     assert Path(attention_summary.onnx_path).is_file()
 
@@ -169,6 +117,20 @@ def test_gpt_oss_export_attention_variants_surface_real_masks(tmp_path: Path):
     assert "sliding_mask" not in full_input_names
 
 
+def test_gpt_oss_chunked_prefill_swa_specialization_keeps_config_sliding_window():
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained("tiny-random/gpt-oss-bf16", enable_benchmark=True)
+    specs = qeff_model.get_benchmark_module_specs(mode="prefill", ctx_len=128, enable_chunking=True)
+    swa_spec = next(spec for spec in specs if spec.module_name == "prefill_chunked_swa_attention")
+
+    specialization = swa_spec.wrapper.specialization_values(batch_size=1, seq_len=32, ctx_len=128, mode="prefill")
+    dynamic_axes = swa_spec.wrapper.dynamic_axes("attention_output")
+
+    assert specialization["ctx_len"] == 160
+    assert specialization["sliding_window"] == 128
+    assert dynamic_axes["sliding_mask"][3] == "ctx_len"
+    assert dynamic_axes["past_key"][2] == "ctx_len"
+
+
 def test_compile_export_only_uses_benchmark_backend():
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
         "hf-internal-testing/tiny-random-LlamaForCausalLM",
@@ -176,9 +138,10 @@ def test_compile_export_only_uses_benchmark_backend():
     )
     manifest_path = qeff_model.compile(prefill_only=False, prefill_seq_len=4, ctx_len=8, export_only=True)
 
-    manifest = json.loads(Path(manifest_path).read_text())
-    assert [summary["module_name"] for summary in manifest["summaries"]] == ["attention", "decoder"]
-    assert all(summary["qpc_path"] is None for summary in manifest["summaries"])
+    assert Path(manifest_path).is_file()
+    payload = json.loads(Path(manifest_path).read_text())
+    assert [summary["module_name"] for summary in payload["summaries"]] == ["attention", "mlp"]
+    assert all(summary["qpc_path"] is None for summary in payload["summaries"])
 
 
 def test_compile_decode_benchmark_smoke():
@@ -188,34 +151,19 @@ def test_compile_decode_benchmark_smoke():
     )
     manifest_path = qeff_model.compile(prefill_seq_len=4, ctx_len=8)
 
-    manifest = json.loads(Path(manifest_path).read_text())
-    assert [summary["module_name"] for summary in manifest["summaries"]] == ["attention", "decoder"]
-    assert [summary["mode"] for summary in manifest["summaries"]] == ["both", "both"]
-    assert all(summary["qpc_path"] is not None for summary in manifest["summaries"])
-    assert all(Path(summary["qpc_path"]).is_dir() for summary in manifest["summaries"])
+    assert Path(manifest_path).is_file()
+    payload = json.loads(Path(manifest_path).read_text())
+    assert [summary["module_name"] for summary in payload["summaries"]] == ["attention", "mlp"]
+    assert [summary["mode"] for summary in payload["summaries"]] == ["both", "both"]
+    assert all(summary["qpc_path"] is not None for summary in payload["summaries"])
+    assert all(Path(summary["qpc_path"]).is_dir() for summary in payload["summaries"])
 
 
-def test_generate_benchmark_mode_writes_json_report(monkeypatch, tmp_path: Path, capsys):
+def test_generate_benchmark_mode_prints_table(monkeypatch, capsys):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
         "hf-internal-testing/tiny-random-LlamaForCausalLM",
         enable_benchmark=True,
     )
-    qeff_model._benchmark_manifest = type(
-        "DummyManifest",
-        (),
-        {
-            "prefill_only": False,
-            "enable_chunking": False,
-            "batch_size": 1,
-            "seq_len": 4,
-            "ctx_len": 8,
-            "num_cores": 16,
-            "num_devices": 1,
-            "warmup_runs": 2,
-            "benchmark_runs": 3,
-            "summaries": [],
-        },
-    )()
     summary = BenchmarkSummary(
         benchmark_type="attention",
         module_name="attention",
@@ -230,7 +178,7 @@ def test_generate_benchmark_mode_writes_json_report(monkeypatch, tmp_path: Path,
         resolved_dims={"hidden_size": 16},
         input_shapes={"hidden_states": [1, 4, 16]},
         output_shapes={"attention_output": [1, 4, 16]},
-        onnx_path=str(tmp_path / "attention.onnx"),
+        onnx_path="/tmp/attention.onnx",
         qpc_path="/tmp/qpc",
         prefill_runtime=None,
         seed_prefill_ms=0.12,
@@ -245,23 +193,44 @@ def test_generate_benchmark_mode_writes_json_report(monkeypatch, tmp_path: Path,
         ),
     )
 
-    def fake_generate_benchmark_report(model, *args, **kwargs):
-        model._benchmark_report_path = str(tmp_path / "benchmark-report.json")
-        Path(model._benchmark_report_path).write_text(
-            json.dumps({"summaries": [{"module_name": "attention", "decode_runtime": {"mean_ms": 1.5}}]}),
-            encoding="utf-8",
-        )
+    def fake_generate_benchmark_report(*args, **kwargs):
         return [summary]
 
     monkeypatch.setattr(
         "QEfficient.benchmarking.causal_lm_microbenchmark.generate_benchmark_report",
         fake_generate_benchmark_report,
     )
+    qeff_model._benchmark_manifest = BenchmarkManifest(
+        prefill_only=False,
+        enable_chunking=False,
+        batch_size=1,
+        seq_len=4,
+        ctx_len=8,
+        num_cores=16,
+        num_devices=1,
+        warmup_runs=2,
+        benchmark_runs=3,
+        summaries=[summary],
+    )
 
     returned = qeff_model.generate(tokenizer=None, prompts=[])
 
-    report = json.loads(Path(returned).read_text())
-    assert report["summaries"][0]["module_name"] == "attention"
-    assert report["summaries"][0]["decode_runtime"]["mean_ms"] == 1.5
+    assert Path(returned).is_file()
     stdout = capsys.readouterr().out
-    assert stdout == ""
+    assert "Mode" in stdout
+    assert "Module" in stdout
+    assert "attention" in stdout
+    assert "decode" in stdout
+    assert "inputs:" in stdout
+    assert "outputs:" in stdout
+    assert "prefill_stats:" not in stdout
+
+
+def test_benchmark_mode_uses_config_only_stub():
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        enable_benchmark=True,
+    )
+    assert qeff_model.enable_benchmark is True
+    assert qeff_model.model.__class__.__name__ == "LlamaForCausalLM"
+    assert not hasattr(qeff_model.model, "model")
