@@ -14,9 +14,12 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # For AWQ model update pytorch version to 2.8.*
-model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
+model_id = "Qwen/Qwen3-VL-2B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
-# config.text_config.num_hidden_layers = 2
+
+# config.vision_config.depth = 9
+# config.text_config.num_hidden_layers = 1
+# config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -34,13 +37,14 @@ if skip_vision:  # Only Text
         prefill_seq_len=128,
         ctx_len=4096,
         num_cores=16,
-        num_devices=8,
+        num_devices=4,
         height=354,
         width=536,
-        mxfp6_matmul=False,
+        mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
+        use_onnx_subfunctions=True,
     )
 
     messages = [
@@ -75,10 +79,9 @@ else:  # Vision + Text
     ctx_len = 8192
 
     resolutions = [
-        {"width": 360, "height": 120, "num_frames": 3},
-        {"width": 320, "height": 180, "num_frames": 2},
-        {"width": 360, "height": 240, "num_frames": 1},
-        {"width": 454, "height": 256, "num_frames": 1},
+        {"width": 360, "height": 240, "num_frames": 3},
+        {"width": 536, "height": 354, "num_frames": 2},
+        {"width": 1024, "height": 1024, "num_frames": 1},
     ]
 
     widths = [s["width"] for s in resolutions]
@@ -97,28 +100,29 @@ else:  # Vision + Text
         prefill_seq_len=128,
         ctx_len=ctx_len,
         num_cores=16,
-        num_devices=2,
+        num_devices=4,
         height=heights,
         width=widths,
         num_frames=num_frames,
         mm_processor_kwargs={
-            "min_pixels": 4 * 28 * 28,
-            "max_pixels": 16384 * 28 * 28,
+            "min_pixels": 4 * 32 * 32,
+            "max_pixels": 16384 * 32 * 32,
         },
         # vision_size=vision_size,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
+        use_onnx_subfunctions=False,
     )
 
     image_url = "https://picsum.photos/id/237/536/354"
     image = Image.open(requests.get(image_url, stream=True).raw)
-    image = image.resize((360, 120))  # Resize to any dimension (width, height) present in specializations
+    image = image.resize((360, 240))  # Resize to any dimension (width, height) present in specializations
     frames = 3
 
     content = [{"type": "image", "image": image} for _ in range(frames)] + [
-        {"type": "text", "text": "Describe the image"}
+        {"type": "text", "text": "Describe the visual"}
     ]
 
     messages = [{"role": "user", "content": content}]
@@ -135,11 +139,12 @@ else:  # Vision + Text
         return_tensors="pt",
     )
 
-    image_grid_thw = inputs.get("image_grid_thw")
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
 
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, tokenizer=tokenizer, generation_len=100, multi_specs=True, num_frames=1)
+    output = qeff_model.generate(
+        inputs=inputs, tokenizer=tokenizer, generation_len=100, multi_specs=True, num_frames=frames
+    )
     print(output.generated_ids)
     print(output.generated_texts)
     print(output)

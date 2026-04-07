@@ -590,8 +590,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
         vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
 
-        vision_start = perf_counter()
-
         vision_outputs = {}
         if vision_inputs:
             vision_size = vision_inputs["pixel_values"].shape[0] // num_frames
@@ -601,12 +599,14 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             idx = next(i for i, inner in enumerate(vision_session.allowed_shapes) if (2, pixel_values_shape) in inner)
 
             biffer_set = {
-                "vision_embeds": np.zeros(vision_session.allowed_shapes[idx][2][1], dtype=np.float16),
-                "image_grid_thw": np.zeros(vision_session.allowed_shapes[idx][0][1], dtype=np.int64),
+                "vision_embeds": np.zeros(vision_session.allowed_shapes[idx][3][1], dtype=np.float16),
+                "image_grid_thw": np.zeros(vision_session.allowed_shapes[idx][1][1], dtype=np.int64),
+                "deepstack_features": np.zeros(vision_session.allowed_shapes[idx][2][1], dtype=np.float16),
             }
 
             vision_session.set_buffers(biffer_set)
 
+            vision_start = perf_counter()
             chunk_inputs = vision_inputs.copy()
             for i in range(num_frames):
                 chunk_inputs["pixel_values"] = vision_inputs["pixel_values"][i * vision_size : (i + 1) * vision_size]
@@ -633,7 +633,19 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             vision_outputs["vision_embeds"],
             pad_width=(
                 (0, 0),
-                (0, 156 - vision_session.allowed_shapes[idx][2][1][1]),
+                (0, lang_session.allowed_shapes[0][1][1][1] - vision_outputs["vision_embeds"].shape[-2]),
+                (0, 0),
+            ),  # pad axis=1 only
+            mode="constant",
+            constant_values=0,
+        )
+
+        vision_outputs["deepstack_features"] = np.pad(
+            vision_outputs["deepstack_features"],
+            pad_width=(
+                (0, 0),
+                (0, 0),
+                (0, lang_session.allowed_shapes[0][1][1][1] - vision_outputs["deepstack_features"].shape[-2]),
                 (0, 0),
             ),  # pad axis=1 only
             mode="constant",
