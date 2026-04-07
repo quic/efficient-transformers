@@ -367,7 +367,7 @@ def test_few_spd_inference(model_id):
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
-@pytest.mark.parametrize("model_id", test_models_id[:1])
+@pytest.mark.parametrize("model_id", test_models_id)
 def test_dummy_spd_inference(model_id):
     """Test dummy layer SPD inference."""
     torch.manual_seed(42)

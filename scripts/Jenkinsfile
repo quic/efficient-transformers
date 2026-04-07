@@ -1,28 +1,3 @@
-def dockerExec(String container, String commands) {
-    sh """
-    sudo docker exec ${container} bash -c '
-        set -e
-        ${commands}
-    '
-    """
-}
-
-def runPytest(String container, String markers, String junitFile, int workers = 0) {
-    def parallel = workers > 0 ? "-n ${workers}" : ""
-
-    dockerExec(container, """
-        cd /efficient-transformers &&
-        . preflight_qeff/bin/activate &&
-        export TOKENIZERS_PARALLELISM=false &&
-        pytest tests -m "${markers}" \
-            --ignore tests/vllm \
-            --ignore tests/unit_test \
-            ${parallel} \
-            --durations=10 \
-            --junitxml=${junitFile} || true
-    """)
-}
-
 def testFilter(String profile) {
     switch (profile) {
         case 'dummy_layers_model':
@@ -71,26 +46,20 @@ pipeline {
         stage('Install QEfficient') {
             steps {
                 sh '''
-                . ~/.bashrc
-                sudo docker run --privileged -dit --name ${BUILD_TAG} \
-                  -e HF_TOKEN=${HF_TOKEN} \
-                  -v ./:/efficient-transformers \
-                  -v ${HF_PATH}:${DOCKER_HF_PATH} \
-                  ${DOCKER_LATEST}:master_latest
-
-                sudo docker exec ${BUILD_TAG} bash -c "
-                  cd /efficient-transformers &&
-                  apt update &&
-                  DEBIAN_FRONTEND=noninteractive apt install -y \
-                    tzdata python3.12-venv python3.12-dev build-essential &&
-                  python3.12 -m venv preflight_qeff &&
-                  . preflight_qeff/bin/activate &&
-                  pip install --upgrade pip setuptools &&
-                  pip install .[test] junitparser pytest-xdist &&
-                  pip install librosa==0.10.2 soundfile==0.13.1 &&
-                  pip install --extra-index-url https://download.pytorch.org/whl/cpu \
-                    timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1
-                "
+                    . ~/.bashrc
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    apt update &&
+                    DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
+                    python3.12 -m venv preflight_qeff &&
+                    . preflight_qeff/bin/activate &&
+                    pip install --upgrade pip setuptools &&
+                    pip install .[test] &&
+                    pip install junitparser pytest-xdist &&
+                    pip install librosa==0.10.2 soundfile==0.13.1 &&
+                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1
+                    rm -rf QEfficient"
                 '''
             }
         }
@@ -100,38 +69,55 @@ pipeline {
             parallel {
                 stage('Export & ONNX') {
                     steps {
-                        timeout(time: 40, unit: 'MINUTES') {
-                            runPytest(
-                                env.BUILD_TAG,
-                                "(not cli) and (not on_qaic) and (not finetune)",
-                                "tests/tests_log1.xml",
-                                4
-                            )
-                        }
-                    }
+                       timeout(time: 40, unit: 'MINUTES') {
+                           sh '''
+                           sudo docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_cli_qaic &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_cli_qaic &&
+                           pytest tests -m '(not on_qaic) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
+                           junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
                 }
 
                 stage('QAIC LLM') {
                     steps {
-                        timeout(time: 180, unit: 'MINUTES') {
-                            runPytest(
-                                env.BUILD_TAG,
-                                "(not cli) and (on_qaic) and (llm_model) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models) and  ${env.TEST_FILTER}",
-                                "tests/tests_log2.xml"
-                            )
-                        }
-                    }
+                       timeout(time: 180, unit: 'MINUTES') {
+                           sh '''
+                           sudo docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_qaic_llm &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_qaic_llm &&
+                           pytest tests -m '(llm_model) and (not qnn) and ${env.TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log2.xml --durations=10 &&
+                           junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
                 }
                 stage('QAIC FEATURE') {
                     steps {
-                        timeout(time: 180, unit: 'MINUTES') {
-                            runPytest(
-                                env.BUILD_TAG,
-                                "(not cli) and (on_qaic) and (feature) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models) and ${env.TEST_FILTER}",
-                                "tests/tests_log3.xml"
-                            )
-                        }
-                    }
+                       timeout(time: 80, unit: 'MINUTES') {
+                           sh '''
+                           sudo docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_qaic_feature &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_qaic_feature &&
+                           pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${env.TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                           junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
                 }
             }
         }
@@ -140,11 +126,17 @@ pipeline {
             when {expression { params.RUN_QAIC_MM }}
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
-                    runPytest(
-                        env.BUILD_TAG,
-                        "(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune) and (not diffusion_models) and ${env.TEST_FILTER}",
-                        "tests/tests_log_mm.xml"
-                    )
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_cli_qaic_multimodal &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                    pytest tests -m '(multimodal) and (not qnn) and ${env.TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log6.xml --durations=10 &&
+                    junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
                 }
             }
         }
@@ -153,11 +145,18 @@ pipeline {
             when { expression { params.RUN_QAIC_DIFFUSION } }
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
-                    runPytest(
-                        env.BUILD_TAG,
-                        "(not cli) and (on_qaic) and (diffusion_models) and (not qnn) and (not finetune)",
-                        "tests/tests_log_diffusion.xml"
-                    )
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_cli_qaic_diffusion &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
+                    export HF_HUB_CACHE=/huggingface_hub &&
+                    pytest tests -m 'diffusion_models' --ignore tests/vllm  --ignore tests/unit_test --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
+                    junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
                 }
             }
         }
@@ -166,11 +165,19 @@ pipeline {
             when { expression { params.RUN_CLI } }
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
-                    runPytest(
-                        env.BUILD_TAG,
-                        "(cli and not qnn) and (not finetune)",
-                        "tests/tests_log_cli.xml"
-                    )
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    #source /qnn_sdk/bin/envsetup.sh &&
+                    #source /qnn_sdk/bin/envcheck -c &&
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/cli &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/cli &&
+                    pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log3.xml --durations=10 &&
+                    junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
                 }
             }
         }
@@ -179,17 +186,21 @@ pipeline {
             when { expression { params.RUN_FINETUNE } }
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
-                    dockerExec(env.BUILD_TAG, """
-                        cd /efficient-transformers &&
-                        . preflight_qeff/bin/activate &&
-                        pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
-                        pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu
-                    """)
-                    runPytest(
-                        env.BUILD_TAG,
-                        "(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)",
-                        "tests/tests_log_finetune.xml"
-                    )
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    # TODO: Update torch_qaic path to py312 when migrating to Python 3.12
+                    pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
+                    # pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
+                    pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
+                    mkdir -p $PWD/cli_qaic_finetuning &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/cli_qaic_finetuning &&
+                    pytest tests -m '(finetune)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log_finetune.xml --durations=10 &&
+                    junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
                 }
             }
         }
@@ -200,16 +211,15 @@ pipeline {
             script {
                 try {
                     sh '''
-                    sudo chown -R ubuntu:ubuntu . || true
-                    sudo chmod -R u+w . || true
+                    sudo chown -R ubuntu .
                     '''
                 } catch (error) {
-                    echo "Failed to change ownership/permissions: ${error}"
+                    echo "Failed to change ownership: ${error}"
                 }
             }
             script {
                 try {
-                    junit testResults: 'tests/**/*.xml', allowEmptyResults: true
+                    junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
                 } catch (error) {
                     echo "No test results file found or parsing failed: ${error}"
                 }
