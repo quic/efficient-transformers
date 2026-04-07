@@ -733,7 +733,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -752,7 +752,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             query_states, key_states, cos_cached, sin_cached, position_ids
         )
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin_cached,
@@ -764,14 +764,14 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
                 "sliding_window": self.sliding_window,
             }
             if self.sliding_window is not None:
-                key_states, value_states = past_key_value.sliding_window_update_chunked(
+                key_states, value_states = past_key_values.sliding_window_update_chunked(
                     key_states, value_states, self.layer_idx, cache_kwargs
                 )
             else:
                 if comp_ctx_lengths is not None:
                     attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
-                key_states, value_states = past_key_value.full_cache_update_chunked(
+                key_states, value_states = past_key_values.full_cache_update_chunked(
                     key_states, value_states, self.layer_idx, cache_kwargs
                 )
 
@@ -805,7 +805,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights, past_key_values
 
 
 class QEffPrefillOnlyGptOssAttention(GptOssAttention):
@@ -817,7 +817,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -836,7 +836,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
             query_states, key_states, cos_cached, sin_cached, position_ids
         )
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin_cached,
@@ -845,11 +845,11 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 "position_ids": position_ids,
                 "config": self.config,
                 "is_sliding": self.sliding_window is not None,
-                "sliding_window": past_key_value.sliding_window_len,
+                "sliding_window": past_key_values.sliding_window_len,
             }
             if self.sliding_window is not None:
-                sliding_window_len = past_key_value.sliding_window_len
-                short_read_idx = torch.arange(past_key_value.key_cache[self.layer_idx].shape[2])
+                sliding_window_len = past_key_values.sliding_window_len
+                short_read_idx = torch.arange(past_key_values.key_cache[self.layer_idx].shape[2])
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )
@@ -859,7 +859,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 v_cache = value_states[:, :, read_idx, :]
             else:
                 k_cache, v_cache = key_states, value_states
-            _, _ = past_key_value.write_only(k_cache, v_cache, self.layer_idx, cache_kwargs)
+            _, _ = past_key_values.write_only(k_cache, v_cache, self.layer_idx, cache_kwargs)
 
         if self.sliding_window is not None:
             attention_mask = sliding_mask
@@ -885,7 +885,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights, past_key_values
 
 
 class QEffGptOssAttention(GptOssAttention):
@@ -897,7 +897,7 @@ class QEffGptOssAttention(GptOssAttention):
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -916,7 +916,7 @@ class QEffGptOssAttention(GptOssAttention):
             query_states, key_states, cos_cached, sin_cached, position_ids
         )
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin_cached,
@@ -925,12 +925,12 @@ class QEffGptOssAttention(GptOssAttention):
                 "position_ids": position_ids,
                 "config": self.config,
                 "is_sliding": self.sliding_window is not None,
-                "sliding_window": past_key_value.sliding_window_len,
+                "sliding_window": past_key_values.sliding_window_len,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         if self.sliding_window is not None:
             attention_mask = sliding_mask
@@ -953,7 +953,7 @@ class QEffGptOssAttention(GptOssAttention):
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights, past_key_values
 
 
 class QEffGptOssDecoderLayer(GptOssDecoderLayer):
@@ -981,7 +981,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=use_cache,

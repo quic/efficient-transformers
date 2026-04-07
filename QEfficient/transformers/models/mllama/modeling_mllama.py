@@ -166,7 +166,7 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
         self,
         hidden_states: torch.Tensor,
         cross_attention_states: Optional[torch.Tensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -181,8 +181,8 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
 
         # elif past_key_value is not None:
         # Fetch old cache
-        key_states_old = past_key_value.layers[self.layer_idx].keys
-        value_states_old = past_key_value.layers[self.layer_idx].values
+        key_states_old = past_key_values.layers[self.layer_idx].keys
+        value_states_old = past_key_values.layers[self.layer_idx].values
 
         # if cross_attention_states is not None:
         # Compute new KV states
@@ -203,8 +203,8 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
         value_states = torch.where(torch.tensor(q_len == 1), value_states_old, value_states_new)
 
         # Update the image cache
-        past_key_value.layers[self.layer_idx].keys = key_states
-        past_key_value.layers[self.layer_idx].values = value_states
+        past_key_values.layers[self.layer_idx].keys = key_states
+        past_key_values.layers[self.layer_idx].values = value_states
 
         key_states = self.k_norm(key_states)
 
@@ -236,7 +236,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         position_embeddings: torch.Tensor = None,
@@ -256,7 +256,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             if self.layer_idx is None:
                 raise ValueError(
                     f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
@@ -269,7 +269,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
             query_states, key_states, cos_cached, sin_cached, position_ids
         )
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
@@ -277,7 +277,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface = eager_self_attention_forward
 
@@ -347,7 +347,7 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=use_cache,
@@ -379,7 +379,7 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
         hidden_states: torch.Tensor,
         cross_attention_states: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -397,23 +397,23 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
             value_states = self.v_proj(cross_attention_states)
             key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
             value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-            if past_key_value is not None:
+            if past_key_values is not None:
                 cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
                 if comp_ctx_lengths is not None:
                     attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
                 # if we have a new image + new tokens, we only computed key_states on that new image
                 # we still update the cross key states, past_image, new_image. And use it!
-                key_states, value_states = past_key_value.update(
+                key_states, value_states = past_key_values.update(
                     key_states,
                     value_states,
                     self.layer_idx,
                     cache_kwargs,
                 )
-        elif past_key_value is not None:
+        elif past_key_values is not None:
             key_states, value_states = (
-                past_key_value.layers[self.layer_idx].keys,
-                past_key_value.layers[self.layer_idx].values,
+                past_key_values.layers[self.layer_idx].keys,
+                past_key_values.layers[self.layer_idx].values,
             )
         else:
             raise ValueError(
@@ -469,7 +469,7 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=cross_attention_mask,
             cross_attention_states=cross_attention_states,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             cache_position=cache_position,

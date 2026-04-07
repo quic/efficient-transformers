@@ -224,7 +224,7 @@ class QEffGPTJModel(GPTJModel):
         else:
             past_length = past_key_values[0][0].size(-2)
 
-        if not self._use_flash_attention_2:
+        if not getattr(self, "_use_flash_attention_2", False):
             attention_mask = _create_causal_mask(position_ids, past_length, None)
 
         # # Prepare head mask if needed

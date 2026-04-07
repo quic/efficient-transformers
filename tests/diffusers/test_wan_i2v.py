@@ -34,6 +34,7 @@ from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
 # Test Configuration for I2V with dynamic sizing
 CONFIG_PATH = "tests/diffusers/wan_i2v_test_config.json"
 INITIAL_TEST_CONFIG = load_json(CONFIG_PATH)
+TEST_SEED = 42
 
 
 def prepare_test_image_with_dynamic_sizing(pipeline, config):
@@ -257,11 +258,10 @@ def wan_i2v_pipeline_call_with_mad_validation(
         )
 
     output_buffer = {
-        "output": np.random.rand(
-            batch_size,
-            pipeline.cl,
-            constants.WAN_DIT_OUT_CHANNELS,
-        ).astype(np.int32),
+        "output": np.zeros(
+            (batch_size, pipeline.cl, constants.WAN_DIT_OUT_CHANNELS),
+            dtype=np.int32,
+        ),
     }
     pipeline.transformer.qpc_session.set_buffers(output_buffer)
     transformer_perf = []
@@ -408,7 +408,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
     video_torch = pytorch_pipeline.vae.decode(latents, return_dict=False)[0]
 
     # Allocate output buffer for VAE decoder
-    output_buffer = {"sample": np.random.rand(batch_size, 3, num_frames, height, width).astype(np.int32)}
+    output_buffer = {"sample": np.zeros((batch_size, 3, num_frames, height, width), dtype=np.int32)}
     pipeline.vae_decoder.qpc_session.set_buffers(output_buffer)
 
     # Run VAE decoder inference and measure time
@@ -448,6 +448,9 @@ def wan_i2v_pipeline_call_with_mad_validation(
 @pytest.fixture(scope="session")
 def wan_i2v_pipeline():
     """Build the WAN I2V pipeline with random weights/dummy config."""
+    torch.manual_seed(TEST_SEED)
+    np.random.seed(TEST_SEED)
+
     config = INITIAL_TEST_CONFIG["model_setup"]
     model_id = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
     pipe_cfg = WanImageToVideoPipeline.load_config(model_id)
@@ -490,6 +493,10 @@ def wan_i2v_pipeline():
         boundary_ratio=pipe_cfg.get("boundary_ratio"),
         expand_timesteps=pipe_cfg.get("expand_timesteps", False),
     )
+    vae.eval()
+    transformer_high.eval()
+    transformer_low.eval()
+    text_encoder.eval()
 
     import copy
 
@@ -535,7 +542,7 @@ def test_wan_i2v_pipeline(wan_i2v_pipeline):
     num_frames = config["model_setup"]["num_frames"]
 
     # Generate with MAD validation
-    generator = torch.manual_seed(42)
+    generator = torch.Generator(device="cpu").manual_seed(TEST_SEED)
     start_time = time.time()
 
     try:

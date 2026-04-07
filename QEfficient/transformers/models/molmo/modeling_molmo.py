@@ -254,6 +254,8 @@ class QEffMolmoBlock(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         B, T, C = q.size()  # batch size, sequence length, d_model
         dtype = k.dtype
+        cache_position = kwargs.get("cache_position")
+        cos, sin = None, None
 
         # Optionally apply layer norm to keys and queries.
         if self.q_norm is not None and self.k_norm is not None:
@@ -268,28 +270,19 @@ class QEffMolmoBlock(nn.Module):
         # shape: (B, n_kv_h, T, hs)
         v = v.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads).transpose(1, 2)
 
-        if self.config.use_position_ids and self.config.rope:
+        if self.config.rope:
             kv_seq_len = k.shape[-2]
-            kv_seq_len = layer_past.get_seq_length(self.layer_id)
-            # Apply rotary embeddings
-            cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
-            q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
-
-        if not self.config.use_position_ids and self.config.rope:
-            kv_seq_len = k.shape[-2]
-            kv_seq_len = layer_past.get_seq_length(kv_seq_len, self.layer_id)
+            if layer_past is not None:
+                kv_seq_len = layer_past.get_seq_length(self.layer_id, cache_position)
             # Apply rotary embeddings
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
 
         if layer_past is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-            }
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            # sin/cos are specific to RoPE models and are needed for some static cache paths.
+            if self.config.rope:
+                cache_kwargs.update({"sin": sin, "cos": cos})
             if comp_ctx_lengths is not None:
                 attention_bias = attention_bias[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_bias.shape[-1]

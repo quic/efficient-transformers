@@ -472,7 +472,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         attention_mask: Optional[torch.Tensor],
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -505,7 +505,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             chunk_position_ids = position_ids
             if self.use_rope and self.config.attention_chunk_size:
                 chunk_position_ids = torch.where(
@@ -521,7 +521,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
 
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
 
@@ -537,7 +537,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights, past_key_values
 
 
 class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
@@ -572,7 +572,7 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
             attention_mask=attention_mask,
             position_embeddings=position_embeddings,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
