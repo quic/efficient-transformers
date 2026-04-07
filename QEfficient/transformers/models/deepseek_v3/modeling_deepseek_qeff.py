@@ -322,7 +322,7 @@ class QEffDeepseekV3Attention(nn.Module):
 
         v_up_per_head = v_up_per_head.reshape(-1,p, self.kv_lora_rank, self.v_head_dim) #4,16,512,128
 
-        value_states=torch.matmul(kva_expanded, v_up_per_head).reshape(bsz, self.num_heads, self.v_head_dim, self.v_head_dim)  #4,16,128,128 -> 1,64,128,128
+        value_states=torch.matmul(kva_expanded, v_up_per_head).reshape(bsz, self.num_heads, -1, self.v_head_dim)  #4,16,128,128 -> 1,64,128,128
 
         cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
@@ -341,8 +341,9 @@ class QEffDeepseekV3Attention(nn.Module):
                 print("using fused qk")
                 q_nope_compressed = torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk)      #1,1,32,1536 ,  64,1536,512 -> 1,64,32,512
 
-            query_states = torch.cat((q_nope_compressed, q_pe), dim=-1).reshape(4,16,32,576)   #1,64,32,512,    1,64,32,64   ->   1,64,32,576 -> 4,16,32,576
-            key_states = torch.cat((kva_expanded, k_pe_expanded), dim=-1)                     #4,1,128,512,    4,1,128,64   ->                 4,1,128,576
+            query_states = torch.cat((q_nope_compressed, q_pe), dim=-1)                                 #1,64,32,512,    1,64,32,64   ->   1,64,32,576 ->
+            query_states = query_states.reshape(-1,p,q_len,self.kv_lora_rank + self.qk_rope_head_dim)   #1,64,32,576  -> 4,16,32,576
+            key_states = torch.cat((kva_expanded, k_pe_expanded), dim=-1)                               #4,1,128,512,    4,1,128,64   ->                 4,1,128,576
         else:
             print("no absorption")
             q_nope = torch.bmm(q_a_proj_out, self.q_up)
@@ -354,7 +355,7 @@ class QEffDeepseekV3Attention(nn.Module):
             key_states = torch.cat((k_nope, k_pe_expanded), dim=-1)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
-        attn_weights = attn_weights.reshape(1, self.num_heads, 32, 128)
+        attn_weights = attn_weights.reshape(bsz, self.num_heads, q_len, -1)
 
 
 
