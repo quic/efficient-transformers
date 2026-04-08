@@ -573,7 +573,6 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
-        breakpoint()
         layer_switch = (
             config._sliding_window_pattern if hasattr(config, "_sliding_window_pattern") else 2
         )  # 2 is for BC
