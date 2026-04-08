@@ -14,6 +14,14 @@ from QEfficient.utils.run_utils import ApiRunner
 torch.manual_seed(42)
 
 
+def print_perf_stats(exec_info):
+    if not hasattr(exec_info, "perf_metrics"):
+        return
+    print("\n========================= Performance Stats =========================")
+    print(exec_info)
+    print("=====================================================================")
+
+
 def normalize_generated_ids(generated_ids):
     array = np.asarray(generated_ids)
     if array.dtype == object:
@@ -389,6 +397,7 @@ def main():
 
         qpc_path = model.compile(**compile_kwargs)
         exec_info = model.generate(inputs=inputs, device_ids=args.device_group, generation_len=args.generation_len)
+        print_perf_stats(exec_info)
         effective_use_onnx_subfunctions = True
         effective_vision_subfunctions = False
         effective_lang_subfunctions = True
