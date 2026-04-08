@@ -17,6 +17,9 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
 
+
+#exit()
+
 PREFILL_SEQ_LEN = 32
 CTX_LEN = 128
 generation_len = 10

@@ -8,11 +8,15 @@ import argparse
 import json
 import logging
 import os
+import torch
 import warnings
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from QEfficient import QEFFAutoModelForCausalLM
+#from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils.constants import Constants
 
@@ -39,11 +43,16 @@ def evaluate_model_performance(
     profiling_start_iter: int = 2,
     write_output_start_iter: Optional[int] = None,
     output_dir: str = None,
+    enable_mla: Optional[bool] = False,
+    mla_absorption_config: Optional[Dict[str, bool]] = False,
+    num_devices: int = 1,
 ):
     _suppress_warnings()
-    replace_transformers_quantizers()
+    #replace_transformers_quantizers()
 
-    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=num_hidden_layers)
+    model_path ="/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
+    model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float32, num_hidden_layers=num_hidden_layers, trust_remote_code=True)
+    model = QEFFAutoModelForCausalLM(model, num_kv_heads_repeat=num_devices)
 
     result = model.evaluate_performance(
         batch_size=batch_size,
@@ -56,6 +65,9 @@ def evaluate_model_performance(
             "mxfp6_matmul": True,
             "aic_enable_depth_first": False,
             "mxint8_kv_cache": True,
+            "enable_mla": enable_mla,
+            "mla_absorption_config": mla_absorption_config,
+            "num_devices": num_devices,
         },
         runner_num_iters=runner_num_iters,
         profiling_type=profiling_type,
@@ -105,8 +117,17 @@ if __name__ == "__main__":
         help="qaic-runner output write start iteration (must be >0 and < profiling-start-iter)",
     )
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for performance artifacts")
+    #parser.add_argument("--enable_mla", type=bool, default=False, help="enable_mla")
+    #parser.add_argument("--mla_absorption_config", type=Dict[str, bool], default={"enable":False, "online":False}, help="mla_absorption_config")
     args = parser.parse_args()
 
+    enable_mla = True
+    mla_absorption_config = {"enable":True, "online":False}
+    num_devices=4
+    prompt_len=1
+    ctx_len=16384
+    
+    
     evaluate_model_performance(
         model_name=args.model_name,
         prompt_len=args.prompt_len,
@@ -120,4 +141,7 @@ if __name__ == "__main__":
         profiling_start_iter=args.profiling_start_iter,
         write_output_start_iter=args.write_output_start_iter,
         output_dir=args.output_dir,
+        enable_mla=enable_mla,
+        mla_absorption_config=mla_absorption_config,
+        num_devices=num_devices,
     )
