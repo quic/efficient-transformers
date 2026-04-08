@@ -85,7 +85,7 @@
       "full_batch_size": 2,
       "additional_params": {
         "text_config": {
-        "sliding_window_pattern": 2,
+        "_sliding_window_pattern": 2,
         "hidden_size": 2560,
         "intermediate_size": 10240,
         "num_hidden_layers": 2,

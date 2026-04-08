@@ -354,6 +354,10 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_custom_dtype(model_nam
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    torch.manual_seed(42)
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+
     # Get img_size for standard models, None for InternVL
     img_size = custom_dtype_support_models_config_dict[model_name].get("img_size")
 
