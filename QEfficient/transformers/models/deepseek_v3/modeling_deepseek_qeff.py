@@ -720,23 +720,23 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
-        # self.all_gate_proj = torch.nn.Parameter(
-        #     torch.cat(
-        #         [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
-        #         dim=0,
-        #     )
-        # )
-        # self.all_up_proj = torch.nn.Parameter(
-        #     torch.cat(
-        #         [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
-        #     )
-        # )
-        # self.all_down_proj = torch.nn.Parameter(
-        #     torch.cat(
-        #         [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
-        #         dim=0,
-        #     )
-        # )
+        self.all_gate_proj = torch.nn.Parameter(
+            torch.cat(
+                [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
+                dim=0,
+            )
+        )
+        self.all_up_proj = torch.nn.Parameter(
+            torch.cat(
+                [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
+            )
+        )
+        self.all_down_proj = torch.nn.Parameter(
+            torch.cat(
+                [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
+                dim=0,
+            )
+        )
         self.act_fn = self.experts[0].act_fn
 
     def moe(
