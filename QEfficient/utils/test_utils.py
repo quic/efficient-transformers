@@ -259,6 +259,8 @@ class ModelConfig:
         "OpenGVLab/InternVL2_5-1B",
         "OpenGVLab/InternVL3_5-1B",
         "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "Qwen/Qwen3-VL-2B-Instruct",
     }
 
     EXTERNAL_MODELS = {

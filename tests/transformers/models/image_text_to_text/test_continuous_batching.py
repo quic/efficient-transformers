@@ -85,6 +85,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
         config = set_num_layers_vlm(config, n_layer=n_layer)
+        if hasattr(config, "model_type") and config.model_type in [
+            "qwen3_vl",
+            "qwen3_vl_moe",
+        ]:
+            config.vision_config.depth = 9
+            config.text_config.num_hidden_layers = 1
+            config.vision_config.deepstack_visual_indexes = [8]
         if model_name in ModelConfig.INTERNVL_MODELS or model_name in ModelConfig.MOLMO_MODELS:
             config._attn_implementation = "eager"
             model_hf = load_vlm_model(config)
