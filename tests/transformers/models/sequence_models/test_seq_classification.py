@@ -25,7 +25,11 @@ with open(CONFIG_PATH, "r") as f:
 
 
 def check_seq_classification_pytorch_vs_ai100(
-    model_name: str, seq_len: Union[int, List[int]] = 32, n_layer: int = -1, compare_results: Optional[bool] = False
+    model_name: str,
+    manual_cleanup: callable,
+    seq_len: Union[int, List[int]] = 32,
+    n_layer: int = -1,
+    compare_results: Optional[bool] = False,
 ):
     """
     Validate the PyTorch model and the Cloud AI 100 model for sequence classification.
@@ -35,6 +39,7 @@ def check_seq_classification_pytorch_vs_ai100(
 
     Args:
         model_name (str): HuggingFace model card name
+        manual_cleanup (callable): Function to clean up resources
         seq_len (Union[int, List[int]]): Sequence length(s) for compilation
         n_layer (int): Number of layers for the model
         enable_qnn (bool): Enable QNN compilation
@@ -95,6 +100,8 @@ def check_seq_classification_pytorch_vs_ai100(
 
     # Print final result
     print(f"MAD (PyTorch vs AI100): {mad_pt_ai100:.2e}")
+    manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
+
     if compare_results is False:
         return
 
@@ -117,7 +124,7 @@ def check_seq_classification_pytorch_vs_ai100(
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_seq_classification_pytorch_vs_ai100(model_name):
+def test_full_seq_classification_pytorch_vs_ai100(model_name, manual_cleanup):
     """
     Test function to validate the sequence classification model with multiple sequence lengths.
 
@@ -128,9 +135,7 @@ def test_full_seq_classification_pytorch_vs_ai100(model_name):
     4. Outputs remain consistent across different sequence lengths
     """
     check_seq_classification_pytorch_vs_ai100(
-        model_name=model_name,
-        seq_len=32,
-        compare_results=True,
+        model_name=model_name, seq_len=32, compare_results=True, manual_cleanup=manual_cleanup
     )
 
 
@@ -138,7 +143,7 @@ def test_full_seq_classification_pytorch_vs_ai100(model_name):
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_seq_classification_multiple_seq_len(model_name):
+def test_full_seq_classification_multiple_seq_len(model_name, manual_cleanup):
     """
     Test function to validate the sequence classification model with multiple sequence lengths.
 
@@ -149,16 +154,14 @@ def test_full_seq_classification_multiple_seq_len(model_name):
     4. Outputs remain consistent across different sequence lengths
     """
     check_seq_classification_pytorch_vs_ai100(
-        model_name=model_name,
-        seq_len=[32, 64, 128],
-        compare_results=True,
+        model_name=model_name, seq_len=[32, 64, 128], compare_results=True, manual_cleanup=manual_cleanup
     )
 
 
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_seq_classification_pytorch_vs_ai100(model_name):
+def test_seq_classification_pytorch_vs_ai100(model_name, manual_cleanup):
     """
     Test function to validate the PyTorch model and Cloud AI 100 model
     for sequence classification with a single sequence length.
@@ -168,16 +171,14 @@ def test_seq_classification_pytorch_vs_ai100(model_name):
     2. PyTorch and AI100 outputs are numerically consistent within defined tolerances
     """
     check_seq_classification_pytorch_vs_ai100(
-        model_name=model_name,
-        seq_len=32,
-        n_layer=1,
+        model_name=model_name, seq_len=32, n_layer=1, manual_cleanup=manual_cleanup
     )
 
 
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_seq_classification_multiple_seq_len(model_name):
+def test_seq_classification_multiple_seq_len(model_name, manual_cleanup):
     """
     Test function to validate the sequence classification model with multiple sequence lengths.
 
@@ -188,7 +189,5 @@ def test_seq_classification_multiple_seq_len(model_name):
     4. Outputs remain consistent across different sequence lengths
     """
     check_seq_classification_pytorch_vs_ai100(
-        model_name=model_name,
-        seq_len=[32, 64, 128],
-        n_layer=1,
+        model_name=model_name, seq_len=[32, 64, 128], n_layer=1, manual_cleanup=manual_cleanup
     )

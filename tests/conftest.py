@@ -7,26 +7,55 @@
 
 import os
 import shutil
+from pathlib import Path
 
-from transformers import logging
+import pytest
 
 from QEfficient.utils.cache import QEFF_HOME
 
 
-def qeff_models_clean_up():
-    qeff_dir = QEFF_HOME
-    if os.path.exists(qeff_dir):
-        shutil.rmtree(qeff_dir)
-        print(f"\n.............Cleaned up {qeff_dir}")
+def qeff_models_clean_up(qeff_dir=QEFF_HOME):
+    """
+    Clean up QEFF models and cache.
+
+    Args:
+        qeff_dir: Can be a string (file/dir path), PosixPath, or list of strings/PosixPath objects
+                 If a file path is provided, its parent directory will be deleted
+    """
+    if isinstance(qeff_dir, (str, Path)):
+        paths = [qeff_dir]
+    else:
+        paths = qeff_dir
+
+    for path in paths:
+        try:
+            path_str = str(path)
+            if os.path.isfile(path_str):
+                dir_to_delete = os.path.dirname(path_str)
+                if os.path.exists(dir_to_delete):
+                    shutil.rmtree(dir_to_delete)
+                    print(f"\n.............Cleaned up {dir_to_delete}")
+            elif os.path.isdir(path_str):
+                if os.path.exists(path_str):
+                    shutil.rmtree(path_str)
+                    print(f"\n.............Cleaned up {path_str}")
+        except Exception as e:
+            print(f"\n.............Error cleaning up {path}: {e}")
 
 
-def pytest_sessionstart(session):
-    print("\n############################### Pytest Session Starting ###############################\n")
+@pytest.fixture
+def manual_cleanup():
+    """Fixture to manually trigger cleanup"""
+    return qeff_models_clean_up
 
-    # Suppress transformers warnings about unused weights when loading models with fewer layers
-    logging.set_verbosity_error()
 
-    qeff_models_clean_up()
+# def pytest_sessionstart(session):
+#     print("\n############################### Pytest Session Starting ###############################\n")
+
+#     # Suppress transformers warnings about unused weights when loading models with fewer layers
+#     logging.set_verbosity_error()
+
+#     qeff_models_clean_up()
 
 
 def pytest_configure(config):
@@ -37,13 +66,8 @@ def pytest_configure(config):
     )
 
 
-def pytest_runtest_teardown(item, nextitem):
-    """Clean up after each test case."""
-    qeff_models_clean_up()
-
-
-def pytest_sessionfinish(session, exitstatus):
-    inside_worker = getattr(session.config, "workerinput", None)
-    if inside_worker is None:
-        qeff_models_clean_up()
-        print("\n############################### Pytest Session Ended ###############################\n")
+# def pytest_sessionfinish(session, exitstatus):
+#     inside_worker = getattr(session.config, "workerinput", None)
+#     if inside_worker is None:
+#         qeff_models_clean_up()
+#         print("\n############################### Pytest Session Ended ###############################\n")

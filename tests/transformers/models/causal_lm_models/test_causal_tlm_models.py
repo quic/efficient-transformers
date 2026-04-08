@@ -30,15 +30,16 @@ model_config_dict = {model["model_name"]: model for model in spd_models}
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_spd[:1])
-def test_full_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_full_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS
+        model_name=model_name, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS, manual_cleanup=manual_cleanup
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,
         continuous_batching=True,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -46,19 +47,21 @@ def test_full_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_spd[:1])
-def test_few_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_few_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 
     n_layer = get_custom_n_layers(model_name)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,
         n_layer=n_layer,
+        manual_cleanup=manual_cleanup,
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,
         n_layer=n_layer,
         continuous_batching=True,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -66,7 +69,7 @@ def test_few_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_spd[:1])
-def test_dummy_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_dummy_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 
     hf_config = get_hf_config_from_custom_config(
         model_name, additional_params=model_config_dict[model_name].get("additional_params", {})
@@ -75,10 +78,12 @@ def test_dummy_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         model_name=model_name,
         num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,
         config=hf_config,
+        manual_cleanup=manual_cleanup,
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,
         config=hf_config,
         continuous_batching=True,
+        manual_cleanup=manual_cleanup,
     )

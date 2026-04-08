@@ -30,36 +30,36 @@ model_config_dict = {model["model_name"]: model for model in causal_lm_models}
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal[1:2])
-def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 
     if model_name in ModelConfig.FULL_MODEL_TESTS_TO_SKIP:
         pytest.skip(f"Skipping full model test for {model_name} due to resource constraints.")
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, compare_results=True)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, compare_results=True, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal[1:2])
-def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     n_layer = get_custom_n_layers(model_name)
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models_causal[1:2])
-def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+@pytest.mark.parametrize("model_name", test_models_causal[0:2])
+def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 
     hf_config = get_hf_config_from_custom_config(
         model_name, additional_params=model_config_dict[model_name].get("additional_params", {})
     )
     if model_name in ModelConfig.QUANTIZED_MODELS:
         n_layer = get_custom_n_layers(model_name)
-        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer)
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, manual_cleanup=manual_cleanup)
     else:
-        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=hf_config)
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=hf_config, manual_cleanup=manual_cleanup)
 
 
 ######################### QNN Tests #########################

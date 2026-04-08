@@ -47,6 +47,7 @@ NEW_GENERATION_TOKENS = 10
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
+    manual_cleanup: callable,
     num_hidden_layers: Optional[int] = -1,
     kv_offload: Optional[bool] = False,
     num_devices: Optional[int] = 1,
@@ -69,6 +70,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     model_hf = load_vlm_hf_model(model_name, num_hidden_layers=num_hidden_layers, config=config)
     config = model_hf.config
+    # print(config)
+    # print(model_hf)
     qeff_model = load_vlm_qeff_model(
         model_name, num_hidden_layers=num_hidden_layers, model_hf=model_hf, kv_offload=kv_offload
     )
@@ -207,7 +210,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     print(exec_info)
     cloud_ai_100_tokens = exec_info.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
-
+    manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
 
@@ -228,7 +231,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models[:1])
 @pytest.mark.parametrize("kv_offload", [True, False])
-def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
+def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
 
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
@@ -237,18 +240,16 @@ def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_of
 
     torch.manual_seed(42)
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name,
-        kv_offload=kv_offload,
-        compare_results=True,
+        model_name, kv_offload=kv_offload, compare_results=True, manual_cleanup=manual_cleanup
     )
 
 
 @pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models[:1])
+@pytest.mark.parametrize("model_name", test_mm_models[2:3])
 @pytest.mark.parametrize("kv_offload", [True, False])
-def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
+def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
 
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
@@ -261,6 +262,7 @@ def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_off
         num_hidden_layers=model_config_dict[model_name]["num_layers"],
         kv_offload=kv_offload,
         compare_results=True,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -269,7 +271,7 @@ def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_off
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models[:1])
 @pytest.mark.parametrize("kv_offload", [True, False])
-def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
+def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
 
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
@@ -283,15 +285,14 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
             model_name, additional_params=model_config_dict[model_name].get("additional_params", {})
         )
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name,
-            kv_offload=kv_offload,
-            config=hf_config,
+            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
         )
     else:
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name,
             num_hidden_layers=model_config_dict[model_name]["num_layers"],
             kv_offload=kv_offload,
+            manual_cleanup=manual_cleanup,
         )
 
 
@@ -303,7 +304,7 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload):
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload, manual_cleanup):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
     ``Mandatory`` Args:
@@ -320,4 +321,5 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_off
         kv_offload=kv_offload,
         enable_qnn=True,
         qnn_config=qnn_config_json_path,
+        manual_cleanup=manual_cleanup,
     )

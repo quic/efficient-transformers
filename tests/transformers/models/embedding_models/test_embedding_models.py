@@ -42,6 +42,7 @@ def load_embedding_model(model_name: str, n_layer: int = -1):
 
 def check_embed_pytorch_vs_ort_vs_ai100(
     model_name: str,
+    manual_cleanup: callable,
     seq_len: int = Constants.CTX_LEN,
     n_layer: int = -1,
     enable_qnn: Optional[bool] = False,
@@ -54,8 +55,6 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     inputs = tokenizer("My name is", return_tensors="pt")
 
     pt_model = load_embedding_model(model_name, n_layer)
-    print(pt_model.config)
-    print(pt_model)
     # Original PyTorch model output
     pt_outputs = pt_model(**inputs)
     pooling_method = POOLING_MAP[pooling] if pooling else None
@@ -109,6 +108,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     assert mad <= 10**-2, f"MAD is too high for onnx and Pytorch: {mad}"
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
+    manual_cleanup(os.path.dirname(qeff_model.onnx_path))  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
 
@@ -128,23 +128,29 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
-def test_full_embed_model_pytorch_vs_onnx_vs_ai100(model):
+def test_full_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
     """
-    check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=32, compare_results=True)
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model["model_name"], seq_len=32, compare_results=True, manual_cleanup=manual_cleanup
+    )
 
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
-def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
+def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
     """
     check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"], seq_len=32, pooling=model["pooling"], compare_results=True
+        model_name=model["model_name"],
+        seq_len=32,
+        pooling=model["pooling"],
+        compare_results=True,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -152,41 +158,49 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
-def test_full_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
+def test_full_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
     """
-    check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=[32, 20], compare_results=True)
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model["model_name"], seq_len=[32, 20], compare_results=True, manual_cleanup=manual_cleanup
+    )
 
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100(model):
+def test_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
     """
-    check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=32, n_layer=1)
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model["model_name"], seq_len=32, n_layer=1, manual_cleanup=manual_cleanup
+    )
 
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
+def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
     """
-    check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=32, pooling=model["pooling"], n_layer=1)
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model["model_name"], seq_len=32, pooling=model["pooling"], n_layer=1, manual_cleanup=manual_cleanup
+    )
 
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
-def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
+def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
     """
-    check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=[32, 20], n_layer=1)
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model["model_name"], seq_len=[32, 20], n_layer=1, manual_cleanup=manual_cleanup
+    )
 
 
 ##########  QNN TESTS ##############
@@ -196,7 +210,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
 @pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
+def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name, manual_cleanup):
     """
     QNN Compilation path test.
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
@@ -205,7 +219,12 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
     check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model_name["model_name"], seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
+        model_name=model_name["model_name"],
+        seq_len=32,
+        n_layer=1,
+        enable_qnn=True,
+        qnn_config=qnn_config_json_path,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -213,7 +232,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
 @pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model):
+def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model, manual_cleanup):
     """
     QNN Compilation path test.
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
@@ -228,6 +247,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model):
         pooling=model["pooling"],
         enable_qnn=True,
         qnn_config=qnn_config_json_path,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -235,7 +255,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model):
 @pytest.mark.llm_model
 @pytest.mark.qnn
 @pytest.mark.parametrize("model", [embed_test_models[0]])
-def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model):
+def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model, manual_cleanup):
     """
     QNN Compilation path test.
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
@@ -244,5 +264,10 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model):
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
     check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"], seq_len=[32, 20], n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
+        model_name=model["model_name"],
+        seq_len=[32, 20],
+        n_layer=1,
+        enable_qnn=True,
+        qnn_config=qnn_config_json_path,
+        manual_cleanup=manual_cleanup,
     )

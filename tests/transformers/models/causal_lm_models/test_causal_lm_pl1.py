@@ -29,13 +29,19 @@ model_config_dict = {model["model_name"]: model for model in causal_pl1_models}
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_pl1[:1])
 @pytest.mark.parametrize("retain_full_kv", [True, False])
-def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv):
+def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
 
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=1, retain_full_kv=retain_full_kv)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, continuous_batching=True, prompt_len=1, retain_full_kv=retain_full_kv
+        model_name=model_name, prompt_len=1, retain_full_kv=retain_full_kv, manual_cleanup=manual_cleanup
+    )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        continuous_batching=True,
+        prompt_len=1,
+        retain_full_kv=retain_full_kv,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -44,16 +50,25 @@ def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_ful
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_pl1[:1])
 @pytest.mark.parametrize("retain_full_kv", [True, False])
-def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv):
+def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
 
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
     n_layer = get_custom_n_layers(model_name)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=n_layer, prompt_len=1, retain_full_kv=retain_full_kv
+        model_name=model_name,
+        n_layer=n_layer,
+        prompt_len=1,
+        retain_full_kv=retain_full_kv,
+        manual_cleanup=manual_cleanup,
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=n_layer, continuous_batching=True, prompt_len=1, retain_full_kv=retain_full_kv
+        model_name=model_name,
+        n_layer=n_layer,
+        continuous_batching=True,
+        prompt_len=1,
+        retain_full_kv=retain_full_kv,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -62,7 +77,7 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_pl1[:1])
 @pytest.mark.parametrize("retain_full_kv", [True, False])
-def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv):
+def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
 
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
@@ -71,8 +86,17 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_fu
         model_name, additional_params=model_config_dict[model_name].get("additional_params", {})
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, prompt_len=1, retain_full_kv=retain_full_kv, config=hf_config
+        model_name=model_name,
+        prompt_len=1,
+        retain_full_kv=retain_full_kv,
+        config=hf_config,
+        manual_cleanup=manual_cleanup,
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, continuous_batching=True, prompt_len=1, retain_full_kv=retain_full_kv, config=hf_config
+        model_name=model_name,
+        continuous_batching=True,
+        prompt_len=1,
+        retain_full_kv=retain_full_kv,
+        config=hf_config,
+        manual_cleanup=manual_cleanup,
     )

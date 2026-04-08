@@ -296,6 +296,7 @@ def run_seq2seq_ort(
 
 def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
+    manual_cleanup: callable,
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = -1,
     enable_qnn: Optional[bool] = False,
@@ -351,6 +352,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
+    manual_cleanup(os.path.dirname(qeff_model.onnx_path))  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
 
@@ -371,27 +373,24 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     torch.manual_seed(42)
     check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        compare_results=True,
+        model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup
     )
 
 
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
     torch.manual_seed(42)
-    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-    )
+    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, manual_cleanup=manual_cleanup)
 
 
 # =================== QNN Tests ======================
@@ -400,7 +399,7 @@ def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 @pytest.mark.qnn
 @pytest.mark.skip(reason="Whisper is currently not supported on QNN")
 @pytest.mark.parametrize("model_name", test_models)
-def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
+def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, manual_cleanup):
     """
     QNN Compilation path test.
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -411,5 +410,9 @@ def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
     check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=4, enable_qnn=True, qnn_config=qnn_config_json_path
+        model_name=model_name,
+        n_layer=4,
+        enable_qnn=True,
+        qnn_config=qnn_config_json_path,
+        manual_cleanup=manual_cleanup,
     )

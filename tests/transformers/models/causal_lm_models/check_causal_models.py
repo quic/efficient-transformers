@@ -99,6 +99,7 @@ def load_causal_lm_model(model_name, n_layer=-1, config=None):
 
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
+    manual_cleanup: callable,
     continuous_batching: bool = False,
     prompt_len: int = Constants.PROMPT_LEN,
     ctx_len: int = Constants.CTX_LEN,
@@ -231,9 +232,10 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
                 "Tokens don't match for ONNXRT output and Cloud AI 100 output."
             )
 
-    # Compare results for full model only.
+    manual_cleanup(os.path.dirname(onnx_model_path))  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
+    # Compare results for full model only.
     compile_params = {
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,

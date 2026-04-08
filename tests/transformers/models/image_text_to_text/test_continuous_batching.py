@@ -41,6 +41,7 @@ NEW_GENERATION_TOKENS = 10
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     model_name: str,
+    manual_cleanup: callable,
     num_hidden_layers: int = -1,
     kv_offload: bool = False,
     num_devices: int = 1,
@@ -222,6 +223,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
             f"Tokens don't match for prompt {i} between HF and QPC output for different prompts"
         )
+    manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
 
 
 @pytest.mark.full_layers
@@ -229,7 +231,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
-def test_full_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload):
+def test_full_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload, manual_cleanup):
 
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
@@ -240,6 +242,7 @@ def test_full_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         model_name=model_name,
         kv_offload=kv_offload,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -248,7 +251,7 @@ def test_full_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
-def test_few_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload):
+def test_few_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload, manual_cleanup):
 
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
@@ -260,6 +263,7 @@ def test_few_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name,
         model_name=model_name,
         num_hidden_layers=model_config_dict[model_name]["num_layers"],
         kv_offload=kv_offload,
+        manual_cleanup=manual_cleanup,
     )
 
 
@@ -268,7 +272,7 @@ def test_few_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name,
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
-def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload):
+def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload, manual_cleanup):
 
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
@@ -282,13 +286,12 @@ def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_nam
             model_name, additional_params=model_config_dict[model_name].get("additional_params", {})
         )
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-            model_name,
-            kv_offload=kv_offload,
-            config=hf_config,
+            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
         )
     else:
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             model_name,
             num_hidden_layers=model_config_dict[model_name]["num_layers"],
             kv_offload=kv_offload,
+            manual_cleanup=manual_cleanup,
         )
