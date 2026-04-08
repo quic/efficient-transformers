@@ -57,6 +57,12 @@ def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mo
         return ""
     num_q_blocks = attention_cfg.get("num_q_blocks") or 1
     num_kv_blocks = attention_cfg.get("num_kv_blocks") or 1
+    head_block_size = (attention_cfg.get("head_block_size") or 1) if attention_cfg.get("head_blocking_enabled") else 1
+
+    if head_block_size > 1 and num_q_blocks == 1 and num_kv_blocks == 1:
+        return "h"
+    if head_block_size > 1:
+        return "hqkv"
     if num_q_blocks > 1 and num_kv_blocks > 1:
         return "qkv"
     if num_q_blocks > 1:

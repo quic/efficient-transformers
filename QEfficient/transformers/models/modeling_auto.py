@@ -3036,12 +3036,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if isinstance(num_blocks, int):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
-            while seq_len < max_blocks or (seq_len % max_blocks > block_size):
-                seq_len = seq_len * 2
-                block_size = -(-seq_len // max_blocks)
-            if self.hash_params.get("blocking_kwargs").num_batch_blocks:
-                bs = self.hash_params.get("blocking_kwargs").num_batch_blocks
-
+            seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len

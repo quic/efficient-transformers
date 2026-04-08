@@ -43,9 +43,10 @@ def main():
 
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=2)
 
     if args.compare_non_blocking:
+        model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=2)
+        
         # Compile the model
         qpc_path = model.compile(
             prefill_seq_len=args.prefill_seq_len,
@@ -67,7 +68,7 @@ def main():
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
     qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode}
-    model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
+    model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=2)
 
     # Compile the model
     qpc_path_blocked = model_blocked.compile(
