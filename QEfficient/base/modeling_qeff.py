@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import warnings
@@ -612,8 +613,14 @@ class QEFFBaseModel(ABC):
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 
+        env = os.environ.copy()
+        if "ddr_stats" in compiler_options:
+            dump_dir=compile_dir / "aic_graph_dump"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            env["QAIC_COMPILER_OPTS_UNSUPPORTED"]=f"-aic-hoist-vtcm-loads=false -aic-op-stats-verbosity 2 -debug-glow=1 -aic-dump-graphs-dir={dump_dir}"
+
         try:
-            subprocess.run(command, capture_output=True, check=True)
+            subprocess.run(command, capture_output=True, check=True, env=env)
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
                 "\n".join(
