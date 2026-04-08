@@ -224,6 +224,20 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             inputs = qeff_model.model.prepare_inputs_for_generation(
                 inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
             )
+        if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in [
+            "qwen3_vl",
+            "qwen3_vl_moe",
+        ]:
+            inputs = qeff_model.model.prepare_inputs_for_generation(
+                inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
+            )
+            if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in [
+                "qwen3_vl",
+                "qwen3_vl_moe",
+            ]:
+                config.vision_config.depth = 9
+                config.text_config.num_hidden_layers = 1
+                config.vision_config.deepstack_visual_indexes = [8]
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
         compile_kwargs["img_size"] = img_size
