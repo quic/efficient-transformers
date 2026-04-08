@@ -574,7 +574,9 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         breakpoint()
-        layer_switch = config._sliding_window_pattern if hasattr(config, "_sliding_window_pattern") else 2  # 2 is for BC
+        layer_switch = (
+            config._sliding_window_pattern if hasattr(config, "_sliding_window_pattern") else 2
+        )  # 2 is for BC
         is_sliding = torch.tensor(
             [bool((i + 1) % layer_switch) for i in range(config.num_hidden_layers)], dtype=torch.bool
         )
@@ -886,7 +888,9 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
-        layer_switch = config._sliding_window_pattern if hasattr(config, "_sliding_window_pattern") else 2  # 2 is for BC
+        layer_switch = (
+            config._sliding_window_pattern if hasattr(config, "_sliding_window_pattern") else 2
+        )  # 2 is for BC
         is_sliding = torch.tensor(
             [bool((i + 1) % layer_switch) for i in range(config.num_hidden_layers)], dtype=torch.bool
         )
