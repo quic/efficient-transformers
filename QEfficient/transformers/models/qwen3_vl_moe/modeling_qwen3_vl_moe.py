@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from qwen_vl_utils import smart_resize
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -927,17 +928,201 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             inputs = {**vision_inputs, **lang_inputs}
         return inputs
 
+    # def get_specializations(
+    #     self,
+    #     batch_size: int,
+    #     prefill_seq_len: int,
+    #     ctx_len: int,
+    #     img_size: None,
+    #     height: int = None,
+    #     width: int = None,
+    #     time: int = 1,
+    #     # dimensions: List = None,
+    #     num_frames: int = 1,
+    #     kv_offload: bool = False,
+    #     continuous_batching: bool = False,
+    #     kv_cache_batch_size: Optional[int] = None,
+    #     full_batch_size: Optional[int] = None,
+    #     **compiler_options,
+    # ):
+    #     comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+    #     comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+    #     if height is None or width is None:
+    #         height = constants.QWEN3_VL_HEIGHT
+    #         width = constants.QWEN3_VL_WIDTH
+    #         logger.warning(
+    #             f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
+    #         )
+    #     prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
+    #     ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+    #     channel = 3
+    #     patch_size = self.config.vision_config.patch_size
+    #     temporal_patch_size = self.config.vision_config.temporal_patch_size
+
+    #     IMAGE_FACTOR = 32
+    #     MIN_PIXELS = 64 * 32 * 32
+    #     MAX_PIXELS = 16384 * 32 * 32
+    #     MAX_RATIO = 200
+
+    #     def round_by_factor(number: int, factor: int) -> int:
+    #         """Returns the closest integer to 'number' that is divisible by 'factor'."""
+    #         return round(number / factor) * factor
+
+    #     def ceil_by_factor(number: int, factor: int) -> int:
+    #         """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
+    #         return math.ceil(number / factor) * factor
+
+    #     def floor_by_factor(number: int, factor: int) -> int:
+    #         """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
+    #         return math.floor(number / factor) * factor
+
+    #     def smart_resize(
+    #         height: int,
+    #         width: int,
+    #         factor: int = IMAGE_FACTOR,
+    #         min_pixels: int = MIN_PIXELS,
+    #         max_pixels: int = MAX_PIXELS,
+    #     ) -> tuple[int, int]:
+    #         """
+    #         Rescales the image so that the following conditions are met:
+
+    #         1. Both dimensions (height and width) are divisible by 'factor'.
+
+    #         2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
+
+    #         3. The aspect ratio of the image is maintained as closely as possible.
+    #         """
+    #         if max(height, width) / min(height, width) > MAX_RATIO:
+    #             raise ValueError(
+    #                 f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
+    #             )
+    #         h_bar = max(factor, round_by_factor(height, factor))
+    #         w_bar = max(factor, round_by_factor(width, factor))
+    #         if h_bar * w_bar > max_pixels:
+    #             beta = math.sqrt((height * width) / max_pixels)
+    #             h_bar = floor_by_factor(height / beta, factor)
+    #             w_bar = floor_by_factor(width / beta, factor)
+    #         elif h_bar * w_bar < min_pixels:
+    #             beta = math.sqrt(min_pixels / (height * width))
+    #             h_bar = ceil_by_factor(height * beta, factor)
+    #             w_bar = ceil_by_factor(width * beta, factor)
+    #         return h_bar, w_bar
+
+    #     resized_height, resized_width = smart_resize(height=height, width=width)
+    #     grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+    #     grid_height = grid_h * grid_w
+    #     grid_width = patch_size * patch_size * temporal_patch_size * channel
+    #     vision_size = grid_height // 4
+    #     vision_size = vision_size * num_frames * time
+    #     grid_height = grid_height * time * batch_size
+
+    #     vision = [
+    #         {
+    #             "batch_size": batch_size,
+    #             "vision_size": vision_size,
+    #             "grid_height": grid_height,
+    #             "grid_width": grid_width,
+    #             "time": time,
+    #             "grid_h": grid_h,
+    #             "grid_w": grid_w,
+    #             "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
+    #         }
+    #     ]
+
+    #     if comp_ctx_lengths_prefill is not None:
+    #         lang = []
+
+    #         for i in range(0, len(comp_ctx_lengths_prefill)):
+    #             lang_prefill = {
+    #                 "batch_size": 1 if continuous_batching else batch_size,
+    #                 "seq_len": prefill_seq_len,
+    #                 "ctx_len": ctx_len,
+    #                 "vision_size": vision_size,
+    #                 "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
+    #                 "vision_batch_size": batch_size,
+    #                 "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
+    #             }
+
+    #             if continuous_batching:
+    #                 lang_prefill["full_batch_size"] = kv_cache_batch_size
+    #             else:
+    #                 lang_prefill["batch_size"] = kv_cache_batch_size
+    #             if full_batch_size:
+    #                 lang_prefill["full_batch_exec_size"] = full_batch_size
+
+    #             lang.append(lang_prefill)
+
+    #         for i in range(0, len(comp_ctx_lengths_decode)):
+    #             lang_decode = {
+    #                 "batch_size": full_batch_size if continuous_batching else batch_size,
+    #                 "seq_len": "1",
+    #                 "ctx_len": ctx_len,
+    #                 "vision_size": vision_size,
+    #                 "comp_ctx_lengths": comp_ctx_lengths_decode[i],
+    #                 "vision_batch_size": batch_size,
+    #                 "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
+    #             }
+
+    #             if continuous_batching:
+    #                 lang_decode["full_batch_size"] = kv_cache_batch_size
+    #             else:
+    #                 lang_decode["batch_size"] = kv_cache_batch_size
+
+    #             lang.append(lang_decode)
+    #     else:
+    #         lang_prefill = {
+    #             "batch_size": 1 if continuous_batching else batch_size,
+    #             "seq_len": prefill_seq_len,
+    #             "ctx_len": ctx_len,
+    #             "vision_size": vision_size,
+    #             "vision_batch_size": batch_size,
+    #             "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
+    #         }
+
+    #         if continuous_batching:
+    #             lang_prefill["full_batch_size"] = kv_cache_batch_size
+    #         else:
+    #             lang_prefill["batch_size"] = kv_cache_batch_size
+    #         if full_batch_size:
+    #             lang_prefill["full_batch_exec_size"] = full_batch_size
+
+    #         lang_decode = {
+    #             "batch_size": full_batch_size if continuous_batching else batch_size,
+    #             "seq_len": 1,
+    #             "ctx_len": ctx_len,
+    #             "vision_size": vision_size,
+    #             "vision_batch_size": batch_size,
+    #             "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
+    #         }
+
+    #         if continuous_batching:
+    #             lang_decode["full_batch_size"] = kv_cache_batch_size
+    #         else:
+    #             lang_decode["batch_size"] = kv_cache_batch_size
+
+    #         lang = [lang_prefill, lang_decode]
+
+    #     specializations = {}
+
+    #     if kv_offload:
+    #         specializations["vision"] = vision
+    #         specializations["lang"] = lang
+    #         return specializations, compiler_options
+    #     else:
+    #         lang[0].pop("vision_size")
+    #         lang[1].pop("vision_size")
+    #         return lang, compiler_options
+
     def get_specializations(
         self,
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
         img_size: None,
-        height: int = None,
-        width: int = None,
+        height: int | List[int] = None,
+        width: int | List[int] = None,
         time: int = 1,
-        # dimensions: List = None,
-        num_frames: int = 1,
+        num_frames: int | List[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
@@ -946,12 +1131,18 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+
         if height is None or width is None:
-            height = constants.QWEN3_VL_HEIGHT
-            width = constants.QWEN3_VL_WIDTH
+            height = constants.QWEN2_5_VL_HEIGHT
+            width = constants.QWEN2_5_VL_WIDTH
             logger.warning(
                 f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
+
+        height = [height] if isinstance(height, int) else height
+        width = [width] if isinstance(width, int) else width
+        num_frames = [num_frames] * len(height) if isinstance(num_frames, int) else num_frames
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         channel = 3
@@ -959,74 +1150,61 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         temporal_patch_size = self.config.vision_config.temporal_patch_size
 
         IMAGE_FACTOR = 32
-        MIN_PIXELS = 64 * 32 * 32
-        MAX_PIXELS = 16384 * 32 * 32
-        MAX_RATIO = 200
+        IMAGE_MIN_TOKEN_NUM = 4
+        IMAGE_MAX_TOKEN_NUM = 16384
+        min_pixels = IMAGE_MIN_TOKEN_NUM * IMAGE_FACTOR**2
+        max_pixels = IMAGE_MAX_TOKEN_NUM * IMAGE_FACTOR**2
+        mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
+        if mm_processor_kwargs:
+            min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
+            max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
 
-        def round_by_factor(number: int, factor: int) -> int:
-            """Returns the closest integer to 'number' that is divisible by 'factor'."""
-            return round(number / factor) * factor
+        vision = []
+        max_vision_size = 0
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            max_vision_size = user_vision_size
 
-        def ceil_by_factor(number: int, factor: int) -> int:
-            """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
-            return math.ceil(number / factor) * factor
-
-        def floor_by_factor(number: int, factor: int) -> int:
-            """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
-            return math.floor(number / factor) * factor
-
-        def smart_resize(
-            height: int,
-            width: int,
-            factor: int = IMAGE_FACTOR,
-            min_pixels: int = MIN_PIXELS,
-            max_pixels: int = MAX_PIXELS,
-        ) -> tuple[int, int]:
-            """
-            Rescales the image so that the following conditions are met:
-
-            1. Both dimensions (height and width) are divisible by 'factor'.
-
-            2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
-
-            3. The aspect ratio of the image is maintained as closely as possible.
-            """
-            if max(height, width) / min(height, width) > MAX_RATIO:
-                raise ValueError(
-                    f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
+        for h, w, f in zip(height, width, num_frames):
+            resized_height, resized_width = smart_resize(
+                height=h, width=w, factor=IMAGE_FACTOR, min_pixels=min_pixels, max_pixels=max_pixels
+            )
+            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+            grid_height = grid_h * grid_w
+            grid_width = patch_size * patch_size * temporal_patch_size * channel
+            vision_size = grid_height // 4
+            vision_size = vision_size * time
+            grid_height = grid_height * time * batch_size
+            if not user_vision_size:
+                max_vision_size = max(max_vision_size, vision_size * f)
+                assert max_vision_size < ctx_len, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) must be less than ctx_len. Please adjust the image "
+                    "resolution."
                 )
-            h_bar = max(factor, round_by_factor(height, factor))
-            w_bar = max(factor, round_by_factor(width, factor))
-            if h_bar * w_bar > max_pixels:
-                beta = math.sqrt((height * width) / max_pixels)
-                h_bar = floor_by_factor(height / beta, factor)
-                w_bar = floor_by_factor(width / beta, factor)
-            elif h_bar * w_bar < min_pixels:
-                beta = math.sqrt(min_pixels / (height * width))
-                h_bar = ceil_by_factor(height * beta, factor)
-                w_bar = ceil_by_factor(width * beta, factor)
-            return h_bar, w_bar
+            else:
+                assert vision_size * f < user_vision_size, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) cannot exceed the provided "
+                    f"vision_size={user_vision_size}. Please adjust the image resolution or "
+                    "increase the vision_size."
+                )
 
-        resized_height, resized_width = smart_resize(height=height, width=width)
-        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        grid_height = grid_h * grid_w
-        grid_width = patch_size * patch_size * temporal_patch_size * channel
-        vision_size = grid_height // 4
-        vision_size = vision_size * num_frames * time
-        grid_height = grid_height * time * batch_size
-
-        vision = [
-            {
-                "batch_size": batch_size,
-                "vision_size": vision_size,
-                "grid_height": grid_height,
-                "grid_width": grid_width,
-                "time": time,
-                "grid_h": grid_h,
-                "grid_w": grid_w,
-                "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
-            }
-        ]
+            vision.append(
+                {
+                    "batch_size": batch_size,
+                    "vision_size": vision_size,
+                    "grid_height": grid_height,
+                    "grid_width": grid_width,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
+                    "time": time,
+                    "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
+                }
+            )
 
         if comp_ctx_lengths_prefill is not None:
             lang = []
@@ -1036,7 +1214,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
-                    "vision_size": vision_size,
+                    "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "vision_batch_size": batch_size,
                     "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
@@ -1056,7 +1234,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "vision_size": vision_size,
+                    "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "vision_batch_size": batch_size,
                     "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
@@ -1073,7 +1251,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "vision_size": vision_size,
+                "vision_size": max_vision_size,
                 "vision_batch_size": batch_size,
                 "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
             }
@@ -1089,7 +1267,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
-                "vision_size": vision_size,
+                "vision_size": max_vision_size,
                 "vision_batch_size": batch_size,
                 "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
             }

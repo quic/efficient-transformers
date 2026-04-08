@@ -598,13 +598,23 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
             idx = next(i for i, inner in enumerate(vision_session.allowed_shapes) if (2, pixel_values_shape) in inner)
 
-            biffer_set = {
-                "vision_embeds": np.zeros(vision_session.allowed_shapes[idx][3][1], dtype=np.float16),
-                "image_grid_thw": np.zeros(vision_session.allowed_shapes[idx][1][1], dtype=np.int64),
-                "deepstack_features": np.zeros(vision_session.allowed_shapes[idx][2][1], dtype=np.float16),
+            buffer_set = {
+                "vision_embeds": np.zeros(
+                    vision_session.allowed_shapes[idx][vision_session.binding_index_map["vision_embeds"]][1],
+                    dtype=np.float16,
+                ),
+                "image_grid_thw": np.zeros(
+                    vision_session.allowed_shapes[idx][vision_session.binding_index_map["image_grid_thw"]][1],
+                    dtype=np.int64,
+                ),
             }
+            if "deepstack_features" in vision_session.binding_index_map:
+                buffer_set["deepstack_features"] = np.zeros(
+                    vision_session.allowed_shapes[idx][vision_session.binding_index_map["deepstack_features"]][1],
+                    dtype=np.float16,
+                )
 
-            vision_session.set_buffers(biffer_set)
+            vision_session.set_buffers(buffer_set)
 
             vision_start = perf_counter()
             chunk_inputs = vision_inputs.copy()
@@ -639,18 +649,18 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             mode="constant",
             constant_values=0,
         )
-
-        vision_outputs["deepstack_features"] = np.pad(
-            vision_outputs["deepstack_features"],
-            pad_width=(
-                (0, 0),
-                (0, 0),
-                (0, lang_session.allowed_shapes[0][1][1][1] - vision_outputs["deepstack_features"].shape[-2]),
-                (0, 0),
-            ),  # pad axis=1 only
-            mode="constant",
-            constant_values=0,
-        )
+        if "deepstack_features" in vision_outputs:
+            vision_outputs["deepstack_features"] = np.pad(
+                vision_outputs["deepstack_features"],
+                pad_width=(
+                    (0, 0),
+                    (0, 0),
+                    (0, lang_session.allowed_shapes[0][1][1][1] - vision_outputs["deepstack_features"].shape[-2]),
+                    (0, 0),
+                ),  # pad axis=1 only
+                mode="constant",
+                constant_values=0,
+            )
 
         lang_session.set_buffers(vision_outputs)
 
