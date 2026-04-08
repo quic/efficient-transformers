@@ -1053,7 +1053,15 @@ class QEffDeepseekV3Model(nn.Module):
 
 class QEffDeepseekV3ForCausalLM(nn.Module):
     """Adapted DeepseekV3ForCausalLM with batch_index and QEff optimizations."""
-
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+            """
+            Return the set of class used as the repeated layer across the model for subfunction extraction.
+            Notes:
+                This method should return the *class object* (not an instance).
+                Downstream code can use this to find/build subfunctions for repeated blocks.
+            """
+            return {self.model.layers[0].__class__}
+ 
     def forward(
         self,
         input_ids: torch.LongTensor = None,
