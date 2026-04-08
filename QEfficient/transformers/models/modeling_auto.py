@@ -1041,7 +1041,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-
     def __update_prefill_transform(
         self,
         enable: Optional[bool] = True,
@@ -1433,6 +1432,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         use_onnx_subfunctions: bool = False,
         prefill_only=None,
         enable_chunking=False,
+        qaic_config: Optional[dict] = None,
         **compiler_options,
     ) -> str:
         """
@@ -1518,6 +1518,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
+
+        # Apply compile-dependent transforms like blocking transform
+        self.transform(
+            ctx_len=ctx_len,
+            seq_len=prefill_seq_len,
+            batch_size=batch_size,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+        )
 
         specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
@@ -2134,6 +2143,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
         use_onnx_subfunctions: bool = False,
+        qaic_config: Optional[dict] = None,
         **compiler_options,
     ) -> str:
         """
@@ -2206,6 +2216,15 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
+
+        # Apply compile-dependent transforms like blocking transform
+        self.transform(
+            ctx_len=ctx_len,
+            seq_len=prefill_seq_len,
+            batch_size=batch_size,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+        )
 
         # Get specializations from modelling file
         # TODO: expose this via the auto class as well

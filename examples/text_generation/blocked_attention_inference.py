@@ -46,7 +46,7 @@ def main():
 
     if args.compare_non_blocking:
         model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=2)
-        
+
         # Compile the model
         qpc_path = model.compile(
             prefill_seq_len=args.prefill_seq_len,

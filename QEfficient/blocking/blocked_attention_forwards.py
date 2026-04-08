@@ -121,7 +121,7 @@ def blocked_kv_attention_forward(
     )
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device)
 
-    past_seen_tokens = _normalize_int(cache_kwargs.get("past_seen_tokens"))
+    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True
@@ -166,10 +166,10 @@ def blocked_kv_attention_forward(
 
         if use_causal_mask or mask_block is None:
             target_length = torch.where(
-                    torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                    past_seen_tokens,
-                    end_index,
-                )
+                torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+                past_seen_tokens,
+                end_index,
+            )
             causal_mask_block = _create_causal_mask(
                 position_ids=position_ids,
                 target_length=target_length,
@@ -374,7 +374,7 @@ def blocked_hqkv_attention_forward(
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
     if sinks is not None:
-        sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1) 
+        sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -519,9 +519,8 @@ def blocked_bhqkv_attention_forward(
     num_head_blocks = math.ceil(num_heads / head_block_size)
     num_q_blocks = max(1, _normalize_int(num_q_blocks))
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)    
+    num_kv_blocks = max(1, num_kv_blocks)
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
-
 
     h_output_blocks = []
     h_attn_blocks = []
