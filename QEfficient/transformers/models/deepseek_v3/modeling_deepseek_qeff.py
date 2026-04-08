@@ -474,7 +474,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 target_length=end_index,
                 start_index=start_index,
             )
-            import ipdb; ipdb.set_trace()
+            
             if enable_absorption:
                 krope_nope = torch.cat((compressed_kv_block, k_pe_block), dim=-1)
                 attn_weights_block = torch.matmul(qkupTrope_nope, krope_nope.transpose(2, 3)) * self.softmax_scale  # [1, 64, q_len, 576] X [1, 1, 576, kv_block_size] -> [1, 64, q_len, kv_block_size] 
@@ -499,6 +499,164 @@ class QEffDeepseekV3Attention(nn.Module):
 
         return attn_output, None, compressed_kvs, None
 
+    def fused_forward_basic(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        compressed_kvs: Optional[torch.Tensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        mla_absorption: Optional[Dict[str, bool]] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        bsz, q_len, _ = hidden_states.size()
+
+        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
+        compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
+        compressed_kv, k_pe = compressed_kv.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+
+        q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
+        q_pe = torch.bmm(q_a_proj_out, self.q_rope)
+        q_pe = q_pe.view(bsz, q_len, self.num_heads, self.qk_rope_head_dim).transpose(1, 2)
+        q_nope = torch.bmm(q_a_proj_out, self.q_up)
+        q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
+
+        compressed_kv = self.kv_a_layernorm(compressed_kv)
+        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        if compressed_kvs is not None:
+            compressed_kv = compressed_kvs.update_ckv(compressed_kv, self.layer_idx, cache_kwargs)
+
+        kva = compressed_kv
+
+        if mla_absorption is not None:
+            enable_absorption = mla_absorption.get("enable", False)
+            absorb_online = mla_absorption.get("online", False)
+        else:
+            enable_absorption = False
+
+        n_head_ckv = compressed_kv.shape[1]
+        p = self.num_heads // n_head_ckv
+
+        ############################################################################
+
+
+        kva_expanded = kva.unsqueeze(2).expand(-1,-1,p,-1,-1).reshape(bsz, self.num_heads, -1, self.kv_lora_rank)
+        v_up_per_head = self.v_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.v_head_dim).permute(1,0,2)
+
+        value_states=torch.matmul(kva_expanded, v_up_per_head)
+
+        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+
+        if compressed_kvs is not None:
+            k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
+
+        k_pe_expanded = k_pe.unsqueeze(2).expand(-1,-1,p,-1,-1).reshape(bsz, self.num_heads, -1, self.qk_rope_head_dim)
+
+        if enable_absorption:
+            if absorb_online:
+                print("online absorption")
+                out = torch.matmul(self.per_head_q_up, self.per_head_k_up)
+                q_nope_compressed = torch.matmul(q_a_proj_out.unsqueeze(1), out)
+            else:
+                print("using fused qk")
+                #breakpoint()
+                q_nope_compressed = torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk)
+
+            query_states = torch.cat((q_nope_compressed, q_pe), dim=-1)
+            key_states = torch.cat((kva_expanded, k_pe_expanded), dim=-1)
+        else:
+            print("no absorption")
+            q_nope = torch.bmm(q_a_proj_out, self.q_up)
+            q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
+            query_states = torch.cat((q_nope, q_pe), dim=-1)
+
+            k_up_per_head = self.k_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.qk_nope_head_dim).permute(1,0,2)
+            k_nope = torch.matmul(kva_expanded, k_up_per_head)
+            key_states = torch.cat((k_nope, k_pe_expanded), dim=-1)
+
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
+        if attention_mask is not None:  # no matter the length, we just slice it
+                attn_weights = torch.where(
+                    attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                )
+
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
+        attn_output = torch.matmul(attn_weights, value_states)
+
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
+        attn_output = self.o_proj(attn_output)
+
+        return attn_output, attn_weights, compressed_kvs, value_states
+ 
+
+
+    def fused_forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        compressed_kvs: Optional[torch.Tensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        mla_absorption: Optional[Dict[str, bool]] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        if os.environ.get("KIMI_BLOCKING", "0") == "h":
+            return self.fused_forward_blocked_kv(
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                position_ids,
+                past_key_value,
+                compressed_kvs,
+                batch_index,
+                output_attentions,
+                use_cache,
+                cache_position,
+                mla_absorption,
+                **kwargs,
+            )
+        elif os.environ.get("KIMI_BLOCKING", "0") == "kv":
+            return self.fused_forward_blocked_kv(
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                position_ids,
+                past_key_value,
+                compressed_kvs,
+                batch_index,
+                output_attentions,
+                use_cache,
+                cache_position,
+                mla_absorption,
+                **kwargs,
+            )
+        else:
+            return self.fused_forward_basic(
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                position_ids,
+                past_key_value,
+                compressed_kvs,
+                batch_index,
+                output_attentions,
+                use_cache,
+                cache_position,
+                mla_absorption,
+                **kwargs,
+            )
+    
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -562,23 +720,23 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
-        self.all_gate_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
-        )
-        self.all_up_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
-            )
-        )
-        self.all_down_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
-        )
+        # self.all_gate_proj = torch.nn.Parameter(
+        #     torch.cat(
+        #         [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
+        #         dim=0,
+        #     )
+        # )
+        # self.all_up_proj = torch.nn.Parameter(
+        #     torch.cat(
+        #         [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
+        #     )
+        # )
+        # self.all_down_proj = torch.nn.Parameter(
+        #     torch.cat(
+        #         [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
+        #         dim=0,
+        #     )
+        # )
         self.act_fn = self.experts[0].act_fn
 
     def moe(
