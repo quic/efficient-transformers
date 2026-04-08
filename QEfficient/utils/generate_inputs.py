@@ -325,7 +325,9 @@ class InputHandlerVLM:
         inputs["image_idx"] = np.array([[0]])
 
         vision_inputs = {
-            k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
+            k: v
+            for k, v in inputs.items()
+            if k in {"pixel_values", "image_position_ids", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
         for i in range(num_hidden_layers):
@@ -374,6 +376,9 @@ class InputHandlerVLM:
         outputs["image_features_RetainedState"] = (
             ort_outputs["image_features_RetainedState"] if "image_features_RetainedState" in ort_outputs else None
         )
+        outputs["vision_embeds_RetainedState"] = (
+            ort_outputs["vision_embeds_RetainedState"] if "vision_embeds_RetainedState" in ort_outputs else None
+        )
         outputs["image_idx"] = ort_outputs["image_idx_output"]
         return outputs
 
@@ -398,6 +403,12 @@ class InputHandlerVLM:
             updated_inputs["pixel_values"] = ort_outputs["pixel_values_RetainedState"]
         if "image_features_RetainedState" in ort_outputs.keys():
             updated_inputs["image_features"] = ort_outputs["image_features_RetainedState"]
+        if "vision_embeds_RetainedState" in ort_outputs.keys():
+            updated_inputs["vision_embeds"] = ort_outputs["vision_embeds_RetainedState"]
+        if "mm_token_type_ids" in inputs.keys():
+            updated_inputs["mm_token_type_ids"] = np.zeros_like(
+                updated_inputs["input_ids"], dtype=inputs["mm_token_type_ids"].dtype
+            )
 
         if "cross_attention_mask" in inputs.keys():
             bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
