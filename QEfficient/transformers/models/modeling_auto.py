@@ -1526,6 +1526,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             batch_size=batch_size,
             num_devices=num_devices,
             qaic_config=qaic_config,
+            aic_num_cores=num_cores,
         )
 
         specializations, compiler_options = self.model.get_specializations(
@@ -2224,6 +2225,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             batch_size=batch_size,
             num_devices=num_devices,
             qaic_config=qaic_config,
+            aic_num_cores=num_cores,
         )
 
         # Get specializations from modelling file

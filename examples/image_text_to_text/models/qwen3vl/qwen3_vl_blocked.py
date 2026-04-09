@@ -13,7 +13,8 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-model_id = "yujiepan/qwen3-vl-tiny-random"
+# model_id = "yujiepan/qwen3-vl-tiny-random"
+model_id = "Qwen/Qwen3-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
 # config.vision_config.depth = 9
@@ -28,9 +29,6 @@ NUM_BATCH_BLOCKS = 2
 qaic_config = dict(
     enable_blocking=True,
     blocking_mode="hqkv",
-    head_block_size=HEAD_BLOCK_SIZE,
-    num_kv_blocks=NUM_KV_BLOCKS,
-    num_q_blocks=NUM_Q_BLOCKS,
 )
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -53,9 +51,9 @@ if skip_vision:
     qeff_model.compile(
         batch_size=batch_size,
         prefill_seq_len=128,
-        ctx_len=4096,
+        ctx_len=32768,
         num_cores=16,
-        num_devices=4,
+        num_devices=8,
         height=354,
         width=536,
         mxfp6_matmul=True,
@@ -96,9 +94,9 @@ else:
     qeff_model.compile(
         batch_size=batch_size,
         prefill_seq_len=128,
-        ctx_len=4096,
+        ctx_len=32768,
         num_cores=16,
-        num_devices=4,
+        num_devices=8,
         height=354,
         width=536,
         # height=1024,
@@ -152,7 +150,7 @@ else:
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=30000)
     print(output.generated_ids)
     print(processor.tokenizer.batch_decode(output.generated_ids))
     print(output)

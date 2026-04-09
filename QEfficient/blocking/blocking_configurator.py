@@ -176,6 +176,9 @@ def build_transformer_blocking_config(
     if seq_len is None and ctx_len is None:
         return AttentionBlockingConfig(mode="")
 
+    # we only block on text configs in the case of VLMs
+    if hasattr(model_config, "text_config"):
+        model_config = model_config.text_config
     num_heads = require_value(
         get_attr_or_key(model_config, ("num_attention_heads", "num_heads", "attention_heads", "n_heads")),
         "num attention heads",
