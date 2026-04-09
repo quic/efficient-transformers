@@ -90,11 +90,6 @@ print("Prompt:", repr(prompt))
 print("Completion:", repr(predicted_string))
 
 
-
-
-
-qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}
-
 prefill_seq_len = 1
 ctx_len = 1024
 
@@ -103,12 +98,11 @@ qpc_path = qeff_model.compile(
     ctx_len=ctx_len,
     enable_mla=enable_mla,
     mla_absorption_config=mla_absorption_config,
-    mxfp6_matmul=False,
+    mxfp6_matmul=True,
     mxint8_kv_cache=False,
     num_devices=num_kv_heads_repeat,
     num_cores=16,
     #prefill_only=True,
-    qaic_config=qaic_config,
 )
 
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)
