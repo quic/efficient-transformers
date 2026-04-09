@@ -297,6 +297,7 @@ def run_seq2seq_ort(
 def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
+    num_devices: int = 1,
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = -1,
     enable_qnn: Optional[bool] = False,
@@ -338,7 +339,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
     qeff_model.compile(
         ctx_len=ctx_len,
-        num_cores=16,
+        num_devices=num_devices,
         batch_size=batch_size,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
@@ -352,7 +353,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
-    manual_cleanup(os.path.dirname(qeff_model.onnx_path))  # Clean up the model files after the tests are done.
+    manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
 
@@ -376,7 +377,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     torch.manual_seed(42)
     check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup
+        model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup, num_devices=4
     )
 
 

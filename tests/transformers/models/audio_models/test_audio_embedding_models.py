@@ -135,6 +135,7 @@ def run_ctc_ort(onnx_path, config, processor: AutoProcessor, inputs: np.ndarray,
 def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
+    num_devices: int = 1,
     n_layer: int = -1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
@@ -169,12 +170,13 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
         batch_size=batch_size,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        num_devices=num_devices,
     )
     cloud_ai_100_output = qeff_model.generate(processor, data)
     assert pytorch_output == cloud_ai_100_output, "Tokens don't match for pytorch output and Cloud AI 100 output."
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
-    manual_cleanup(os.path.dirname(qeff_model.onnx_path))
+    manual_cleanup(qeff_model.onnx_path)
     if compare_results is False:
         return
 
@@ -182,6 +184,8 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
         "batch_size": batch_size,
         "enable_qnn": enable_qnn,
         "qnn_config": qnn_config,
+        "num_devices": num_devices,
+        "n_layer": n_layer,
     }
     assert dump_and_compare_results(
         model_name,
@@ -204,7 +208,9 @@ def test_full_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
     torch.manual_seed(42)
-    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup)
+    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup, num_devices=4
+    )
 
 
 @pytest.mark.on_qaic
@@ -244,4 +250,5 @@ def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, manual_cleanup):
         enable_qnn=True,
         qnn_config=qnn_config_json_path,
         manual_cleanup=manual_cleanup,
+        num_devices=4,
     )

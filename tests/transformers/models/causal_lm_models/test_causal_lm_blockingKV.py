@@ -34,10 +34,14 @@ def test_full_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_
 
     qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup
+        model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup, num_devices=4
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, continuous_batching=True, qaic_config=qaic_config, manual_cleanup=manual_cleanup
+        model_name=model_name,
+        continuous_batching=True,
+        qaic_config=qaic_config,
+        manual_cleanup=manual_cleanup,
+        num_devices=4,
     )
 
 

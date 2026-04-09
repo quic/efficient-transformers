@@ -19,7 +19,7 @@ from transformers import (
     AutoProcessor,
 )
 
-from QEfficient.utils.test_utils import load_vlm_qeff_model
+from QEfficient.utils.test_utils import load_vlm_hf_config, load_vlm_hf_model, load_vlm_qeff_model
 
 NEW_GENERATION_TOKENS = 10
 
@@ -43,7 +43,11 @@ def has_QwenLayer_function(onnx_path):
 
 
 def check_image_text_to_text_subfunction_core(
-    model_name: str, kv_offload: bool = False, num_hidden_layers: int = -1, config: Optional[AutoConfig] = None
+    model_name: str,
+    manual_cleanup: callable,
+    kv_offload: bool = False,
+    num_hidden_layers: int = -1,
+    config: Optional[AutoConfig] = None,
 ):
 
     img_size = model_config_dict[model_name]["img_size"]
@@ -55,9 +59,12 @@ def check_image_text_to_text_subfunction_core(
     enable_qnn = False
     qnn_config = None
     num_devices = 1
-
+    model_hf = load_vlm_hf_model(model_name, num_hidden_layers=num_hidden_layers, config=config)
     qeff_model = load_vlm_qeff_model(
-        model_name, kv_offload=kv_offload, num_hidden_layers=num_hidden_layers, config=config
+        model_name,
+        kv_offload=kv_offload,
+        num_hidden_layers=num_hidden_layers,
+        model_hf=model_hf,
     )
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
     image = Image.open(requests.get(img_url, stream=True).raw)
@@ -102,30 +109,28 @@ def check_image_text_to_text_subfunction_core(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )
+    manual_cleanup(qeff_model.onnx_path)
 
 
 @pytest.mark.full_layers
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
-def test_full_image_text_to_text_subfunction(model_name, kv_offload):
+def test_full_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``Qwen/Qwen2.5-VL-3B-Instruct``
     """
     torch.manual_seed(42)
-    check_image_text_to_text_subfunction_core(
-        model_name,
-        kv_offload=kv_offload,
-    )
+    check_image_text_to_text_subfunction_core(model_name, kv_offload=kv_offload, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.few_layers
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
-def test_few_image_text_to_text_subfunction(model_name, kv_offload):
+def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
     ``Mandatory`` Args:
@@ -133,9 +138,7 @@ def test_few_image_text_to_text_subfunction(model_name, kv_offload):
     """
     torch.manual_seed(42)
     check_image_text_to_text_subfunction_core(
-        model_name,
-        kv_offload=kv_offload,
-        num_hidden_layers=2,
+        model_name, kv_offload=kv_offload, num_hidden_layers=2, manual_cleanup=manual_cleanup
     )
 
 
@@ -143,19 +146,16 @@ def test_few_image_text_to_text_subfunction(model_name, kv_offload):
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
-def test_dummy_image_text_to_text_subfunction(model_name, kv_offload):
+def test_dummy_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching with subfunction.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``Qwen/Qwen2.5-VL-3B-Instruct``
     """
     torch.manual_seed(42)
-    custom_config = model_config_dict[model_name].get("additional_params", {})
-    model_type = model_config_dict[model_name].get("model_type", None)
-    hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
-    hf_config.name_or_path = model_name
+    hf_config = load_vlm_hf_config(
+        model_name, additional_params=model_config_dict[model_name].get("additional_params", {})
+    )
     check_image_text_to_text_subfunction_core(
-        model_name,
-        kv_offload=kv_offload,
-        config=hf_config,
+        model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
     )

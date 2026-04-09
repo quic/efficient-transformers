@@ -199,7 +199,7 @@ def find_candidate_pred_tokens(
 
 
 def check_pld_spec_decode_inference(
-    model_id: str, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None
+    model_id: str, manual_cleanup: callable, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None
 ):
     """check pld"""
     draft_model_name = model_config_dict[model_id]["draft_model_name"]
@@ -437,42 +437,38 @@ def check_pld_spec_decode_inference(
     ]  # Because we always run for single input and single batch size
     all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
+    manual_cleanup(target_model_qpc_path)
 
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", test_models_id)
-def test_full_pld_inference(model_id):
+def test_full_pld_inference(model_id, manual_cleanup):
     """
     Test the full layers model PLD inference pipeline.
     """
     torch.manual_seed(42)
-    check_pld_spec_decode_inference(
-        model_id,
-    )
+    check_pld_spec_decode_inference(model_id, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", test_models_id)
-def test_few_pld_inference(model_id):
+def test_few_pld_inference(model_id, manual_cleanup):
     """
     Test few layers model for PLD inference pipeline.
     """
     torch.manual_seed(42)
-    check_pld_spec_decode_inference(
-        model_id,
-        num_hidden_layers=2,
-    )
+    check_pld_spec_decode_inference(model_id, num_hidden_layers=2, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", test_models_id)
-def test_dummy_pld_inference(model_id):
+def test_dummy_pld_inference(model_id, manual_cleanup):
     """
     Test dummy layers model for PLD inference pipeline.
     """
@@ -481,7 +477,4 @@ def test_dummy_pld_inference(model_id):
         model_config_dict[model_id]["target_model_name"], **model_config_dict[model_id]["additional_params"]
     )
     print(hf_config)
-    check_pld_spec_decode_inference(
-        model_id,
-        config=hf_config,
-    )
+    check_pld_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)

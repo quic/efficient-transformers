@@ -89,7 +89,7 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
 
 
 def check_spec_decode_inference(
-    model_id: str, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None
+    model_id: str, manual_cleanup: callable, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None
 ):
 
     draft_model_name = model_config_dict[model_id]["draft_model_name"]
@@ -337,38 +337,35 @@ def check_spec_decode_inference(
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
     assert os.path.isfile(os.path.join(os.path.dirname(target_model_qpc_path), "qconfig.json"))
     assert os.path.isfile(os.path.join(os.path.dirname(draft_model_qpc_path), "qconfig.json"))
+    manual_cleanup(target_model_qpc_path)
+    manual_cleanup(draft_model_qpc_path)
 
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", test_models_id)
-def test_full_spd_inference(model_id):
+def test_full_spd_inference(model_id, manual_cleanup):
     """Test full layer SPD inference."""
     torch.manual_seed(42)
-    check_spec_decode_inference(
-        model_id,
-    )
+    check_spec_decode_inference(model_id, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", test_models_id)
-def test_few_spd_inference(model_id):
+def test_few_spd_inference(model_id, manual_cleanup):
     """Test few layer SPD inference."""
     torch.manual_seed(42)
-    check_spec_decode_inference(
-        model_id,
-        num_hidden_layers=2,
-    )
+    check_spec_decode_inference(model_id, num_hidden_layers=2, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", test_models_id)
-def test_dummy_spd_inference(model_id):
+def test_dummy_spd_inference(model_id, manual_cleanup):
     """Test dummy layer SPD inference."""
     torch.manual_seed(42)
     hf_config = AutoConfig.from_pretrained(
@@ -377,7 +374,4 @@ def test_dummy_spd_inference(model_id):
         **model_config_dict[model_id]["additional_params"],
     )
     print(hf_config)
-    check_spec_decode_inference(
-        model_id,
-        config=hf_config,
-    )
+    check_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)

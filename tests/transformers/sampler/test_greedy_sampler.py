@@ -27,7 +27,12 @@ test_models = [model["model_name"] for model in sampler_models]
 model_config_dict = {model["model_name"]: model for model in sampler_models}
 
 
-def check_greedy_sampler(model_name: str, num_hidden_layers: Optional[int] = None, config: Optional[AutoConfig] = None):
+def check_greedy_sampler(
+    model_name: str,
+    manual_cleanup: callable,
+    num_hidden_layers: Optional[int] = None,
+    config: Optional[AutoConfig] = None,
+):
     """
     Test greedy sampling with QPCs compiled with and without On Device Sampling.
     """
@@ -139,32 +144,34 @@ def check_greedy_sampler(model_name: str, num_hidden_layers: Optional[int] = Non
         "Generated ids do not match"
     )
 
+    manual_cleanup(model_w_sampler.onnx_path)
+    manual_cleanup(model_wo_sampler.onnx_path)
+
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_greedy_sampler(model_name):
+def test_full_greedy_sampler(model_name, manual_cleanup):
     """
     Test the full greedy sampling with different models.
     """
     torch.manual_seed(42)
-    check_greedy_sampler(
-        model_name,
-    )
+    check_greedy_sampler(model_name, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_2layers_greedy_sampler(model_name):
+def test_2layers_greedy_sampler(model_name, manual_cleanup):
     """
     Test the greedy sampling with 2 layers models.
     """
     torch.manual_seed(42)
     check_greedy_sampler(
         model_name,
+        manual_cleanup=manual_cleanup,
         num_hidden_layers=2,
     )
 
@@ -173,7 +180,7 @@ def test_2layers_greedy_sampler(model_name):
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_dummy_greedy_sampler(model_name):
+def test_dummy_greedy_sampler(model_name, manual_cleanup):
     """
     Test the greedy sampling with dummy models.
     """
@@ -186,4 +193,5 @@ def test_dummy_greedy_sampler(model_name):
     check_greedy_sampler(
         model_name,
         config=hf_config,
+        manual_cleanup=manual_cleanup,
     )

@@ -27,7 +27,12 @@ test_models = [model["model_name"] for model in sampler_models]
 model_config_dict = {model["model_name"]: model for model in sampler_models}
 
 
-def check_random_sampler(model_name: str, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None):
+def check_random_sampler(
+    model_name: str,
+    manual_cleanup: callable,
+    num_hidden_layers: Optional[int] = -1,
+    config: Optional[AutoConfig] = None,
+):
     """
     Test random sampling with QPCs compiled with and without On Device Sampling.
     """
@@ -255,20 +260,20 @@ def check_random_sampler(model_name: str, num_hidden_layers: Optional[int] = -1,
         assert (model_wo_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["wo_sampler"]).all(), (
             "Without sampler generated ids do not match"
         )
+    manual_cleanup(model_w_sampler.onnx_path)
+    manual_cleanup(model_wo_sampler.onnx_path)
 
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_random_sampler(model_name):
+def test_full_random_sampler(model_name, manual_cleanup):
     """
     Test the full random sampler with different models.
     """
     torch.manual_seed(42)
-    check_random_sampler(
-        model_name,
-    )
+    check_random_sampler(model_name, manual_cleanup=manual_cleanup)
 
 
 # @pytest.mark.on_qaic

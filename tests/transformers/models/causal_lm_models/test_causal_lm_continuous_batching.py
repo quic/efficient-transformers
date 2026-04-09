@@ -29,7 +29,7 @@ model_config_dict = {model["model_name"]: model for model in causal_lm_models}
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models_causal[1:2])
+@pytest.mark.parametrize("model_name", test_models_causal)
 def test_full_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
     if model_name in ModelConfig.FULL_MODEL_TESTS_TO_SKIP:
         pytest.skip(f"Skipping full model test for {model_name} due to resource constraints.")
@@ -37,6 +37,7 @@ def test_full_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
         model_name,
         continuous_batching=True,
         manual_cleanup=manual_cleanup,
+        num_devices=4,
     )
 
 

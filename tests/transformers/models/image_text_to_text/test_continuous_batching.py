@@ -243,6 +243,7 @@ def test_full_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name
         model_name=model_name,
         kv_offload=kv_offload,
         manual_cleanup=manual_cleanup,
+        num_devices=4,
     )
 
 

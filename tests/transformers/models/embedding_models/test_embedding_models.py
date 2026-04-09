@@ -108,7 +108,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     assert mad <= 10**-2, f"MAD is too high for onnx and Pytorch: {mad}"
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
-    manual_cleanup(os.path.dirname(qeff_model.onnx_path))  # Clean up the model files after the tests are done.
+    manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
 

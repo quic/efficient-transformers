@@ -187,7 +187,7 @@ def prefix_caching_inference(model_name, qpc_path):
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_simple_prefix_caching(model_name):
+def test_full_simple_prefix_caching(model_name, manual_cleanup):
     """
     The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
     """
@@ -201,12 +201,13 @@ def test_full_simple_prefix_caching(model_name):
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+    manual_cleanup(qeff_model.onnx_path)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_simple_prefix_caching(model_name):
+def test_simple_prefix_caching(model_name, manual_cleanup):
     """
     The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
     """
@@ -224,6 +225,7 @@ def test_simple_prefix_caching(model_name):
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+    manual_cleanup(qeff_model.onnx_path)
 
 
 ################################# QNN Tests #################################

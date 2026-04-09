@@ -70,11 +70,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     model_hf = load_vlm_hf_model(model_name, num_hidden_layers=num_hidden_layers, config=config)
     config = model_hf.config
-    # print(config)
-    # print(model_hf)
     qeff_model = load_vlm_qeff_model(
         model_name, num_hidden_layers=num_hidden_layers, model_hf=model_hf, kv_offload=kv_offload
     )
+    print(model_hf)
 
     compile_kwargs = {
         "num_devices": num_devices,
@@ -229,7 +228,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models[:1])
+@pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
 def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
 
@@ -240,14 +239,18 @@ def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_of
 
     torch.manual_seed(42)
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name, kv_offload=kv_offload, compare_results=True, manual_cleanup=manual_cleanup
+        model_name,
+        kv_offload=kv_offload,
+        compare_results=True,
+        manual_cleanup=manual_cleanup,
+        num_devices=4,
     )
 
 
 @pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models[2:3])
+@pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
 def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
 
@@ -269,7 +272,7 @@ def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_off
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models[:1])
+@pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
 def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
 

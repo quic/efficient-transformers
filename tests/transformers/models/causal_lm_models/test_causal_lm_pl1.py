@@ -27,14 +27,14 @@ model_config_dict = {model["model_name"]: model for model in causal_pl1_models}
 @pytest.mark.full_layers
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models_pl1[:1])
+@pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
 
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, prompt_len=1, retain_full_kv=retain_full_kv, manual_cleanup=manual_cleanup
+        model_name=model_name, prompt_len=1, retain_full_kv=retain_full_kv, manual_cleanup=manual_cleanup, num_devices=4
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
@@ -42,13 +42,14 @@ def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_ful
         prompt_len=1,
         retain_full_kv=retain_full_kv,
         manual_cleanup=manual_cleanup,
+        num_devices=4,
     )
 
 
 @pytest.mark.few_layers
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models_pl1[:1])
+@pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
 
@@ -75,7 +76,7 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full
 @pytest.mark.dummy_layers
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models_pl1[:1])
+@pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
 

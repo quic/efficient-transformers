@@ -100,6 +100,7 @@ def load_causal_lm_model(model_name, n_layer=-1, config=None):
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
+    num_devices: int = 1,
     continuous_batching: bool = False,
     prompt_len: int = Constants.PROMPT_LEN,
     ctx_len: int = Constants.CTX_LEN,
@@ -184,7 +185,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        num_devices=1,
+        num_devices=num_devices,
         mxfp6=False,
         aic_enable_depth_first=False,
         num_speculative_tokens=num_speculative_tokens,
@@ -232,14 +233,14 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
                 "Tokens don't match for ONNXRT output and Cloud AI 100 output."
             )
 
-    manual_cleanup(os.path.dirname(onnx_model_path))  # Clean up the model files after the tests are done.
+    manual_cleanup(onnx_model_path)  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
     # Compare results for full model only.
     compile_params = {
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
-        "num_devices": 1,
+        "num_devices": num_devices,
         "mxfp6": False,
         "aic_enable_depth_first": False,
         "num_speculative_tokens": num_speculative_tokens,

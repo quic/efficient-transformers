@@ -28,7 +28,10 @@ model_config_dict = {model["model_name"]: model for model in sampler_models}
 
 
 def check_sampler_transform(
-    model_name: str, num_hidden_layers: Optional[int] = None, config: Optional[AutoConfig] = None
+    model_name: str,
+    manual_cleanup: callable,
+    num_hidden_layers: Optional[int] = None,
+    config: Optional[AutoConfig] = None,
 ):
     """
     Check the sampler transform for a given model.
@@ -153,13 +156,16 @@ def check_sampler_transform(
     assert "token_bitmasks" in model_w_sampler_w_guided_decoding_session.input_names, (
         "Sampler input token_bitmasks not found in QPC compiled with On Device Sampler and Guided Decoding"
     )
+    manual_cleanup(model_w_sampler_qpc_path)
+    manual_cleanup(model_w_sampler_w_guided_decoding_qpc_path)
+    manual_cleanup(model_wo_sampler_qpc_path)
 
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_sampler_transform(model_name: str):
+def test_full_sampler_transform(model_name, manual_cleanup):
     """
     Test for full layer models if `SamplerTransform` adds nodes at the output of a `QEffForCausalLM model` to enable the
     sampling of next tokens at the device (instead of the host) and returns the
@@ -167,16 +173,14 @@ def test_full_sampler_transform(model_name: str):
     """
     # Export and compile QEfficient models
     torch.manual_seed(42)
-    check_sampler_transform(
-        model_name,
-    )
+    check_sampler_transform(model_name, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_2layers_sampler_transform(model_name: str):
+def test_2layers_sampler_transform(model_name, manual_cleanup):
     """
     Test for 2 layers model if `SamplerTransform` adds nodes at the output of a `QEffForCausalLM model` to enable the
     sampling of next tokens at the device (instead of the host) and returns the
@@ -184,17 +188,14 @@ def test_2layers_sampler_transform(model_name: str):
     """
     # Export and compile QEfficient models
     torch.manual_seed(42)
-    check_sampler_transform(
-        model_name,
-        num_hidden_layers=2,
-    )
+    check_sampler_transform(model_name, num_hidden_layers=2, manual_cleanup=manual_cleanup)
 
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_dummy_sampler_transform(model_name: str):
+def test_dummy_sampler_transform(model_name: str, manual_cleanup):
     """
     Test for dummy model if `SamplerTransform` adds nodes at the output of a `QEffForCausalLM model` to enable the
     sampling of next tokens at the device (instead of the host) and returns the
@@ -207,7 +208,4 @@ def test_dummy_sampler_transform(model_name: str):
         trust_remote_code=True,
         **model_config_dict[model_name].get("additional_params", {}),
     )
-    check_sampler_transform(
-        model_name,
-        config=hf_config,
-    )
+    check_sampler_transform(model_name, config=hf_config, manual_cleanup=manual_cleanup)
