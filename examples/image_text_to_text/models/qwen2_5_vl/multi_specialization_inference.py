@@ -110,7 +110,6 @@ else:  # Vision + Text
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
-        skip_lang=True,
     )
 
     image_url = "https://picsum.photos/id/237/536/354"
