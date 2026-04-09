@@ -25,7 +25,6 @@ from QEfficient.customop import (
     CtxScatterFuncCB3D,
 )
 
-from QEfficient.utils.logging_utils import logger
 
 class InvalidIndexProvider:
     SUBFUNC_ENABLED = False
@@ -738,9 +737,7 @@ class QEffSlidingWindowCache:
 
         # Get the sliding_window_pattern from config
         sliding_window_pattern = getattr(
-            config,
-            "_sliding_window_pattern",
-            getattr(config, "sliding_window_pattern", None)
+            config, "_sliding_window_pattern", getattr(config, "sliding_window_pattern", None)
         )
 
         cache = cls(
