@@ -1041,6 +1041,9 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3Attention": {
             "forward": QEffDeepseekV3Attention.forward,
             "fused_forward": QEffDeepseekV3Attention.fused_forward,
+            "fused_forward_blocked_kv": QEffDeepseekV3Attention.fused_forward_blocked_kv,
+            "fused_forward_basic": QEffDeepseekV3Attention.fused_forward_basic,
+            "fused_forward_h_blocking": QEffDeepseekV3Attention.fused_forward_h_blocking,
             "__qeff_init__": QEffDeepseekV3Attention.__qeff_init__,
         },
         "DeepseekV3RMSNorm": {
