@@ -37,6 +37,7 @@ dependencies = [
     "tensorboard",
     "fire",
     "py7zr",
+    "qwen-vl-utils==0.0.8",
     "torchmetrics==1.7.0",
     "ftfy==6.3.1",
     "imageio==2.37.2",
