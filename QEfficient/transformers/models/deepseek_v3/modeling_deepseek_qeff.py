@@ -484,8 +484,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 # [1, 64, q_len, kv_block_size] X [1, 1, kv_block_size, 512] -> [1, 64, q_len, 512]
             else:
                 knope = torch.matmul(compressed_kv_block, self.per_head_k_up_normal)
-                breakpoint()
-                krope_nope = torch.cat((knope, k_pe_block.expand(-1,64,-1,-1)), dim=-1)
+                krope_nope = torch.cat((knope, k_pe_block.expand(-1,self.num_heads,-1,-1)), dim=-1)
                 qrope_nope = torch.cat((q_nope, q_pe), dim=-1)
                 attn_weights_block = torch.matmul(qrope_nope, krope_nope.transpose(2, 3)) * self.softmax_scale
                 attn_weights_block = torch.where(
@@ -539,37 +538,24 @@ class QEffDeepseekV3Attention(nn.Module):
         else:
             enable_absorption = False
 
-        n_head_ckv = compressed_kv.shape[1]
-        p = self.num_heads // n_head_ckv
-
-        ############################################################################
-
-
-        kva_expanded = kva.unsqueeze(2).expand(-1,-1,p,-1,-1).reshape(bsz, self.num_heads, -1, self.kv_lora_rank)
-        v_up_per_head = self.v_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.v_head_dim).permute(1,0,2)
-
-        value_states=torch.matmul(kva_expanded, v_up_per_head)
-
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
-        k_pe_expanded = k_pe.unsqueeze(2).expand(-1,-1,p,-1,-1).reshape(bsz, self.num_heads, -1, self.qk_rope_head_dim)
 
         if enable_absorption:
             if absorb_online:
                 print("online absorption")
                 out = torch.matmul(self.per_head_q_up, self.per_head_k_up)
-                q_nope_compressed = torch.matmul(q_a_proj_out.unsqueeze(1), out)
+                q_nope_compressed = torch.matmul(q_a_proj_out, out)
             else:
                 print("using fused qk")
-                #breakpoint()
-                q_nope_compressed = torch.matmul(q_a_proj_out.unsqueeze(1), self.fusedqk)
+                q_nope_compressed = torch.matmul(q_a_proj_out, self.fusedqk)
 
             query_states = torch.cat((q_nope_compressed, q_pe), dim=-1)
-            key_states = torch.cat((kva_expanded, k_pe_expanded), dim=-1)
+            key_states = torch.cat((kva, k_pe), dim=-1)
         else:
             print("no absorption")
             q_nope = torch.bmm(q_a_proj_out, self.q_up)
@@ -577,8 +563,8 @@ class QEffDeepseekV3Attention(nn.Module):
             query_states = torch.cat((q_nope, q_pe), dim=-1)
 
             k_up_per_head = self.k_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.qk_nope_head_dim).permute(1,0,2)
-            k_nope = torch.matmul(kva_expanded, k_up_per_head)
-            key_states = torch.cat((k_nope, k_pe_expanded), dim=-1)
+            k_nope = torch.matmul(kva, k_up_per_head)
+            key_states = torch.cat((k_nope, k_pe.expand(-1,self.num_heads,-1,-1)), dim=-1)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
         if attention_mask is not None:  # no matter the length, we just slice it
@@ -587,12 +573,13 @@ class QEffDeepseekV3Attention(nn.Module):
                 )
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = torch.matmul(attn_weights, kva)
+        attn_output = torch.matmul(attn_output, self.per_head_v_up)
 
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
         attn_output = self.o_proj(attn_output)
 
-        return attn_output, attn_weights, compressed_kvs, value_states
+        return attn_output, attn_weights, compressed_kvs, None
  
 
 
