@@ -695,7 +695,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
         # Prefill using VLM-aware run_prefill (batch is a list of (image, text))
         start = perf_counter()
-        outputs, position_ids, generation_len_final = self.run_prefill_multiFrames(inputs, num_frames, generation_len)
+        outputs, position_ids, generation_len_final = self.run_prefill_multi_frame_specialization(
+            inputs, num_frames, generation_len
+        )
         self.update_decode_input(outputs, position_ids, generation_len_final)
 
         # Prepare decode
