@@ -38,7 +38,7 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 class GemmaRMSNormFunc(torch.autograd.Function):
     @staticmethod
     def forward(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float):
-        div_first = hidden_states * torch.rsqrt(torch.tensor(hidden_states.shape[-1]))
+        div_first = hidden_states * torch.rsqrt(torch.tensor(hidden_states.shape[-1], dtype=hidden_states.dtype))
         variance = div_first.pow(2).sum(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + epsilon)
         return weight * hidden_states
