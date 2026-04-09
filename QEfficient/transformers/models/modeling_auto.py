@@ -1604,7 +1604,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         image_height: Optional[int] = None,
         image_width: Optional[int] = None,
         multi_specs: Optional[bool] = None,
-        num_frames: Optional[int] = 0,
+        num_frames: Optional[int] = None,
         **kwargs,
     ) -> Union[torch.Tensor, np.ndarray]:
         """

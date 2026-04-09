@@ -1056,9 +1056,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         patch_size = self.config.vision_config.patch_size
         temporal_patch_size = self.config.vision_config.temporal_patch_size
 
-        IMAGE_FACTOR = 28
-        IMAGE_MIN_TOKEN_NUM = 4
-        IMAGE_MAX_TOKEN_NUM = 16384
+        IMAGE_FACTOR = constants.IMAGE_FACTOR_QWEN_2_5
+        IMAGE_MIN_TOKEN_NUM = constants.IMAGE_MIN_TOKEN_NUM
+        IMAGE_MAX_TOKEN_NUM = constants.IMAGE_MAX_TOKEN_NUM
         min_pixels = IMAGE_MIN_TOKEN_NUM * IMAGE_FACTOR**2
         max_pixels = IMAGE_MAX_TOKEN_NUM * IMAGE_FACTOR**2
         mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)

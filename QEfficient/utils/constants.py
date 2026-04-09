@@ -142,10 +142,14 @@ WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16
 # Qwen2_5_vl Constants
 QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
+IMAGE_FACTOR_QWEN_2_5 = 28
+IMAGE_MIN_TOKEN_NUM = 4
+IMAGE_MAX_TOKEN_NUM = 16384
 
 # Qwen3_vl Constanst
 QWEN3_VL_HEIGHT = 354
 QWEN3_VL_WIDTH = 536
+IMAGE_FACTOR_QWEN_3 = 32
 
 # Modules to cache while clearing the pytorch weights
 CACHE_MODULES = ["get_output_names", "get_dummy_inputs", "get_onnx_dynamic_axes", "get_specializations"]
