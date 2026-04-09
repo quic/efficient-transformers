@@ -3912,7 +3912,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if output_dir and "compile_dir" not in compile_kwargs:
             compile_kwargs["compile_dir"] = str(Path(output_dir) / "compile")
 
+        
+        # COMPILATION COMMAND
         qpc_path = Path(self.compile(**compile_kwargs))
+        #####################
+        
         if not qpc_path.is_dir() or not (qpc_path / "programqpc.bin").is_file():
             raise RuntimeError(f"Compiled QPC directory is invalid: {qpc_path}")
         dirs = self._prepare_perf_output_dirs(output_dir, qpc_path)

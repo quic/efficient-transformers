@@ -612,7 +612,7 @@ class QEffDeepseekV3Attention(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if os.environ.get("KIMI_BLOCKING", "0") == "h":
-            return self.fused_forward_blocked_kv(
+            return self.fused_forward_h_blocking(
                 hidden_states,
                 position_embeddings,
                 attention_mask,
