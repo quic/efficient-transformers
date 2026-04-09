@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 from dataclasses import asdict, dataclass
@@ -18,20 +19,15 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from torch import nn
+from transformers import AutoModelForCausalLM
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.text_generation_inference import write_io_files
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
-    QEffGptOssAttention,
     QEffGptOssExperts,
-    QEffGptOssMLP,
-    QEffGptOssRotaryEmbedding,
-    QEffPrefillOnlyChunkedGptOssAttention,
-    QEffPrefillOnlyChunkedGptOssMLP,
-    QEffPrefillOnlyGptOssAttention,
-    QEffPrefillOnlyGptOssMLP,
 )
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
@@ -101,6 +97,8 @@ class BenchmarkSummary:
     seed_prefill_ms: Optional[float]
     first_decode_ms: Optional[float]
     decode_runtime: Optional[RuntimeStats]
+    io_dir: Optional[str] = None
+    io_manifest_path: Optional[str] = None
 
 
 @dataclass
@@ -278,6 +276,38 @@ def _report_cache_path(qeff_model: "QEFFAutoModelForCausalLM", summaries: List[B
     return _benchmark_cache_root(summary) / f"benchmark_report_{digest}.json"
 
 
+def _benchmark_io_cache_dir(summary: BenchmarkSummary) -> Path:
+    safe_module_name = summary.module_name.replace("/", "_")
+    return (
+        _benchmark_cache_root(summary)
+        / "benchmark_io"
+        / f"layer{summary.layer_index}_{summary.mode}_{safe_module_name}"
+    )
+
+
+def _contiguous_io_map(values: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    return {name: np.ascontiguousarray(array) for name, array in values.items()}
+
+
+def _save_benchmark_io_artifacts(
+    summary: BenchmarkSummary,
+    phase_ios: List[Tuple[str, Dict[str, np.ndarray]]],
+) -> Tuple[str, str]:
+    io_dir = _benchmark_io_cache_dir(summary)
+    io_dir.mkdir(parents=True, exist_ok=True)
+    for index, (phase_name, inputs) in enumerate(phase_ios):
+        write_io_files(
+            _contiguous_io_map(inputs),
+            {},
+            str(io_dir),
+            phase_name,
+            "aic_batch_io",
+            include_dims=True,
+            reset=index == 0,
+        )
+    return str(io_dir), str(io_dir / "aic_batch_io.json")
+
+
 def save_benchmark_manifest(
     qeff_model: "QEFFAutoModelForCausalLM",
     manifest: BenchmarkManifest,
@@ -313,6 +343,23 @@ def _prepare_direct_qeff_module(module: nn.Module) -> nn.Module:
         if hasattr(child, "__qeff_init__"):
             child.__qeff_init__()
     return module.eval()
+
+
+def _build_minimal_gpt_oss_qeff_bundle(config, *, layer_type: str, mode: str, enable_chunking: bool):
+    from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+    cfg = copy.deepcopy(config)
+    cfg.num_hidden_layers = 1
+    cfg.layer_types = [layer_type]
+    hf_model = AutoModelForCausalLM.from_config(cfg, attn_implementation="eager", trust_remote_code=True)
+    qeff_model = QEFFAutoModelForCausalLM(hf_model)
+    if mode == "prefill":
+        qeff_model.prefill(enable=True, enable_chunking=enable_chunking)
+    else:
+        qeff_model.prefill(enable=False)
+    qeff_model.model.float()
+    source_model = qeff_model.model.model
+    return cfg, source_model, source_model.layers[0]
 
 
 def _build_torch_causal_mask(
@@ -495,11 +542,16 @@ class DenseMlpBenchmarkWrapper(BenchmarkWrapperBase):
         self.returns_tuple = returns_tuple
         self._output_name = output_name
 
+    def _normalize_hidden_output(self, hidden_output: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
+        if hidden_output.dim() == 2:
+            hidden_output = hidden_output.view(hidden_states.shape)
+        return hidden_output
+
     def forward(self, hidden_states: torch.Tensor):
         outputs = self.mlp(hidden_states)
         if self.returns_tuple:
-            return outputs[0]
-        return outputs
+            return self._normalize_hidden_output(outputs[0], hidden_states)
+        return self._normalize_hidden_output(outputs, hidden_states)
 
     def build_example_inputs(self, batch_size: int, seq_len: int, ctx_len: int) -> Dict[str, object]:
         return {"hidden_states": torch.zeros((batch_size, seq_len, self.config.hidden_size), dtype=torch.float32)}
@@ -521,7 +573,10 @@ class DenseMlpBenchmarkWrapper(BenchmarkWrapperBase):
         return {output_name: [batch_size, seq_len, self.config.hidden_size]}
 
     def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
-        return {"hidden_states": outputs[self._output_name][:, -1:, :]}
+        hidden_output = outputs[self._output_name]
+        if hidden_output.ndim == 2:
+            hidden_output = hidden_output[:, None, :]
+        return {"hidden_states": hidden_output[:, -1:, :]}
 
 
 class GptOssCacheModuleBenchmarkWrapper(BenchmarkWrapperBase):
@@ -884,9 +939,6 @@ class GptOssArchitectureAdapter:
         enable_chunking: bool = False,
     ) -> List[BenchmarkModuleSpec]:
         config = qeff_model.model.config
-        rotary_emb = QEffGptOssRotaryEmbedding(config)
-        cos_cached = rotary_emb.cos_cached * rotary_emb.attention_scaling
-        sin_cached = rotary_emb.sin_cached * rotary_emb.attention_scaling
 
         layer_variants = []
         for variant_index, variant_name in [
@@ -906,7 +958,18 @@ class GptOssArchitectureAdapter:
             layer_variants.append((layer_index, "attention"))
 
         specs = []
+        bundle_cache = {}
         for variant_layer_index, variant_name in layer_variants:
+            layer_type = "sliding_attention" if variant_name == "swa_attention" else "full_attention"
+            cache_key = (layer_type, mode, bool(enable_chunking and mode == "prefill"))
+            if cache_key not in bundle_cache:
+                bundle_cache[cache_key] = _build_minimal_gpt_oss_qeff_bundle(
+                    config,
+                    layer_type=layer_type,
+                    mode=mode,
+                    enable_chunking=enable_chunking if mode == "prefill" else False,
+                )
+            variant_config, source_model, layer = bundle_cache[cache_key]
             if mode == "prefill":
                 effective_cache_len = seq_len + getattr(config, "sliding_window", 0) if enable_chunking else seq_len
             elif variant_name == "swa_attention":
@@ -915,13 +978,10 @@ class GptOssArchitectureAdapter:
                 effective_cache_len = ctx_len
             if mode == "prefill" and enable_chunking:
                 attn_name = f"prefill_chunked_{variant_name}"
-                attention_cls = QEffPrefillOnlyChunkedGptOssAttention
             elif mode == "prefill":
                 attn_name = f"prefill_{variant_name}"
-                attention_cls = QEffPrefillOnlyGptOssAttention
             else:
                 attn_name = variant_name
-                attention_cls = QEffGptOssAttention
 
             specs.append(
                 BenchmarkModuleSpec(
@@ -930,26 +990,33 @@ class GptOssArchitectureAdapter:
                     mode=mode,
                     layer_index=variant_layer_index,
                     wrapper=GptOssAttentionBenchmarkWrapper(
-                        attention_module=_prepare_direct_qeff_module(attention_cls(config, variant_layer_index)),
-                        config=config,
-                        cos_cached=cos_cached,
-                        sin_cached=sin_cached,
+                        attention_module=layer.self_attn,
+                        config=variant_config,
+                        cos_cached=source_model.cos_cached,
+                        sin_cached=source_model.sin_cached,
                         ctx_len=ctx_len,
                         cache_len=effective_cache_len,
-                        layer_index=variant_layer_index,
+                        layer_index=0,
                     ),
                     output_name="attention_output",
                 )
             )
         if mode == "prefill" and enable_chunking:
             mlp_name = "prefill_chunked_moe"
-            mlp_module = _prepare_direct_qeff_module(QEffPrefillOnlyChunkedGptOssMLP(config))
         elif mode == "prefill":
             mlp_name = "prefill_moe"
-            mlp_module = _prepare_direct_qeff_module(QEffPrefillOnlyGptOssMLP(config))
         else:
             mlp_name = "moe"
-            mlp_module = _prepare_direct_qeff_module(QEffGptOssMLP(config))
+        first_layer_type = "sliding_attention" if layer_variants[0][1] == "swa_attention" else "full_attention"
+        first_cache_key = (first_layer_type, mode, bool(enable_chunking and mode == "prefill"))
+        if first_cache_key not in bundle_cache:
+            bundle_cache[first_cache_key] = _build_minimal_gpt_oss_qeff_bundle(
+                config,
+                layer_type=first_layer_type,
+                mode=mode,
+                enable_chunking=enable_chunking if mode == "prefill" else False,
+            )
+        variant_config, _, mlp_layer = bundle_cache[first_cache_key]
         specs.append(
             BenchmarkModuleSpec(
                 benchmark_type="moe",
@@ -957,8 +1024,8 @@ class GptOssArchitectureAdapter:
                 mode=mode,
                 layer_index=layer_variants[0][0],
                 wrapper=DenseMlpBenchmarkWrapper(
-                    mlp_module=mlp_module,
-                    config=config,
+                    mlp_module=mlp_layer.mlp,
+                    config=variant_config,
                     returns_tuple=True,
                     output_name="mlp_output",
                 ),
@@ -1198,9 +1265,10 @@ def compile_benchmark_modules(
     **compiler_options,
 ) -> BenchmarkManifest:
     adapter = _resolve_adapter(qeff_model)
-    if prefill_only is True:
+    effective_prefill_only = False if prefill_only is None and seq_len == 1 else prefill_only
+    if effective_prefill_only is True:
         concrete_modes = ("prefill",)
-    elif prefill_only is False:
+    elif effective_prefill_only is False:
         concrete_modes = ("decode",)
     else:
         concrete_modes = _resolve_benchmark_modes(adapter, "both")
@@ -1270,7 +1338,7 @@ def compile_benchmark_modules(
             )
 
     manifest = BenchmarkManifest(
-        prefill_only=prefill_only,
+        prefill_only=effective_prefill_only,
         enable_chunking=enable_chunking,
         batch_size=batch_size,
         seq_len=seq_len,
@@ -1363,6 +1431,39 @@ def _run_prefill_and_decode_benchmark(
         benchmark_runs=benchmark_runs,
     )
     return prefill_runtime, seed_prefill_ms, first_decode_ms, decode_runtime
+
+
+def _collect_phase_io_artifacts(
+    summary: BenchmarkSummary,
+    session: QAICInferenceSession,
+    wrapper: BenchmarkWrapperBase,
+    *,
+    batch_size: int,
+    seq_len: int,
+    ctx_len: int,
+    seed: int,
+) -> Tuple[str, str]:
+    phase_ios: List[Tuple[str, Dict[str, np.ndarray]]] = []
+
+    if summary.mode == "prefill":
+        prefill_inputs = wrapper.numpy_inputs(batch_size, seq_len, ctx_len, seed)
+        phase_ios.append(("prefill", prefill_inputs))
+    elif summary.mode == "decode":
+        seed_inputs = wrapper.numpy_inputs(batch_size, 1, ctx_len, seed)
+        seed_outputs = _run_session(session, seed_inputs)
+        phase_ios.append(("seed", seed_inputs))
+        seed_position_ids = seed_inputs.get("position_ids", _build_position_ids(batch_size, 1))
+        decode_inputs = wrapper.build_decode_inputs(seed_outputs, seed_position_ids)
+        phase_ios.append(("decode", decode_inputs))
+    else:
+        prefill_inputs = wrapper.numpy_inputs(batch_size, seq_len, ctx_len, seed)
+        prefill_outputs = _run_session(session, prefill_inputs)
+        phase_ios.append(("prefill", prefill_inputs))
+        seed_position_ids = prefill_inputs.get("position_ids", _build_position_ids(batch_size, seq_len))
+        decode_inputs = wrapper.build_decode_inputs(prefill_outputs, seed_position_ids)
+        phase_ios.append(("decode", decode_inputs))
+
+    return _save_benchmark_io_artifacts(summary, phase_ios)
 
 
 def benchmark_module_spec(
@@ -1629,6 +1730,15 @@ def generate_benchmark_report(
                     benchmark_runs=benchmark_runs,
                 )
             summary.resolved_dims = adapter.resolved_dims(qeff_model)
+            summary.io_dir, summary.io_manifest_path = _collect_phase_io_artifacts(
+                summary,
+                session,
+                spec.wrapper,
+                batch_size=manifest.batch_size,
+                seq_len=manifest.seq_len,
+                ctx_len=manifest.ctx_len,
+                seed=seed,
+            )
             resolved.append(summary)
 
     qeff_model._benchmark_manifest.summaries = resolved

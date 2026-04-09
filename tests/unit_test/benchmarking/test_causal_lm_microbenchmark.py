@@ -8,13 +8,16 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import onnx
 import pytest
 
 from QEfficient.benchmarking.causal_lm_microbenchmark import (
     BenchmarkManifest,
     BenchmarkSummary,
+    DenseMlpBenchmarkWrapper,
     RuntimeStats,
+    _save_benchmark_io_artifacts,
     resolve_model_id,
 )
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -131,6 +134,60 @@ def test_gpt_oss_chunked_prefill_swa_specialization_keeps_config_sliding_window(
     assert dynamic_axes["past_key"][2] == "ctx_len"
 
 
+def test_dense_mlp_wrapper_build_decode_inputs_accepts_2d_output():
+    class DummyConfig:
+        hidden_size = 32
+
+    class DummyMlp:
+        def __call__(self, hidden_states):
+            return hidden_states
+
+    wrapper = DenseMlpBenchmarkWrapper(DummyMlp(), DummyConfig(), output_name="mlp_output")
+    decode_inputs = wrapper.build_decode_inputs({"mlp_output": np.zeros((1, 32), dtype=np.float32)}, np.array([[0]]))
+
+    assert decode_inputs["hidden_states"].shape == (1, 1, 32)
+
+
+def test_save_benchmark_io_artifacts_writes_phase_manifests(tmp_path: Path):
+    summary = BenchmarkSummary(
+        benchmark_type="moe",
+        module_name="moe",
+        mode="decode",
+        model_name="gpt_oss",
+        model_id="tiny-random/gpt-oss-bf16",
+        architecture="gpt_oss",
+        layer_index=0,
+        batch_size=1,
+        seq_len=1,
+        ctx_len=128,
+        resolved_dims={"hidden_size": 32},
+        input_shapes={"hidden_states": [1, 1, 32]},
+        output_shapes={"mlp_output": [1, 1, 32]},
+        onnx_path=str(tmp_path / "GptOssMlpBenchmarkWrapper.onnx"),
+        qpc_path=str(tmp_path / "qpc"),
+        prefill_runtime=None,
+        seed_prefill_ms=None,
+        first_decode_ms=None,
+        decode_runtime=None,
+    )
+    phase_ios = [
+        ("seed", {"hidden_states": np.zeros((1, 1, 32), dtype=np.float32)}),
+        ("decode", {"hidden_states": np.ones((1, 1, 32), dtype=np.float32)}),
+    ]
+
+    io_dir, io_manifest_path = _save_benchmark_io_artifacts(summary, phase_ios)
+
+    assert Path(io_dir).is_dir()
+    assert Path(io_manifest_path).is_file()
+    assert (Path(io_dir) / "seed" / "hidden_states.raw").is_file()
+    assert (Path(io_dir) / "seed" / "aic_batch_io.json").is_file()
+    assert (Path(io_dir) / "decode" / "hidden_states.raw").is_file()
+    assert not (Path(io_dir) / "seed" / "mlp_output.raw").exists()
+    manifest = json.loads(Path(io_manifest_path).read_text())
+    assert len(manifest["IO-files"]) == 2
+    assert all(entry["io-direction"] == "in" for phase in manifest["IO-files"] for entry in phase)
+
+
 def test_compile_export_only_uses_benchmark_backend():
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
         "hf-internal-testing/tiny-random-LlamaForCausalLM",
@@ -156,6 +213,30 @@ def test_compile_decode_benchmark_smoke():
     assert [summary["module_name"] for summary in payload["summaries"]] == ["attention", "mlp"]
     assert [summary["mode"] for summary in payload["summaries"]] == ["both", "both"]
     assert all(summary["qpc_path"] is not None for summary in payload["summaries"])
+    assert all(Path(summary["qpc_path"]).is_dir() for summary in payload["summaries"])
+
+
+def test_compile_seq_len_one_defaults_to_decode_only_export_only():
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        enable_benchmark=True,
+    )
+    manifest_path = qeff_model.compile(prefill_only=None, prefill_seq_len=1, ctx_len=128, export_only=True)
+
+    payload = json.loads(Path(manifest_path).read_text())
+    assert payload["prefill_only"] is False
+    assert payload["seq_len"] == 1
+    assert [summary["mode"] for summary in payload["summaries"]] == ["decode", "decode"]
+
+
+def test_gpt_oss_decode_seq_len_one_compile_smoke():
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained("tiny-random/gpt-oss-bf16", enable_benchmark=True)
+    manifest_path = qeff_model.compile(prefill_only=None, prefill_seq_len=1, ctx_len=128)
+
+    payload = json.loads(Path(manifest_path).read_text())
+    assert payload["prefill_only"] is False
+    assert [summary["module_name"] for summary in payload["summaries"]] == ["swa_attention", "full_attention", "moe"]
+    assert [summary["mode"] for summary in payload["summaries"]] == ["decode", "decode", "decode"]
     assert all(Path(summary["qpc_path"]).is_dir() for summary in payload["summaries"])
 
 
