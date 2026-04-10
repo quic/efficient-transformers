@@ -17,4 +17,7 @@ jobs:
         run: pip install -e ".[test]"
 
       - name: Run unit tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
         run: pytest tests/unit_test/ -n auto -v
