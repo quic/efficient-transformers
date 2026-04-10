@@ -275,7 +275,8 @@ class QEffDeepseekV3Attention(nn.Module):
         self.per_head_v_up = torch.nn.Parameter(per_head_v_up.unsqueeze(0).detach().clone())
         self.per_head_q_up = torch.nn.Parameter(per_head_q_up.unsqueeze(0).detach().clone())
         self.per_head_k_up = torch.nn.Parameter(per_head_k_up.unsqueeze(0).detach().clone())
-        self.per_head_k_up_normal = self.per_head_k_up.transpose(2, 3)
+        per_head_k_up_normal = self.per_head_k_up.transpose(2, 3)
+        self.per_head_k_up_normal = torch.nn.Parameter(per_head_k_up_normal.detach().clone())
 
         fusedqk_list = []
         for i in range(self.num_heads):
