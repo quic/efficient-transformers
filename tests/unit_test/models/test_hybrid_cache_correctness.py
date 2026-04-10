@@ -598,6 +598,11 @@ class TestQEffHybridChunkedCacheCorrectness:
         """
         cfg = _mistral_cfg(sliding_window=4)
         cache = QEffHybridChunkedCache(cfg, max_batch_size=1, max_cache_len=ctx_len)
+        if not hasattr(cache, "key_cache"):
+            # transformers>=4.57 no longer exposes key_cache/value_cache on HybridChunkedCache.
+            # Attach legacy list fields so these backward-compatibility tests can exercise QEff methods.
+            cache.key_cache = [None] * len(cache.layers)
+            cache.value_cache = [None] * len(cache.layers)
         k = torch.zeros(1, 2, ctx_len, 8)
         v = torch.zeros(1, 2, ctx_len, 8)
         for layer_idx in range(num_layers):
