@@ -51,13 +51,13 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
-    PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyChunkedTransform,
+    PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyTransform,
     ReplicateKVHeadTransform,
     RevertPrefillKeepAttentionTransform,
-    RevertPrefillOnlyTransform,
     RevertPrefillOnlyExternalModuleMapperTransform,
+    RevertPrefillOnlyTransform,
     SamplerTransform,
     SpDTransform,
     TextClassificationTransform,
@@ -3010,8 +3010,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # kv_cache_shape = get_padding_shape_from_config(
         #     self.model.config, fbs if self.continuous_batching else bs, seq_len
         # )
-        ckv_shape = (1, seq_len, 512)
-        k_pe_shape = (1, 1, seq_len, 64)
         kv_cache_shape = (1, 64, seq_len, 192)
         kv_cache_shape_v = (1, 64, seq_len, 128)
         enable_chunking = kwargs.get("enable_chunking", False)
@@ -3154,7 +3152,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if enable_mla:
             for lay in self.model.model.layers:
                 if lay is not None:
-                    num_heads = lay.self_attn.kv_a_proj_with_mqa.weight.shape[0]//576
+                    num_heads = lay.self_attn.kv_a_proj_with_mqa.weight.shape[0] // 576
 
             example_inputs = {k: v for k, v in example_inputs.items() if "past" not in k}
             dynamic_axes = {k: v for k, v in dynamic_axes.items() if "past" not in k}

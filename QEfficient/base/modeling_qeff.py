@@ -366,7 +366,6 @@ class QEFFBaseModel(ABC):
         self.export(**kwargs)
         return self.onnx_path
 
-
     @dump_qconfig
     def _compile(
         self,

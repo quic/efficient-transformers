@@ -5,13 +5,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 
 prompt = "Once upon a time,"
-num_kv_heads_repeat=4 #TS=4
-num_hidden_layers=2
-enable_mla=True
-mla_absorption_config={"enable": False, "online": False}
+num_kv_heads_repeat = 4  # TS=4
+num_hidden_layers = 2
+enable_mla = True
+mla_absorption_config = {"enable": False, "online": False}
 
-#model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
-model_path ="/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
+# model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
+model_path = (
+    "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
+)
 model = AutoModelForCausalLM.from_pretrained(
     model_path, torch_dtype=torch.float32, num_hidden_layers=num_hidden_layers, trust_remote_code=True
 )
@@ -60,7 +62,7 @@ for i in range(model.config.num_hidden_layers):
 
 
 inputs["compressed_kvs"] = compressed_kvs
-#inputs["past_key_values"] = past_key_values
+# inputs["past_key_values"] = past_key_values
 
 prefill_qeff_out = qeff_model.model(**inputs)
 
@@ -78,7 +80,7 @@ for _ in range(1, generation_len):
         "input_ids": next_token_id,
         "position_ids": position_ids,
         "compressed_kvs": qeff_out["past_key_values"],
-        #"past_key_values": qeff_out["past_key_values"],
+        # "past_key_values": qeff_out["past_key_values"],
     }
     qeff_out = qeff_model.model(**decode_inputs)
 
@@ -102,7 +104,7 @@ qpc_path = qeff_model.compile(
     mxint8_kv_cache=False,
     num_devices=num_kv_heads_repeat,
     num_cores=16,
-    #prefill_only=True,
+    # prefill_only=True,
 )
 
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)

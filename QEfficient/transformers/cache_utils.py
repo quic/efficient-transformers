@@ -350,7 +350,6 @@ class QEffDynamicCompressedKVRopeLayer:
 
     def update_ckv(self, compressed_kv, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
-        batch_index = cache_kwargs.get("batch_index", None)  # TODO: add support later
 
         self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
 
@@ -371,7 +370,6 @@ class QEffDynamicCompressedKVRopeLayer:
 
     def update_k_pe(self, k_pe_cache, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
-        batch_index = cache_kwargs.get("batch_index", None)  # TODO: add support later
 
         self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
 
@@ -394,7 +392,6 @@ class QEffDynamicCompressedKVRopeLayer:
         # Gather
         ckv_out = self.ckv
         position_ids = cache_kwargs.get("position_ids")
-        batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = ckv_out.shape
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
@@ -417,7 +414,6 @@ class QEffDynamicCompressedKVRopeLayer:
         # Gather
         k_pe_out = self.k_pe
         position_ids = cache_kwargs.get("position_ids")
-        batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = k_pe_out.shape
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
@@ -438,14 +434,12 @@ class QEffDynamicCompressedKVRopeLayer:
 
     def write_only_k_pe(self, k_pe_cache, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
-        batch_index = cache_kwargs.get("batch_index", None)  # TODO: add support later
 
         self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
         return self.k_pe
 
     def write_only_ckv(self, compressed_kv, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
-        batch_index = cache_kwargs.get("batch_index", None)  # TODO: add support later
 
         self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
         return self.ckv
@@ -473,11 +467,11 @@ class QEffDynamicCompressedKVRopeCache:
         return self.layers[layer_idx].read_only_blocked_k_pe(start_index, end_index, cache_kwargs)
 
     def write_only_ckv(self, ckv, layer_idx, cache_kwargs):
-        #self.append_new_layers(layer_idx)
+        # self.append_new_layers(layer_idx)
         return self.layers[layer_idx].write_only_ckv(ckv, cache_kwargs)
 
     def write_only_k_pe(self, k_pe, layer_idx, cache_kwargs):
-        #self.append_new_layers(layer_idx)
+        # self.append_new_layers(layer_idx)
         return self.layers[layer_idx].write_only_k_pe(k_pe, cache_kwargs)
 
     @classmethod
