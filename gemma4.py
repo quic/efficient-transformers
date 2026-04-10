@@ -13,6 +13,29 @@ from QEfficient.utils.run_utils import ApiRunner
 
 torch.manual_seed(42)
 
+chat_template="""
+{%- for message in messages %}
+    {%- if loop.index0 == 0 %}
+        {{- bos_token }}
+    {%- endif %}
+    {{- '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n' }}
+    {%- if message['content'] is string %}
+        {{- message['content'] }}
+    {%- else %}
+        {%- for content in message['content'] %}
+            {%- if content['type'] == 'image' %}
+                {{- '<|image|>' }}
+            {%- elif content['type'] == 'text' %}
+                {{- content['text'] }}
+            {%- endif %}
+        {%- endfor %}
+    {%- endif %}
+    {{- '<|eot_id|>' }}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' }}
+{%- endif %}
+"""
 
 def print_perf_stats(exec_info):
     if not hasattr(exec_info, "perf_metrics"):
@@ -77,6 +100,7 @@ def prepare_inputs(processor, system_prompt: str, user_prompt: str, image_source
         messages[-1]["content"][0]["url"] = image_source
         inputs = processor.apply_chat_template(
             messages,
+            chat_template,
             tokenize=True,
             return_dict=True,
             return_tensors="pt",
@@ -87,6 +111,7 @@ def prepare_inputs(processor, system_prompt: str, user_prompt: str, image_source
         rendered_prompt = processor.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = processor.tokenizer.apply_chat_template(
             messages,
+            chat_template,
             tokenize=True,
             return_dict=True,
             return_tensors="pt",

@@ -11,6 +11,7 @@ from typing import List, Optional, Type, Union
 
 import onnx
 import torch
+import numpy as np
 import torch.nn as nn
 import yaml
 from transformers.cache_utils import Cache
@@ -33,7 +34,7 @@ from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
-
+from QEfficient.base.onnx_transforms import FP16ClipTransform
 _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
 _DISABLE_EXPORT_FP16_CLAMP = False
@@ -894,7 +895,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
 
     def generate_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
         return QEffGemma4ForCausalLM.generate_npi_file(self, onnx_path, model_name)
-
+    
     def generate_vision_npi_file(self, onnx_path: Union[str, Path], model_name: Optional[str] = None) -> str:
         del model_name
         onnx_path = Path(onnx_path)
@@ -1090,3 +1091,42 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         if kv_offload:
             return {"vision": vision_inputs, "lang": lang_inputs}
         return {**vision_inputs, **lang_inputs}
+    
+    def remove_fp16clip_transform_if_disabled(self, effective_fp16clip: bool):
+        """
+        Remove FP16ClipTransform from ONNX transforms when FP16 clipping is disabled.
+        """
+        if not effective_fp16clip:
+            # ---- language model
+            if hasattr(self, "lang_model") and hasattr(self.lang_model, "_onnx_transforms"):
+                self.lang_model._onnx_transforms = [
+                    t for t in self.lang_model._onnx_transforms
+                    if t is not FP16ClipTransform
+                ]
+
+            # ---- vision model (optional)
+            if getattr(self, "vision_model", None) is not None:
+                if hasattr(self.vision_model, "_onnx_transforms"):
+                    self.vision_model._onnx_transforms = [
+                        t for t in self.vision_model._onnx_transforms
+                        if t is not FP16ClipTransform
+                    ]
+
+    def normalize_generated_ids(self,generated_ids):
+        array = np.asarray(generated_ids)
+        if array.dtype == object:
+            array = np.asarray([np.asarray(row).reshape(-1) for row in generated_ids], dtype=np.int64)
+        array = np.asarray(array)
+        if array.ndim == 1:
+            array = array.reshape(1, -1)
+        elif array.ndim > 2:
+            array = array.reshape(array.shape[0], -1)
+        return array.astype(np.int64, copy=False)
+    
+    def effective_lens(self,prefill_seq_len:int,ctx_len:int,prompt_len:int,generation_len:int,skip_vision:bool):
+        effective_ctx_len= max(ctx_len, prompt_len + generation_len)
+        if skip_vision:
+            effective_prefill_seq_len= prefill_seq_len
+        else:    
+            effective_prefill_seq_len = max(prefill_seq_len, prompt_len)
+        return effective_prefill_seq_len, effective_ctx_len

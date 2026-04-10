@@ -1685,6 +1685,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
+        convert_to_fp16 = compiler_options.pop("convert_to_fp16", True)
         vision_compiler_options = compiler_options.copy()
         vision_compiler_options.pop("node_precision_info", None)
         if vision_node_precision_info is not None:
@@ -1694,7 +1695,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
-                convert_to_fp16=True,
+                convert_to_fp16=convert_to_fp16,
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -1726,7 +1727,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_only=True,
                 retained_state=True,
                 specializations=specializations["lang"],
-                convert_to_fp16=True,
+                convert_to_fp16=convert_to_fp16,
                 mxfp6_matmul=mxfp6_matmul,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -1964,6 +1965,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["position_ids"] = np.where(
                 lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
             )  # Need to use -1 as position_ids for invalid tokens
+        if "mm_token_type_ids" not in lang_inputs and "mm_token_type_ids" in lang_session.input_names:
+            # Keep prefill/decode dynamic shapes aligned when callers omit multimodal token type ids.
+            lang_inputs["mm_token_type_ids"] = np.zeros_like(
+                lang_inputs["input_ids"], dtype=lang_inputs["input_ids"].dtype
+            )
 
         not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         if not_mllama:
