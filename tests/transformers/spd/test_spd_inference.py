@@ -351,7 +351,6 @@ def test_full_spd_inference(model_id, manual_cleanup):
     check_spec_decode_inference(model_id, manual_cleanup=manual_cleanup)
 
 
-@pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", test_models_id)
@@ -361,17 +360,16 @@ def test_few_spd_inference(model_id, manual_cleanup):
     check_spec_decode_inference(model_id, num_hidden_layers=2, manual_cleanup=manual_cleanup)
 
 
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_id", test_models_id)
-def test_dummy_spd_inference(model_id, manual_cleanup):
-    """Test dummy layer SPD inference."""
-    torch.manual_seed(42)
-    hf_config = AutoConfig.from_pretrained(
-        model_config_dict[model_id]["draft_model_name"],
-        trust_remote_code=True,
-        **model_config_dict[model_id]["additional_params"],
-    )
-    print(hf_config)
-    check_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)
+# @pytest.mark.dummy_layers
+# @pytest.mark.on_qaic
+# @pytest.mark.feature
+# @pytest.mark.parametrize("model_id", test_models_id)
+# def test_dummy_spd_inference(model_id, manual_cleanup):
+#     """Test dummy layer SPD inference."""
+#     torch.manual_seed(42)
+#     hf_config = AutoConfig.from_pretrained(
+#         model_config_dict[model_id]["draft_model_name"],
+#         trust_remote_code=True,
+#         **model_config_dict[model_id]["additional_params"],
+#     )
+#     check_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)

@@ -553,7 +553,7 @@
       }
     },
     {
-      "model_name": "openai/gpt-oss-120b",
+      "model_name": "openai/gpt-oss-20b",
       "model_type": "gpt_oss",
       "additional_params": {
         "num_hidden_layers": 2,

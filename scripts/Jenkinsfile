@@ -33,7 +33,7 @@ pipeline {
         )
         string(
             name: 'SELECT_TEST_STAGES',
-            defaultValue: '',
+            defaultValue: 'ALL',
             description: 'Select which test stages you want to run (all run by default)'
         )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)

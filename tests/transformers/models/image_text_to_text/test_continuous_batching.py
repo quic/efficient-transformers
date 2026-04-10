@@ -67,6 +67,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         model_name,
         num_hidden_layers=num_hidden_layers,
         model_hf=model_hf,
+        continuous_batching=True,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
         kv_offload=kv_offload,

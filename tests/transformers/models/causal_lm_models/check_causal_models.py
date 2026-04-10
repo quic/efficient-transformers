@@ -146,13 +146,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         continuous_batching=continuous_batching,
         qaic_config=qaic_config,
     )
-    onnx_model_path = qeff_model.export()
 
     if continuous_batching is False:
         pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
-        ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
-        gen_len = ort_tokens.shape[-1]
-        assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
     if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
         if continuous_batching:
@@ -160,9 +156,19 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
         else:
             pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
-            assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-                "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-            )
+
+    onnx_model_path = qeff_model.export()
+    if continuous_batching is False:
+        ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
+        gen_len = ort_tokens.shape[-1]
+
+    if pytorch_hf_tokens is not None and ort_tokens is not None:
+        assert (pytorch_hf_tokens == ort_tokens).all(), (
+            "Tokens don't match for HF PyTorch model output and ONNXRT output."
+        )
+
+    if pytorch_kv_tokens is not None and ort_tokens is not None:
+        assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
     compiler_options = {}
     if continuous_batching and prompt_len == 1:

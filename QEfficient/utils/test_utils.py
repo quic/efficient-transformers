@@ -40,7 +40,15 @@ def get_qeff_model(
     return qeff_model
 
 
-def load_vlm_qeff_model(model_name, num_hidden_layers=-1, kv_offload=False, model_hf=None):
+def load_vlm_qeff_model(
+    model_name,
+    num_hidden_layers=-1,
+    kv_offload=False,
+    model_hf=None,
+    continuous_batching=False,
+    enable_qnn=None,
+    qnn_config=None,
+):
     if num_hidden_layers != -1:
         try:
             qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -48,6 +56,7 @@ def load_vlm_qeff_model(model_name, num_hidden_layers=-1, kv_offload=False, mode
                 low_cpu_mem_usage=False,
                 config=model_hf.config,
                 kv_offload=kv_offload,
+                continuous_batching=continuous_batching,
             )
         except ValueError:
             qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -55,12 +64,15 @@ def load_vlm_qeff_model(model_name, num_hidden_layers=-1, kv_offload=False, mode
                 low_cpu_mem_usage=False,
                 config=model_hf.config,
                 kv_offload=kv_offload,
+                continuous_batching=continuous_batching,
             )
     else:
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
+            continuous_batching=continuous_batching,
         )
+
     return qeff_model
 
 

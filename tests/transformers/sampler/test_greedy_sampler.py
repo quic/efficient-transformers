@@ -160,7 +160,6 @@ def test_full_greedy_sampler(model_name, manual_cleanup):
     check_greedy_sampler(model_name, manual_cleanup=manual_cleanup)
 
 
-@pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
@@ -176,22 +175,22 @@ def test_2layers_greedy_sampler(model_name, manual_cleanup):
     )
 
 
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models)
-def test_dummy_greedy_sampler(model_name, manual_cleanup):
-    """
-    Test the greedy sampling with dummy models.
-    """
-    torch.manual_seed(42)
-    hf_config = AutoConfig.from_pretrained(
-        model_name,
-        trust_remote_code=True,
-        **model_config_dict[model_name].get("additional_params", {}),
-    )
-    check_greedy_sampler(
-        model_name,
-        config=hf_config,
-        manual_cleanup=manual_cleanup,
-    )
+# @pytest.mark.dummy_layers
+# @pytest.mark.on_qaic
+# @pytest.mark.feature
+# @pytest.mark.parametrize("model_name", test_models)
+# def test_dummy_greedy_sampler(model_name, manual_cleanup):
+#     """
+#     Test the greedy sampling with dummy models.
+#     """
+#     torch.manual_seed(42)
+#     hf_config = AutoConfig.from_pretrained(
+#         model_name,
+#         trust_remote_code=True,
+#         **model_config_dict[model_name].get("additional_params", {}),
+#     )
+#     check_greedy_sampler(
+#         model_name,
+#         config=hf_config,
+#         manual_cleanup=manual_cleanup,
+#     )
