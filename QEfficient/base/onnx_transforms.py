@@ -236,8 +236,7 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         do_split = SplitTensorsTransform in requested
         fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
         file_num_tracker = {"num": 0, "size": 0}
-        if onnx_base_dir is not None:
-            external_data_helper.load_external_data_for_model(model, onnx_base_dir)
+        external_data_helper.load_external_data_for_model(model, onnx_base_dir)
 
         if do_fp16 or do_split:
             for tensor in external_data_helper._get_all_tensors(model):
