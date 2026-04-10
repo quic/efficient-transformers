@@ -2984,7 +2984,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params["chunking"] = True
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
-        num_q_blocks = self.hash_params["blocking_config"].num_q_blocks
+        num_q_blocks = (
+            self.hash_params["blocking_config"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
+        )
         if num_q_blocks is None:
             if (
                 prefill_seq_len is None

@@ -377,6 +377,8 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
+        qaic_config: Optional[dict] = None,
+        **compiler_options,
     ):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
@@ -392,6 +394,27 @@ class QEFFBaseModel(ABC):
                     "enable_chunking": enable_chunking,
                 }
             )
+
+        # Transform before export
+        qaic_config = (
+            qaic_config if qaic_config else getattr(self.model, "qaic_config", None) if hasattr(self, "model") else None
+        )
+        if specializations is not None:
+            bs = require_value(get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
+            seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
+            ctx_len = get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
+        else:
+            bs = None
+            seq_len = None
+            ctx_len = None
+
+        self.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
 
         self.export(**kwargs)
         return self.onnx_path
@@ -447,9 +470,6 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        disable_blocking: Optional[bool] = True,
-        blocking_mode: Optional[str] = "hqkv",
-        vtcm_ratio: Optional[float] = 0.75,
         qaic_config: Optional[dict] = None,
         **compiler_options,
     ) -> str:
@@ -476,23 +496,6 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-        # Transform before export
-        qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
-        bs = require_value(get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
-        seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
-        ctx_len = get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
-        self.transform(
-            ctx_len=ctx_len,
-            seq_len=seq_len,
-            bs=bs,
-            num_devices=mdp_ts_num_devices,
-            disable_blocking=disable_blocking,
-            blocking_mode=blocking_mode,
-            vtcm_ratio=vtcm_ratio,
-            qaic_config=qaic_config,
-            **compiler_options,
-        )
-
         onnx_path = Path(
             onnx_path
             if onnx_path
@@ -505,6 +508,9 @@ class QEFFBaseModel(ABC):
                 offload_pt_weights,
                 use_onnx_subfunctions,
                 retain_full_kv,
+                num_devices=mdp_ts_num_devices,
+                qaic_config=qaic_config,
+                **compiler_options,
             )
         )
         compile_dir = Path(compile_dir or onnx_path.parent)

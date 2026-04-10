@@ -150,7 +150,10 @@ class QEffMixtralAttention(MixtralAttention):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            # kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
+
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
