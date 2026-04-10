@@ -25,7 +25,7 @@ import tempfile
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Dict
 
 import numpy as np
 import onnx
@@ -213,21 +213,6 @@ def _run_whisper_export_smoke(qeff_model: QEFFAutoModelForSpeechSeq2Seq, out_dir
     return onnx_path
 
 
-def _assert_proxy_only_onnx_transform_policy(
-    qeff_model, enable_proxy: bool, always_on_transforms: Optional[Set[str]] = None
-) -> None:
-    transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
-    proxy_only_transforms = {"FP16ClipTransform", "SplitTensorsTransform"}
-    always_on_transforms = always_on_transforms or set()
-    conditional_proxy_transforms = proxy_only_transforms - always_on_transforms
-
-    if enable_proxy:
-        assert proxy_only_transforms.issubset(transform_names)
-    else:
-        assert conditional_proxy_transforms.isdisjoint(transform_names)
-        assert always_on_transforms.issubset(transform_names)
-
-
 def _skip_on_model_fetch_error(exc: Exception, model_id: str) -> None:
     pytest.skip(
         f"Skipping {model_id}: model unavailable or unsupported in this environment ({type(exc).__name__}: {exc})"
@@ -394,7 +379,7 @@ def test_text_embedding_fp16_clip_transform_and_export(tmp_path):
     transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
 
     assert "FP16ClipTransform" in transform_names
-    assert "SplitTensorsTransform" not in transform_names
+    assert "SplitTensorsTransform" in transform_names
 
     inputs = tokenizer("hello world", return_tensors="pt")
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "embedding-ai100"))
@@ -607,7 +592,6 @@ def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
-    _assert_proxy_only_onnx_transform_policy(qeff_model, enable_proxy=True)
     onnx_path = _exported_onnx_path(
         qeff_model.export(tmp_path / "with-subfunctions-and-proxy", use_onnx_subfunctions=True)
     )
@@ -642,61 +626,3 @@ def test_awq_export_smoke(tmp_path):
         onnx_model = onnx.load(onnx_path, load_external_data=False)
 
     assert any(node.op_type == "MatMulNBits" for node in onnx_model.graph.node)
-
-
-@pytest.mark.llm_model
-def test_proxy_toggle_onnx_transform_policy_for_causal_lm():
-    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
-    try:
-        qeff_default = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
-        qeff_proxy = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True, enable_proxy=True)
-    except Exception as exc:
-        _skip_on_model_fetch_error(exc, model_id)
-
-    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
-    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
-
-
-@pytest.mark.llm_model
-def test_proxy_toggle_onnx_transform_policy_for_embedding():
-    model_id = TINY_TEXT_EMBEDDING_MODEL_ID
-    try:
-        qeff_default = QEFFAutoModel.from_pretrained(model_id)
-        qeff_proxy = QEFFAutoModel.from_pretrained(model_id, enable_proxy=True)
-    except Exception as exc:
-        _skip_on_model_fetch_error(exc, model_id)
-
-    _assert_proxy_only_onnx_transform_policy(
-        qeff_default, enable_proxy=False, always_on_transforms={"FP16ClipTransform"}
-    )
-    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
-
-
-@pytest.mark.llm_model
-def test_proxy_toggle_onnx_transform_policy_for_whisper():
-    model_id = TINY_WHISPER_MODEL_ID
-    try:
-        qeff_default = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_id, trust_remote_code=True)
-        qeff_proxy = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_id, trust_remote_code=True, enable_proxy=True)
-    except Exception as exc:
-        _skip_on_model_fetch_error(exc, model_id)
-
-    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
-    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
-
-
-@pytest.mark.llm_model
-def test_proxy_toggle_onnx_transform_policy_for_vlm():
-    model_id = VLM_TEXT_RUNTIME_MODEL_ID
-    try:
-        qeff_default = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_id, trust_remote_code=True, kv_offload=False
-        )
-        qeff_proxy = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_id, trust_remote_code=True, enable_proxy=True, kv_offload=False
-        )
-    except Exception as exc:
-        _skip_on_model_fetch_error(exc, model_id)
-
-    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
-    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)

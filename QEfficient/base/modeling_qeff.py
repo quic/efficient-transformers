@@ -20,9 +20,7 @@ import torch
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
-    FP16ClipTransform,
     OnnxTransformPipeline,
-    SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
@@ -54,8 +52,9 @@ class QEFFBaseModel(ABC):
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
-    def _transform_names(self) -> List[str]:
-        return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
+    @classmethod
+    def _transform_names(cls) -> List[str]:
+        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -246,7 +245,10 @@ class QEFFBaseModel(ABC):
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
 
-        export_dir.mkdir(parents=True, exist_ok=True)
+        # Setup temporary paths
+        tmp_onnx_dir = export_dir / "onnx_tmp"
+        tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
+        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
         input_names = []
@@ -276,7 +278,7 @@ class QEFFBaseModel(ABC):
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
-                str(onnx_path),
+                str(tmp_onnx_path),
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -285,13 +287,11 @@ class QEFFBaseModel(ABC):
             )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(onnx_path, load_external_data=False)
+            model = onnx.load(tmp_onnx_path, load_external_data=False)
 
-            needs_external_tensor_data = any(
-                transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
-            )
+            # Clear temporary references
             transform_kwargs = {
-                "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
+                "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
@@ -306,9 +306,7 @@ class QEFFBaseModel(ABC):
             )
             logger.info("ONNX transforms applied")
 
-            onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
-            onnx.save(model, onnx_path_tmp)
-            onnx_path_tmp.replace(onnx_path)
+            onnx.save(model, onnx_path)
             del model
             gc.collect()
             logger.info("Transformed ONNX saved")
@@ -316,6 +314,9 @@ class QEFFBaseModel(ABC):
         except Exception as e:
             logger.error(f"ONNX export or transforms failed: {e}")
             raise e
+
+        finally:
+            shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         self.onnx_path = onnx_path
         return onnx_path
