@@ -106,13 +106,22 @@ class CustomOpTransform(BaseOnnxTransform):
     @classmethod
     def apply(cls, model: ModelProto) -> bool:
         op_applied = False
+
+        # Register with PyTorch ONNX exporter (for export time)
         for op_name, (func_class, _) in cls._custom_ops.items():
             if hasattr(func_class, "symbolic"):
                 torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, ONNX_EXPORT_OPSET)
 
+        used_op_types = {node.op_type for node in model.graph.node}
+        for function_proto in model.functions:
+            used_op_types.update(node.op_type for node in function_proto.node)
+
+        # Add function prototypes to model
         existing = {f.name for f in model.functions}
         for _, onnxscript_func in cls._custom_ops.values():
             proto = onnxscript_func.to_function_proto()
+            if proto.name not in used_op_types:
+                continue
             if proto.name not in existing:
                 model.functions.append(proto)
                 op_applied = True
