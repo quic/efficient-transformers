@@ -10,32 +10,11 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.utils.run_utils import ApiRunner
-
+from gemma4_utils import (
+    build_messages,
+    CHAT_TEMPLATE,
+)
 torch.manual_seed(42)
-
-chat_template="""
-{%- for message in messages %}
-    {%- if loop.index0 == 0 %}
-        {{- bos_token }}
-    {%- endif %}
-    {{- '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n' }}
-    {%- if message['content'] is string %}
-        {{- message['content'] }}
-    {%- else %}
-        {%- for content in message['content'] %}
-            {%- if content['type'] == 'image' %}
-                {{- '<|image|>' }}
-            {%- elif content['type'] == 'text' %}
-                {{- content['text'] }}
-            {%- endif %}
-        {%- endfor %}
-    {%- endif %}
-    {{- '<|eot_id|>' }}
-{%- endfor %}
-{%- if add_generation_prompt %}
-    {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' }}
-{%- endif %}
-"""
 
 def print_perf_stats(exec_info):
     if not hasattr(exec_info, "perf_metrics"):
@@ -74,24 +53,6 @@ def resolve_effective_prefill_seq_len(requested_prefill_seq_len: int, prompt_len
     return max(requested_prefill_seq_len, prompt_len)
 
 
-def build_messages(system_prompt: str, user_prompt: str, use_image: bool):
-    messages = []
-    if system_prompt and not use_image:
-        messages.append({"role": "system", "content": system_prompt})
-    if use_image:
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": user_prompt},
-                ],
-            }
-        )
-    else:
-        messages.append({"role": "user", "content": user_prompt})
-    return messages
-
 
 def prepare_inputs(processor, system_prompt: str, user_prompt: str, image_source: str | None):
     use_image = image_source is not None
@@ -100,7 +61,6 @@ def prepare_inputs(processor, system_prompt: str, user_prompt: str, image_source
         messages[-1]["content"][0]["url"] = image_source
         inputs = processor.apply_chat_template(
             messages,
-            chat_template,
             tokenize=True,
             return_dict=True,
             return_tensors="pt",
@@ -111,7 +71,6 @@ def prepare_inputs(processor, system_prompt: str, user_prompt: str, image_source
         rendered_prompt = processor.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = processor.tokenizer.apply_chat_template(
             messages,
-            chat_template,
             tokenize=True,
             return_dict=True,
             return_tensors="pt",
