@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# ----------------------------------------------------------------------------
+
 import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -5,15 +12,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 
 prompt = "Once upon a time,"
-num_kv_heads_repeat = 4  # TS=4
+num_kv_heads_repeat = 1  # When using KIMI_BLOCKING="kv" or None, make sure this is set to 1. Use only for KIMI_BLOCKING="h" and this number should be equal to TS in that case.
 num_hidden_layers = 2
+TS = 4
 enable_mla = True
 mla_absorption_config = {"enable": False, "online": False}
 
-# model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
-model_path = (
-    "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
-)
+model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
+# model_path = "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
 model = AutoModelForCausalLM.from_pretrained(
     model_path, torch_dtype=torch.float32, num_hidden_layers=num_hidden_layers, trust_remote_code=True
 )
@@ -41,10 +47,15 @@ inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded
 inputs.pop("token_type_ids", None)
 inputs = {k: torch.from_numpy(v) for k, v in inputs.items()}
 
-pad_shape_k = (1, 64, CTX_LEN, 192)
-pad_shape_v = (1, 64, CTX_LEN, 128)
-pad_shape_ckv = (1, num_kv_heads_repeat, CTX_LEN, 512)
-pad_shape_k_pe = (1, num_kv_heads_repeat, CTX_LEN, 64)
+pad_shape_k = (
+    1,
+    model.config.num_attention_heads,
+    CTX_LEN,
+    model.config.qk_nope_head_dim + model.config.qk_rope_head_dim,
+)
+pad_shape_v = (1, model.config.num_attention_heads, CTX_LEN, model.config.v_head_dim)
+pad_shape_ckv = (1, num_kv_heads_repeat, CTX_LEN, model.config.kv_lora_rank)
+pad_shape_k_pe = (1, num_kv_heads_repeat, CTX_LEN, model.config.qk_rope_head_dim)
 
 past_key_values = []
 compressed_kvs = []
@@ -102,7 +113,7 @@ qpc_path = qeff_model.compile(
     mla_absorption_config=mla_absorption_config,
     mxfp6_matmul=True,
     mxint8_kv_cache=False,
-    num_devices=num_kv_heads_repeat,
+    num_devices=TS,
     num_cores=16,
     # prefill_only=True,
 )

@@ -75,6 +75,7 @@ from QEfficient.transformers.quantizers.quant_transforms import (
 )
 from QEfficient.utils import (
     constants,
+    get_padding_shape_from_config,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
@@ -2805,7 +2806,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
-        if self.model.config.model_type in {"kimi_k2"}:
+        if self.model.config.model_type in {"kimi_k2", "kimi_k25"}:
             self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
             if replicate_kv_transformed:
                 self.hash_params["config"] = model.config.to_diff_dict()
@@ -3005,13 +3006,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-        # kv_cache_shape = get_padding_shape_from_config(
-        #     self.model.config, fbs if self.continuous_batching else bs, seq_len
-        # )
-        kv_cache_shape = (1, 64, seq_len, 192)
-        kv_cache_shape_v = (1, 64, seq_len, 128)
+
+        kv_cache_shape = get_padding_shape_from_config(
+            self.model.config, fbs if self.continuous_batching else bs, seq_len
+        )
         enable_chunking = kwargs.get("enable_chunking", False)
 
         # TODO: HACK handle better
@@ -3022,7 +3021,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params["mla_absorption_config"] = mla_absorption_config
             setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
 
-        if self.model.config.model_type in {"kimi_k2"}:
+        if self.model.config.model_type in {"kimi_k2", "kimi_k25"}:
             if prefill_only:
                 self.prefill(enable=True)
                 self.hash_params["prefill_only"] = True
@@ -3122,14 +3121,47 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 else pkv_dynamic_axes
             )
 
+        if self.model.config.model_type in {"kimi_k2", "kimi_k25"}:
+            if enable_mla:
+                for lay in self.model.model.layers:
+                    if lay is not None:
+                        num_heads = lay.self_attn.kv_a_proj_with_mqa.weight.shape[0] // 576
+
+                example_inputs = {k: v for k, v in example_inputs.items() if "past" not in k}
+                dynamic_axes = {k: v for k, v in dynamic_axes.items() if "past" not in k}
+                output_names = [v for v in output_names if "past" not in v]
+                example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
+                for i in range(self.num_layers):
+                    ckv = torch.zeros((bs, num_heads, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32)
+                    k_pe = torch.zeros((bs, num_heads, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32)
+                    example_inputs["compressed_kvs"][i].append(ckv)
+                    example_inputs["compressed_kvs"][i].append(k_pe)
+                    dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                    dynamic_axes[f"k_pe.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                    output_names.append(f"compressed_kv.{i}_RetainedState")
+                    output_names.append(f"k_pe.{i}_RetainedState")
+
+            else:
+                cache_shape_k = (
+                    1,
+                    self.model.config.num_attention_heads,
+                    seq_len,
+                    self.model.config.qk_nope_head_dim + self.model.config.qk_rope_head_dim,
+                )
+                cache_shape_v = (1, self.model.config.num_attention_heads, seq_len, self.model.config.v_head_dim)
+                for i in range(self.num_layers):
+                    example_inputs["past_key_values"][i].append(torch.zeros(cache_shape_k, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(torch.zeros(cache_shape_v, dtype=torch.float32))
+                    dynamic_axes[f"past_key.{i}"] = pkv_dynamic_axes[i]
+                    dynamic_axes[f"past_value.{i}"] = pkv_dynamic_axes[i]
+                    output_names.append(f"past_key.{i}_RetainedState")
+                    output_names.append(f"past_value.{i}_RetainedState")
+        else:
             for i in range(self.num_layers):
-                # for kv in ["key", "value"]:
-                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape_v, dtype=torch.float32))
-                dynamic_axes[f"past_key.{i}"] = pkv_dynamic_axes[i]
-                dynamic_axes[f"past_value.{i}"] = pkv_dynamic_axes[i]
-                output_names.append(f"past_key.{i}_RetainedState")
-                output_names.append(f"past_value.{i}_RetainedState")
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -3149,24 +3181,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
-        if enable_mla:
-            for lay in self.model.model.layers:
-                if lay is not None:
-                    num_heads = lay.self_attn.kv_a_proj_with_mqa.weight.shape[0] // 576
-
-            example_inputs = {k: v for k, v in example_inputs.items() if "past" not in k}
-            dynamic_axes = {k: v for k, v in dynamic_axes.items() if "past" not in k}
-            output_names = [v for v in output_names if "past" not in v]
-            example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
-            for i in range(self.num_layers):
-                ckv = torch.zeros((bs, num_heads, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32)
-                k_pe = torch.zeros((bs, num_heads, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32)
-                example_inputs["compressed_kvs"][i].append(ckv)
-                example_inputs["compressed_kvs"][i].append(k_pe)
-                dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}
-                dynamic_axes[f"k_pe.{i}"] = {0: "batch_size", 2: "ctx_len"}
-                output_names.append(f"compressed_kv.{i}_RetainedState")
-                output_names.append(f"k_pe.{i}_RetainedState")
 
         return self._export(
             example_inputs,

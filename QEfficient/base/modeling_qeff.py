@@ -271,17 +271,8 @@ class QEFFBaseModel(ABC):
                             )
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
-                        # input_names.extend([f"compressed_kvs.{i}",])
-                        input_names.extend(
-                            [
-                                f"compressed_kv.{i}",
-                            ]
-                        )
-                        input_names.extend(
-                            [
-                                f"k_pe.{i}",
-                            ]
-                        )
+                        input_names.extend([f"compressed_kv.{i}",])
+                        input_names.extend([f"k_pe.{i}",])
                 else:
                     input_names.append(param)
 
@@ -343,7 +334,6 @@ class QEFFBaseModel(ABC):
         retain_full_kv: Optional[bool] = False,
         enable_mla: Optional[bool] = False,
         mla_absorption_config: Optional[bool] = False,
-        mdp_ts_num_devices: Optional[int] = 1,
     ):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
@@ -351,7 +341,6 @@ class QEFFBaseModel(ABC):
             "retain_full_kv": retain_full_kv,
             "enable_mla": enable_mla,
             "mla_absorption_config": mla_absorption_config,
-            "mdp_ts_num_devices": mdp_ts_num_devices,
         }
 
         if prefill_only:
@@ -426,7 +415,6 @@ class QEFFBaseModel(ABC):
                 retain_full_kv,
                 enable_mla,
                 mla_absorption_config,
-                mdp_ts_num_devices,
             )
         )
         compile_dir = Path(compile_dir or onnx_path.parent)

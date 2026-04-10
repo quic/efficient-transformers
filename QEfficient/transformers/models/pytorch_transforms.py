@@ -1071,10 +1071,6 @@ class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransfo
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
     }
-    """_match_string_replace_method = {
-        **{v: k for k, v in PrefillOnlyExternalModuleMapperTransform._match_string_replace_method.items()},
-    }
-    """
 
 
 class T5ModelTransform(ModuleMappingTransform):
