@@ -441,7 +441,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
                 blocking_config=blocking_config,
                 comp_ctx_length=comp_ctx_lengths,
                 batch_index=batch_index,
-                position_ids=position_ids,
+                position_ids=position_ids[0],
                 past_seen_tokens=past_seen_tokens,
             )
         else:
@@ -453,7 +453,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
-                position_ids=position_ids,
+                position_ids=position_ids[0],
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,
