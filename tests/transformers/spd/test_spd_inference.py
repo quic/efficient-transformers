@@ -337,8 +337,8 @@ def check_spec_decode_inference(
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
     assert os.path.isfile(os.path.join(os.path.dirname(target_model_qpc_path), "qconfig.json"))
     assert os.path.isfile(os.path.join(os.path.dirname(draft_model_qpc_path), "qconfig.json"))
-    manual_cleanup(target_model_qpc_path)
-    manual_cleanup(draft_model_qpc_path)
+    manual_cleanup(target_model.onnx_path)
+    manual_cleanup(draft_model.onnx_path)
 
 
 @pytest.mark.full_layers

@@ -437,7 +437,7 @@ def check_pld_spec_decode_inference(
     ]  # Because we always run for single input and single batch size
     all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
-    manual_cleanup(target_model_qpc_path)
+    manual_cleanup(target_model.onnx_path)
 
 
 @pytest.mark.full_layers
@@ -476,5 +476,4 @@ def test_dummy_pld_inference(model_id, manual_cleanup):
     hf_config = AutoConfig.from_pretrained(
         model_config_dict[model_id]["target_model_name"], **model_config_dict[model_id]["additional_params"]
     )
-    print(hf_config)
     check_pld_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)
