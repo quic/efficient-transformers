@@ -156,9 +156,9 @@ def check_sampler_transform(
     assert "token_bitmasks" in model_w_sampler_w_guided_decoding_session.input_names, (
         "Sampler input token_bitmasks not found in QPC compiled with On Device Sampler and Guided Decoding"
     )
-    manual_cleanup(model_w_sampler_qpc_path)
-    manual_cleanup(model_w_sampler_w_guided_decoding_qpc_path)
-    manual_cleanup(model_wo_sampler_qpc_path)
+    manual_cleanup(model_w_sampler.onnx_path)
+    manual_cleanup(model_w_sampler_w_guided_decoding.onnx_path)
+    manual_cleanup(model_wo_sampler.onnx_path)
 
 
 @pytest.mark.full_layers

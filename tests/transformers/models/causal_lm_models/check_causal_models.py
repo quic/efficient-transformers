@@ -51,7 +51,7 @@ def get_custom_n_layers(model_name):
     if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8", "openai/gpt-oss-20b"}:
         return 2
     elif model_name in ModelConfig.SWIFTKV_MODELS:
-        return None
+        return -1
     return 1
 
 
