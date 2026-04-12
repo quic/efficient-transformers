@@ -30,7 +30,7 @@ model_config_dict = {model["model_name"]: model for model in sampler_models}
 def check_greedy_sampler(
     model_name: str,
     manual_cleanup: callable,
-    num_hidden_layers: Optional[int] = None,
+    num_hidden_layers: Optional[int] = -1,
     config: Optional[AutoConfig] = None,
 ):
     """
