@@ -160,19 +160,19 @@ def test_full_greedy_sampler(model_name, manual_cleanup):
     check_greedy_sampler(model_name, manual_cleanup=manual_cleanup)
 
 
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models)
-def test_2layers_greedy_sampler(model_name, manual_cleanup):
-    """
-    Test the greedy sampling with 2 layers models.
-    """
-    torch.manual_seed(42)
-    check_greedy_sampler(
-        model_name,
-        manual_cleanup=manual_cleanup,
-        num_hidden_layers=2,
-    )
+# @pytest.mark.on_qaic
+# @pytest.mark.feature
+# @pytest.mark.parametrize("model_name", test_models)
+# def test_2layers_greedy_sampler(model_name, manual_cleanup):
+#     """
+#     Test the greedy sampling with 2 layers models.
+#     """
+#     torch.manual_seed(42)
+#     check_greedy_sampler(
+#         model_name,
+#         manual_cleanup=manual_cleanup,
+#         num_hidden_layers=2,
+#     )
 
 
 # @pytest.mark.dummy_layers

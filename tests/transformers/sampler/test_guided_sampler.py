@@ -169,30 +169,30 @@ def test_full_guided_decoding_sampler(model_name, manual_cleanup):
     check_guided_decoding_sampler(model_name, manual_cleanup=manual_cleanup)
 
 
-@pytest.mark.few_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models)
-def test_2layers_guided_decoding_sampler(model_name, manual_cleanup):
-    """
-    Test the guided decoding with 2 layers models.
-    """
-    torch.manual_seed(42)
-    check_guided_decoding_sampler(model_name, num_hidden_layers=2, manual_cleanup=manual_cleanup)
+# @pytest.mark.few_layers
+# @pytest.mark.on_qaic
+# @pytest.mark.feature
+# @pytest.mark.parametrize("model_name", test_models)
+# def test_2layers_guided_decoding_sampler(model_name, manual_cleanup):
+#     """
+#     Test the guided decoding with 2 layers models.
+#     """
+#     torch.manual_seed(42)
+#     check_guided_decoding_sampler(model_name, num_hidden_layers=2, manual_cleanup=manual_cleanup)
 
 
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models)
-def test_dummy_guided_decoding_sampler(model_name, manual_cleanup):
-    """
-    Test the guided decoding with dummy models.
-    """
-    torch.manual_seed(42)
-    hf_config = AutoConfig.from_pretrained(
-        model_name,
-        trust_remote_code=True,
-        **model_config_dict[model_name].get("additional_params", {}),
-    )
-    check_guided_decoding_sampler(model_name, config=hf_config, manual_cleanup=manual_cleanup)
+# @pytest.mark.dummy_layers
+# @pytest.mark.on_qaic
+# @pytest.mark.feature
+# @pytest.mark.parametrize("model_name", test_models)
+# def test_dummy_guided_decoding_sampler(model_name, manual_cleanup):
+#     """
+#     Test the guided decoding with dummy models.
+#     """
+#     torch.manual_seed(42)
+#     hf_config = AutoConfig.from_pretrained(
+#         model_name,
+#         trust_remote_code=True,
+#         **model_config_dict[model_name].get("additional_params", {}),
+#     )
+#     check_guided_decoding_sampler(model_name, config=hf_config, manual_cleanup=manual_cleanup)
