@@ -167,6 +167,8 @@ def make_tiny_gemma3():
         ],
         rope_scaling={"rope_type": "default"},
     )
+    if not hasattr(cfg, "sliding_window_pattern") and hasattr(cfg, "_sliding_window_pattern"):
+        cfg.sliding_window_pattern = cfg._sliding_window_pattern
     return Gemma3ForCausalLM(cfg).eval(), cfg
 
 
