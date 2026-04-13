@@ -15,6 +15,7 @@ from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -52,6 +53,26 @@ def yarn_linear_ramp_mask(min, max, dim):
     linear_func = (torch.arange(dim, dtype=torch.float32) - min) / (max - min)
     ramp_func = torch.clamp(linear_func, 0, 1)
     return ramp_func
+
+
+class QEffDeepseekV3CustomRMSNormAIC(nn.Module):
+    """
+    RMSNorm module that works by replacing the current module with compiler known custom-op.
+    """
+
+    def forward(self, hidden_states):
+        """
+        Forward pass of the RMSNorm module.
+
+        Args:
+            hidden_states (torch.Tensor): Input tensor to be normalized.
+
+        Returns:
+            torch.Tensor: Normalized tensor.
+        """
+        return CustomRMSNormFunc.apply(
+            hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+        )
 
 
 class DeepseekV3RotaryEmbedding(nn.Module):

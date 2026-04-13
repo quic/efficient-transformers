@@ -252,6 +252,7 @@ from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
 )
 from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import (
     QEffDeepseekV3Attention,
+    QEffDeepseekV3CustomRMSNormAIC,
     QEffDeepseekV3DecoderLayer,
     QEffDeepseekV3ForCausalLM,
     QEffDeepseekV3Model,
@@ -1048,7 +1049,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "__qeff_init__": QEffDeepseekV3Attention.__qeff_init__,
         },
         "DeepseekV3RMSNorm": {
-            "forward": QEFFGrok1CustomRMSNormAIC.forward,
+            "forward": QEffDeepseekV3CustomRMSNormAIC.forward,
         },
     }
 

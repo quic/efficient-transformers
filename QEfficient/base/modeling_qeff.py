@@ -236,6 +236,8 @@ class QEFFBaseModel(ABC):
         """
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
+        export_kwargs.pop("enable_mla", None)
+        export_kwargs.pop("mla_absorption_config", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
