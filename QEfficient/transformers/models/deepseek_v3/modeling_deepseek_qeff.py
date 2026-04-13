@@ -372,14 +372,16 @@ class QEffDeepseekV3Attention(nn.Module):
                     )
                 attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(qrope_nope.dtype)
                 attn_output = torch.matmul(attn_weights, kva)
-                attn_output = torch.matmul(attn_output, self.per_head_v_up[:, h_start:h_end, :, :])
+                attn_output = torch.matmul(
+                    attn_output, self.per_head_v_up[:, h_start:h_end, :, :]
+                )  # TODO: merge this matmul with o_proj
                 attn_output_list.append(attn_output)
                 attn_weights_list.append(attn_weights)
 
         attn_output = torch.cat(attn_output_list, dim=1)
         attn_weights = torch.cat(attn_weights_list, dim=1)
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
-        attn_output = self.o_proj(attn_output)
+        attn_output = self.o_proj(attn_output)  # 7168, 8192
 
         return attn_output, attn_weights, compressed_kvs, None
 
@@ -518,7 +520,7 @@ class QEffDeepseekV3Attention(nn.Module):
                     skip_future,
                 )
 
-        attn_output = torch.matmul(output, self.per_head_v_up)
+        attn_output = torch.matmul(output, self.per_head_v_up)  # TODO: merge this matmul with o_proj
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
         attn_output = self.o_proj(attn_output)
 
@@ -572,17 +574,14 @@ class QEffDeepseekV3Attention(nn.Module):
 
         if enable_absorption:
             if absorb_online:
-                print("online absorption")
                 out = torch.matmul(self.per_head_q_up, self.per_head_k_up)
                 q_nope_compressed = torch.matmul(q_a_proj_out, out)
             else:
-                print("using fused qk")
                 q_nope_compressed = torch.matmul(q_a_proj_out, self.fusedqk)
 
             query_states = torch.cat((q_nope_compressed, q_pe), dim=-1)
             key_states = torch.cat((kva, k_pe), dim=-1)
         else:
-            print("no absorption")
             q_nope = torch.bmm(q_a_proj_out, self.q_up)
             q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
             query_states = torch.cat((q_nope, q_pe), dim=-1)
@@ -669,7 +668,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 **kwargs,
             )
 
-    def forward(
+    def forward_full_kv(
         self,
         hidden_states: torch.Tensor,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
@@ -727,6 +726,121 @@ class QEffDeepseekV3Attention(nn.Module):
         attn_output = self.o_proj(attn_output)
 
         return attn_output, attn_weights, past_key_value, value_states
+
+    def forward_full_kv_h_blocking(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        bsz, q_len, _ = hidden_states.size()
+        if self.q_lora_rank is None:
+            q = self.q_proj(hidden_states)
+        else:
+            q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
+        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
+        q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+
+        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
+        compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
+        compressed_kv, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        kv = (
+            self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
+            .view(
+                bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
+            )  # TODO : split this matmul #with k_up and v_up
+            .transpose(1, 2)
+        )
+
+        k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+
+        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+
+        query_states = torch.cat((q_nope, q_pe), -1)
+        k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
+        key_states = torch.cat((k_nope, k_pe_new), -1)
+
+        if past_key_value is not None:
+            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+        n_head_ckv = 4  # compressed_kv.shape[1]
+
+        attn_output_list = []
+        attn_weights_list = []
+        for head_block_idx in range(self.num_heads // n_head_ckv):
+            h_start = head_block_idx * n_head_ckv
+            h_end = min(h_start + n_head_ckv, self.num_heads)
+
+            attn_weights = (
+                torch.matmul(query_states[:, h_start:h_end, :, :], key_states[:, h_start:h_end, :, :].transpose(2, 3))
+                * self.softmax_scale
+            )
+
+            if attention_mask is not None:
+                attn_weights = torch.where(
+                    attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                )
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_output = torch.matmul(attn_weights, value_states[:, h_start:h_end, :, :])
+            attn_output_list.append(attn_output)
+            attn_weights_list.append(attn_weights)
+
+        attn_output = torch.cat(attn_output_list, dim=1)
+        attn_weights = torch.cat(attn_weights_list, dim=1)
+
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
+        attn_output = self.o_proj(attn_output)
+
+        return attn_output, attn_weights, past_key_value, value_states
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        if os.environ.get("KIMI_BLOCKING", "0") == "h":
+            return self.forward_full_kv_h_blocking(
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                position_ids,
+                past_key_value,
+                batch_index,
+                output_attentions,
+                use_cache,
+                cache_position,
+                **kwargs,
+            )
+        else:
+            return self.forward_full_kv(
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                position_ids,
+                past_key_value,
+                batch_index,
+                output_attentions,
+                use_cache,
+                cache_position,
+                **kwargs,
+            )
 
 
 class QEffDeepseekV3MoE(nn.Module):

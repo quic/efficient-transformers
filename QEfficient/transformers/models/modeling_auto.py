@@ -3133,7 +3133,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
                 for i in range(self.num_layers):
                     ckv = torch.zeros((bs, num_heads, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32)
-                    k_pe = torch.zeros((bs, num_heads, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32)
+                    k_pe = torch.zeros(
+                        (bs, num_heads, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32
+                    )
                     example_inputs["compressed_kvs"][i].append(ckv)
                     example_inputs["compressed_kvs"][i].append(k_pe)
                     dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}

@@ -271,8 +271,16 @@ class QEFFBaseModel(ABC):
                             )
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
-                        input_names.extend([f"compressed_kv.{i}",])
-                        input_names.extend([f"k_pe.{i}",])
+                        input_names.extend(
+                            [
+                                f"compressed_kv.{i}",
+                            ]
+                        )
+                        input_names.extend(
+                            [
+                                f"k_pe.{i}",
+                            ]
+                        )
                 else:
                     input_names.append(param)
 

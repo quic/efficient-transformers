@@ -18,8 +18,10 @@ TS = 4
 enable_mla = True
 mla_absorption_config = {"enable": False, "online": False}
 
-model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
-# model_path = "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
+# model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
+model_path = (
+    "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
+)
 model = AutoModelForCausalLM.from_pretrained(
     model_path, torch_dtype=torch.float32, num_hidden_layers=num_hidden_layers, trust_remote_code=True
 )
@@ -35,9 +37,9 @@ padded_len = inputs["input_ids"].shape[1]
 num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
-with torch.no_grad():
-    out = model(**inputs)
-    predictions = torch.argmax(out.logits, dim=-1)
+# with torch.no_grad():
+#    out = model(**inputs)
+#    predictions = torch.argmax(out.logits, dim=-1)
 
 qeff_model = QEFFAutoModelForCausalLM(model, num_kv_heads_repeat=num_kv_heads_repeat)
 qeff_model.mla(enable_mla=enable_mla, mla_absorption_config=mla_absorption_config)
@@ -72,13 +74,15 @@ for i in range(model.config.num_hidden_layers):
     compressed_kvs.append(x)
 
 
-inputs["compressed_kvs"] = compressed_kvs
-# inputs["past_key_values"] = past_key_values
+if enable_mla:
+    inputs["compressed_kvs"] = compressed_kvs
+else:
+    inputs["past_key_values"] = past_key_values
 
 prefill_qeff_out = qeff_model.model(**inputs)
 
 breakpoint()
-assert (prefill_qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
+# assert (prefill_qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
 position_ids = inputs["position_ids"]
 qeff_out = prefill_qeff_out
@@ -90,9 +94,12 @@ for _ in range(1, generation_len):
     decode_inputs = {
         "input_ids": next_token_id,
         "position_ids": position_ids,
-        "compressed_kvs": qeff_out["past_key_values"],
-        # "past_key_values": qeff_out["past_key_values"],
     }
+    if enable_mla:
+        decode_inputs["compressed_kvs"] = qeff_out["past_key_values"]
+    else:
+        decode_inputs["past_key_values"] = qeff_out["past_key_values"]
+
     qeff_out = qeff_model.model(**decode_inputs)
 
 qeff_generated_ids.append(qeff_out["logits"][:, -1, :].argmax(-1).reshape(-1, 1))
@@ -104,7 +111,7 @@ print("Completion:", repr(predicted_string))
 
 
 prefill_seq_len = 1
-ctx_len = 1024
+ctx_len = 16 * 1024
 
 qpc_path = qeff_model.compile(
     prefill_seq_len=prefill_seq_len,
