@@ -7,6 +7,7 @@
 
 import logging
 import os
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -118,7 +119,8 @@ class CustomOpTransform(BaseOnnxTransform):
         # Add function prototypes to model
         existing = {f.name for f in model.functions}
 
-        for func_name, onnxscript_func in cls._custom_ops.values():
+        # for func_name, onnxscript_func in cls._custom_ops.values():
+        for _, onnxscript_func in cls._custom_ops.values():
             proto = onnxscript_func.to_function_proto()
             if proto.name not in used_op_types:
                 continue
@@ -212,6 +214,8 @@ class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
     def __init__(self, transforms: List[Type[BaseOnnxTransform]]):
+        if not transforms:
+            warnings.warn("Transform list is empty. No transformations will be applied.")
         self.transforms = transforms
 
     def apply(
@@ -236,8 +240,7 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         do_split = SplitTensorsTransform in requested
         fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
         file_num_tracker = {"num": 0, "size": 0}
-        if onnx_base_dir is not None:
-            external_data_helper.load_external_data_for_model(model, onnx_base_dir)
+        external_data_helper.load_external_data_for_model(model, onnx_base_dir)
 
         if do_fp16 or do_split:
             for tensor in external_data_helper._get_all_tensors(model):
