@@ -3121,6 +3121,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 else pkv_dynamic_axes
             )
 
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
+
         if self.model.config.model_type in {"kimi_k2", "kimi_k25"}:
             if enable_mla:
                 for lay in self.model.model.layers:
@@ -3151,19 +3157,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     self.model.config.qk_nope_head_dim + self.model.config.qk_rope_head_dim,
                 )
                 cache_shape_v = (1, self.model.config.num_attention_heads, seq_len, self.model.config.v_head_dim)
+                example_inputs["past_key_values"] = [[] for _ in range(self.num_layers)]
                 for i in range(self.num_layers):
                     example_inputs["past_key_values"][i].append(torch.zeros(cache_shape_k, dtype=torch.float32))
                     example_inputs["past_key_values"][i].append(torch.zeros(cache_shape_v, dtype=torch.float32))
-                    dynamic_axes[f"past_key.{i}"] = pkv_dynamic_axes[i]
-                    dynamic_axes[f"past_value.{i}"] = pkv_dynamic_axes[i]
-                    output_names.append(f"past_key.{i}_RetainedState")
-                    output_names.append(f"past_value.{i}_RetainedState")
-        else:
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
-                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -3421,7 +3418,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         """
         if mla_absorption_config and not enable_mla:
-            logger.warning("enable_mla_fusion will be ignored as enable_mla is set to False")
+            logger.warning("mla_absorption_config will be ignored as enable_mla is set to False")
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
                 "`kv_cache_batch_size` or `full_batch_size` is being passed"
