@@ -917,7 +917,7 @@ class QEffHybridCacheForGPTOSS:
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
             if is_sliding_layer:
-                kv_position_ids = torch.where(position_ids == -1, position_ids, position_ids % sliding_window)
+                kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1)
             else:
                 kv_position_ids = position_ids
 

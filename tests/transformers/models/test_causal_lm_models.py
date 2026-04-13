@@ -668,7 +668,10 @@ def test_custom_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
     hf_config = get_hf_config_from_custom_config(model_name)
-    qaic_config = dict(num_kv_blocks=Constants.NUM_KV_BLOCKS)
+
+    NUM_KV_BLOCKS = 2
+
+    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, config=hf_config, qaic_config=qaic_config)
 
 
