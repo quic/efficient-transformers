@@ -214,7 +214,7 @@ class QEffGemma3Attention(Gemma3Attention):
         position_embeddings: Optional[torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -232,7 +232,7 @@ class QEffGemma3Attention(Gemma3Attention):
         query_states = self.q_norm(query_states)
         key_states = self.k_norm(key_states)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             if self.layer_idx is None:
                 raise ValueError(
                     f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
@@ -245,7 +245,7 @@ class QEffGemma3Attention(Gemma3Attention):
             cos, sin = self.rotary_emb(value_states, seq_len=self.config.max_position_embeddings)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
-        if past_key_value is not None:
+        if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
@@ -254,12 +254,12 @@ class QEffGemma3Attention(Gemma3Attention):
                 "position_ids": position_ids,
                 "is_sliding": self.is_sliding,
                 "sliding_window_pattern": self.config.sliding_window_pattern,
-                "sliding_window": past_key_value.sliding_window_len,
+                "sliding_window": past_key_values.sliding_window_len,
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -330,7 +330,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
             position_embeddings=None,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,

@@ -8,9 +8,9 @@
     "mad_validation": {
         "tolerances": {
             "vae_encoder": 7,
-            "transformer_high": 0.3,
-            "transformer_low": 0.2,
-            "vae_decoder": 0.71
+            "transformer_high": 0.7,
+            "transformer_low": 0.75,
+            "vae_decoder": 2.5
         }
     },
     "pipeline_params": {

@@ -143,6 +143,10 @@ WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16
 QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
 
+# Qwen3_vl Constanst
+QWEN3_VL_HEIGHT = 354
+QWEN3_VL_WIDTH = 536
+
 # Modules to cache while clearing the pytorch weights
 CACHE_MODULES = ["get_output_names", "get_dummy_inputs", "get_onnx_dynamic_axes", "get_specializations"]
 
@@ -190,6 +194,7 @@ CCL_START_MAP = {
 CCL_MAX_ELEMENTS_LISTS = 5
 CCL_START_CTX_LEN = 4096
 CCL_MIN_CTX_LEN = 1024
+CCL_UNIQNE_STEP = 32
 
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256
