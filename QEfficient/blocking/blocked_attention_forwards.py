@@ -689,9 +689,6 @@ def blocked_h_attention_forward(
     h_attn_blocks = []
 
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
-    # needed for GPT-OSS
-    if sinks is not None:
-        sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, q_len, -1)
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -712,7 +709,11 @@ def blocked_h_attention_forward(
             attn_weights = torch.where(attention_mask, masked_tensor, attn_weights)
         # attention sinks needed for gpt-oss
         if sinks is not None:
-            sinks_g = sinks[:, h_start:h_end, :, :]
+            sinks_g = (
+                module.sinks[h_start:h_end]
+                .reshape(1, -1, 1, 1)
+                .expand(attn_weights.shape[0], -1, attn_weights.shape[2], -1)
+            )
             combined_logits = torch.cat([attn_weights, sinks_g], dim=-1)
             attn_weights = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
 

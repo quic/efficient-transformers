@@ -912,11 +912,11 @@ class QEffHybridCacheForGPTOSS:
         else:
             position_ids = cache_kwargs.get("position_ids")
             is_sliding_layer = cache_kwargs.get("is_sliding")
-            sliding_window = cache_kwargs.get("sliding_window")
             _, _, ctx_len, _ = self.key_cache[layer_idx].shape
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
             if is_sliding_layer:
+                # prefill only mode we slice the passed key states to sliding window len and need to adjust kv_position_ids accordingly
                 kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1)
             else:
                 kv_position_ids = position_ids
