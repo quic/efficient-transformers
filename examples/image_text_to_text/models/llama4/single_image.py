@@ -13,7 +13,6 @@ This example demonstrates two modes:
 2. Vision+Text mode (skip_vision=False): Process image and text together
 """
 
-import torch
 import transformers
 from transformers import AutoConfig, AutoProcessor, TextStreamer
 
@@ -133,7 +132,7 @@ else:
         return_tensors="pt",
     )
     # Convert pixel values to float32 for processing
-    inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+    inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
     ## STEP 6: Run Vision+Text Inference
     streamer = TextStreamer(tokenizer)

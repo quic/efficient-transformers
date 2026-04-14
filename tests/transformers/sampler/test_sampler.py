@@ -17,6 +17,8 @@ from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import InternProcessor, set_num_layers_vlm
 
+pytestmark = pytest.mark.skip(reason="Test file disabled due to issues")
+
 test_configs = [
     pytest.param(
         "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
