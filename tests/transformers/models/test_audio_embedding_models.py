@@ -31,7 +31,7 @@ with open(CONFIG_PATH, "r") as f:
     test_models = config_data["audio_embedding_models"]
 
 
-def load_ctc_model(model_config):
+def load_ctc_model(model_config, torch_dtype: Optional[torch.dtype] = torch.float32):
     """
     Function to load model from huggingface
     --------
@@ -48,6 +48,7 @@ def load_ctc_model(model_config):
         model_path,
         attn_implementation="eager",
         low_cpu_mem_usage=False,
+        torch_dtype=torch_dtype,
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()

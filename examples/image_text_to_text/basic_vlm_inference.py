@@ -8,6 +8,7 @@
 import argparse
 
 import requests
+import torch
 from PIL import Image
 from transformers import AutoProcessor, TextStreamer
 
@@ -36,7 +37,10 @@ def run_model(
     #   with outputs transferred via host for flexibility
 
     model = QEFFAutoModelForImageTextToText.from_pretrained(
-        model_name, attn_implementation="eager", kv_offload=kv_offload
+        model_name,
+        attn_implementation="eager",
+        kv_offload=kv_offload,
+        torch_dtype=torch.float32,
     )
 
     ## STEP 2: Export & Compile the Model
