@@ -569,6 +569,45 @@
   ],
   "blockedKV_causal_lm_models": [
     {
+      "model_name": "unsloth/gemma-2b",
+      "model_type": "gemma",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 256000,
+        "num_key_value_heads": 1
+      }
+    },
+    {
+      "model_name": "unsloth/gemma-2-2b",
+      "model_type": "gemma2",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 256000,
+        "num_key_value_heads": 1
+      }
+    },
+    {
+      "model_name": "ibm-granite/granite-3.1-1b-a400m-base",
+      "model_type": "granitemoe",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 49155,
+        "num_key_value_heads": 1
+      }
+    },
+    {
       "model_name": "meta-llama/Llama-3.2-1B",
       "model_type": "llama",
       "additional_params": {
@@ -586,6 +625,31 @@
           "original_max_position_embeddings": 8192,
           "rope_type": "llama3"
         }
+      }
+    },
+    {
+      "model_name": "wtang06/mpt-125m-c4",
+      "model_type": "mpt",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 50368
+      }
+    },
+    {
+      "model_name": "bigcode/starcoder2-3b",
+      "model_type": "starcoder2",
+      "additional_params": {
+        "max_position_embeddings": 128,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "hidden_size": 64,
+        "intermediate_size": 256,
+        "vocab_size": 49152,
+        "num_key_value_heads": 1
       }
     }
   ],

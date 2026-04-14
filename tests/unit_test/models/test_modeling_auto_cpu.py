@@ -512,23 +512,6 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
         with pytest.raises(ValueError, match="prefill_seq_len"):
             qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=None, enable_chunking=False)
 
-    def test_valid_prefill_seq_len_sets_env_var(self):
-        """Valid prefill_seq_len sets NUM_Q_BLOCKS env var."""
-        from QEfficient.utils.constants import GPT_OSS_PREFILL_Q_BLOCK_SIZE
-
-        model, cfg = make_tiny_gpt2()
-        qeff = QEFFAutoModelForCausalLM(model)
-        os.environ.pop("NUM_Q_BLOCKS", None)
-        block_size = GPT_OSS_PREFILL_Q_BLOCK_SIZE
-        prefill_seq_len = block_size * 2  # Must be divisible by block_size
-        result = qeff.get_seq_len_and_handle_specialized_prefill_model(
-            prefill_seq_len=prefill_seq_len, enable_chunking=False
-        )
-        assert os.environ.get("NUM_Q_BLOCKS") is not None
-        assert result >= prefill_seq_len or result > 0
-        # Cleanup
-        os.environ.pop("NUM_Q_BLOCKS", None)
-
     def test_prefill_seq_len_not_divisible_raises_value_error(self):
         """prefill_seq_len not divisible by block_size raises ValueError."""
         from QEfficient.utils.constants import GPT_OSS_PREFILL_Q_BLOCK_SIZE

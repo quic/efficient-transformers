@@ -130,7 +130,12 @@ class QEffFalconAttention(FalconAttention):
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos_cached, sin_cached, position_ids)
 
         if layer_past is not None:
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            past_seen_tokens = layer_past.get_seq_length()
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "past_seen_tokens": past_seen_tokens,
+            }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]

@@ -65,6 +65,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     config: Optional[AutoConfig] = None,
     img_size: Optional[int] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
+    qaic_config: Optional[dict] = None,
 ):
     """
     Unified function to test PyTorch model, PyTorch KV model, ONNX model, and Cloud AI 100 model.
