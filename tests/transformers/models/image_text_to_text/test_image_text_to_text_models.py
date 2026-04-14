@@ -42,10 +42,7 @@ CONFIG_PATH = "tests/configs/image_text_model_configs.json"
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
     multimodal_models = config_data["image_text_models"]
-<<<<<<< HEAD
     custom_dtype_support_models = config_data["image_text_custom_dtype_models"]
-=======
->>>>>>> 121421a (fixed formatting and a few incorrect merges)
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
 test_custom_dtype_support_models = [model_config["model_name"] for model_config in custom_dtype_support_models]
@@ -67,11 +64,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     img_size: Optional[int] = None,
-<<<<<<< HEAD
     torch_dtype: Optional[torch.dtype] = torch.float32,
     qaic_config: Optional[dict] = None,
-=======
->>>>>>> 121421a (fixed formatting and a few incorrect merges)
 ):
     """
     Unified function to test PyTorch model, PyTorch KV model, ONNX model, and Cloud AI 100 model.
@@ -345,7 +339,6 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
         batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
     )
-
 
 
 ### Custom dtype Test ###

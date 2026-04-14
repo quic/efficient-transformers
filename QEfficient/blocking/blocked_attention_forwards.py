@@ -128,7 +128,7 @@ def blocked_kv_attention_forward(
     position_ids = cache_kwargs.get("position_ids")
     num_kv_blocks = max(1, num_kv_blocks)
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype, device=query.device)
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
     if sinks is not None:
@@ -234,7 +234,7 @@ def blocked_qkv_attention_forward(
 
     q_output_blocks = []
     q_attn_blocks = []
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype, device=query.device)
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
     if sinks is not None:
@@ -370,7 +370,7 @@ def blocked_hqkv_attention_forward(
 
     h_output_blocks = []
     h_attn_blocks = []
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype, device=query.device)
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
     if sinks is not None:
@@ -530,7 +530,7 @@ def blocked_bhqkv_attention_forward(
     )  # default to batch size for number of batch blocks
     batch_block_positions = [(i * batch_size) // num_batch_blocks for i in range(num_batch_blocks)]
 
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype, device=query.device)
 
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
@@ -688,7 +688,7 @@ def blocked_h_attention_forward(
     h_output_blocks = []
     h_attn_blocks = []
 
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype, device=query.device)
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -755,7 +755,7 @@ def blocked_q_attention_forward(
     q_output_blocks = []
     q_attn_blocks = []
 
-    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=query.device)
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype, device=query.device)
 
     for q_block_idx in range(num_q_blocks):
         q_start = q_block_positions[q_block_idx]
