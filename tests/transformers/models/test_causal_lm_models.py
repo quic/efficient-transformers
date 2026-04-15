@@ -253,7 +253,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pretrained_model_name_or_path=model_name,
         qaic_config=qaic_config,
     )
-    qeff_model.transform(ctx_len=ctx_len, seq_len=prompt_len, batch_size=full_batch_size, num_devices=1)
+    qeff_model.transform(
+        ctx_len=ctx_len, seq_len=prompt_len, batch_size=full_batch_size, num_devices=1, qaic_config=qaic_config
+    )
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():

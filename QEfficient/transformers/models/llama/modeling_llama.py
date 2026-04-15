@@ -148,7 +148,7 @@ class QEffLlamaAttention(LlamaAttention):
         value_states = self.v_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
 
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         query_states, key_states = qeff_apply_rotary_pos_emb(
             query_states, key_states, cos_cached, sin_cached, position_ids
         )
