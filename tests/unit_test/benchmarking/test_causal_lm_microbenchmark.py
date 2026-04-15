@@ -20,6 +20,7 @@ from QEfficient.benchmarking.causal_lm_microbenchmark import (
     _save_benchmark_io_artifacts,
     resolve_model_id,
 )
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
 
@@ -313,3 +314,91 @@ def test_benchmark_mode_uses_config_only_stub():
     assert qeff_model.enable_benchmark is True
     assert qeff_model.model.__class__.__name__ == "LlamaForCausalLM"
     assert not hasattr(qeff_model.model, "model")
+
+
+BLOCKING_MODES = [
+    ("h", BlockingMode.H, {"head_block_size": 1}),
+    ("q", BlockingMode.Q, {"num_q_blocks": 2}),
+    ("kv", BlockingMode.KV, {"num_kv_blocks": 2}),
+    ("hqkv", BlockingMode.HQKV, {"head_block_size": 1, "num_q_blocks": 2, "num_kv_blocks": 2}),
+]
+
+
+GPT_OSS_BLOCKING_MODES = [
+    ("h", BlockingMode.H, {"head_block_size": 1}),
+    ("q", BlockingMode.Q, {"num_q_blocks": 2}),
+    ("kv", BlockingMode.KV, {"num_kv_blocks": 2}),
+    ("hqkv", BlockingMode.HQKV, {"head_block_size": 2, "num_q_blocks": 2, "num_kv_blocks": 2}),
+]
+
+
+@pytest.mark.parametrize("mode_name,mode,kwargs", BLOCKING_MODES, ids=[m[0] for m in BLOCKING_MODES])
+def test_llama_blocked_attention_inventory(mode_name, mode, kwargs):
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        "hf-internal-testing/tiny-random-LlamaForCausalLM", enable_benchmark=True
+    )
+    bc = AttentionBlockingConfig(mode=mode, **kwargs)
+    specs = qeff_model.get_benchmark_module_specs(mode="decode", ctx_len=128, blocking_config=bc)
+    attn_spec = next(s for s in specs if s.benchmark_type == "attention")
+    assert attn_spec.module_name == f"attention_blocked_{mode_name}"
+    assert hasattr(attn_spec.wrapper.attention, "attn_blocking_config")
+    assert attn_spec.wrapper.attention.attn_blocking_config.mode == mode
+
+
+@pytest.mark.parametrize("mode_name,mode,kwargs", BLOCKING_MODES, ids=[m[0] for m in BLOCKING_MODES])
+def test_llama_blocked_attention_export(mode_name, mode, kwargs, tmp_path):
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        "hf-internal-testing/tiny-random-LlamaForCausalLM", enable_benchmark=True
+    )
+    bc = AttentionBlockingConfig(mode=mode, **kwargs)
+    summaries = qeff_model.export_benchmark_modules(
+        mode="decode",
+        benchmark_type="attention",
+        batch_size=1,
+        seq_len=4,
+        ctx_len=128,
+        export_dir=tmp_path,
+        blocking_config=bc,
+    )
+    assert len(summaries) == 1
+    assert summaries[0].module_name == f"attention_blocked_{mode_name}"
+    assert Path(summaries[0].onnx_path).is_file()
+
+
+def test_llama_no_blocking_inventory_unchanged():
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        "hf-internal-testing/tiny-random-LlamaForCausalLM", enable_benchmark=True
+    )
+    specs = qeff_model.get_benchmark_module_specs(mode="decode", ctx_len=128)
+    assert [s.module_name for s in specs] == ["attention", "mlp"]
+
+
+def test_gpt_oss_blocked_attention_only_applies_to_full_attention():
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained("tiny-random/gpt-oss-bf16", enable_benchmark=True)
+    bc = AttentionBlockingConfig(mode=BlockingMode.H, head_block_size=1)
+    specs = qeff_model.get_benchmark_module_specs(mode="decode", ctx_len=128, blocking_config=bc)
+    names = [s.module_name for s in specs]
+    assert "swa_attention" in names
+    assert "full_attention_blocked_h" in names
+    assert "moe" in names
+
+
+@pytest.mark.parametrize("mode_name,mode,kwargs", GPT_OSS_BLOCKING_MODES, ids=[m[0] for m in GPT_OSS_BLOCKING_MODES])
+def test_gpt_oss_blocked_full_attention_export(mode_name, mode, kwargs, tmp_path):
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained("tiny-random/gpt-oss-bf16", enable_benchmark=True)
+    bc = AttentionBlockingConfig(mode=mode, **kwargs)
+    summaries = qeff_model.export_benchmark_modules(
+        mode="decode",
+        benchmark_type="attention",
+        batch_size=1,
+        seq_len=1,
+        ctx_len=128,
+        export_dir=tmp_path,
+        blocking_config=bc,
+    )
+    full_attn = [s for s in summaries if "full_attention" in s.module_name]
+    assert len(full_attn) == 1
+    assert full_attn[0].module_name == f"full_attention_blocked_{mode_name}"
+    assert Path(full_attn[0].onnx_path).is_file()
+    swa = [s for s in summaries if s.module_name == "swa_attention"]
+    assert len(swa) == 1

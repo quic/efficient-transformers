@@ -22,6 +22,7 @@ from torch import nn
 from transformers import AutoModelForCausalLM
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
+from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import write_io_files
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffHybridCacheForGPTOSS
@@ -112,6 +113,7 @@ class BenchmarkManifest:
     warmup_runs: int
     benchmark_runs: int
     summaries: List[BenchmarkSummary]
+    blocking_config: Optional[AttentionBlockingConfig] = None
 
 
 @dataclass
@@ -775,19 +777,28 @@ class LlamaArchitectureAdapter:
         seq_len: int,
         ctx_len: int,
         enable_chunking: bool = False,
+        blocking_config: Optional[AttentionBlockingConfig] = None,
     ) -> List[BenchmarkModuleSpec]:
         config = qeff_model.model.config
         rotary_emb = QEffLlamaRotaryEmbedding(config)
+        blocking_suffix = (
+            f"_blocked_{blocking_config.mode.value}"
+            if blocking_config and blocking_config.mode != BlockingMode.NONE
+            else ""
+        )
         specs = []
         if mode in {"prefill", "decode", "both"}:
+            attn_module = _prepare_direct_qeff_module(QEffLlamaAttention(config, layer_index))
+            if blocking_config and blocking_config.mode != BlockingMode.NONE:
+                attn_module.attn_blocking_config = blocking_config
             specs.append(
                 BenchmarkModuleSpec(
                     benchmark_type="attention",
-                    module_name="attention",
+                    module_name=f"attention{blocking_suffix}",
                     mode=mode,
                     layer_index=layer_index,
                     wrapper=LlamaAttentionBenchmarkWrapper(
-                        attention_module=_prepare_direct_qeff_module(QEffLlamaAttention(config, layer_index)),
+                        attention_module=attn_module,
                         cos_cached=rotary_emb.cos_cached,
                         sin_cached=rotary_emb.sin_cached,
                         config=config,
@@ -845,8 +856,14 @@ class GptOssArchitectureAdapter:
         seq_len: int,
         ctx_len: int,
         enable_chunking: bool = False,
+        blocking_config: Optional[AttentionBlockingConfig] = None,
     ) -> List[BenchmarkModuleSpec]:
         config = qeff_model.model.config
+        blocking_suffix = (
+            f"_blocked_{blocking_config.mode.value}"
+            if blocking_config and blocking_config.mode != BlockingMode.NONE
+            else ""
+        )
 
         layer_variants = []
         for variant_index, variant_name in [
@@ -891,6 +908,11 @@ class GptOssArchitectureAdapter:
             else:
                 attn_name = variant_name
 
+            attn_module = layer.self_attn
+            if blocking_config and blocking_config.mode != BlockingMode.NONE and variant_name != "swa_attention":
+                attn_module.attn_blocking_config = blocking_config
+                attn_name = f"{attn_name}{blocking_suffix}"
+
             specs.append(
                 BenchmarkModuleSpec(
                     benchmark_type="attention",
@@ -898,7 +920,7 @@ class GptOssArchitectureAdapter:
                     mode=mode,
                     layer_index=variant_layer_index,
                     wrapper=GptOssAttentionBenchmarkWrapper(
-                        attention_module=layer.self_attn,
+                        attention_module=attn_module,
                         config=variant_config,
                         cos_cached=source_model.cos_cached,
                         sin_cached=source_model.sin_cached,
@@ -946,7 +968,9 @@ class GptOssArchitectureAdapter:
 class CausalLMModuleBenchmarkModel(QEFFBaseModel):
     _pytorch_transforms: List = []
 
-    def __init__(self, model: BenchmarkWrapperBase, output_name: str, model_name: str, model_id: str):
+    def __init__(
+        self, model: BenchmarkWrapperBase, output_name: str, model_name: str, model_id: str, module_name: str = ""
+    ):
         self._benchmark_model_name = model_name
         self._benchmark_model_id = model_id
         self._output_name = output_name
@@ -954,6 +978,8 @@ class CausalLMModuleBenchmarkModel(QEFFBaseModel):
         self.hash_params["benchmark_output_name"] = output_name
         self.hash_params["benchmark_model_name"] = model_name
         self.hash_params["benchmark_model_id"] = model_id
+        if module_name:
+            self.hash_params["benchmark_module_name"] = module_name
 
     @property
     def get_model_config(self) -> Dict:
@@ -1068,6 +1094,7 @@ def get_benchmark_module_specs(
     seq_len: int = 32,
     ctx_len: int = 128,
     enable_chunking: bool = False,
+    blocking_config: Optional[AttentionBlockingConfig] = None,
 ) -> List[BenchmarkModuleSpec]:
     if mode not in {"prefill", "decode", "both"}:
         raise ValueError("get_benchmark_module_specs supports `prefill`, `decode`, or `both`.")
@@ -1079,6 +1106,7 @@ def get_benchmark_module_specs(
         seq_len=seq_len,
         ctx_len=ctx_len,
         enable_chunking=enable_chunking,
+        blocking_config=blocking_config,
     )
 
 
@@ -1093,6 +1121,7 @@ def export_benchmark_modules(
     layer_index: int = 0,
     export_dir: Optional[str] = None,
     enable_chunking: bool = False,
+    blocking_config: Optional[AttentionBlockingConfig] = None,
 ) -> List[BenchmarkSummary]:
     model_name = getattr(qeff_model, "benchmark_model_name", qeff_model.model_name)
     model_id = qeff_model.hash_params.get("pretrained_model_name_or_path", model_name)
@@ -1108,6 +1137,7 @@ def export_benchmark_modules(
             seq_len=seq_len,
             ctx_len=ctx_len,
             enable_chunking=enable_chunking,
+            blocking_config=blocking_config,
         )
         for spec in specs:
             if benchmark_type and spec.benchmark_type != benchmark_type:
@@ -1117,6 +1147,7 @@ def export_benchmark_modules(
                 output_name=spec.output_name,
                 model_name=model_name,
                 model_id=model_id,
+                module_name=spec.module_name,
             )
             onnx_path = benchmark_model.export(
                 export_dir=export_dir,
@@ -1170,6 +1201,7 @@ def compile_benchmark_modules(
     mxint8_kv_cache: bool = False,
     seed: int = 13,
     enable_chunking: bool = False,
+    blocking_config: Optional[AttentionBlockingConfig] = None,
     **compiler_options,
 ) -> BenchmarkManifest:
     adapter = _resolve_adapter(qeff_model)
@@ -1190,6 +1222,7 @@ def compile_benchmark_modules(
             seq_len=seq_len,
             ctx_len=ctx_len,
             enable_chunking=enable_chunking if concrete_mode == "prefill" else False,
+            blocking_config=blocking_config,
         )
         for spec in specs:
             if benchmark_type and spec.benchmark_type != benchmark_type:
@@ -1199,6 +1232,7 @@ def compile_benchmark_modules(
                 output_name=spec.output_name,
                 model_name=getattr(qeff_model, "benchmark_model_name", qeff_model.model_name),
                 model_id=qeff_model.hash_params.get("pretrained_model_name_or_path", qeff_model.model_name),
+                module_name=spec.module_name,
             )
             onnx_path = benchmark_model.export(
                 export_dir=export_dir,
@@ -1256,6 +1290,7 @@ def compile_benchmark_modules(
         warmup_runs=warmup_runs,
         benchmark_runs=benchmark_runs,
         summaries=summaries,
+        blocking_config=blocking_config,
     )
     qeff_model._benchmark_manifest = manifest
     save_benchmark_manifest(qeff_model, manifest)
@@ -1397,6 +1432,7 @@ def benchmark_module_spec(
         output_name=spec.output_name,
         model_name=model_name,
         model_id=model_id,
+        module_name=spec.module_name,
     )
     onnx_path = benchmark_model.export(
         export_dir=export_dir,
@@ -1434,8 +1470,9 @@ def benchmark_module_spec(
     elif spec.mode == "decode":
         raw_seed_inputs = spec.wrapper.numpy_inputs(batch_size, 1, ctx_len, seed)
         seed_position_ids = raw_seed_inputs.get("position_ids", _build_position_ids(batch_size, 1))
+        start = perf_counter()
         seed_outputs = _run_session(session, raw_seed_inputs)
-        seed_prefill_ms = None
+        seed_prefill_ms = (perf_counter() - start) * 1000.0
         first_decode_ms, decode_runtime = _run_decode_benchmark(
             session=session,
             wrapper=spec.wrapper,
@@ -1571,6 +1608,7 @@ def generate_benchmark_report(
             seq_len=manifest.seq_len,
             ctx_len=manifest.ctx_len,
             enable_chunking=manifest.enable_chunking if concrete_mode == "prefill" else False,
+            blocking_config=manifest.blocking_config,
         )
         for spec in specs:
             key = (spec.mode, spec.module_name)
@@ -1665,12 +1703,13 @@ def _print_summaries(summaries: List[BenchmarkSummary], as_json: bool) -> None:
 
 
 def format_benchmark_table(summaries: List[BenchmarkSummary]) -> str:
-    headers = ["Mode", "Module", "Type", "Prefill ms", "Decode ms"]
+    headers = ["Mode", "Module", "Type", "Prefill ms", "Seed ms", "Decode ms"]
     rows = []
     for summary in summaries:
         prefill_ms = f"{summary.prefill_runtime.mean_ms:.4f}" if summary.prefill_runtime else "-"
+        seed_ms = f"{summary.seed_prefill_ms:.4f}" if summary.seed_prefill_ms is not None else "-"
         decode_ms = f"{summary.decode_runtime.mean_ms:.4f}" if summary.decode_runtime else "-"
-        rows.append([summary.mode, summary.module_name, summary.benchmark_type, prefill_ms, decode_ms])
+        rows.append([summary.mode, summary.module_name, summary.benchmark_type, prefill_ms, seed_ms, decode_ms])
 
     widths = [len(header) for header in headers]
     for row in rows:

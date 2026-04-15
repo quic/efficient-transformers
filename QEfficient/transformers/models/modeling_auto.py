@@ -3092,8 +3092,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         *,
         mode: str = "decode",
         layer_index: int = 0,
+        seq_len: int = 32,
         ctx_len: int = 128,
         enable_chunking: bool = False,
+        blocking_config=None,
     ):
         if not self.enable_benchmark:
             raise ValueError("Benchmark mode is disabled. Load the model with `enable_benchmark=True`.")
@@ -3103,8 +3105,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self,
             mode=mode,
             layer_index=layer_index,
+            seq_len=seq_len,
             ctx_len=ctx_len,
             enable_chunking=enable_chunking,
+            blocking_config=blocking_config,
         )
 
     def export_benchmark_modules(
@@ -3118,6 +3122,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layer_index: int = 0,
         export_dir: Optional[str] = None,
         enable_chunking: bool = False,
+        blocking_config=None,
     ):
         if not self.enable_benchmark:
             raise ValueError("Benchmark mode is disabled. Load the model with `enable_benchmark=True`.")
@@ -3133,6 +3138,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             layer_index=layer_index,
             export_dir=export_dir,
             enable_chunking=enable_chunking,
+            blocking_config=blocking_config,
         )
 
     def benchmark_modules(
@@ -3637,6 +3643,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 export_only=export_only,
                 mxint8_kv_cache=mxint8_kv_cache,
                 enable_chunking=enable_chunking,
+                blocking_config=compiler_options.pop("blocking_config", None),
                 mxfp6_matmul=mxfp6_matmul,
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 offload_pt_weights=offload_pt_weights,
