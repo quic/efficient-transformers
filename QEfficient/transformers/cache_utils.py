@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from transformers.cache_utils import Cache, EncoderDecoderCache
+from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 
 try:
     # transformers<5.3 had these hybrid cache classes
@@ -66,10 +66,12 @@ class InvalidIndexProvider:
         else:
             return 0
 
+
 def _match_invalid_mask(invalid_mask: torch.Tensor, target_len: int) -> torch.Tensor:
     if invalid_mask.shape[-1] == target_len:
         return invalid_mask
     return invalid_mask[..., :target_len]
+
 
 class QEffDynamicLayer(CacheLayerMixin):
     is_compileable = False
@@ -447,21 +449,6 @@ class QEffDynamicCache(Cache):
         while len(self.layers) <= layer_idx:
             self.layers.append(QEffDynamicLayer())
 
-    @classmethod
-    def from_legacy_cache(cls, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None) -> "QEffDynamicCache":
-        cache = cls()
-        if past_key_values is not None:
-            for layer_idx in range(len(past_key_values)):
-                key_states, value_states = past_key_values[layer_idx]
-                cache.update(key_states, value_states, layer_idx)
-        return cache
-
-    def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor, torch.Tensor]]:
-        legacy_cache = ()
-        for layer in self.layers:
-            legacy_cache += ((layer.keys, layer.values),)
-        return legacy_cache
-
     def get_seq_length(self, layer_idx: Optional[int] = 0, cache_position: Optional[torch.LongTensor] = None) -> int:
         """
         Keep backward-compatible call shape while deferring to upstream implementation.
@@ -490,17 +477,6 @@ class QEffDynamicCache(Cache):
     def __iter__(self):
         for idx in range(len(self.layers)):
             yield self[idx]
-
-    def get_seq_length(self, layer_idx: Optional[int] = 0, *args, **kwargs) -> int:
-        if layer_idx is None:
-            layer_idx = 0
-        is_empty_layer = (
-            len(self.layers) == 0
-            or len(self.layers) <= layer_idx
-            or getattr(self.layers[layer_idx], "keys", None) is None
-            or len(self.layers[layer_idx].keys) == 0
-        )
-        return self.layers[layer_idx].keys.shape[-2] if not is_empty_layer else 0
 
     def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
         """
