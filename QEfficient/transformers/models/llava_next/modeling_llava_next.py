@@ -214,7 +214,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                     constants.GRANITEVISION_IMG_SIZE,
                     constants.GRANITEVISION_IMG_SIZE,
                 ),
-                dtype=torch.float32,
+                dtype=self.config.torch_dtype,
             ),
             "image_sizes": torch.tensor(
                 [[constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH]], dtype=torch.int64
@@ -233,7 +233,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                     vision_size,
                     self.language_model.config.hidden_size,
                 ),
-                dtype=torch.float32,
+                dtype=self.config.torch_dtype,
             ),
             "image_idx": torch.zeros((1, 1), dtype=torch.int64),
         }
@@ -247,12 +247,14 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                         num_key_value_heads,
                         constants.GRANITEVISION_CTX_LEN,
                         head_dim,
+                        dtype=self.config.torch_dtype,
                     ),
                     torch.zeros(
                         FBS if continuous_batching else BS,
                         num_key_value_heads,
                         constants.GRANITEVISION_CTX_LEN,
                         head_dim,
+                        dtype=self.config.torch_dtype,
                     ),
                 )
             )
@@ -491,6 +493,10 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 10, 3, "img_size", "img_size")),
+            IOInfo(
+                name="pixel_values",
+                datatype=self.config.torch_dtype,
+                shape=("batch_size", 10, 3, "img_size", "img_size"),
+            ),
             IOInfo(name="image_sizes", datatype=torch.int64, shape=(1109, 1610)),
         ]

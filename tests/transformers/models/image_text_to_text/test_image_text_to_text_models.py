@@ -42,8 +42,11 @@ CONFIG_PATH = "tests/configs/image_text_model_configs.json"
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
     multimodal_models = config_data["image_text_models"]
+    custom_dtype_support_models = config_data["image_text_custom_dtype_models"]
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
+test_custom_dtype_support_models = [model_config["model_name"] for model_config in custom_dtype_support_models]
+custom_dtype_support_models_config_dict = {model["model_name"]: model for model in custom_dtype_support_models}
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -61,6 +64,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     img_size: Optional[int] = None,
+    torch_dtype: Optional[torch.dtype] = torch.float32,
+    qaic_config: Optional[dict] = None,
 ):
     """
     Unified function to test PyTorch model, PyTorch KV model, ONNX model, and Cloud AI 100 model.
@@ -94,6 +99,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
+                torch_dtype=torch_dtype,
             )
         else:
             model_hf = load_vlm_model(config)
@@ -101,6 +107,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
+                torch_dtype=torch_dtype,
             )
     else:
         model_hf = load_vlm_model_from_config(config)
@@ -108,6 +115,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=config,
+            torch_dtype=torch_dtype,
         )
 
     compile_kwargs = {
@@ -217,7 +225,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         )
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if "pixel_values" in inputs:
-            inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+            inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
@@ -239,7 +247,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 config.text_config.num_hidden_layers = 1
                 config.vision_config.deepstack_visual_indexes = [8]
         if "pixel_values" in inputs:
-            inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+            inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
         compile_kwargs["img_size"] = img_size
 
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
@@ -330,6 +338,43 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload
         n_layer=model_config_dict[model_name]["num_layers"],
         batch_size=model_config_dict[model_name]["batch_size"],
         kv_offload=kv_offload,
+    )
+
+
+### Custom dtype Test ###
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_custom_dtype_support_models)
+@pytest.mark.parametrize("kv_offload", [True])
+@pytest.mark.parametrize("torch_dtype", [torch.float16])
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_custom_dtype(model_name, kv_offload, torch_dtype):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    torch.manual_seed(42)
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+
+    # Get img_size for standard models, None for InternVL
+    img_size = custom_dtype_support_models_config_dict[model_name].get("img_size")
+
+    # TODO: Add custom dtype support in ORT and Pytorch_KV APIs
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=custom_dtype_support_models_config_dict[model_name]["prompt_len"],
+        ctx_len=custom_dtype_support_models_config_dict[model_name]["ctx_len"],
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=custom_dtype_support_models_config_dict[model_name]["img_url"],
+        query=custom_dtype_support_models_config_dict[model_name]["text_prompt"],
+        n_layer=custom_dtype_support_models_config_dict[model_name]["num_layers"],
+        batch_size=custom_dtype_support_models_config_dict[model_name]["batch_size"],
+        kv_offload=kv_offload,
+        torch_dtype=torch_dtype,
     )
 
 
