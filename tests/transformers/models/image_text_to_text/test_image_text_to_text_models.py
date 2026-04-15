@@ -75,7 +75,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
         config = set_num_layers_vlm(config, n_layer=n_layer)
-
+        if hasattr(config, "model_type") and config.model_type in [
+            "qwen3_vl",
+            "qwen3_vl_moe",
+        ]:
+            config.vision_config.depth = 9
+            config.text_config.num_hidden_layers = 1
+            config.vision_config.deepstack_visual_indexes = [8]
         if model_name in ModelConfig.INTERNVL_MODELS or model_name in ModelConfig.MOLMO_MODELS:
             config._attn_implementation = "eager"
             model_hf = load_vlm_model(config)
@@ -306,9 +312,10 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
     torch.manual_seed(42)
     hf_config = None
     if model_name in ModelConfig.STANDARD_VLM_MODELS:
-        hf_config = AutoConfig.from_pretrained(
-            model_name, trust_remote_code=True, **model_config_dict[model_name].get("additional_params", {})
-        )
+        model_type = model_config_dict[model_name].get("model_type", None)
+        custom_config = model_config_dict[model_name].get("additional_params", {})
+        hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
+        hf_config.name_or_path = model_name
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
         )
