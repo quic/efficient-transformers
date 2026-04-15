@@ -237,8 +237,13 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
-from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
+from QEfficient.base.pytorch_transforms import (
+    ExternalModuleMapperTransform,
+    ModuleMappingTransform,
+    ModuleMutatorTransform,
+)
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
+from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -507,6 +512,9 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperPositionalEmbedding,
 )
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
+from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
+from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
+from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
 from QEfficient.utils.logging_utils import logger
@@ -776,6 +784,176 @@ class RevertPrefillOnlyTransform(ModuleMappingTransform):
         **{v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()},
     }
 
+class ReplicateKVHeadTransform(ModuleMutatorTransform):
+    """
+    Replicates KV heads in attention modules to match the number of KV heads in the target model.
+    This transform is used when the source model has fewer KV heads than required in target model.
+    """
+
+    _module_mapping = {
+        QEffCodeGenForCausalLM,
+        QEffFalconForCausalLM,
+        QEffGPT2LMHeadModel,
+        QEffGPTJForCausalLM,
+        QEffLlamaForCausalLM,
+        QEffLlama4ForConditionalGeneration,
+        QEffLlavaForConditionalGeneration,
+        QEffLlavaNextForConditionalGeneration,
+        QEffGemmaForCausalLM,
+        QEffGemma2ForCausalLM,
+        QEffGemma3ForConditionalGeneration,
+        QEffGraniteForCausalLM,
+        QEffGraniteMoeForCausalLM,
+        QEffMllamaForConditionalGeneration,
+        QEffMistralForCausalLM,
+        QEffMistral3ForConditionalGeneration,
+        QEffMptForCausalLM,
+        QEffPhiForCausalLM,
+        QEffPhi3ForCausalLM,
+        QEffQwen2ForCausalLM,
+        QEffQwen3ForCausalLM,
+        QEffQwen_2_5_vl_ForConditionalGeneration,
+        QEffQwen3MoeForCausalLM,
+        QEffQwen3VLForConditionalGeneration,
+        QEffQwen3VLMoeForConditionalGeneration,
+        QEffStarcoder2ForCausalLM,
+        QEffGPTBigCodeForCausalLM,
+        QEffOlmo2ForCausalLM,
+    }
+    _module_string_mapping = {
+        "InternVLChatModel",
+        "MolmoForCausalLM,"
+    }
+
+    def _duplicate_weights_for_linear_layer(
+        layer: nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
+    ):
+        new_kv_heads = repeat * orig_kv_heads
+        if isinstance(layer, (WQLinear_GEMM, QuantLinearGPTQ, QuantLinearORT)):
+            if head_dim % 8 != 0:
+                raise ValueError(
+                    f"the value head_dim={head_dim} is not divisible by 8 which is according to the assumption that model is 4-bit quantized."
+                )
+            if hidden_size % layer.group_size != 0:
+                raise ValueError(
+                    f"The value of hidden_size={hidden_size} is not divisible by k_proj.group_size={layer.group_size}"
+                )
+
+            # Duplication of quantized weights
+            layer.qweight.data = torch.repeat_interleave(
+                layer.qweight.data.view(hidden_size, orig_kv_heads, head_dim // 8), repeat, 1
+            ).view(hidden_size, (new_kv_heads * head_dim) // 8)
+            # Duplication of quantized zero points
+            layer.qzeros.data = torch.repeat_interleave(
+                layer.qzeros.data.view(hidden_size // layer.group_size, orig_kv_heads, head_dim // 8),
+                repeat,
+                1,
+            ).view(hidden_size // layer.group_size, (new_kv_heads * head_dim) // 8)
+            # Duplication of quantization scales
+            layer.scales.data = torch.repeat_interleave(
+                layer.scales.data.view(hidden_size // layer.group_size, orig_kv_heads, head_dim),
+                repeat,
+                1,
+            ).view(hidden_size // layer.group_size, new_kv_heads * head_dim)
+            layer.out_features = layer.out_features * repeat
+
+        elif isinstance(layer, FP8DeQuantLinear):
+            layer.weight.data = torch.repeat_interleave(
+                layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
+            ).view(new_kv_heads * head_dim, hidden_size)
+            layer.weight_scale.data = torch.repeat_interleave(
+                layer.weight_scale.data.view(orig_kv_heads, head_dim), repeat, 0
+            ).view(new_kv_heads * head_dim, -1)
+
+        else:
+            layer.weight.data = torch.repeat_interleave(
+                layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
+            ).view(new_kv_heads * head_dim, hidden_size)
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(
+                layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0
+            ).view(new_kv_heads * head_dim)
+
+    def _get_text_model(model):
+        """
+        Determine and return the appropriate text_model from a given model object.
+        """
+        # Check for VLMs
+        if hasattr(model, "language_model"):
+            if hasattr(model.language_model, "model"):
+                return model.language_model.model
+            else:
+                return model.language_model
+        if hasattr(model, "model"):
+            return model.model
+        if hasattr(model, "transformer"):
+            return model.transformer
+        if hasattr(model, "llm"):
+            return model.llm
+        if hasattr(model, "backbone"):
+            return model.backbone
+
+        raise AttributeError("No suitable text model found in the provided model.")
+
+    @classmethod
+    def mutate(cls, original_module: nn.Module, parent_module: nn.Module, n_repeat: int) -> nn.Module:
+        """
+        Mutates the matched top-level model module in-place by replicating its KV heads.
+
+        Args:
+            original_module: The matched top-level model module to mutate.
+            parent_module: The parent module (unused, present for interface compatibility).
+            n_repeat: The number of times to repeat the KV heads.
+
+        Returns:
+            The mutated module (same object, modified in-place).
+        """
+        text_model = cls._get_text_model(original_module)
+        orig_kv_heads = text_model.config.num_key_value_heads
+        new_kv_heads = n_repeat * orig_kv_heads
+        text_model.config.orig_kv_heads = orig_kv_heads
+        text_model.config.num_key_value_heads = new_kv_heads
+
+        num_attention_heads = text_model.config.num_attention_heads
+        hidden_size = text_model.config.hidden_size
+
+        logger.warning(f"Original KV heads: {orig_kv_heads}")
+        logger.warning(f"Modified KV heads: {new_kv_heads}")
+        for block in text_model.layers:
+            attn = getattr(block, "cross_attn", getattr(block, "self_attn", None))
+            attn.num_key_value_heads = new_kv_heads
+            attn.num_key_value_groups = num_attention_heads // new_kv_heads
+
+            cls._duplicate_weights_for_linear_layer(
+                attn.k_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size
+            )
+            cls._duplicate_weights_for_linear_layer(
+                attn.v_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size
+            )
+
+        return original_module
+
+    @classmethod
+    def apply(cls, model: nn.Module, **kwargs) -> Tuple[nn.Module, bool]:
+        """
+        Replicates KV heads in attention modules based on provided multiplier.
+
+        Args:
+            model: The model to apply the transform to.
+            kwargs: Additional arguments for the transformation. Includes:
+                - num_kv_heads_repeat: The number of times to repeat the KV heads.
+        """
+        n_repeat = kwargs.pop("num_kv_heads_repeat", 1)
+        transformed = False
+        if n_repeat is not None and n_repeat > 1:
+            if (model.__class__ in cls._module_mapping) or (model.__class__.__name__ in cls._module_string_mapping):
+                cls.mutate(model, None, n_repeat)
+                transformed = True
+            else:
+                raise NotImplementedError(
+                    f"Model class {model.__class__.__name__} is not supported for KV head replication."
+                )
+        return model, transformed
 
 class ReplicateKVHeadTransform:
     """

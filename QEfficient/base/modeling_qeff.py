@@ -70,6 +70,7 @@ class QEFFBaseModel(ABC):
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
+        self.hash_params["num_kv_heads_repeat"] = kwargs.get("num_kv_heads_repeat", 1)
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
