@@ -7,7 +7,6 @@
 
 import json
 import os
-from importlib import reload
 from typing import List, Optional
 
 import numpy as np
@@ -15,7 +14,6 @@ import onnx
 import onnxruntime
 import pytest
 import torch
-import transformers
 from datasets import load_dataset
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
@@ -40,7 +38,7 @@ def load_seq2seq_model(model_config):
 
     :model_config: Dict
 
-    :return model_hf
+    :return model_hf, params
     """
     model_path = hf_download(
         repo_id=model_config["model_name"],
@@ -52,7 +50,7 @@ def load_seq2seq_model(model_config):
         "low_cpu_mem_usage": False,
     }
     n_layer = model_config.get("n_layer", -1)
-    if n_layer > 0:
+    if n_layer != -1:
         kwargs["num_hidden_layers"] = n_layer
         kwargs["decoder_layers"] = n_layer
         kwargs["encoder_layers"] = n_layer
@@ -61,8 +59,9 @@ def load_seq2seq_model(model_config):
         model_path,
         **kwargs,
     )
+    params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
-    return model_hf
+    return model_hf, params
 
 
 def run_seq2seq_pytorch_hf(
@@ -96,7 +95,6 @@ def run_seq2seq_pytorch_hf(
     )
 
     # TODO: temporary hack to nullify effect of KVCacheTransform add this as setup_module in pytest
-    reload(transformers.cache_utils)
     # encoder run
     outputs = model(**model_inputs)
 
@@ -297,9 +295,9 @@ def run_seq2seq_ort(
 def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
-    num_devices: int = 1,
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = -1,
+    num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     compare_results: Optional[bool] = False,
@@ -315,7 +313,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
 
-    model_hf = load_seq2seq_model(model_config)
+    model_hf, _ = load_seq2seq_model(model_config)
 
     processor = load_hf_processor(pretrained_model_name_or_path=model_name)
     batch_size = 1
@@ -344,6 +342,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )
+
     exec_info = qeff_model.generate(
         inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len
     )
@@ -353,7 +352,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
-    manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
+    manual_cleanup(qeff_model.onnx_path)
     if compare_results is False:
         return
 
@@ -375,6 +374,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
+
     torch.manual_seed(42)
     check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup, num_devices=4
@@ -384,14 +384,10 @@ def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-    """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
+def test_few_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
+
     torch.manual_seed(42)
-    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, manual_cleanup=manual_cleanup)
+    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4, manual_cleanup=manual_cleanup)
 
 
 # =================== QNN Tests ======================

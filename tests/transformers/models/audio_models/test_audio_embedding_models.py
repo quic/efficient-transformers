@@ -31,7 +31,7 @@ with open(CONFIG_PATH, "r") as f:
     test_models = config_data["audio_embedding_models"]
 
 
-def load_ctc_model(model_config):
+def load_ctc_model(model_config, torch_dtype: Optional[torch.dtype] = torch.float32):
     """
     Function to load model from huggingface
     --------
@@ -48,11 +48,9 @@ def load_ctc_model(model_config):
         "attn_implementation": "eager",
         "low_cpu_mem_usage": False,
     }
-    n_layer = model_config.get("n_layer", -1)
-    if n_layer > 0:
-        kwargs["num_hidden_layers"] = n_layer
     model_hf = AutoModelForCTC.from_pretrained(
         model_path,
+        torch_dtype=torch_dtype,
         **kwargs,
     )
     model_hf.eval()
@@ -202,11 +200,7 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_full_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-    """
-    Test function to validate the PyTorch model, the PyTorch model the ONNX model, and the Cloud AI 100 model.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
+
     torch.manual_seed(42)
     check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup, num_devices=4
@@ -216,14 +210,10 @@ def test_full_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-    """
-    Test function to validate the PyTorch model, the PyTorch model the ONNX model, and the Cloud AI 100 model.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
+def test_few_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
+
     torch.manual_seed(42)
-    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=1, manual_cleanup=manual_cleanup)
+    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4, manual_cleanup=manual_cleanup)
 
 
 # =================== QNN Tests ======================

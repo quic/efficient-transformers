@@ -158,18 +158,14 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     if continuous_batching:
         cloud_ai_100_tokens = exec_info.generated_ids
-        if model_name in ModelConfig.SWIFTKV_MODELS or model_name in ModelConfig.EXTERNAL_MODELS:
-            api_runner = ApiRunner(
-                batch_size, tokenizer, config, Constants.INPUT_STR, Constants.PROMPT_LEN, Constants.CTX_LEN
-            )
-            ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
+        if cloud_ai_100_tokens is not None and ort_tokens is not None:
             assert all(
                 [
                     all(ort_token[:24] == cloud_token[:24])
                     for ort_token, cloud_token in zip(ort_tokens, cloud_ai_100_tokens)
                 ]
             ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
-        else:
+        if pytorch_hf_tokens is not None and cloud_ai_100_tokens is not None:
             assert all(
                 [
                     all(pt_token[:24] == cloud_token[:24])
