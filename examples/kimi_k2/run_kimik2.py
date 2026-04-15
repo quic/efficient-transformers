@@ -12,7 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 
 prompt = "Once upon a time,"
-num_kv_heads_repeat = 1  # When using KIMI_BLOCKING="kv" or None, make sure this is set to 1. Use only for KIMI_BLOCKING="h" and this number should be equal to TS in that case.
+num_kv_heads_repeat = 4  # When using KIMI_BLOCKING="kv" or None, make sure this is set to 1. Use only for KIMI_BLOCKING="h" and this number should be equal to TS in that case.
 num_hidden_layers = 2
 TS = 4
 enable_mla = True
