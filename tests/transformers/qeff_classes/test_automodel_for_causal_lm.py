@@ -13,9 +13,13 @@ import onnx
 import pytest
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 
+from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils._utils import load_hf_tokenizer
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.hash_utils import hash_dict_params
+from QEfficient.utils.run_utils import ApiRunner
 
 test_configs = [
     # name, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
@@ -291,3 +295,39 @@ def test_causal_lm_compile(config, cb, prefill_only, tmp_cache):
     compile_time = end - start
     assert compile_time < 2.0
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+
+
+# FIXME: there should be a CB test here
+@pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
+def test_causal_lm_export_with_deprecated_api(model_name):
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        num_hidden_layers=1,
+    )
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
+    qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
+    new_api_onnx_model_path = qeff_model.export()
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        num_hidden_layers=1,
+    )
+    qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
+    _, old_api_onnx_model_path = qualcomm_efficient_converter(
+        model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer
+    )
+
+    api_runner = ApiRunner(
+        batch_size=1,
+        tokenizer=tokenizer,
+        config=model.config,
+        prompt=Constants.INPUT_STR,
+        prompt_len=Constants.PROMPT_LEN,
+        ctx_len=Constants.CTX_LEN,
+    )
+
+    new_api_ort_tokens = api_runner.run_kv_model_on_ort(new_api_onnx_model_path)
+    old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
+
+    assert (new_api_ort_tokens == old_api_ort_tokens).all(), (
+        "New API output does not match old API output for ONNX export function"
+    )

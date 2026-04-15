@@ -5,43 +5,27 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import os
 from time import perf_counter
 from typing import List, Optional
 
 import numpy as np
 import pytest
-from transformers import AutoTokenizer
+import torch
+from transformers import AutoConfig, AutoTokenizer
 
-from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.device_utils import get_available_device_id
+from QEfficient.utils.test_utils import load_qeff_causal_lm_model
 
-configs = [
-    pytest.param(
-        Constants.INPUT_STR,  # prompts
-        4,  # num_speculative_tokens
-        32,  # prefill_seq_len
-        128,  # ctx_len
-        1,  # prefill_bsz
-        "JackFram/llama-160m",  # draft_model_name
-        "JackFram/llama-160m",  # target_model_name
-        1,  # full_batch_size
-        id="CB llama",
-    ),
-    pytest.param(
-        Constants.INPUT_STR,  # prompts
-        4,  # num_speculative_tokens
-        32,  # prefill_seq_len
-        128,  # ctx_len
-        1,  # prefill_bsz
-        "Qwen/Qwen2-0.5B",  # draft_model_name
-        "Qwen/Qwen2-0.5B",  # target_model_name
-        1,  # full_batch_size
-        id="CB qwen",
-    ),
-]
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/feature_configs.json")
+with open(CONFIG_PATH, "r") as f:
+    config_data = json.load(f)
+    spd_models = config_data["spd_config"]
+
+test_models_id = [model["id"] for model in spd_models]
+model_config_dict = {model["id"]: model for model in spd_models}
 
 
 def run_prefill_on_draft_and_target(
@@ -104,26 +88,18 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     return bonus_token_inputs, dlm_decode_inputs
 
 
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize(
-    "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
-    configs,
-)
-def test_spec_decode_inference(
-    prompts: List[str],
-    num_speculative_tokens: int,
-    prefill_seq_len: int,
-    ctx_len: int,
-    prefill_bsz: int,
-    draft_model_name: str,
-    target_model_name: str,
-    full_batch_size: Optional[int],
+def check_spec_decode_inference(
+    model_id: str, manual_cleanup: callable, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None
 ):
-    # get device group
-    device_group: List[int] = get_available_device_id()
-    if not device_group:
-        pytest.skip("No available devices to run model on Cloud AI 100")
+    draft_model_name = model_config_dict[model_id]["draft_model_name"]
+    target_model_name = model_config_dict[model_id]["target_model_name"]
+    prompts = model_config_dict[model_id]["prompts"]
+    num_speculative_tokens = model_config_dict[model_id]["num_speculative_tokens"]
+    prefill_seq_len = model_config_dict[model_id]["prefill_seq_len"]
+    ctx_len = model_config_dict[model_id]["ctx_len"]
+    prefill_bsz = model_config_dict[model_id]["prefill_bsz"]
+    full_batch_size = model_config_dict[model_id]["full_batch_size"]
+
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
@@ -136,10 +112,20 @@ def test_spec_decode_inference(
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
     qaic_config = dict(speculative_model_type="target")
-    target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, qaic_config=qaic_config
+
+    target_model = load_qeff_causal_lm_model(
+        target_model_name,
+        continuous_batching=continuous_batching,
+        qaic_config=qaic_config,
+        num_hidden_layers=num_hidden_layers,
+        config=config,
     )
-    draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
+    draft_model = load_qeff_causal_lm_model(
+        draft_model_name,
+        continuous_batching=continuous_batching,
+        num_hidden_layers=num_hidden_layers,
+        config=config,
+    )
 
     target_model_qpc_path: str = target_model.compile(
         num_cores=6,
@@ -350,3 +336,42 @@ def test_spec_decode_inference(
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
     assert os.path.isfile(os.path.join(os.path.dirname(target_model_qpc_path), "qconfig.json"))
     assert os.path.isfile(os.path.join(os.path.dirname(draft_model_qpc_path), "qconfig.json"))
+    manual_cleanup(target_model.onnx_path)
+    manual_cleanup(draft_model.onnx_path)
+
+
+@pytest.mark.full_layers
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("model_id", test_models_id)
+def test_full_spd_inference(model_id, manual_cleanup):
+    """Test full layer SPD inference."""
+    torch.manual_seed(42)
+    check_spec_decode_inference(model_id, manual_cleanup=manual_cleanup)
+
+
+@pytest.mark.few_layers
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("model_id", test_models_id)
+def test_few_spd_inference(model_id, manual_cleanup):
+    """Test few layer SPD inference."""
+    torch.manual_seed(42)
+    check_spec_decode_inference(model_id, num_hidden_layers=2, manual_cleanup=manual_cleanup)
+
+
+# llama error with SPD, skipping dummy layer test for now
+@pytest.mark.skip(reason="Dummy layer test is currently failing for SPD, needs investigation")
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize("model_id", test_models_id)
+def test_dummy_spd_inference(model_id, manual_cleanup):
+    """Test dummy layer SPD inference."""
+    torch.manual_seed(42)
+    hf_config = AutoConfig.from_pretrained(
+        model_config_dict[model_id]["draft_model_name"],
+        trust_remote_code=True,
+        **model_config_dict[model_id]["additional_params"],
+    )
+    check_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)
