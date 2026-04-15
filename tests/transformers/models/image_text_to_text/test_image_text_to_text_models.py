@@ -217,7 +217,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
         inputs = processor(images=image, text=prompt, return_tensors="pt")
-        if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
+        if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in [
+            "qwen2_5_vl",
+            "qwen3_vl",
+            "qwen3_vl_moe",
+        ]:
             inputs = qeff_model.model.prepare_inputs_for_generation(
                 inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
             )

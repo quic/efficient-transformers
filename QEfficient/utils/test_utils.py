@@ -431,6 +431,7 @@ class ModelConfig:
         "google/gemma-3-4b-it",
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3-VL-2B-Instruct",
         "meta-llama/Llama-3.2-11B-Vision-Instruct",
     }
 
