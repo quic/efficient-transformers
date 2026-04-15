@@ -59,7 +59,7 @@ SUPPORTED_CAUSAL_RUNTIME_MODEL_IDS = {
     "gpt_oss": "tiny-random/gpt-oss-bf16",
 }
 
-BENCHMARK_TYPES = ("attention", "decoder", "mlp", "moe")
+BENCHMARK_TYPES = ("attention", "mlp", "moe")
 BENCHMARK_MODES = ("prefill", "decode", "both")
 
 
@@ -73,7 +73,6 @@ class RuntimeStats:
     p50_ms: Optional[float] = None
     p99_ms: Optional[float] = None
     throughput_ips: Optional[float] = None
-    tokens_per_second: Optional[float] = None
 
 
 @dataclass
@@ -495,43 +494,6 @@ class LlamaAttentionBenchmarkWrapper(LlamaCacheModuleBenchmarkWrapper):
         return attention_output, present_key, present_value
 
 
-class LlamaDecoderBenchmarkWrapper(LlamaCacheModuleBenchmarkWrapper):
-    def __init__(self, decoder_layer: nn.Module, cos_cached: torch.Tensor, sin_cached: torch.Tensor, config):
-        super().__init__(config=config, cos_cached=cos_cached, sin_cached=sin_cached)
-        self.decoder_layer = decoder_layer
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
-        position_ids: torch.LongTensor,
-        past_key_values,
-    ):
-        past_key_value = QEffDynamicCache.from_legacy_cache(past_key_values)
-        hidden_states = self.decoder_layer(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_value,
-            use_cache=True,
-            cos_cached=self.cos_cached,
-            sin_cached=self.sin_cached,
-        )
-        present_key, present_value = past_key_value.to_legacy_cache()[0]
-        return hidden_states, present_key, present_value
-
-    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
-        next_position_ids = _next_position_ids(position_ids)
-        next_ctx_len = outputs["past_key_RetainedState"].shape[2]
-        return {
-            "hidden_states": outputs["decoder_output"][:, -1:, :],
-            "attention_mask": _build_numpy_causal_mask(next_position_ids, next_ctx_len),
-            "position_ids": next_position_ids,
-            self.past_key_input_name: outputs["past_key_RetainedState"],
-            self.past_value_input_name: outputs["past_value_RetainedState"],
-        }
-
-
 class DenseMlpBenchmarkWrapper(BenchmarkWrapperBase):
     benchmark_input_kind = "hidden"
 
@@ -780,60 +742,6 @@ class GptOssAttentionBenchmarkWrapper(GptOssCacheModuleBenchmarkWrapper):
             cos_cached=self.cos_cached,
         )
         return attn_output, past_key_value.key_cache[self.layer_index], past_key_value.value_cache[self.layer_index]
-
-
-class GptOssDecoderBenchmarkWrapper(GptOssCacheModuleBenchmarkWrapper):
-    def __init__(
-        self,
-        decoder_layer: nn.Module,
-        config,
-        cos_cached: torch.Tensor,
-        sin_cached: torch.Tensor,
-        ctx_len: int,
-        cache_len: Optional[int] = None,
-        layer_index: int = 0,
-    ):
-        super().__init__(decoder_layer.self_attn, config, cos_cached, sin_cached, ctx_len, cache_len, layer_index)
-        self.decoder_layer = decoder_layer
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
-        position_ids: torch.LongTensor,
-        past_key: torch.Tensor,
-        past_value: torch.Tensor,
-        sliding_mask: Optional[torch.Tensor] = None,
-    ):
-        past_key_value = self._build_cache(past_key, past_value)
-        outputs = self.decoder_layer(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_value,
-            use_cache=True,
-            sliding_mask=sliding_mask,
-            sin_cached=self.sin_cached,
-            cos_cached=self.cos_cached,
-        )
-        return outputs[0], past_key_value.key_cache[self.layer_index], past_key_value.value_cache[self.layer_index]
-
-    def build_decode_inputs(self, outputs: Dict[str, np.ndarray], position_ids: np.ndarray) -> Dict[str, np.ndarray]:
-        next_position_ids = _next_position_ids(position_ids)
-        inputs = {
-            "hidden_states": outputs["decoder_output"][:, -1:, :],
-            "attention_mask": _build_numpy_causal_mask(next_position_ids, self.cache_len),
-            "position_ids": next_position_ids,
-            self.past_key_input_name: outputs["past_key_RetainedState"],
-            self.past_value_input_name: outputs["past_value_RetainedState"],
-        }
-        if self.uses_sliding_window:
-            inputs["sliding_mask"] = _build_numpy_causal_mask(
-                next_position_ids,
-                outputs["past_key_RetainedState"].shape[2],
-                sliding_window=outputs["past_key_RetainedState"].shape[2],
-            )
-        return inputs
 
 
 class LlamaArchitectureAdapter:
@@ -1357,7 +1265,6 @@ def compile_benchmark_modules(
 def _run_decode_benchmark(
     session: QAICInferenceSession,
     wrapper: BenchmarkWrapperBase,
-    output_name: str,
     seed_outputs: Dict[str, np.ndarray],
     seed_position_ids: np.ndarray,
     warmup_runs: int,
@@ -1394,7 +1301,6 @@ def _run_decode_benchmark(
         p50_ms=float(np.percentile(timings_array, 50)),
         p99_ms=float(np.percentile(timings_array, 99)),
         throughput_ips=(benchmark_runs / (total_ms / 1000.0)) if total_ms else None,
-        tokens_per_second=(benchmark_runs / (total_ms / 1000.0)) if total_ms else None,
     )
     return first_decode_ms, stats
 
@@ -1424,7 +1330,6 @@ def _run_prefill_and_decode_benchmark(
     first_decode_ms, decode_runtime = _run_decode_benchmark(
         session=session,
         wrapper=wrapper,
-        output_name="",
         seed_outputs=seed_outputs,
         seed_position_ids=seed_position_ids,
         warmup_runs=warmup_runs,
@@ -1527,19 +1432,13 @@ def benchmark_module_spec(
             benchmark_runs=benchmark_runs,
         )
     elif spec.mode == "decode":
-        raw_seed_inputs = spec.wrapper.numpy_inputs(batch_size, 1 if spec.mode == "decode" else seq_len, ctx_len, seed)
+        raw_seed_inputs = spec.wrapper.numpy_inputs(batch_size, 1, ctx_len, seed)
         seed_position_ids = raw_seed_inputs.get("position_ids", _build_position_ids(batch_size, 1))
-        start = perf_counter()
         seed_outputs = _run_session(session, raw_seed_inputs)
-        seed_runtime_ms = (perf_counter() - start) * 1000.0
-        if spec.mode == "decode":
-            seed_prefill_ms = None
-        else:
-            seed_prefill_ms = seed_runtime_ms
+        seed_prefill_ms = None
         first_decode_ms, decode_runtime = _run_decode_benchmark(
             session=session,
             wrapper=spec.wrapper,
-            output_name=spec.output_name,
             seed_outputs=seed_outputs,
             seed_position_ids=seed_position_ids,
             warmup_runs=warmup_runs,
@@ -1703,7 +1602,6 @@ def generate_benchmark_report(
                 first_decode_ms, decode_runtime = _run_decode_benchmark(
                     session=session,
                     wrapper=spec.wrapper,
-                    output_name=spec.output_name,
                     seed_outputs=seed_outputs,
                     seed_position_ids=seed_position_ids,
                     warmup_runs=warmup_runs,
@@ -1711,8 +1609,6 @@ def generate_benchmark_report(
                 )
                 summary.first_decode_ms = first_decode_ms
                 summary.decode_runtime = decode_runtime
-                if decode_runtime and decode_runtime.tokens_per_second is None and decode_runtime.mean_ms:
-                    decode_runtime.tokens_per_second = 1000.0 / decode_runtime.mean_ms
             else:
                 (
                     summary.prefill_runtime,

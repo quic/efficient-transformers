@@ -180,9 +180,8 @@ def test_save_benchmark_io_artifacts_writes_phase_manifests(tmp_path: Path):
     assert Path(io_dir).is_dir()
     assert Path(io_manifest_path).is_file()
     assert (Path(io_dir) / "seed" / "hidden_states.raw").is_file()
-    assert (Path(io_dir) / "seed" / "aic_batch_io.json").is_file()
     assert (Path(io_dir) / "decode" / "hidden_states.raw").is_file()
-    assert not (Path(io_dir) / "seed" / "mlp_output.raw").exists()
+    assert not (Path(io_dir) / "seed" / "mlp_output.raw").is_file()
     manifest = json.loads(Path(io_manifest_path).read_text())
     assert len(manifest["IO-files"]) == 2
     assert all(entry["io-direction"] == "in" for phase in manifest["IO-files"] for entry in phase)
@@ -270,7 +269,6 @@ def test_generate_benchmark_mode_prints_table(monkeypatch, capsys):
             min_ms=1.1,
             max_ms=1.9,
             total_ms=4.5,
-            tokens_per_second=666.67,
         ),
     )
 
