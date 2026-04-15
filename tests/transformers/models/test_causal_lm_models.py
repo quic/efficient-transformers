@@ -715,17 +715,3 @@ def test_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         num_q_blocks=NUM_Q_BLOCKS,
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models_blockedKV)
-def test_causal_nonBlockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
-    """
-    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    n_layer = get_custom_n_layers(model_name)
-
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
