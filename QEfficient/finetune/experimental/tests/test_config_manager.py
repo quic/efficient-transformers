@@ -182,3 +182,79 @@ def test_torch_dtype_invalid():
         config_manager.validate_config()
 
     assert "torch_dtype must be one of" in str(exc_info.value)
+
+
+def test_parallelism_rejects_tp_plus_pp_combo():
+    """TP cannot be combined with PP in supported mode matrix."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    training_config = TrainingConfig(tp_degree=2, pp_degree=2, ddp_degree=1)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    with pytest.raises(ValueError) as exc_info:
+        config_manager.validate_config()
+
+    assert "TP cannot be combined with PP" in str(exc_info.value)
+
+
+def test_parallelism_rejects_ddp_plus_pp_combo():
+    """DDP cannot be combined with PP in supported mode matrix."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    training_config = TrainingConfig(tp_degree=1, pp_degree=2, ddp_degree=2)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    with pytest.raises(ValueError) as exc_info:
+        config_manager.validate_config()
+
+    assert "DDP cannot be combined with PP" in str(exc_info.value)
+
+
+def test_parallelism_world_size_product_mismatch(monkeypatch):
+    """WORLD_SIZE must match pp*tp*ddp when distributed env is set."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    monkeypatch.setenv("WORLD_SIZE", "8")
+
+    training_config = TrainingConfig(tp_degree=2, pp_degree=1, ddp_degree=2)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    with pytest.raises(ValueError) as exc_info:
+        config_manager.validate_config()
+
+    assert "must equal WORLD_SIZE" in str(exc_info.value)
+
+
+def test_parallelism_multi_server_rejects_tp(monkeypatch):
+    """TP and TP+DDP are rejected for multi-server launch."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
+
+    training_config = TrainingConfig(tp_degree=2, pp_degree=1, ddp_degree=4)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    with pytest.raises(ValueError) as exc_info:
+        config_manager.validate_config()
+
+    assert "TP and TP+DDP are supported only on a single server" in str(exc_info.value)
+
+
+def test_parallelism_valid_tp_ddp_single_server(monkeypatch):
+    """TP+DDP single-server should pass when WORLD_SIZE matches degree product."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    monkeypatch.setenv("WORLD_SIZE", "4")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
+
+    training_config = TrainingConfig(tp_degree=2, pp_degree=1, ddp_degree=2)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    # Should not raise
+    config_manager.validate_config()
