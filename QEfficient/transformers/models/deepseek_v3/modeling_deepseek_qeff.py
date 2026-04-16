@@ -9,7 +9,7 @@ from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
 from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
-from QEfficient.customop.quantization_ops import DequantizeLinearFunc, UnpackUInt8ToUInt4
+from QEfficient.customop.quantization_ops import DequantizeLinearFunc, UnpackUInt8ToInt4
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -722,18 +722,18 @@ class QEffDeepseekV3MoE(nn.Module):
         down_proj_scales = self.all_down_scales[topk_indices.flatten()]
         down_proj_qzeros = self.all_down_qzeros[topk_indices.flatten()]
 
-        gate_proj_unpacked = UnpackUInt8ToUInt4.apply(gate_proj_qweight)
-        gate_zeros_unpacked = UnpackUInt8ToUInt4.apply(gate_proj_qzeros)
+        gate_proj_unpacked = UnpackUInt8ToInt4.apply(gate_proj_qweight)
+        gate_zeros_unpacked = UnpackUInt8ToInt4.apply(gate_proj_qzeros)
         gate_proj_dq = DequantizeLinearFunc.apply(
             gate_proj_unpacked, gate_proj_scales, gate_zeros_unpacked, self.group_size
         )
 
-        up_proj_unpacked = UnpackUInt8ToUInt4.apply(up_proj_qweight)
-        up_zeros_unpacked = UnpackUInt8ToUInt4.apply(up_proj_qzeros)
+        up_proj_unpacked = UnpackUInt8ToInt4.apply(up_proj_qweight)
+        up_zeros_unpacked = UnpackUInt8ToInt4.apply(up_proj_qzeros)
         up_proj_dq = DequantizeLinearFunc.apply(up_proj_unpacked, up_proj_scales, up_zeros_unpacked, self.group_size)
 
-        down_proj_unpacked = UnpackUInt8ToUInt4.apply(down_proj_qweight)
-        down_zeros_unpacked = UnpackUInt8ToUInt4.apply(down_proj_qzeros)
+        down_proj_unpacked = UnpackUInt8ToInt4.apply(down_proj_qweight)
+        down_zeros_unpacked = UnpackUInt8ToInt4.apply(down_proj_qzeros)
         down_proj_dq = DequantizeLinearFunc.apply(
             down_proj_unpacked, down_proj_scales, down_zeros_unpacked, self.group_size
         )
