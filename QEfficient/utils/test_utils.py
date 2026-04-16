@@ -17,6 +17,22 @@ from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
 
 
+def get_custom_n_layers(model_name):
+    """
+    Function to set number layers of the variuos types of models such as swiftkv models and others
+    --------
+
+    :model_name: str
+
+    :return n_layer
+    """
+    if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8", "openai/gpt-oss-20b"}:
+        return 2
+    elif model_name in ModelConfig.SWIFTKV_MODELS:
+        return -1
+    return 1
+
+
 def load_hf_causal_lm_model(
     model_name: str,
     num_hidden_layers: int = -1,
