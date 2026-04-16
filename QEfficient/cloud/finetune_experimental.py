@@ -79,6 +79,7 @@ class FineTuningPipeline:
             model_instance = self._create_model()
             self.model = model_instance.model
             self.tokenizer = model_instance.tokenizer
+
         except Exception as e:
             logger.log_rank_zero(f"Failed to load model: {e}", level=logging.ERROR)
             # Cleanup datasets if already created

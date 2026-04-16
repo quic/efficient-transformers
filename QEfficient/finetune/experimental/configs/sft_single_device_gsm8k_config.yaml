@@ -35,6 +35,7 @@ dataset:
   completion_template: "{answer}"    # Model will be trained on this part. 
   config_name: "main" # Config name for the dataset 
   data_seed: 42 # Random seed for dataset shuffling
+  dataset_num_samples: 1000
 
 
 # Training configuration

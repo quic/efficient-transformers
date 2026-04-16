@@ -1,5 +1,4 @@
 import torch
-from peft import get_peft_model
 from transformers.integrations.tensor_parallel import (
     ALL_PARALLEL_STYLES,
     distribute_model,
@@ -8,12 +7,8 @@ from transformers.integrations.tensor_parallel import (
 
 
 def print_trainable_parameters(model) -> None:
-    """
-    Print the number of trainable parameters, all params and percentage of trainablke params.
-    Args:
-        model: The PyTorch model.
-    """
-    trainable_params, all_param = model.get_nb_trainable_parameters()
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    all_param = sum(p.numel() for p in model.parameters())
     print(
         f"Trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
     )
@@ -44,18 +39,37 @@ def is_colwise_parallel(param: torch.distributed.tensor.DTensor) -> bool:
 
 
 def update_peft_tp_plan(model):
-    # If original layer has colwise then Lora-A --> colwise and Lora-B --> rowwise
-    # If original layer has rowwise then Lora-A --> rowwise and Lora-B --> colwise
     peft_tp_plan = {}
-    for name, schema in model.tp_plan.items():
-        lora_a_name = "base_model.model." + name + ".lora_A.default"
-        lora_b_name = "base_model.model." + name + ".lora_B.default"
+    state_dict_keys = set(model.state_dict().keys())
+
+    for name, schema in list(model.tp_plan.items()):
+        lora_a_default_name = name + ".lora_A.default"
+        lora_b_default_name = name + ".lora_B.default"
+        # Save-time PEFT adapter keys are emitted without `.default` suffix
+        # (e.g. `...lora_B.weight`), so keep aliases for gather_state_dict_for_save lookup.
+        lora_a_name = name + ".lora_A"
+        lora_b_name = name + ".lora_B"
+
+        # Only add entries for layers that actually have LoRA adapters
+        has_lora = any(
+            replace_layer_number_by_wildcard(k.replace(".weight", "")) == lora_a_default_name
+            for k in state_dict_keys
+            if "lora_A.default" in k
+        )
+        if not has_lora:
+            continue
+
         if schema == "rowwise":
+            peft_tp_plan[lora_a_default_name] = "rowwise"
+            peft_tp_plan[lora_b_default_name] = "colwise_gather_output"
             peft_tp_plan[lora_a_name] = "rowwise"
-            peft_tp_plan[lora_b_name] = "colwise"
+            peft_tp_plan[lora_b_name] = "colwise_gather_output"
         elif schema == "colwise":
+            peft_tp_plan[lora_a_default_name] = "colwise"
+            peft_tp_plan[lora_b_default_name] = "lora_rowwise"
             peft_tp_plan[lora_a_name] = "colwise"
             peft_tp_plan[lora_b_name] = "lora_rowwise"
+
     model.tp_plan.update(peft_tp_plan)
 
 
@@ -87,14 +101,19 @@ def apply_tp_modification_for_peft(model, tp_mesh=None):
             # tp_layer.prepare_module_tp(module_obj, tp_mesh)
 
             # Shard the param
-            tp_layer.shard_tensor(param, tensor_idx=None, dtype=empty_param.dtype)
-            setattr(getattr(module_obj, param_name), "data", param)
+
+            sharded = tp_layer.shard_tensor(param, tensor_idx=None, dtype=empty_param.dtype)
+            if sharded is not None:
+                if not isinstance(sharded, torch.nn.Parameter):
+                    sharded = torch.nn.Parameter(sharded, requires_grad=empty_param.is_floating_point())
+                setattr(module_obj, param_name, sharded)  # replaces Parameter, not just .data
 
 
 def apply_peft_to_model(model, tp_mesh=None, peft_config=None):
     peft_config = peft_config
     # Add PEFT adapters to the model
-    model = get_peft_model(model, peft_config)
+    model.add_adapter(peft_config, "default")  # sets _hf_peft_config_loaded = True
+    model.enable_adapters()  # activates the adapter
     print_trainable_parameters(model)
 
     if tp_mesh is None:

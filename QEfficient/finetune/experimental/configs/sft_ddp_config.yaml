@@ -36,6 +36,7 @@ dataset:
   completion_template: "{answer}"    # Model will be trained on this part. 
   config_name: "main" # Config name for the dataset
   data_seed: 42 # Random seed for dataset shuffling, for deterministic shuffling and reproducibility
+  dataset_num_samples: 1000
 
 
 
@@ -45,6 +46,7 @@ training:
   gradient_accumulation_steps: 1  # Number of steps to accumulate gradients
   per_device_train_batch_size: 1  # Batch size per device during training
   torch_compile: False # Whether to use torch.compile
+  ddp_degree: 4
   ddp_config: # DDP configuration
     ddp_backend: "qccl"
     ddp_find_unused_parameters: False
