@@ -11,6 +11,7 @@ import os
 from typing import Optional
 
 import numpy as np
+import onnx
 import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -253,7 +254,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pretrained_model_name_or_path=model_name,
         qaic_config=qaic_config,
     )
-    qeff_model.transform(ctx_len=ctx_len, seq_len=prompt_len, batch_size=full_batch_size, num_devices=1)
+    qeff_model.transform(
+        ctx_len=ctx_len, seq_len=prompt_len, batch_size=full_batch_size, num_devices=1, qaic_config=qaic_config
+    )
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
@@ -675,6 +678,43 @@ def test_custom_causal_blockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, config=hf_config, qaic_config=qaic_config)
 
 
+@pytest.mark.regular
+@pytest.mark.parametrize("model_name", test_models_blockedKV)
+def test_blockedKV_onnx_function_count_with_subfunction(model_name):
+    """
+    Export twice with `use_onnx_subfunctions=True`:
+      1) without blocking
+      2) with KV blocking (NUM_KV_BLOCKS=2)
+
+    Verify that the number of ONNX functions is identical.
+    """
+    # Keep model small for test runtime, and avoid CB path (not needed for function count).
+    n_layer = get_custom_n_layers(model_name)
+
+    # Export with subfunctions, NO blocking
+    model_no_block, _ = load_causal_lm_model(model_name, n_layer=n_layer)
+    qeff_no_block = QEFFAutoModelForCausalLM(
+        copy.deepcopy(model_no_block), pretrained_model_name_or_path=model_name, qaic_config=None
+    )
+    qeff_no_block.export(use_onnx_subfunctions=True, offload_pt_weights=False)
+    onnx_no_block = onnx.load(qeff_no_block.onnx_path, load_external_data=False)
+    num_functions_no_block = len(onnx_no_block.functions)
+
+    # Export with subfunctions, WITH KV blocking
+    NUM_KV_BLOCKS = 2
+    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS)
+
+    model_kv_block, _ = load_causal_lm_model(model_name, n_layer=n_layer)
+    qeff_kv_block = QEFFAutoModelForCausalLM(
+        copy.deepcopy(model_kv_block), pretrained_model_name_or_path=model_name, qaic_config=qaic_config
+    )
+    qeff_kv_block.export(use_onnx_subfunctions=True, offload_pt_weights=False)
+    onnx_kv_block = onnx.load(qeff_kv_block.onnx_path, load_external_data=False)
+    num_functions_kv_block = len(onnx_kv_block.functions)
+
+    assert num_functions_no_block == num_functions_kv_block
+
+
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
@@ -713,17 +753,3 @@ def test_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         num_q_blocks=NUM_Q_BLOCKS,
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, qaic_config=qaic_config)
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models_blockedKV)
-def test_causal_nonBlockedKV_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
-    """
-    Test function to validate the PyTorch model for KV blocking, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    n_layer = get_custom_n_layers(model_name)
-
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)

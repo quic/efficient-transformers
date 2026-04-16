@@ -57,7 +57,7 @@ class QEffMptAttention(MptAttention):
         key_states = key_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
 
-        past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
+        past_seen_tokens = past_key_value.get_seq_length(self.layer_idx) if past_key_value is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
 

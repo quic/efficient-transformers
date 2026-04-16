@@ -58,10 +58,6 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
 }
 
 
-def get_blocking_strategy(config: AttentionBlockingConfig) -> Callable:
-    return _STRATEGIES.get(config.mode)
-
-
 # helper function needed both in generic blocked approach and in other modeling files for non-blocked approach
 def past_key_value_update(
     module,

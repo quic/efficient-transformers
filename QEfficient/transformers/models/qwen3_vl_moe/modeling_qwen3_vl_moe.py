@@ -404,7 +404,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
             position_ids[1:],
             self.config.rope_scaling["mrope_section"],
         )
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
