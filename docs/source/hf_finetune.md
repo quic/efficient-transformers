@@ -16,10 +16,33 @@ The **QEfficient Fine-Tune Module** is a component of the QEfficient project foc
 
 ***
 
+## Workflow Overview
+
+| Step | Stage | What happens | Common entry points |
+| --- | --- | --- | --- |
+| 1 | Install | Set up the QEfficient stack and any QAIC-specific dependencies. | `pip install`, Docker |
+| 2 | Configure | Create the YAML config and choose the training mode. | PEFT, model, dataset, optimizer settings |
+| 3 | Train | Launch the finetuning job. | `QEfficient finetune` CLI, `torchrun`, `accelerate` |
+| 4 | Inference | Run the trained checkpoint for generation validation. | generate API, evaluation scripts |
+| 5 | Evaluate | Measure quality and regression signals. | Validation loss, perplexity, `lm-eval-harness` |
+
+The recommended flow is:
+
+1. **Install** the QEfficient stack and any QAIC-specific dependencies.
+2. **Configure** a YAML file for PEFT, including model, dataset, optimizer, and runtime settings.
+3. **Train** with the module entrypoint, `torchrun`, or `accelerate` depending on the target parallelism mode.
+4. **Run inference** with the trained checkpoint to validate generation quality and prompt handling.
+5. **Evaluate** the run with validation loss, perplexity, or `lm-eval-harness` style benchmarks.
+
+Optional steps after this point are publishing to Hugging Face Hub and deployment to a serving stack.
+
+***
+
 ## Getting Started
 
-Transformer's Trainer `https://huggingface.co/docs/transformers/main/en/main_classes/trainer#trainer` class goes hand-in-hand with the TrainingArguments class `https://huggingface.co/docs/transformers/v5.2.0/en/main_classes/trainer#transformers.TrainingArguments`, which offers a wide range of options to customize how a model is trained.
-Since this stack is based on HF's Trainer class. Please refer to above docs to configure config.yaml file for finetuning. 
+We support PEFT Finetuning. Parameter-Efficient Fine-Tuning (PEFT) using [LoRA](https://arxiv.org/abs/2106.09685) freezes the base model and trains small low-rank adapters. PEFT reduces trainable parameters to less than 1% of the original model, lowering memory and storage costs.
+Transformer's [Trainer](https://huggingface.co/docs/transformers/main/en/main_classes/trainer#trainer) class goes hand-in-hand with the [TrainingArguments](https://huggingface.co/docs/transformers/v5.2.0/en/main_classes/trainer#transformers.TrainingArguments) class, which offers a wide range of options to customize how a model is trained.
+Since this stack is based on HF's Trainer class. Please refer to above docs to configure the config.yaml file for finetuning. 
 
 ### Installation (ENV set up)
 
