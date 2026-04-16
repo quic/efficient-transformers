@@ -216,7 +216,7 @@ def test_parallelism_world_size_product_mismatch(monkeypatch):
     """WORLD_SIZE must match pp*tp*ddp when distributed env is set."""
     from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
 
-    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
 
     training_config = TrainingConfig(tp_degree=2, pp_degree=1, ddp_degree=2)
     master_config = MasterConfig(training=training_config)
