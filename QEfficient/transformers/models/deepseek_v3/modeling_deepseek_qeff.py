@@ -326,7 +326,9 @@ class QEffDeepseekV3Attention(nn.Module):
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
-        compressed_kv, k_pe = compressed_kv.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+
+        kva = compressed_kv[:, :, :, : self.kv_lora_rank]
+        k_pe = compressed_kv[:, :, :, self.kv_lora_rank :]
 
         q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
         q_pe = torch.matmul(q_a_proj_out, self.q_rope)
@@ -334,12 +336,10 @@ class QEffDeepseekV3Attention(nn.Module):
         q_nope = torch.bmm(q_a_proj_out, self.q_up)
         q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
 
-        compressed_kv = self.kv_a_layernorm(compressed_kv)
+        kva = self.kv_a_layernorm(kva)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         if compressed_kvs is not None:
-            compressed_kv = compressed_kvs.update_ckv(compressed_kv, self.layer_idx, cache_kwargs)
-
-        kva = compressed_kv
+            kva = compressed_kvs.update_ckv(kva, self.layer_idx, cache_kwargs)
 
         if mla_absorption is not None:
             enable_absorption = mla_absorption.get("enable", False)
@@ -347,7 +347,7 @@ class QEffDeepseekV3Attention(nn.Module):
         else:
             enable_absorption = False
 
-        n_head_ckv = compressed_kv.shape[1]
+        n_head_ckv = kva.shape[1]
 
         cos, sin = self.rotary_emb(kva, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
@@ -429,7 +429,9 @@ class QEffDeepseekV3Attention(nn.Module):
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
-        compressed_kv, k_pe = compressed_kv.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+
+        kva = compressed_kv[:, :, :, : self.kv_lora_rank]
+        k_pe = compressed_kv[:, :, :, self.kv_lora_rank :]
 
         q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
         q_pe = torch.matmul(q_a_proj_out, self.q_rope)
@@ -437,7 +439,7 @@ class QEffDeepseekV3Attention(nn.Module):
         q_nope = torch.matmul(q_a_proj_out, self.q_up)
         q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
 
-        compressed_kv = self.kv_a_layernorm(compressed_kv)
+        kva = self.kv_a_layernorm(kva)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
 
         if mla_absorption is not None:
@@ -448,13 +450,13 @@ class QEffDeepseekV3Attention(nn.Module):
 
         ## Write Only
         if compressed_kvs is not None:
-            compressed_kv = compressed_kvs.write_only_ckv(compressed_kv, self.layer_idx, cache_kwargs)
+            compressed_kvs.write_only_ckv(kva, self.layer_idx, cache_kwargs)
 
         cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         if compressed_kvs is not None:
-            k_pe = compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
+            compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
         if enable_absorption:
             if absorb_online:
@@ -566,7 +568,9 @@ class QEffDeepseekV3Attention(nn.Module):
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
-        compressed_kv, k_pe = compressed_kv.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+
+        kva = compressed_kv[:, :, :, : self.kv_lora_rank]
+        k_pe = compressed_kv[:, :, :, self.kv_lora_rank :]
 
         q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
         q_pe = torch.bmm(q_a_proj_out, self.q_rope)
@@ -574,12 +578,10 @@ class QEffDeepseekV3Attention(nn.Module):
         q_nope = torch.bmm(q_a_proj_out, self.q_up)
         q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
 
-        compressed_kv = self.kv_a_layernorm(compressed_kv)
+        kva = self.kv_a_layernorm(kva)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         if compressed_kvs is not None:
-            compressed_kv = compressed_kvs.update_ckv(compressed_kv, self.layer_idx, cache_kwargs)
-
-        kva = compressed_kv
+            kva = compressed_kvs.update_ckv(kva, self.layer_idx, cache_kwargs)
 
         if mla_absorption is not None:
             enable_absorption = mla_absorption.get("enable", False)
@@ -628,7 +630,6 @@ class QEffDeepseekV3Attention(nn.Module):
 
         return attn_output, attn_weights, compressed_kvs
 
-
     def fused_forward_orig(
         self,
         hidden_states: torch.Tensor,
@@ -644,37 +645,29 @@ class QEffDeepseekV3Attention(nn.Module):
         mla_absorption: Optional[Dict[str, bool]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-
         bsz, q_len, _ = hidden_states.size()
         print("using orig forward")
 
         # ---- KV compression ----
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
-        compressed_kv = compressed_kv.view(
-            bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim
-        ).transpose(1, 2)
+        compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
 
-        compressed_kv, k_pe = compressed_kv.split(
-            [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
-        )
+        kva = compressed_kv[:, :, :, : self.kv_lora_rank]
+        k_pe = compressed_kv[:, :, :, self.kv_lora_rank :]
 
         # ---- Q projections ----
         q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
 
         q_pe = torch.bmm(q_a_proj_out, self.q_rope)
-        q_pe = q_pe.view(
-            bsz, q_len, self.num_heads, self.qk_rope_head_dim
-        ).transpose(1, 2)
+        q_pe = q_pe.view(bsz, q_len, self.num_heads, self.qk_rope_head_dim).transpose(1, 2)
 
-        compressed_kv = self.kv_a_layernorm(compressed_kv)
+        kva = self.kv_a_layernorm(kva)
 
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         if compressed_kvs is not None:
-            compressed_kv = compressed_kvs.update_ckv(
-                compressed_kv, self.layer_idx, cache_kwargs
-            )
+            kva = compressed_kvs.update_ckv(kva, self.layer_idx, cache_kwargs)
 
-        kva = compressed_kv
+        # kva = compressed_kv
 
         # ---- MLA absorption flags ----
         if mla_absorption is not None:
@@ -692,19 +685,17 @@ class QEffDeepseekV3Attention(nn.Module):
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         if compressed_kvs is not None:
-            k_pe = compressed_kvs.update_k_pe(
-                k_pe, self.layer_idx, cache_kwargs
-            )
+            k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
-        kva_expanded = kva.unsqueeze(2).expand(-1, -1, p, -1, -1) \
-        .reshape(bsz, self.num_heads, seq_kv, self.kv_lora_rank)
+        kva_expanded = (
+            kva.unsqueeze(2).expand(-1, -1, p, -1, -1).reshape(bsz, self.num_heads, seq_kv, self.kv_lora_rank)
+        )
 
-        k_pe_expanded = k_pe.unsqueeze(2).expand(-1, -1, p, -1, -1) \
-        .reshape(bsz, self.num_heads, seq_kv, self.qk_rope_head_dim)
+        k_pe_expanded = (
+            k_pe.unsqueeze(2).expand(-1, -1, p, -1, -1).reshape(bsz, self.num_heads, seq_kv, self.qk_rope_head_dim)
+        )
 
-        v_up_per_head = self.v_up.squeeze(0) \
-        .view(self.kv_lora_rank, self.num_heads, self.v_head_dim) \
-        .permute(1, 0, 2)
+        v_up_per_head = self.v_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.v_head_dim).permute(1, 0, 2)
 
         value_states = torch.matmul(kva_expanded, v_up_per_head)
 
@@ -721,14 +712,12 @@ class QEffDeepseekV3Attention(nn.Module):
                 key_states = torch.cat((kva_expanded, k_pe_expanded), dim=-1)
         else:
             q_nope = torch.bmm(q_a_proj_out, self.q_up)
-            q_nope = q_nope.view(
-                bsz, q_len, self.num_heads, self.qk_nope_head_dim
-            ).transpose(1, 2)
+            q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
             query_states = torch.cat((q_nope, q_pe), dim=-1)
 
-            k_up_per_head = self.k_up.squeeze(0) \
-            .view(self.kv_lora_rank, self.num_heads, self.qk_nope_head_dim) \
-            .permute(1, 0, 2)
+            k_up_per_head = (
+                self.k_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.qk_nope_head_dim).permute(1, 0, 2)
+            )
             k_nope = torch.matmul(kva_expanded, k_up_per_head)
             key_states = torch.cat((k_nope, k_pe_expanded), dim=-1)
 
@@ -742,18 +731,11 @@ class QEffDeepseekV3Attention(nn.Module):
             )
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
         ## Do v_proj here
-        attn_output = torch.matmul(
-            attn_weights, value_states
-        )
-        attn_output = (
-            attn_output.transpose(1, 2)
-            .contiguous()
-            .reshape(bsz, q_len, self.num_heads * self.v_head_dim)
-        )
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
 
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights, compressed_kvs
-
 
     def fused_forward(
         self,
@@ -850,18 +832,24 @@ class QEffDeepseekV3Attention(nn.Module):
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
         q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
-        q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+
+        q_nope = q[:, :, :, : self.qk_nope_head_dim]
+        q_pe = q[:, :, :, self.qk_nope_head_dim :]
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
-        compressed_kv, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+
+        kva = compressed_kv[:, :, : self.kv_lora_rank]
+        k_pe = compressed_kv[:, :, self.kv_lora_rank :]
+
         k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
         kv = (
-            self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
+            self.kv_b_proj(self.kv_a_layernorm(kva))
             .view(bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
             .transpose(1, 2)
         )
 
-        k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+        k_nope = kv[:, :, :, : self.qk_nope_head_dim]
+        value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
         cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
@@ -909,20 +897,26 @@ class QEffDeepseekV3Attention(nn.Module):
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
         q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
-        q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+
+        q_nope = q[:, :, :, : self.qk_nope_head_dim]
+        q_pe = q[:, :, :, self.qk_nope_head_dim :]
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
-        compressed_kv, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+
+        kva = compressed_kv[:, :, : self.kv_lora_rank]
+        k_pe = compressed_kv[:, :, self.kv_lora_rank :]
+
         kv = (
-            self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
+            self.kv_b_proj(self.kv_a_layernorm(kva))
             .view(
                 bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
             )  # TODO : split this matmul #with k_up and v_up
             .transpose(1, 2)
         )
 
-        k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+        k_nope = kv[:, :, :, : self.qk_nope_head_dim]
+        value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
         cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
@@ -935,7 +929,7 @@ class QEffDeepseekV3Attention(nn.Module):
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        n_head_ckv = 4  # compressed_kv.shape[1]
+        n_head_ckv = 4  # kva.shape[1]
 
         attn_output_list = []
         attn_weights_list = []
