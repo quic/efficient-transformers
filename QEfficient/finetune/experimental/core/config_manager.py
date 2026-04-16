@@ -913,21 +913,21 @@ class ConfigManager:
                 "Supported modes are PP only, DDP only, TP only, or TP+DDP (single-server).",
             )
 
-        # WORLD_SIZE consistency checks (when launched in distributed mode)
-        if "WORLD_SIZE" in os.environ:
+        # LOCAL_WORLD_SIZE consistency checks (when launched in distributed mode)
+        if "LOCAL_WORLD_SIZE" in os.environ:
             try:
-                world_size = int(os.environ["WORLD_SIZE"])
+                local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
             except ValueError:
-                world_size = -1
+                local_world_size = -1
 
             self._push(
                 errors,
-                world_size < 1,
-                f"Invalid WORLD_SIZE={os.environ.get('WORLD_SIZE')!r}; expected a positive integer.",
+                local_world_size < 1,
+                f"Invalid LOCAL_WORLD_SIZE={os.environ.get('LOCAL_WORLD_SIZE')!r}; expected a positive integer.",
             )
 
             if (
-                world_size > 0
+                local_world_size > 0
                 and isinstance(pp_degree, int)
                 and isinstance(tp_degree, int)
                 and isinstance(ddp_degree, int)
@@ -935,10 +935,10 @@ class ConfigManager:
                 expected_world_size = pp_degree * tp_degree * ddp_degree
                 self._push(
                     errors,
-                    expected_world_size != world_size,
+                    expected_world_size != local_world_size,
                     "Parallelism degree mismatch: pp_degree * tp_degree * ddp_degree "
                     f"must equal WORLD_SIZE ({pp_degree} * {tp_degree} * {ddp_degree} = {expected_world_size}, "
-                    f"WORLD_SIZE={world_size}).",
+                    f"LOCAL_WORLD_SIZE={local_world_size}).",
                 )
 
             local_world_size_raw = os.environ.get("LOCAL_WORLD_SIZE")

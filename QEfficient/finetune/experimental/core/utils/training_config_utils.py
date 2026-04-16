@@ -50,7 +50,23 @@ def prepare_training_config(
     if torch_dtype is None:
         raise ValueError("'torch_dtype' field is required in training configuration. Expected one of: ['fp16', 'bf16']")
 
-    training_config[torch_dtype] = True
+    # Normalize precision flags before mapping torch_dtype.
+    # This avoids contradictory user-provided combinations such as
+    # torch_dtype="fp16" with fp16=False.
+    training_config.pop("fp16", None)
+    training_config.pop("bf16", None)
+
+    device = training_config.get("device", "qaic")
+    if device == "qaic":
+        # For QAIC, avoid setting HF's fp16/bf16 TrainingArguments flags:
+        # - bf16=True triggers a GPU-only capability check in TrainingArguments.
+        # - fp16=True routes through QAIC GradScaler unscale path that can fail in TP+DDP.
+        # Keep precision encoded via model torch_dtype instead.
+        training_config["fp16"] = False
+        training_config["bf16"] = False
+    else:
+        if torch_dtype in ("fp16", "bf16"):
+            training_config[torch_dtype] = True
 
     training_config["data_seed"] = training_config.get("seed")
 
