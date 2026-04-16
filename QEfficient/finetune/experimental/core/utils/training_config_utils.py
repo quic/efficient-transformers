@@ -49,7 +49,9 @@ def prepare_training_config(
     torch_dtype = training_config.pop("torch_dtype", None)
     if torch_dtype is None:
         raise ValueError("'torch_dtype' field is required in training configuration. Expected one of: ['fp16', 'bf16']")
+
     training_config[torch_dtype] = True
+
     training_config["data_seed"] = training_config.get("seed")
 
     # Restoring the "torch_dtype" after torch_dtype conversion using the saved value

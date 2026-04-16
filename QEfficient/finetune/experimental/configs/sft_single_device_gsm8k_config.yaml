@@ -26,11 +26,13 @@ dataset:
   completion_template: "{answer}"    # Model will be trained on this part. 
   config_name: "main" # Config name for the dataset 
   data_seed: 42 # Random seed for dataset shuffling
+  dataset_num_samples: 1000
 
 
 # Training configuration
 training:
   type: "sft"
+  output_dir: "./training_result_single_device"
   gradient_accumulation_steps: 1  # Number of steps to accumulate gradients
   per_device_train_batch_size: 1  # Batch size per device during training
   num_train_epochs: 1

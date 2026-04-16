@@ -8,13 +8,13 @@
 model:
   model_type: "hf"  # Hugging Face model
   auto_class_name: "AutoModelForCausalLM" # Auto class to load the model with
-  model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
+  model_name: "meta-llama/Llama-3.2-1b"  # Pretrained model name
   use_peft: true # Enable PEFT (Parameter Efficient Fine-Tuning)
   peft_config:
     lora_r: 8 # LoRA rank
     lora_alpha: 16
     lora_dropout: 0
-    target_modules: ["k_proj","gate_proj","q_proj","up_proj","v_proj","down_proj"] # Target modules for LoRA
+    target_modules: ["q_proj", "v_proj", "k_proj"] # Target modules for LoRA
     task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
     peft_type: "LORA"  # Options: LORA, IA3, etc.
 
@@ -26,6 +26,7 @@ dataset:
   completion_template: "{answer}"    # Model will be trained on this part. 
   config_name: "main" # Config name for the dataset 
   data_seed: 42 # Random seed for dataset shuffling
+  dataset_num_samples: 100
 
 
 # Training configuration
@@ -37,11 +38,21 @@ training:
   torch_compile: False # Whether to use torch.compile
   tp_degree: 2
   ddp_degree: 2
+  pp_degree: 1
+  device: "qaic"
+  ddp_config: # DDP configuration
+    ddp_backend: "qccl"
+    ddp_find_unused_parameters: False
+    ddp_bucket_cap_mb: 25
+    ddp_broadcast_buffers: True
+    ddp_timeout: 1800
+
 
 # Optimizer configuration
 optimizers:
   optimizer_name: "adamw"
   lr: 1e-4
+  
 
 scheduler:
   scheduler_name: "cosine"
