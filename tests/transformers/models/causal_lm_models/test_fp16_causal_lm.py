@@ -35,6 +35,7 @@ model_config_dict = {model["model_name"]: model for model in causal_lm_fp16_test
 
 def check_causal_lm_pytorch_vs_kv_vs_ai100(
     model_name: str,
+    manual_cleanup: callable,
     prompt_len: int = Constants.PROMPT_LEN,
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
@@ -118,33 +119,41 @@ def check_causal_lm_pytorch_vs_kv_vs_ai100(
         return
 
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+    manual_cleanup(qeff_model.onnx_path)
 
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name):
+def test_full_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name, manual_cleanup):
 
-    check_causal_lm_pytorch_vs_kv_vs_ai100(model_name=model_name, torch_dtype=torch.float16)
+    torch.manual_seed(42)
+    check_causal_lm_pytorch_vs_kv_vs_ai100(
+        model_name=model_name, torch_dtype=torch.float16, manual_cleanup=manual_cleanup
+    )
 
 
 @pytest.mark.few_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_few_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name):
+def test_few_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name, manual_cleanup):
 
+    torch.manual_seed(42)
     n_layer = get_custom_n_layers(model_name)
-    check_causal_lm_pytorch_vs_kv_vs_ai100(model_name=model_name, n_layer=n_layer, torch_dtype=torch.float16)
+    check_causal_lm_pytorch_vs_kv_vs_ai100(
+        model_name=model_name, n_layer=n_layer, torch_dtype=torch.float16, manual_cleanup=manual_cleanup
+    )
 
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_dummy_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name):
+def test_dummy_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name, manual_cleanup):
 
+    torch.manual_seed(42)
     custom_config = model_config_dict[model_name]
     hf_config = AutoConfig.from_pretrained(
         model_name,
@@ -153,6 +162,10 @@ def test_dummy_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name):
     )
     if model_name in ModelConfig.QUANTIZED_MODELS:
         n_layer = get_custom_n_layers(model_name)
-        check_causal_lm_pytorch_vs_kv_vs_ai100(model_name, n_layer=n_layer, torch_dtype=torch.float16)
+        check_causal_lm_pytorch_vs_kv_vs_ai100(
+            model_name, n_layer=n_layer, torch_dtype=torch.float16, manual_cleanup=manual_cleanup
+        )
     else:
-        check_causal_lm_pytorch_vs_kv_vs_ai100(model_name, config=hf_config, torch_dtype=torch.float16)
+        check_causal_lm_pytorch_vs_kv_vs_ai100(
+            model_name, config=hf_config, torch_dtype=torch.float16, manual_cleanup=manual_cleanup
+        )

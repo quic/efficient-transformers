@@ -9,6 +9,7 @@ import json
 import os
 
 import pytest
+import torch
 from transformers import AutoConfig
 
 from QEfficient.utils.test_utils import ModelConfig
@@ -35,6 +36,7 @@ def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_ful
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
 
+    torch.manual_seed(42)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         prompt_len=1,
@@ -53,6 +55,7 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full
 
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
+    torch.manual_seed(42)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         n_layer=2,
@@ -72,6 +75,7 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_fu
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
 
+    torch.manual_seed(42)
     custom_config = model_config_dict[model_name]
     hf_config = AutoConfig.from_pretrained(
         model_name,
@@ -96,7 +100,7 @@ def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain_
 
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
-
+    torch.manual_seed(42)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         continuous_batching=True,
@@ -116,7 +120,7 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain_f
 
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
-
+    torch.manual_seed(42)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         n_layer=2,
@@ -137,6 +141,7 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
 
+    torch.manual_seed(42)
     custom_config = model_config_dict[model_name]
     hf_config = AutoConfig.from_pretrained(
         model_name,
