@@ -845,7 +845,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             Dictionary containing the classification logits.
         """
         self._prepare_trace_runtime(
-            onnx_parent=os.path.dirname(self.onnx_path),
+            onnx_parent=os.path.dirname(self.onnx_path) if self.onnx_path else None,
             write_io=write_io,
             capture_trace=capture_trace,
         )
@@ -2364,7 +2364,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
         self._prepare_trace_runtime(
-            onnx_parent=os.path.dirname(self.onnx_path),
+            onnx_parent=os.path.dirname(self.onnx_path) if self.onnx_path else None,
             write_io=write_io,
             capture_trace=capture_trace,
         )
@@ -3869,8 +3869,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         write_io = kwargs.pop("write_io", False)
         capture_trace = kwargs.pop("capture_trace", False)
+        onnx_parent = os.path.dirname(self.onnx_path) if self.onnx_path else None
         self._prepare_trace_runtime(
-            onnx_parent=os.path.dirname(self.onnx_path),
+            onnx_parent=onnx_parent,
             write_io=write_io,
             capture_trace=capture_trace,
         )
@@ -4237,7 +4238,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             raise TypeError("Please run compile API first!")
 
         self._prepare_trace_runtime(
-            onnx_parent=os.path.dirname(self.onnx_path),
+            onnx_parent=os.path.dirname(self.onnx_path) if self.onnx_path else None,
             write_io=write_io,
             capture_trace=capture_trace,
         )
@@ -4543,8 +4544,9 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
+        onnx_parent = os.path.dirname(self.onnx_path) if self.onnx_path else None
         self._prepare_trace_runtime(
-            onnx_parent=os.path.dirname(self.onnx_path),
+            onnx_parent=onnx_parent,
             write_io=write_io,
             capture_trace=capture_trace,
         )

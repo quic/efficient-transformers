@@ -11,6 +11,8 @@ from pathlib import Path
 import numpy as np
 import onnx
 import pytest
+from transformers import AutoConfig
+from transformers import AutoModelForCausalLM as HFAutoModelForCausalLM
 
 from QEfficient.benchmarking.causal_lm_microbenchmark import (
     BenchmarkManifest,
@@ -201,6 +203,13 @@ def test_compile_export_only_uses_benchmark_backend():
     assert all(summary["qpc_path"] is None for summary in payload["summaries"])
 
 
+_SKIP_NO_COMPILER = pytest.mark.skipif(
+    not Path("/opt/qti-aic/exec/qaic-compile").exists(),
+    reason="qaic-compile not available",
+)
+
+
+@_SKIP_NO_COMPILER
 def test_compile_decode_benchmark_smoke():
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
         "hf-internal-testing/tiny-random-LlamaForCausalLM",
@@ -229,6 +238,7 @@ def test_compile_seq_len_one_defaults_to_decode_only_export_only():
     assert [summary["mode"] for summary in payload["summaries"]] == ["decode", "decode"]
 
 
+@_SKIP_NO_COMPILER
 def test_gpt_oss_decode_seq_len_one_compile_smoke():
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained("tiny-random/gpt-oss-bf16", enable_benchmark=True)
     manifest_path = qeff_model.compile(prefill_only=None, prefill_seq_len=1, ctx_len=128)
@@ -402,3 +412,56 @@ def test_gpt_oss_blocked_full_attention_export(mode_name, mode, kwargs, tmp_path
     assert Path(full_attn[0].onnx_path).is_file()
     swa = [s for s in summaries if s.module_name == "swa_attention"]
     assert len(swa) == 1
+
+
+VLM_TEXT_MODEL_ID = "tiny-random/gemma-3"
+
+
+def _build_vlm_text_benchmark_model():
+    config = AutoConfig.from_pretrained(VLM_TEXT_MODEL_ID, trust_remote_code=True)
+    text_model = HFAutoModelForCausalLM.from_config(
+        config.text_config, trust_remote_code=True, attn_implementation="eager"
+    )
+    return QEFFAutoModelForCausalLM(text_model, enable_benchmark=True)
+
+
+def test_vlm_decoder_generic_adapter_inventory():
+    qeff_model = _build_vlm_text_benchmark_model()
+    specs = qeff_model.get_benchmark_module_specs(mode="prefill", seq_len=32, ctx_len=128)
+    names = [s.module_name for s in specs]
+    assert "prefill_swa_attention" in names
+    assert "prefill_full_attention" in names
+    assert "prefill_mlp" in names
+
+
+def test_vlm_decoder_generic_adapter_export(tmp_path):
+    qeff_model = _build_vlm_text_benchmark_model()
+    summaries = qeff_model.export_benchmark_modules(
+        mode="prefill",
+        batch_size=1,
+        seq_len=32,
+        ctx_len=128,
+        export_dir=tmp_path,
+    )
+    assert len(summaries) == 3
+    assert all(Path(s.onnx_path).is_file() for s in summaries)
+
+
+@_SKIP_NO_COMPILER
+def test_vlm_decoder_generic_adapter_compile_smoke():
+    qeff_model = _build_vlm_text_benchmark_model()
+    manifest_path = qeff_model.compile(prefill_seq_len=32, ctx_len=128)
+    payload = json.loads(Path(manifest_path).read_text())
+    assert len(payload["summaries"]) >= 2
+    assert any(s["qpc_path"] is not None for s in payload["summaries"])
+
+
+def test_vlm_decoder_backward_compat_no_benchmark():
+    config = AutoConfig.from_pretrained(VLM_TEXT_MODEL_ID, trust_remote_code=True)
+    text_model = HFAutoModelForCausalLM.from_config(
+        config.text_config, trust_remote_code=True, attn_implementation="eager"
+    )
+    qeff_model = QEFFAutoModelForCausalLM(text_model)
+    assert not qeff_model.enable_benchmark
+    with pytest.raises(ValueError, match="enable_benchmark=True"):
+        qeff_model.get_benchmark_module_specs(mode="decode")
