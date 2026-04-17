@@ -1081,6 +1081,44 @@ def _resolve_layers(qeff_model):
     return None, None
 
 
+def _resolve_layers_from_model(model):
+    for model_attr in ("model", "transformer"):
+        inner = getattr(model, model_attr, None)
+        if inner is None:
+            continue
+        for layer_attr in ("layers", "h", "blocks"):
+            layers = getattr(inner, layer_attr, None)
+            if layers is not None and len(layers) > 0:
+                return inner, layers
+    return None, None
+
+
+def _build_single_layer_from_config(config):
+    cfg = copy.deepcopy(config)
+    cfg.num_hidden_layers = 1
+    hf_model = AutoModelForCausalLM.from_config(cfg, attn_implementation="eager", trust_remote_code=True)
+    _prepare_direct_qeff_module(hf_model)
+    hf_model.float().eval()
+    _, layers = _resolve_layers_from_model(hf_model)
+    return hf_model, layers
+
+
+def _resolve_attn_from_layer(layer):
+    for attr in ("self_attn", "attn", "self_attention", "attention", "ln_attn"):
+        obj = getattr(layer, attr, None)
+        if obj is not None and hasattr(obj, "forward"):
+            return obj
+    return None
+
+
+def _resolve_mlp_from_layer(layer):
+    for attr in ("mlp", "feed_forward", "ffn"):
+        obj = getattr(layer, attr, None)
+        if obj is not None and hasattr(obj, "forward"):
+            return obj
+    return None
+
+
 class GenericArchitectureAdapter:
     benchmarkable_types = {"attention", "mlp"}
     supports_combined_prefill_decode = True
@@ -1089,8 +1127,9 @@ class GenericArchitectureAdapter:
     def matches(qeff_model):
         _, layers = _resolve_layers(qeff_model)
         if layers is None:
-            return False
-        return hasattr(layers[0], "self_attn") or hasattr(layers[0], "attn")
+            config = qeff_model.model.config
+            return getattr(config, "num_hidden_layers", 0) > 0 and getattr(config, "hidden_size", 0) > 0
+        return _resolve_attn_from_layer(layers[0]) is not None
 
     @staticmethod
     def resolved_dims(qeff_model):
@@ -1121,20 +1160,27 @@ class GenericArchitectureAdapter:
     ):
         config = qeff_model.model.config
         _, layers = _resolve_layers(qeff_model)
+        _built_model = None
+        if layers is None:
+            _built_model, layers = _build_single_layer_from_config(config)
+        if layers is None:
+            return []
         has_sliding = getattr(config, "sliding_window", None) is not None
         blocking_suffix = (
             f"_blocked_{blocking_config.mode.value}"
             if blocking_config and blocking_config.mode != BlockingMode.NONE
             else ""
         )
-        cos_dummy = torch.ones(1, 1, 1, getattr(config, "head_dim", 32))
-        sin_dummy = torch.zeros(1, 1, 1, getattr(config, "head_dim", 32))
+        _num_heads = getattr(config, "num_attention_heads", getattr(config, "num_heads", 1))
+        _head_dim = getattr(config, "head_dim", None) or (config.hidden_size // max(_num_heads, 1))
+        cos_dummy = torch.ones(1, 1, 1, _head_dim)
+        sin_dummy = torch.zeros(1, 1, 1, _head_dim)
 
         attn_variants = []
         if has_sliding:
             seen_sliding, seen_full = False, False
             for idx, layer in enumerate(layers):
-                attn = getattr(layer, "self_attn", getattr(layer, "attn", None))
+                attn = _resolve_attn_from_layer(layer)
                 if attn is None:
                     continue
                 is_sliding = getattr(attn, "is_sliding", False)
@@ -1148,7 +1194,7 @@ class GenericArchitectureAdapter:
                     break
         if not attn_variants:
             layer = layers[layer_index]
-            attn = getattr(layer, "self_attn", getattr(layer, "attn", None))
+            attn = _resolve_attn_from_layer(layer)
             if attn is not None:
                 attn_variants.append((layer_index, "attention", attn))
 
@@ -1193,7 +1239,7 @@ class GenericArchitectureAdapter:
                 )
             )
 
-        mlp_module = getattr(layers[layer_index], "mlp", None)
+        mlp_module = _resolve_mlp_from_layer(layers[layer_index])
         if mlp_module is not None:
             mlp_name = "mlp" if mode != "prefill" else "prefill_mlp"
             specs.append(
