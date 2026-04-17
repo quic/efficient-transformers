@@ -1,0 +1,5 @@
+{
+    "seq_classification_models": [
+        "meta-llama/Llama-Prompt-Guard-2-22M"
+    ]
+}
