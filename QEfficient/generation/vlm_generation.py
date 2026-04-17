@@ -308,8 +308,10 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         # Set output buffers
         self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
 
-        # Skip buffers for dual-QPC coordination
-        self._session.skip_buffers(self._lang_skip_buffers)
+        # IMPORTANT: never clear retained/KV buffers for slot-targeted prefill calls in
+        # continuous batching, otherwise previously-prefilled slots are wiped.
+        if decode_batch_id is None:
+            self._session.skip_buffers(self._lang_skip_buffers)
 
         # Run chunked prefill
         outputs = None
@@ -511,6 +513,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
         # Use base class generate method with vision prompts
         if self.full_batch_size is not None:
+            if len({str(img) for img in images}) > 1:
+                logger.warning(
+                    "Mixed images with continuous batching require isolated passes because the decode "
+                    "specialization shares a single vision buffer across slots."
+                )
+                return self._generate_mixed_image_batch_isolated(vision_prompts, generation_len, stream, **kwargs)
             # Continuous batching mode (new capability)
             return self._generate_continuous_batching(vision_prompts, generation_len, stream, **kwargs)
         else:
@@ -797,6 +805,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self._vision_outputs = None
         self._vision_outputs_cache = {}
 
+        # Reset retained state once for a fresh generation run.
+        self._session.skip_buffers(self._lang_skip_buffers)
+
         # Initialize decode inputs
         num_prompts = len(vision_prompts)
         execution_batch_size = self.full_batch_size
@@ -863,6 +874,74 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
         return CloudAI100ExecInfo(
             batch_size=1, generated_texts=generated_texts, generated_ids=self.generated_ids, perf_metrics=perf_metrics
+        )
+
+    def _generate_mixed_image_batch_isolated(self, vision_prompts, generation_len, stream, **kwargs):
+        """
+        Run mixed-image requests by isolating each image into its own continuous-batching pass.
+
+        This keeps compiled full-batch decode specialization intact while avoiding cross-image
+        state bleed by duplicating one image/prompt across all CB slots per pass.
+        """
+        if self.full_batch_size is None:
+            return self._generate_regular_batching(vision_prompts, generation_len, stream, **kwargs)
+
+        if stream:
+            logger.warning("Streaming output is not supported in isolated mixed-image mode.")
+
+        isolated_texts = []
+        isolated_ids = []
+        isolated_metrics = []
+
+        for image, prompt in vision_prompts:
+            duplicated_batch = [(image, prompt)] * self.full_batch_size
+            isolated_gen = self.__class__(
+                qeff_model=self.qeff_model,
+                tokenizer=self.tokenizer,
+                processor=self.processor,
+                lang_qpc_path=self._qpc_path,
+                vision_qpc_path=self._vision_qpc_path,
+                device_id=self.device_id,
+                ctx_len=self._ctx_len,
+                comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
+                comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
+                enable_debug_logs=self.enable_debug_logs,
+                write_io_dir=self._write_io_dir,
+                full_batch_size=self.full_batch_size,
+                image_height=self.image_height,
+                image_width=self.image_width,
+                is_tlm=self.is_tlm,
+                include_sampler=self.include_sampler,
+                return_pdfs=self.return_pdfs,
+                include_guided_decoding=self.include_guided_decoding,
+                sampling_params=self.sampling_params,
+            )
+
+            isolated_result = isolated_gen._generate_continuous_batching(
+                duplicated_batch, generation_len=generation_len, stream=False, **kwargs
+            )
+            isolated_texts.append(isolated_result.generated_texts[0])
+            isolated_ids.append(np.array(isolated_result.generated_ids[0], copy=True))
+            isolated_metrics.append(isolated_result.perf_metrics)
+
+            try:
+                isolated_gen._session.deactivate()
+                isolated_gen._vision_session.deactivate()
+            except Exception:
+                logger.debug("Failed to deactivate isolated sessions cleanly.")
+
+        avg_metrics = PerfMetrics(
+            prefill_time=np.mean([m.prefill_time for m in isolated_metrics]),
+            decode_perf=np.mean([m.decode_perf for m in isolated_metrics]),
+            total_perf=np.mean([m.total_perf for m in isolated_metrics]),
+            total_time=np.mean([m.total_time for m in isolated_metrics]),
+        )
+
+        return CloudAI100ExecInfo(
+            batch_size=1,
+            generated_texts=isolated_texts,
+            generated_ids=np.stack(isolated_ids, axis=0),
+            perf_metrics=avg_metrics,
         )
 
     def run_prefill_for_all_inputs_with_cached_vision(self, prompt_queue, generation_len):

@@ -956,7 +956,11 @@ class QEffTextGenerationBase:
                 else:
                     # If the generated sequence is valid and within generation len prepare for next decode
                     decode_inputs["input_ids"][decode_batch_id, -1] = next_token_id[decode_batch_id, -1]
-                    decode_inputs["position_ids"][decode_batch_id][..., -1] += 1
+                    if decode_inputs["position_ids"].ndim == 3:
+                        # Qwen VL style position ids: (3/4, batch, seq_len)
+                        decode_inputs["position_ids"][:, decode_batch_id, -1] += 1
+                    else:
+                        decode_inputs["position_ids"][decode_batch_id][..., -1] += 1
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
                         next_token_id[decode_batch_id, -1]
                     )
@@ -965,10 +969,11 @@ class QEffTextGenerationBase:
 
                     if self.comp_ctx_lengths_decode is not None:
                         # Update ccl_id and comp_ctx_lengths_decode based on the maximum position id
-                        if (
-                            decode_inputs["position_ids"][decode_batch_id, -1]
-                            >= self.comp_ctx_lengths_decode[ccl_id] - 1
-                        ):
+                        if decode_inputs["position_ids"].ndim == 3:
+                            current_pos = decode_inputs["position_ids"][:, decode_batch_id, -1].max()
+                        else:
+                            current_pos = decode_inputs["position_ids"][decode_batch_id, -1]
+                        if current_pos >= self.comp_ctx_lengths_decode[ccl_id] - 1:
                             ccl_id = min(ccl_id + 1, max_ccl_id)
                             decode_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_decode[ccl_id]
 
