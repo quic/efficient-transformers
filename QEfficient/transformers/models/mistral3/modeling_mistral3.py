@@ -99,6 +99,38 @@ class QEffPixtralVisionModel(PixtralVisionModel):
 
 
 class QEffMistral3Model(Mistral3Model):
+    def get_image_features(
+        self,
+        pixel_values: torch.FloatTensor,
+        image_sizes: torch.Tensor,
+        vision_feature_layer: Optional[Union[int, list[int]]] = None,
+        output_hidden_states: Optional[bool] = None,
+        **kwargs,
+    ):
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        image_outputs = self.vision_tower(
+            pixel_values,
+            image_sizes=image_sizes,
+            output_hidden_states=True if output_hidden_states is None else output_hidden_states,
+            return_dict=True,
+            **kwargs,
+        )
+
+        if image_outputs.hidden_states is None:
+            selected_image_feature = image_outputs.last_hidden_state
+        elif isinstance(vision_feature_layer, int):
+            selected_image_feature = image_outputs.hidden_states[vision_feature_layer]
+        else:
+            hs_pool = [image_outputs.hidden_states[layer_idx] for layer_idx in vision_feature_layer]
+            selected_image_feature = torch.cat(hs_pool, dim=-1)
+
+        image_features = self.multi_modal_projector(selected_image_feature.squeeze(0), image_sizes)
+        downsample_ratio = self.vision_tower.patch_size * self.config.spatial_merge_size
+        split_sizes = (torch.as_tensor(image_sizes, device=image_features.device) // downsample_ratio).prod(dim=-1).tolist()
+        image_features = torch.split(image_features.squeeze(0), split_sizes)
+        image_outputs.pooler_output = image_features
+        return image_outputs
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -123,7 +155,7 @@ class QEffMistral3Model(Mistral3Model):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        outputs = self.language_model(
+        outputs = self.model.language_model(
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -149,7 +181,7 @@ class QEFFMistral3EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.model.vision_model = self.model.vision_tower
+        self.model.model.vision_model = self.model.model.vision_tower
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -158,16 +190,17 @@ class QEFFMistral3EncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_tower.transformer.layers[0].__class__}
+        return {self.model.model.vision_tower.transformer.layers[0].__class__}
 
     def forward(self, pixel_values):
         image_sizes = torch.tensor([[pixel_values.shape[2], pixel_values.shape[3]]]).repeat(pixel_values.shape[0], 1)
-        image_features = self.model.get_image_features(
+        image_features = self.model.model.get_image_features(
             pixel_values=pixel_values,
-            vision_feature_layer=self.model.config.vision_feature_layer,
+            vision_feature_layer=self.model.model.config.vision_feature_layer,
             image_sizes=image_sizes,
+            output_hidden_states=True,
         )
-        return image_features[0]
+        return torch.cat(image_features.pooler_output, dim=0)
 
 
 class QEFFMistral3DecoderWrapper(nn.Module):
@@ -175,7 +208,7 @@ class QEFFMistral3DecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.config = self.model.config
-        self.language_model = self.model.language_model
+        self.language_model = self.model.model.language_model
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -184,7 +217,7 @@ class QEFFMistral3DecoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.language_model.layers[0].__class__}
+        return {self.model.model.language_model.layers[0].__class__}
 
     def forward(
         self,
@@ -196,7 +229,7 @@ class QEFFMistral3DecoderWrapper(nn.Module):
         comp_ctx_lengths: Optional[List[int]] = None,
         batch_index: Optional[torch.LongTensor] = None,
     ):
-        inputs_embeds = self.model.language_model.get_input_embeddings()(input_ids)
+        inputs_embeds = self.model.model.language_model.get_input_embeddings()(input_ids)
         mask = input_ids == self.model.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
@@ -229,6 +262,38 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEFFMistral3DecoderWrapper(self)
 
+    def get_image_features(
+        self,
+        pixel_values: torch.FloatTensor,
+        image_sizes: torch.Tensor,
+        vision_feature_layer: Optional[Union[int, list[int]]] = None,
+        **kwargs,
+    ):
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        image_outputs = self.model.vision_tower(
+            pixel_values,
+            image_sizes=image_sizes,
+            output_hidden_states=True,
+            return_dict=True,
+            **kwargs,
+        )
+
+        if image_outputs.hidden_states is None:
+            # Some transformed vision towers do not populate hidden_states even when requested.
+            selected_image_feature = image_outputs.last_hidden_state
+        elif isinstance(vision_feature_layer, int):
+            selected_image_feature = image_outputs.hidden_states[vision_feature_layer]
+        else:
+            hs_pool = [image_outputs.hidden_states[layer_idx] for layer_idx in vision_feature_layer]
+            selected_image_feature = torch.cat(hs_pool, dim=-1)
+
+        image_features = self.model.multi_modal_projector(selected_image_feature.squeeze(0), image_sizes)
+        downsample_ratio = self.model.vision_tower.patch_size * self.config.spatial_merge_size
+        split_sizes = (torch.as_tensor(image_sizes, device=image_features.device) // downsample_ratio).prod(dim=-1).tolist()
+        image_features = torch.split(image_features.squeeze(0), split_sizes)
+        image_outputs.pooler_output = image_features
+        return image_outputs
+
     def forward(
         self,
         input_ids,
@@ -245,7 +310,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             vision_feature_layer=self.config.vision_feature_layer,
             image_sizes=image_sizes,
         )
-        image_features = image_features[0].to(inputs_embeds.device, inputs_embeds.dtype)
+        image_features = torch.cat(image_features.pooler_output, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
@@ -254,7 +319,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         image_embeds = torch.where(mask.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
 
-        outputs = self.language_model(
+        outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -290,7 +355,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         )
         inputs_shapes["vision_embeds"] = (
             vision_size,
-            self.language_model.config.hidden_size,
+            self.model.language_model.config.hidden_size,
         )
         inputs_shapes["position_ids"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -327,8 +392,8 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
-        lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
-        for i in range(self.language_model.config.num_hidden_layers):
+        lang_inputs["past_key_values"] = [[] for _ in range(self.model.language_model.config.num_hidden_layers)]
+        for i in range(self.model.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=self.config.torch_dtype))
 
@@ -502,7 +567,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.language_model.config.num_hidden_layers):
+        for i in range(self.model.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 

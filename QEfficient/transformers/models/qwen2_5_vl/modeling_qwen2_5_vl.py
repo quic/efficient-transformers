@@ -421,7 +421,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
 
         query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids[1:], self.rope_scaling["mrope_section"]
+            query_states, key_states, cos_cached, sin_cached, position_ids[1:], self.config.rope_parameters["mrope_section"]
         )
 
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -703,7 +703,7 @@ class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
 class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
-        self.model = model
+        self.model = model.model
         self.model.vision_model = self.model.visual
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -797,7 +797,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         inputs_shapes["vision_embeds"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             vision_size,
-            self.model.config.hidden_size,
+            self.model.config.text_config.hidden_size,
         )
         inputs_shapes["image_grid_thw"] = (1, 1, 98, 146)
         inputs_shapes["position_ids"] = (
@@ -1102,13 +1102,22 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
 
+        mm_token_type_ids = inputs.get("mm_token_type_ids")
+        if mm_token_type_ids is None:
+            # transformers>=5.5 get_rope_index expects modality token types (text=0, image=1, video=2).
+            mm_token_type_ids = torch.zeros_like(inputs["input_ids"], dtype=torch.int32)
+            mm_token_type_ids = mm_token_type_ids.masked_fill(inputs["input_ids"] == self.config.image_token_id, 1)
+            mm_token_type_ids = mm_token_type_ids.masked_fill(inputs["input_ids"] == self.config.video_token_id, 2)
+
         pos_ids, rope_deltas = self.model.get_rope_index(
-            inputs["input_ids"],
-            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
-            video_grid_thw=None,
-            second_per_grid_ts=None,
+            input_ids=inputs["input_ids"],
+            mm_token_type_ids=mm_token_type_ids,
+            image_grid_thw=None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            video_grid_thw=None if "video_grid_thw" not in inputs else inputs["video_grid_thw"],
+            second_per_grid_ts=None if "second_per_grid_ts" not in inputs else inputs["second_per_grid_ts"],
             attention_mask=inputs["attention_mask"],
         )
+        self.model.rope_deltas = rope_deltas
 
         inputs["position_ids"] = torch.cat((inputs["position_ids"], pos_ids), dim=0)
 
