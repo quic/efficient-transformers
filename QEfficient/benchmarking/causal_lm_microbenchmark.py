@@ -71,9 +71,6 @@ class RuntimeStats:
     min_ms: float
     max_ms: float
     total_ms: float
-    p50_ms: Optional[float] = None
-    p99_ms: Optional[float] = None
-    throughput_ips: Optional[float] = None
 
 
 @dataclass
@@ -159,16 +156,12 @@ def _timed_session_runs(
         timings_ms.append((perf_counter() - start) * 1000.0)
 
     total_ms = float(sum(timings_ms))
-    timings_array = np.asarray(timings_ms, dtype=np.float64)
     return RuntimeStats(
         iterations=benchmark_runs,
         mean_ms=total_ms / benchmark_runs,
         min_ms=float(min(timings_ms)),
         max_ms=float(max(timings_ms)),
         total_ms=total_ms,
-        p50_ms=float(np.percentile(timings_array, 50)),
-        p99_ms=float(np.percentile(timings_array, 99)),
-        throughput_ips=(benchmark_runs / (total_ms / 1000.0)) if total_ms else None,
     )
 
 
@@ -1069,16 +1062,7 @@ class CausalLMModuleBenchmarkModel(QEFFBaseModel):
 
 
 def _resolve_layers(qeff_model):
-    model = qeff_model.model
-    for model_attr in ("model", "transformer"):
-        inner = getattr(model, model_attr, None)
-        if inner is None:
-            continue
-        for layer_attr in ("layers", "h", "blocks"):
-            layers = getattr(inner, layer_attr, None)
-            if layers is not None and len(layers) > 0:
-                return inner, layers
-    return None, None
+    return _resolve_layers_from_model(qeff_model.model)
 
 
 def _resolve_layers_from_model(model):
@@ -1160,9 +1144,9 @@ class GenericArchitectureAdapter:
     ):
         config = qeff_model.model.config
         _, layers = _resolve_layers(qeff_model)
-        _built_model = None
+        _layer_holder = None
         if layers is None:
-            _built_model, layers = _build_single_layer_from_config(config)
+            _layer_holder, layers = _build_single_layer_from_config(config)
         if layers is None:
             return []
         has_sliding = getattr(config, "sliding_window", None) is not None
@@ -1583,16 +1567,12 @@ def _run_decode_benchmark(
         decode_inputs = wrapper.build_decode_inputs(outputs, next_position_ids)
 
     total_ms = float(sum(timings_ms))
-    timings_array = np.asarray(timings_ms, dtype=np.float64)
     stats = RuntimeStats(
         iterations=benchmark_runs,
         mean_ms=total_ms / benchmark_runs,
         min_ms=float(min(timings_ms)),
         max_ms=float(max(timings_ms)),
         total_ms=total_ms,
-        p50_ms=float(np.percentile(timings_array, 50)),
-        p99_ms=float(np.percentile(timings_array, 99)),
-        throughput_ips=(benchmark_runs / (total_ms / 1000.0)) if total_ms else None,
     )
     return first_decode_ms, stats
 
