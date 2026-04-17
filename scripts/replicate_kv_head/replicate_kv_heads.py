@@ -7,10 +7,8 @@
 
 import argparse
 from typing import Optional
-
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers, undo_transformers_quantizers
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
