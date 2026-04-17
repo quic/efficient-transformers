@@ -2,17 +2,7 @@
 This directory contains the tests for the project. Below is the list of test functions and required pytest plugins.
 
 ## Test Functions
-### cloud/test_infer.py
-- test_infer function
 
-### cloud/test_export.py
-- test_export function
-
-### cloud/test_compile.py
-- test_compile function
-
-### cloud/test_execute.py
-- test_execute function
 
 ## Required Plugins
 - `pytest`
@@ -72,4 +62,11 @@ pip install pytest-html
 Then run the tests with html:
 ```sh
 pytest --html=report.html
+```
+
+## Test Collect
+If you want to see the list of all the tests without actually running them, you can use:
+
+```sh
+pytest --collect-only -q
 ```

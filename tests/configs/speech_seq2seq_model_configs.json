@@ -1,5 +1,0 @@
-{
-   "speech_seq2seq_models": [
-        "openai/whisper-tiny"
-    ]
-}
