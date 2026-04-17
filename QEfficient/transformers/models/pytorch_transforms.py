@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import warnings
-from functools import partial
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
@@ -193,6 +192,29 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeRMSNorm,
     Qwen3MoeRotaryEmbedding,
     Qwen3MoeSparseMoeBlock,
+)
+from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLModel,
+    Qwen3VLTextAttention,
+    Qwen3VLTextDecoderLayer,
+    Qwen3VLTextModel,
+    Qwen3VLTextRMSNorm,
+    Qwen3VLTextRotaryEmbedding,
+    Qwen3VLVisionAttention,
+    Qwen3VLVisionModel,
+)
+from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+    Qwen3VLMoeForConditionalGeneration,
+    Qwen3VLMoeModel,
+    Qwen3VLMoeTextAttention,
+    Qwen3VLMoeTextDecoderLayer,
+    Qwen3VLMoeTextModel,
+    Qwen3VLMoeTextRMSNorm,
+    Qwen3VLMoeTextRotaryEmbedding,
+    Qwen3VLMoeTextSparseMoeBlock,
+    Qwen3VLMoeVisionAttention,
+    Qwen3VLMoeVisionModel,
 )
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
@@ -433,6 +455,28 @@ from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeRotaryEmbedding,
     QEffQwen3MoeSparseMoeBlock,
 )
+from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
+    QEffQwen3VLForConditionalGeneration,
+    QEffQwen3VLModel,
+    QEffQwen3VLTextAttention,
+    QEffQwen3VLTextDecoderLayer,
+    QEffQwen3VLTextModel,
+    QEffQwen3VLTextRotaryEmbedding,
+    QEffQwen3VLVisionAttention,
+    QEffQwen3VLVisionModel,
+)
+from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+    QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+    QEffQwen3VLMoeForConditionalGeneration,
+    QEffQwen3VLMoeModel,
+    QEffQwen3VLMoeTextAttention,
+    QEffQwen3VLMoeTextDecoderLayer,
+    QEffQwen3VLMoeTextModel,
+    QEffQwen3VLMoeTextRotaryEmbedding,
+    QEffQwen3VLMoeTextSparseMoeBlock,
+    QEffQwen3VLMoeVisionAttention,
+    QEffQwen3VLMoeVisionModel,
+)
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
@@ -480,6 +524,8 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
         Olmo2RMSNorm: CustomRMSNormAIC,
+        Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
+        Qwen3VLTextRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -538,6 +584,25 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3MoeAttention: QEffQwen3MoeAttention,
         Qwen3MoeRotaryEmbedding: QEffQwen3MoeRotaryEmbedding,
         Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
+        # Qwen3VLMoe
+        Qwen3VLMoeForConditionalGeneration: QEffQwen3VLMoeForConditionalGeneration,
+        Qwen3VLMoeModel: QEffQwen3VLMoeModel,
+        Qwen3VLMoeTextAttention: QEffQwen3VLMoeTextAttention,
+        Qwen3VLMoeTextDecoderLayer: QEffQwen3VLMoeTextDecoderLayer,
+        Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
+        Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
+        Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
+        Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
+        Qwen3VLMoeTextRotaryEmbedding: QEffQwen3VLMoeTextRotaryEmbedding,
+        # Qwen3vl
+        Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
+        Qwen3VLModel: QEffQwen3VLModel,
+        Qwen3VLTextAttention: QEffQwen3VLTextAttention,
+        Qwen3VLTextDecoderLayer: QEffQwen3VLTextDecoderLayer,
+        Qwen3VLVisionAttention: QEffQwen3VLVisionAttention,
+        Qwen3VLVisionModel: QEffQwen3VLVisionModel,
+        Qwen3VLTextModel: QEffQwen3VLTextModel,
+        Qwen3VLTextRotaryEmbedding: QEffQwen3VLTextRotaryEmbedding,
         # Gemma2
         Gemma2Attention: QEffGemma2Attention,
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
@@ -676,6 +741,8 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
         # Qwen3Moe
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+        # Qwen3 VL Moe
+        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
     }
 
 
@@ -732,7 +799,7 @@ class SpDTransform:
             supported_spd_model_types := [SPD_TARGET] + list(model_type_registry.keys())
         ):
             raise ValueError(
-                f"Specualtive model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
+                f"Speculative model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
             )
         elif (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
@@ -914,21 +981,50 @@ class PoolingTransform:
         return model, transformed
 
 
-class BlockedKVAttentionTransform:
-    _module_mapping = {
-        QEffLlamaAttention,
-        QEffQwen2_5_VLAttention,
-    }
+def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
+    """
+    Dynamically determine which DecoderLayer classes should be exported as functions
+    based on the model's architecture using the existing KVCacheTransform mapping.
+    """
+    # Define patterns that identify decoder layer classes
+    DECODER_LAYER_PATTERNS = ["DecoderLayer", "Block", "Layer"]
+
+    # Get all QEff classes that are decoder layers from the existing mapping
+    decoder_layer_classes = set()
+
+    for original_class, qeff_class in KVCacheTransform._module_mapping.items():
+        # Check if the QEff class name contains decoder layer patterns
+        qeff_class_name = qeff_class.__name__
+        if any(pattern in qeff_class_name for pattern in DECODER_LAYER_PATTERNS):
+            decoder_layer_classes.add(qeff_class)
+
+    # Filter to only include classes that are actually used in the current model
+    model_decoder_classes = set()
+    for module in model.modules():
+        if module.__class__ in decoder_layer_classes:
+            model_decoder_classes.add(module.__class__)
+
+    return model_decoder_classes
+
+
+class BlockingAttentionTransform:
+    _skip_classes = {}
 
     @classmethod
-    def apply(cls, model: nn.Module, num_kv_blocks) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
         transformed = False
+        supported_attention_classes = {
+            qeff_class
+            for qeff_class in KVCacheTransform._module_mapping.values()
+            if qeff_class.__name__.endswith("Attention")
+        }
         for module in model.modules():
-            if type(module) in cls._module_mapping:
-                repl_module = type(module)
-                module.__class__ = repl_module
-                module.forward = MethodType(partial(repl_module.forward, num_kv_blocks=num_kv_blocks), module)
-                transformed = True  # Set to True if at least one transformation occurs
-            elif module.__class__.__name__.endswith("Attention") and type(module) not in cls._module_mapping:
-                warnings.warn(f"KV blocking is not yet supported for {type(module)}.")
+            if type(module) in cls._skip_classes:
+                warnings.warn(f"Blocking is not yet supported for {type(module)}.")
+                continue
+            if type(module) in supported_attention_classes:
+                module.attn_blocking_config = attn_blocking_config
+                transformed = True
+            elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
+                warnings.warn(f"Blocking is not yet supported for {type(module)}.")
         return model, transformed

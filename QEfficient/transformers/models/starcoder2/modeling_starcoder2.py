@@ -25,6 +25,12 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     repeat_kv,
 )
 
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -44,7 +50,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -68,7 +74,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -84,23 +90,44 @@ class QEffStarcoder2Attention(Starcoder2Attention):
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        if past_key_value is not None:
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-
-        attention_interface = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            scaling=self.scaling,
-        )
+        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
+        if use_blocking:
+            attn_output, attn_weights = generic_blocked_attention_interface(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_values,
+                blocking_config=blocking_config,
+                comp_ctx_length=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+                past_seen_tokens=past_seen_tokens,
+            )
+        else:
+            key_states, value_states, _ = past_key_value_update(
+                module=self,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+            )
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                scaling=self.scaling,
+            )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
@@ -157,7 +184,7 @@ class QEFFStarcoder2DecoderLayer(Starcoder2DecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=use_cache,

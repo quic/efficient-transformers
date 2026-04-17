@@ -52,16 +52,6 @@ class QEffPhi3RotaryEmbedding(Phi3RotaryEmbedding):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
-        )
-
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
@@ -110,7 +100,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -129,9 +119,6 @@ class QEffPhi3Attention(Phi3Attention):
     - add new args position idx for the cache_kwargs for kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffPhi3RotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -139,9 +126,11 @@ class QEffPhi3Attention(Phi3Attention):
         attention_mask: Optional[torch.Tensor],
         batch_index: Optional[torch.LongTensor] = None,
         position_ids=Optional[torch.Tensor],
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -157,12 +146,13 @@ class QEffPhi3Attention(Phi3Attention):
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
@@ -170,7 +160,7 @@ class QEffPhi3Attention(Phi3Attention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
@@ -207,6 +197,8 @@ class QEffPhi3DecoderLayer(Phi3DecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -239,11 +231,13 @@ class QEffPhi3DecoderLayer(Phi3DecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
 
@@ -264,6 +258,11 @@ class QEffPhi3Model(Phi3Model):
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
     """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffPhi3RotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
 
     def forward(
         self,
@@ -324,6 +323,8 @@ class QEffPhi3Model(Phi3Model):
                 comp_ctx_lengths=comp_ctx_lengths,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
                 **kwargs,
             )
 

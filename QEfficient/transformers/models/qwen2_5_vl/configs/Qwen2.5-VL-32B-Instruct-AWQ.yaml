@@ -1,0 +1,3 @@
+FP16NodeInstanceNames:
+  - logits
+  - onnx::MatMul_25676

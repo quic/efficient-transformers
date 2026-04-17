@@ -26,6 +26,12 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     rotate_half,
 )
 
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -58,16 +64,6 @@ class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x: torch.Tensor, seq_len: int = None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
 
 
 def qeff_apply_rotary_pos_emb(
@@ -111,21 +107,20 @@ def qeff_apply_rotary_pos_emb(
 class QEffGraniteMoeAttention(GraniteMoeAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffGraniteMoeRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -137,33 +132,47 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
-        if past_key_value is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
-                "cache_position": cache_position,
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-            }
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-
-        attention_interface = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            scaling=self.scaling,
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
         )
+        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
+        if use_blocking:
+            attn_output, attn_weights = generic_blocked_attention_interface(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_values,
+                blocking_config=blocking_config,
+                comp_ctx_length=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+                past_seen_tokens=past_seen_tokens,
+            )
+        else:
+            key_states, value_states, _ = past_key_value_update(
+                module=self,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+            )
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                scaling=self.scaling,
+            )
 
         attn_output = attn_output.view(bsz, q_len, -1)
         attn_output = self.o_proj(attn_output)
@@ -186,7 +195,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     # upcast attention to fp32
@@ -214,6 +223,8 @@ class QEffGraniteMoeDecoderLayer(GraniteMoeDecoderLayer):
         cache_position: Optional[torch.LongTensor] = None,
         output_router_logits: Optional[bool] = False,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -250,11 +261,13 @@ class QEffGraniteMoeDecoderLayer(GraniteMoeDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
 
@@ -286,6 +299,11 @@ class QEffGraniteMoeModel(GraniteMoeModel):
     Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`GraniteMoeDecoderLayer`]
 
     """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffGraniteMoeRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def forward(
         self,
@@ -356,6 +374,8 @@ class QEffGraniteMoeModel(GraniteMoeModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
+                    sin_cached=self.sin_cached,
+                    cos_cached=self.cos_cached,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -368,6 +388,8 @@ class QEffGraniteMoeModel(GraniteMoeModel):
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
+                    sin_cached=self.sin_cached,
+                    cos_cached=self.cos_cached,
                 )
 
             hidden_states = layer_outputs[0]

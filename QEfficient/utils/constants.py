@@ -33,6 +33,9 @@ NPI_MAPPING = {
     ),
 }
 
+# Blocking defaults
+VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.75
+
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
@@ -143,6 +146,10 @@ WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16
 QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
 
+# Qwen3_vl Constanst
+QWEN3_VL_HEIGHT = 354
+QWEN3_VL_WIDTH = 536
+
 # Modules to cache while clearing the pytorch weights
 CACHE_MODULES = ["get_output_names", "get_dummy_inputs", "get_onnx_dynamic_axes", "get_specializations"]
 
@@ -170,12 +177,15 @@ WAN_ONNX_EXPORT_LATENT_FRAMES = 21
 WAN_ONNX_EXPORT_SEQ_LEN = 512
 WAN_ONNX_EXPORT_ROTARY_DIM = 128
 WAN_DIT_OUT_CHANNELS = 64
-# Wan dims for 180p
-WAN_ONNX_EXPORT_CL_180P = 5040
-WAN_ONNX_EXPORT_LATENT_HEIGHT_180P = 24
-WAN_ONNX_EXPORT_LATENT_WIDTH_180P = 40
-WAN_ONNX_EXPORT_HEIGHT_180P = 192
-WAN_ONNX_EXPORT_WIDTH_180P = 320
+# Wan dims for 45p
+WAN_ONNX_EXPORT_CL_45P = 252
+WAN_ONNX_EXPORT_LATENT_HEIGHT_45P = 6
+WAN_ONNX_EXPORT_LATENT_WIDTH_45P = 8
+WAN_ONNX_EXPORT_HEIGHT_45P = 48
+WAN_ONNX_EXPORT_WIDTH_45P = 64
+
+# WAN I2V
+WAN_DIT_I2V_IMG_LATENT_CHANNELS = 32
 
 # For the purpose of automatic CCL lists generation, to limit the number of elements in CCL list, the starting point will be calculated based on context length
 CCL_START_MAP = {
@@ -187,6 +197,7 @@ CCL_START_MAP = {
 CCL_MAX_ELEMENTS_LISTS = 5
 CCL_START_CTX_LEN = 4096
 CCL_MIN_CTX_LEN = 1024
+CCL_UNIQNE_STEP = 32
 
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256
@@ -202,7 +213,6 @@ class Constants:
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
-    NUM_KV_BLOCKS = 8
     MAX_TOP_K_IDS = ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
     SAMPLER_OPS = {
         "repetition_penalties",

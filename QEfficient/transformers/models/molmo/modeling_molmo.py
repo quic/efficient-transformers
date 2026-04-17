@@ -18,6 +18,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 def _non_meta_init_device(config) -> torch.device:
@@ -53,9 +54,10 @@ def eager_attention_forward(
         v = v.reshape(B, num_q_heads, S, D)
 
     attn_weights = torch.matmul(q, k.transpose(2, 3)) * scale_factor
-
     if attention_mask is not None:
-        attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+        attn_weights = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=k.dtype), attn_weights
+        )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
     attn_output = torch.matmul(attn_weights, v)
@@ -151,6 +153,8 @@ class QEffMolmoRotaryEmbedding(nn.Module):
     def __init__(self, config, device=None):
         super().__init__()
         dim = config.d_model // config.n_heads
+
+        # TODO: Config does not have torch_dtype or dtype (fp32 Only in encoder)
         self.inv_freq = 1.0 / (config.rope_theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
         self.original_max_seq_len = config.max_position_embeddings or config.max_sequence_length
         self._set_cos_sin_cache(
@@ -250,6 +254,8 @@ class QEffMolmoBlock(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         B, T, C = q.size()  # batch size, sequence length, d_model
         dtype = k.dtype
+        cache_position = kwargs.get("cache_position")
+        cos, sin = None, None
 
         # Optionally apply layer norm to keys and queries.
         if self.q_norm is not None and self.k_norm is not None:
@@ -264,28 +270,19 @@ class QEffMolmoBlock(nn.Module):
         # shape: (B, n_kv_h, T, hs)
         v = v.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads).transpose(1, 2)
 
-        if self.config.use_position_ids and self.config.rope:
+        if self.config.rope:
             kv_seq_len = k.shape[-2]
-            kv_seq_len = layer_past.get_seq_length(self.layer_id)
-            # Apply rotary embeddings
-            cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
-            q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
-
-        if not self.config.use_position_ids and self.config.rope:
-            kv_seq_len = k.shape[-2]
-            kv_seq_len = layer_past.get_seq_length(kv_seq_len, self.layer_id)
+            if layer_past is not None:
+                kv_seq_len = layer_past.get_seq_length(self.layer_id, cache_position)
             # Apply rotary embeddings
             cos, sin = self.rotary_emb(v, seq_len=kv_seq_len)
             q, k = qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, self.config)
 
         if layer_past is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {
-                "sin": sin,
-                "cos": cos,
-                "batch_index": batch_index,
-                "position_ids": position_ids,
-            }
+            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            # sin/cos are specific to RoPE models and are needed for some static cache paths.
+            if self.config.rope:
+                cache_kwargs.update({"sin": sin, "cos": cos})
             if comp_ctx_lengths is not None:
                 attention_bias = attention_bias[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_bias.shape[-1]
@@ -556,6 +553,7 @@ class QEffMolmo(nn.Module):
         if use_cache:
             next_cache = past_key_values.to_legacy_cache()
 
+        logits = logits.float()
         return ModelOutput(
             logits=logits,
             past_key_values=next_cache,
@@ -959,14 +957,14 @@ class QEffMolmoModel(nn.Module):
         # Define inputs
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
-        vision_inputs["image_masks"] = torch.zeros((inputs_shapes["image_masks"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=self.config.torch_dtype)
+        vision_inputs["image_masks"] = torch.zeros((inputs_shapes["image_masks"]), dtype=self.config.torch_dtype)
         vision_inputs["image_input_idx"] = torch.zeros((inputs_shapes["image_input_idx"]), dtype=torch.int32)
 
         vision_inputs["valid_idx"] = torch.zeros((inputs_shapes["valid_idx"]), dtype=torch.int64)
 
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=self.config.torch_dtype)
         lang_inputs["position_ids"] = (
             torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -987,7 +985,7 @@ class QEffMolmoModel(nn.Module):
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.n_layers)]
         for i in range(self.model.config.n_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=self.config.torch_dtype))
 
         if comp_ctx_lengths is not None:
             lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
@@ -1010,12 +1008,12 @@ class QEffMolmoModel(nn.Module):
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(
                 name="pixel_values",
-                datatype=torch.float32,
+                datatype=self.config.torch_dtype,
                 shape=("batch_size", "num_images", "img_tile", "img_size"),
             ),
             IOInfo(
                 name="image_masks",
-                datatype=torch.float32,
+                datatype=self.config.torch_dtype,
                 shape=("batch_size", "num_images", "img_tile"),
             ),
             IOInfo(

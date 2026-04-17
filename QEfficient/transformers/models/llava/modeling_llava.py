@@ -179,11 +179,13 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             raise NotImplementedError("Image Size other than 336 is not supported for Llava models yet.")
         vision_size = img_size // self.config.vision_config.patch_size
         vision_inputs = {
-            "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=torch.float32),
+            "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=self.config.torch_dtype),
         }
         lang_inputs = {
             "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
-            "vision_embeds": torch.ones((BS, vision_size, self.language_model.config.hidden_size), dtype=torch.float32),
+            "vision_embeds": torch.ones(
+                (BS, vision_size, self.language_model.config.hidden_size), dtype=self.config.torch_dtype
+            ),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
             "image_idx": torch.zeros((1, 1), dtype=torch.int64),
         }
@@ -192,8 +194,20 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         for i in range(num_layers):
             lang_inputs["past_key_values"].append(
                 (
-                    torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim),
-                    torch.zeros(FBS if continuous_batching else BS, num_key_value_heads, CTX_LEN, head_dim),
+                    torch.zeros(
+                        FBS if continuous_batching else BS,
+                        num_key_value_heads,
+                        CTX_LEN,
+                        head_dim,
+                        dtype=self.config.torch_dtype,
+                    ),
+                    torch.zeros(
+                        FBS if continuous_batching else BS,
+                        num_key_value_heads,
+                        CTX_LEN,
+                        head_dim,
+                        dtype=self.config.torch_dtype,
+                    ),
                 )
             )
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
@@ -388,5 +402,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "img_size", "img_size")),
+            IOInfo(
+                name="pixel_values", datatype=self.config.torch_dtype, shape=("batch_size", 3, "img_size", "img_size")
+            ),
         ]

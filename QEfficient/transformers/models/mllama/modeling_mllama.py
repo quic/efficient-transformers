@@ -86,7 +86,7 @@ def eager_self_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -122,16 +122,6 @@ class QEffMllamaRotaryEmbedding(MllamaRotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -176,7 +166,7 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
         self,
         hidden_states: torch.Tensor,
         cross_attention_states: Optional[torch.Tensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -191,8 +181,8 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
 
         # elif past_key_value is not None:
         # Fetch old cache
-        key_states_old = past_key_value.layers[self.layer_idx].keys
-        value_states_old = past_key_value.layers[self.layer_idx].values
+        key_states_old = past_key_values.layers[self.layer_idx].keys
+        value_states_old = past_key_values.layers[self.layer_idx].values
 
         # if cross_attention_states is not None:
         # Compute new KV states
@@ -213,8 +203,8 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
         value_states = torch.where(torch.tensor(q_len == 1), value_states_old, value_states_new)
 
         # Update the image cache
-        past_key_value.layers[self.layer_idx].keys = key_states
-        past_key_value.layers[self.layer_idx].values = value_states
+        past_key_values.layers[self.layer_idx].keys = key_states
+        past_key_values.layers[self.layer_idx].values = value_states
 
         key_states = self.k_norm(key_states)
 
@@ -241,20 +231,19 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         - add new args cache idx for the kv retention
     """
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         position_embeddings: torch.Tensor = None,
         use_cache: bool = False,
         cache_position=None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ):
         bsz, q_len, _ = hidden_states.size()
@@ -267,19 +256,20 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             if self.layer_idx is None:
                 raise ValueError(
                     f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
+            # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
+        )
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
@@ -287,7 +277,7 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface = eager_self_attention_forward
 
@@ -326,6 +316,8 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        sin_cached=None,
+        cos_cached=None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -355,12 +347,14 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
         )
         hidden_states = residual + hidden_states
 
@@ -385,7 +379,7 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
         hidden_states: torch.Tensor,
         cross_attention_states: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -403,23 +397,23 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
             value_states = self.v_proj(cross_attention_states)
             key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
             value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-            if past_key_value is not None:
+            if past_key_values is not None:
                 cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
                 if comp_ctx_lengths is not None:
                     attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
                 # if we have a new image + new tokens, we only computed key_states on that new image
                 # we still update the cross key states, past_image, new_image. And use it!
-                key_states, value_states = past_key_value.update(
+                key_states, value_states = past_key_values.update(
                     key_states,
                     value_states,
                     self.layer_idx,
                     cache_kwargs,
                 )
-        elif past_key_value is not None:
+        elif past_key_values is not None:
             key_states, value_states = (
-                past_key_value.layers[self.layer_idx].keys,
-                past_key_value.layers[self.layer_idx].values,
+                past_key_values.layers[self.layer_idx].keys,
+                past_key_values.layers[self.layer_idx].values,
             )
         else:
             raise ValueError(
@@ -465,6 +459,8 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[torch.Tensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -473,7 +469,7 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=cross_attention_mask,
             cross_attention_states=cross_attention_states,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             cache_position=cache_position,
@@ -602,6 +598,11 @@ class QEffMllamaTextModel(MllamaTextModel):
         - add new args cache idx for the kv retention
     """
 
+    def __qeff_init__(self):
+        self.rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -676,6 +677,8 @@ class QEffMllamaTextModel(MllamaTextModel):
                 comp_ctx_lengths=comp_ctx_lengths,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
             )
 
         hidden_states = self.norm(hidden_states)
@@ -944,7 +947,8 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         # vision inputs
         vision_inputs = {
             "pixel_values": torch.zeros(
-                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size), dtype=torch.float32
+                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size),
+                dtype=self.config.torch_dtype,
             ),
             "aspect_ratio_ids": torch.ones((BS, MAX_NUM_IMG), dtype=torch.int64),
             "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
@@ -972,14 +976,26 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
                 lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim
+                    1,
+                    num_key_value_heads,
+                    image_tokens_len,
+                    head_dim,
+                    dtype=self.config.torch_dtype,
                 )
                 lang_inputs["past_key_values"].layers[i].values = torch.zeros(
-                    1, num_key_value_heads, image_tokens_len, head_dim
+                    1,
+                    num_key_value_heads,
+                    image_tokens_len,
+                    head_dim,
+                    dtype=self.config.torch_dtype,
                 )
             else:
-                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
-                lang_inputs["past_key_values"].layers[i].values = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
+                lang_inputs["past_key_values"].layers[i].keys = torch.zeros(
+                    1, num_key_value_heads, CTX_LEN, head_dim, dtype=self.config.torch_dtype
+                )
+                lang_inputs["past_key_values"].layers[i].values = torch.zeros(
+                    1, num_key_value_heads, CTX_LEN, head_dim, dtype=self.config.torch_dtype
+                )
 
         lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
@@ -1139,7 +1155,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         return [
             IOInfo(
                 name="pixel_values",
-                datatype=torch.float32,
+                datatype=self.config.torch_dtype,
                 shape=("batch_size", "max_num_images", 4, 3, "img_size", "img_size"),
             ),
             IOInfo(name="aspect_ratio_ids", datatype=torch.int64, shape=("batch_size", "max_num_images")),

@@ -42,7 +42,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -66,7 +66,7 @@ class QEffPhiAttention(PhiAttention):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
@@ -104,7 +104,7 @@ class QEffPhiAttention(PhiAttention):
         query_states = torch.cat((query_rot, query_pass), dim=-1)
         key_states = torch.cat((key_rot, key_pass), dim=-1)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             # Update the cache_kwargs with position_ids for Cloud AI 100
             cache_kwargs = {
                 "sin": sin,
@@ -115,7 +115,7 @@ class QEffPhiAttention(PhiAttention):
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
@@ -190,7 +190,7 @@ class QEffPhiDecoderLayer(PhiDecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             batch_index=batch_index,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             output_attentions=output_attentions,
             use_cache=use_cache,

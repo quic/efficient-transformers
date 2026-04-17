@@ -30,6 +30,12 @@ from transformers.models.mixtral.modeling_mixtral import (
     rotate_half,
 )
 
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    past_key_value_update,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -59,16 +65,6 @@ class QEffMixtralRotaryEmbedding(MixtralRotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -116,7 +112,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -128,17 +124,16 @@ def eager_attention_forward(
 class QEffMixtralAttention(MixtralAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __qeff_init__(self):
-        self.rotary_emb = QEffMixtralRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -148,34 +143,56 @@ class QEffMixtralAttention(MixtralAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             if self.layer_idx is None:
                 raise ValueError(
                     f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        if past_key_value is not None:
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
-            if comp_ctx_lengths is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-
-        attention_interface = eager_attention_forward
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            scaling=self.scaling,
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos_cached, sin_cached, position_ids
         )
+
+        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
+        if use_blocking:
+            attn_output, attn_weights = generic_blocked_attention_interface(
+                module=self,
+                query=query_states,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                scaling=self.scaling,
+                layer_idx=self.layer_idx,
+                past_key_value=past_key_values,
+                blocking_config=blocking_config,
+                comp_ctx_length=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+                past_seen_tokens=past_seen_tokens,
+            )
+        else:
+            key_states, value_states, _ = past_key_value_update(
+                module=self,
+                key=key_states,
+                value=value_states,
+                attention_mask=attention_mask,
+                past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                position_ids=position_ids,
+            )
+            attn_output, attn_weights = eager_attention_forward(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                scaling=self.scaling,
+            )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
@@ -206,7 +223,6 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         hidden_states = hidden_states.view(-1, hidden_dim)
         # router_logits: (batch * sequence_length, n_experts)
         router_logits = self.gate(hidden_states)
-
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
         routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
@@ -232,7 +248,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
             expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.float())[:, None]
+            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(self.gate.weight.dtype))[:, None]
             current_hidden_states = expert_layer(hidden_states) * scale
             current_hidden_states = torch.where(
                 torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(routing_weights.dtype)).to(torch.bool)[
@@ -265,6 +281,8 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -296,11 +314,13 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
             position_embeddings=position_embeddings,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -322,6 +342,11 @@ class QEffMixtralModel(MixtralModel):
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
     """
+
+    def __qeff_init__(self):
+        self.rotary_emb = QEffMixtralRotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     # Ignore copy
     def forward(
@@ -397,6 +422,8 @@ class QEffMixtralModel(MixtralModel):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
+                sin_cached=self.sin_cached,
+                cos_cached=self.cos_cached,
                 **kwargs,
             )
 

@@ -30,7 +30,9 @@ class ApiRunner:
     4. ``ONNX`` model on Cloud AI 100
     """
 
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None):
+    def __init__(
+        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None, dtype=torch.float32
+    ):
         """
         Initialization
 
@@ -50,6 +52,7 @@ class ApiRunner:
             prompt_len=prompt_len,
             ctx_len=ctx_len,
             full_batch_size=full_batch_size,
+            dtype=dtype,
         )
 
         self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len
@@ -255,7 +258,18 @@ class ApiRunnerVlm:
     """
 
     def __init__(
-        self, batch_size, processor, config, image, conversation, prompt, prompt_len, ctx_len, max_gen_len, n_layer
+        self,
+        batch_size,
+        processor,
+        config,
+        image,
+        conversation,
+        prompt,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+        dtype=torch.float32,
     ):
         """ """
         self.input_handler_vlm = InputHandlerVLM(
@@ -276,6 +290,7 @@ class ApiRunnerVlm:
         self.batch_size = batch_size
         self.config = config
         self.gen_len = max_gen_len
+        self.dtype = dtype
 
     @torch.no_grad()
     def run_vlm_hf_model_on_pytorch_CB(self, model, images, queries):
@@ -309,7 +324,7 @@ class ApiRunnerVlm:
             # Process inputs
             inputs = self.processor(images=image, text=prompt, return_tensors="pt")
             if "pixel_values" in inputs:
-                inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+                inputs["pixel_values"] = inputs["pixel_values"].to(dtype=self.dtype)
 
             # Generate tokens
             output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)
@@ -477,7 +492,19 @@ class ApiRunnerInternVL(ApiRunnerVlm):
     4. ``ONNX`` model on Cloud AI 100
     """
 
-    def __init__(self, batch_size, processor, config, image, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
+    def __init__(
+        self,
+        batch_size,
+        processor,
+        config,
+        image,
+        prompt,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+        dtype=torch.float32,
+    ):
         """ """
         self.input_handler_vlm = InputHandlerInternVL(
             batch_size=batch_size,
@@ -496,6 +523,7 @@ class ApiRunnerInternVL(ApiRunnerVlm):
         self.batch_size = batch_size
         self.config = config
         self.gen_len = max_gen_len
+        self.dtype = dtype
 
     @torch.no_grad()
     def run_vlm_hf_model_on_pytorch_CB(self, model, images, queries):
@@ -570,13 +598,26 @@ class ApiRunnerMolmo(ApiRunnerVlm):
     4. ``ONNX`` model on Cloud AI 100
     """
 
-    def __init__(self, batch_size, processor, config, image, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
+    def __init__(
+        self,
+        batch_size,
+        processor,
+        config,
+        image,
+        prompt,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+        dtype=torch.float32,
+    ):
         self.processor = processor
         self.ctx_len = ctx_len
         self.prompt_len = prompt_len
         self.batch_size = batch_size
         self.config = config
         self.gen_len = max_gen_len
+        self.dtype = dtype
 
     @torch.no_grad()
     def run_vlm_hf_model_on_pytorch(self, model, inputs, generation_config):
