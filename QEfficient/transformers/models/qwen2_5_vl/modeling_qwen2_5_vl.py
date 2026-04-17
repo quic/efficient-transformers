@@ -421,7 +421,12 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
 
         query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids[1:], self.config.rope_parameters["mrope_section"]
+            query_states,
+            key_states,
+            cos_cached,
+            sin_cached,
+            position_ids[1:],
+            self.config.rope_parameters["mrope_section"],
         )
 
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0

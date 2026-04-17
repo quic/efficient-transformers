@@ -126,7 +126,9 @@ class QEffMistral3Model(Mistral3Model):
 
         image_features = self.multi_modal_projector(selected_image_feature.squeeze(0), image_sizes)
         downsample_ratio = self.vision_tower.patch_size * self.config.spatial_merge_size
-        split_sizes = (torch.as_tensor(image_sizes, device=image_features.device) // downsample_ratio).prod(dim=-1).tolist()
+        split_sizes = (
+            (torch.as_tensor(image_sizes, device=image_features.device) // downsample_ratio).prod(dim=-1).tolist()
+        )
         image_features = torch.split(image_features.squeeze(0), split_sizes)
         image_outputs.pooler_output = image_features
         return image_outputs
@@ -289,7 +291,9 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
 
         image_features = self.model.multi_modal_projector(selected_image_feature.squeeze(0), image_sizes)
         downsample_ratio = self.model.vision_tower.patch_size * self.config.spatial_merge_size
-        split_sizes = (torch.as_tensor(image_sizes, device=image_features.device) // downsample_ratio).prod(dim=-1).tolist()
+        split_sizes = (
+            (torch.as_tensor(image_sizes, device=image_features.device) // downsample_ratio).prod(dim=-1).tolist()
+        )
         image_features = torch.split(image_features.squeeze(0), split_sizes)
         image_outputs.pooler_output = image_features
         return image_outputs
