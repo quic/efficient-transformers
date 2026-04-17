@@ -599,8 +599,8 @@ class QEffHybridCache(HybridCache):
             invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-            k_out = CtxGatherFunc.apply(k_out, ctx_indices)
-            v_out = CtxGatherFunc.apply(v_out, ctx_indices)
+            k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
+            v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
 
@@ -695,8 +695,8 @@ class QEffHybridChunkedCache(HybridChunkedCache):
                 invalid_idx_value = 0
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-            k_out = CtxGatherFunc.apply(k_out, ctx_indices)
-            v_out = CtxGatherFunc.apply(v_out, ctx_indices)
+            k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
+            v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
 
