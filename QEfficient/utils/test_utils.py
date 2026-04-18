@@ -472,6 +472,8 @@ class ModelConfig:
         "Qwen/Qwen2.5-VL-3B-Instruct",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
         "Qwen/Qwen3-VL-2B-Instruct",
+        "Qwen/Qwen3-VL-Reranker-2B",
+        "Qwen/Qwen3-VL-Reranker-8B",
     }
 
     EXTERNAL_MODELS = {
