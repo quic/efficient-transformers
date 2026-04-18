@@ -140,16 +140,32 @@ pipeline {
                     mkdir -p $PWD/Non_cli_qaic_multimodal &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log6.xml --durations=10 &&
+                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/image_text_to_text/test_reranker_mad.py --junitxml=tests/tests_log6.xml --durations=10 &&
                     junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                     deactivate"
                     '''
                 }
             }
         }
-
-        stage('Diffusion Models') {
-            when { expression { params.RUN_QAIC_DIFFUSION } }
+        stage('QAIC Reranker Tests') {
+                   steps {
+                       timeout(time: 60, unit: 'MINUTES') {
+                           sh '''
+                           sudo docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_cli_qaic_reranker &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_cli_qaic_reranker &&
+                           export QEFF_RERANKER_DOC_LIMIT=1 &&
+                           pytest -q tests/transformers/models/image_text_to_text/test_reranker_mad.py --maxfail=1 --junitxml=tests/tests_log_reranker.xml --durations=10 &&
+                           junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
+        }
+        stage('QAIC Diffusion Models Tests') {
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''

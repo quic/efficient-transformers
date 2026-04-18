@@ -364,8 +364,9 @@ class InputHandlerVLM:
         Return:
             updated_outputs (Dict): Updated past_key_values, logits, pixel_values
         """
+        num_layers = self.n_layer[0] if isinstance(self.n_layer, (list, tuple)) else self.n_layer
         present_key_values = []
-        for i in range(self.n_layer[0]):
+        for i in range(num_layers):
             if "past_key." + str(i) + "_RetainedState" in ort_outputs:
                 present_key_values.append(ort_outputs["past_key." + str(i) + "_RetainedState"])
             if "past_value." + str(i) + "_RetainedState" in ort_outputs:
@@ -397,7 +398,8 @@ class InputHandlerVLM:
         updated_inputs = {}
         updated_inputs["input_ids"] = ort_outputs["logits"].argmax(-1)
         updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
-        for i in range(self.n_layer[0]):
+        num_layers = self.n_layer[0] if isinstance(self.n_layer, (list, tuple)) else self.n_layer
+        for i in range(num_layers):
             updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
         if "pixel_values_RetainedState" in ort_outputs.keys():
