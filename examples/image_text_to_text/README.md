@@ -100,11 +100,17 @@ Some models have specialized examples demonstrating advanced features:
 |-------|----------|
 | **Llama-4**  | [models/llama4/](models/llama4/) |
 | **Qwen** |  [models/qwen_vl/](models/qwen_vl/) |
+| **Qwen3-VL Reranker** | [models/qwen3vl/reranker/](models/qwen3vl/reranker/) |
 | **Mistral** | [models/mistral_vision/](models/mistral_vision/) |
 | **Gemma** | [models/gemma_vision/](models/gemma_vision/) |
 | **Granite** | [models/granite_vision/](models/granite_vision/) |
 | **InternVL** | [models/internvl/](models/internvl/) |
 | **Molmo** | [models/molmo/](models/molmo/) |
+
+Example command for Qwen3-VL reranker:
+```bash
+python models/qwen3vl/reranker/qwen3_vl_reranker.py
+```
 
 
 ## Documentation
