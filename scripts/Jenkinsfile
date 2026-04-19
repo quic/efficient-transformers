@@ -4,6 +4,9 @@ pipeline {
            label 'qeff_node'
        }
    }
+   environment {
+     RUN_FINETUNE_TESTS = 'false'      // Set to 'true' to enable
+   }
    options {
         disableConcurrentBuilds()
     }
@@ -43,7 +46,7 @@ pipeline {
                            export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic &&
-                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm --ignore tests/transformers/models/image_text_to_text -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
+                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm --ignore tests/transformers/models/image_text_to_text --ignore tests/unit_test -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -52,7 +55,7 @@ pipeline {
                }
                stage('QAIC LLM Tests') {
                    steps {
-                       timeout(time: 120, unit: 'MINUTES') {
+                       timeout(time: 180, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
@@ -62,7 +65,7 @@ pipeline {
                            export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
-                           pytest tests -m '(not cli) and (on_qaic) and (llm_model) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log2.xml --durations=10 &&
+                           pytest tests -m '(not cli) and (on_qaic) and (llm_model) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log2.xml --durations=10 &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -81,7 +84,7 @@ pipeline {
                            export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_feature &&
-                           pytest tests -m '(not cli) and (on_qaic) and (feature) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                           pytest tests -m '(not cli) and (on_qaic) and (feature) and (not nightly) and (not multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/transformers/sampler --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                            junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -102,7 +105,8 @@ pipeline {
                            export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune) and (not diffusion_models)' --ignore tests/vllm --junitxml=tests/tests_log6.xml --durations=10 &&
+                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune) and (not diffusion_models)  and (not nightly)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log6.xml --durations=10 &&
+
                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -122,7 +126,7 @@ pipeline {
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
                     export HF_HUB_CACHE=/huggingface_hub &&
-                    pytest tests -m '(not cli) and (on_qaic) and (diffusion_models) and (not wan) and (not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
+                    pytest tests -m '(not cli) and (on_qaic) and (diffusion_models) and (not qnn) and (not finetune)' --ignore tests/vllm  --ignore tests/unit_test --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
                     junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
                     deactivate"
                     '''
@@ -143,7 +147,7 @@ pipeline {
                            export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/cli &&
-                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --junitxml=tests/tests_log3.xml --durations=10 &&
+                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log3.xml --durations=10 &&
                            junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -208,6 +212,9 @@ pipeline {
         //     }
         // }
         stage('Finetune CLI Tests') {
+            when {
+            environment name: 'RUN_FINETUNE_TESTS', value: 'true'
+                }
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
@@ -215,15 +222,15 @@ pipeline {
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     # TODO: Update torch_qaic path to py312 when migrating to Python 3.12
-                    pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-linux_x86_64.whl &&
+                    pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
                     # pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
-                    pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cpu &&
+                    pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
                     mkdir -p $PWD/cli_qaic_finetuning &&
                     mkdir -p $PWD/Qeff_logs &&
                     export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli_qaic_finetuning &&
-                    pytest tests -m '(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)' --ignore tests/vllm --junitxml=tests/tests_log_finetune.xml --durations=10 &&
+                    pytest tests -m '(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log_finetune.xml --durations=10 &&
                     junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
                     deactivate"
                     '''

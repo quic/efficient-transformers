@@ -107,6 +107,9 @@ class QEffMxfp4HfQuantizer(Mxfp4HfQuantizer):
             logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
         return None
 
+    def update_dtype(self, dtype):
+        return self.update_torch_dtype(dtype)
+
     def _process_model_before_weight_loading(
         self,
         model: torch.nn.Module,

@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
 """
 Fast CPU regression coverage across the main model families supported by QEfficient.
 
@@ -24,7 +25,7 @@ import tempfile
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional, Set
 
 import numpy as np
 import onnx
@@ -74,6 +75,14 @@ CAUSAL_RUNTIME_MODEL_IDS = {
     "granite": "hf-internal-testing/tiny-random-GraniteForCausalLM",
     "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
     "gpt_oss": "tiny-random/gpt-oss-bf16",
+}
+CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
+    "codegen",
+    "phi",
+    "starcoder2",
+    "mixtral",
+    "gpt_oss",
+    # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
 }
 
 VLM_TEXT_RUNTIME_MODEL_ID = "tiny-random/gemma-3"
@@ -169,6 +178,22 @@ def _exported_onnx_path(export_result) -> Path:
     return onnx_path
 
 
+def _count_decoder_block_subfunctions(onnx_model, qeff_model) -> int:
+    get_submodules = getattr(qeff_model.model, "get_submodules_for_export", None)
+    if not callable(get_submodules):
+        return 0
+
+    submodules = get_submodules()
+    if not submodules:
+        return 0
+
+    if not isinstance(submodules, (set, list, tuple)):
+        submodules = [submodules]
+
+    block_names = {module.__name__ for module in submodules if hasattr(module, "__name__")}
+    return sum(any(block_name in func.name for block_name in block_names) for func in onnx_model.functions)
+
+
 def _assert_has_retained_state_outputs(onnx_path: Path) -> None:
     onnx_model = onnx.load(onnx_path, load_external_data=False)
     retained_outputs = [output.name for output in onnx_model.graph.output if output.name.endswith("_RetainedState")]
@@ -188,6 +213,21 @@ def _run_whisper_export_smoke(qeff_model: QEFFAutoModelForSpeechSeq2Seq, out_dir
     return onnx_path
 
 
+def _assert_proxy_only_onnx_transform_policy(
+    qeff_model, enable_proxy: bool, always_on_transforms: Optional[Set[str]] = None
+) -> None:
+    transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
+    proxy_only_transforms = {"FP16ClipTransform", "SplitTensorsTransform"}
+    always_on_transforms = always_on_transforms or set()
+    conditional_proxy_transforms = proxy_only_transforms - always_on_transforms
+
+    if enable_proxy:
+        assert proxy_only_transforms.issubset(transform_names)
+    else:
+        assert conditional_proxy_transforms.isdisjoint(transform_names)
+        assert always_on_transforms.issubset(transform_names)
+
+
 def _skip_on_model_fetch_error(exc: Exception, model_id: str) -> None:
     pytest.skip(
         f"Skipping {model_id}: model unavailable or unsupported in this environment ({type(exc).__name__}: {exc})"
@@ -198,7 +238,7 @@ def _export_vlm_with_text_fallback(model_id: str, out_dir: Path) -> Path:
     try:
         config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
         model_type = getattr(config, "model_type", "")
-        use_text_only_first = model_type in {"qwen2_5_vl", "internvl_chat"}
+        use_text_only_first = model_type in {"qwen2_5_vl", "qwen2_5_vl_text", "internvl_chat"}
 
         if not use_text_only_first:
             try:
@@ -208,7 +248,7 @@ def _export_vlm_with_text_fallback(model_id: str, out_dir: Path) -> Path:
                 pass
 
         try:
-            if model_type == "qwen2_5_vl" and getattr(config, "text_config", None) is not None:
+            if model_type in {"qwen2_5_vl", "qwen2_5_vl_text"} and getattr(config, "text_config", None) is not None:
                 qwen2_cfg_dict = config.text_config.to_dict()
                 qwen2_cfg_dict["model_type"] = "qwen2"
                 qwen2_allowed_keys = set(Qwen2Config().to_dict().keys())
@@ -348,6 +388,22 @@ def test_text_embedding_cpu_parity_and_export(tmp_path):
 
 
 @pytest.mark.llm_model
+def test_text_embedding_fp16_clip_transform_and_export(tmp_path):
+    tokenizer = AutoTokenizer.from_pretrained(TINY_TEXT_EMBEDDING_MODEL_ID)
+    qeff_model = QEFFAutoModel.from_pretrained(TINY_TEXT_EMBEDDING_MODEL_ID)
+    transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
+
+    assert "FP16ClipTransform" in transform_names
+    assert "SplitTensorsTransform" not in transform_names
+
+    inputs = tokenizer("hello world", return_tensors="pt")
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "embedding-ai100"))
+    ort_outputs = _run_embedding_ort(onnx_path, inputs)
+    assert ort_outputs.shape[0] == inputs["input_ids"].shape[0]
+    assert ort_outputs.shape[1] == inputs["input_ids"].shape[1]
+
+
+@pytest.mark.llm_model
 def test_audio_embedding_ctc_cpu_parity_and_export(tmp_path):
     processor = AutoTokenizer.from_pretrained(TINY_AUDIO_CTC_MODEL_ID)
     del processor
@@ -435,6 +491,131 @@ def test_causal_subfunction_export_smoke(tmp_path):
 
 
 @pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("model_type", "model_id"),
+    sorted(CAUSAL_RUNTIME_MODEL_IDS.items()),
+    ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
+)
+def test_causal_compile_with_subfunctions_all_models(model_type, model_id, tmp_path):
+    del model_type
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    try:
+        qpc = qeff_model.compile(
+            prefill_seq_len=8,
+            ctx_len=32,
+            use_onnx_subfunctions=True,
+            compile_dir=tmp_path / "compile-with-subfunctions",
+        )
+    except Exception as exc:
+        pytest.skip(
+            f"Skipping compile for {model_id}: compile backend unavailable or unsupported in this environment "
+            f"({type(exc).__name__}: {exc})"
+        )
+
+    qpc_path = Path(qpc)
+    assert qpc_path.name == "qpc"
+    assert qpc_path.is_dir()
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("model_type", "model_id"),
+    sorted(CAUSAL_RUNTIME_MODEL_IDS.items()),
+    ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
+)
+def test_causal_subfunction_export_smoke_all_models(model_type, model_id, tmp_path):
+    if model_type == "gpt_oss":
+        pytest.skip("Subfunction runtime parity is currently excluded for gpt_oss in quickcheck.")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    if hasattr(tokenizer, "model_input_names"):
+        tokenizer.model_input_names = ["input_ids", "attention_mask"]
+    prompt = ["hello world"]
+    prompt_len = 8
+    ctx_len = 12
+
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        **MODEL_KWARGS,
+        low_cpu_mem_usage=False,
+        trust_remote_code=True,
+        torch_dtype=torch.float32,
+    )
+    model_hf.eval()
+
+    api_runner = ApiRunner(
+        batch_size=1,
+        tokenizer=tokenizer,
+        config=model_hf.config,
+        prompt=prompt,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        full_batch_size=None,
+    )
+
+    hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "with-subfunctions-all", use_onnx_subfunctions=True))
+    ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
+
+    assert np.array_equal(hf_tokens, kv_tokens.squeeze(0))
+    assert np.array_equal(kv_tokens, ort_tokens)
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("model_type", "model_id"),
+    sorted(CAUSAL_RUNTIME_MODEL_IDS.items()),
+    ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
+)
+def test_causal_subfunction_count_with_onnx_subfunctions(model_type, model_id, tmp_path):
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / f"subfunction-count-{model_type}", use_onnx_subfunctions=True)
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    subfunction_count = _count_decoder_block_subfunctions(onnx_model, qeff_model)
+
+    if model_type in CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES:
+        assert subfunction_count > 1, (
+            f"{model_type} expected multiple decoder-block subfunctions (>1), but found {subfunction_count}"
+        )
+    else:
+        assert subfunction_count == 1, (
+            f"{model_type} expected a single decoder-block subfunction (1), but found {subfunction_count}"
+        )
+
+
+@pytest.mark.llm_model
+def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            enable_proxy=True,
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_proxy_only_onnx_transform_policy(qeff_model, enable_proxy=True)
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / "with-subfunctions-and-proxy", use_onnx_subfunctions=True)
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    assert any("QEffGPT2Block" in func.name for func in onnx_model.functions)
+
+
+@pytest.mark.llm_model
 def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(PREFIX_CACHING_MODEL_ID, continuous_batching=True)
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "prefix-caching"))
@@ -461,3 +642,61 @@ def test_awq_export_smoke(tmp_path):
         onnx_model = onnx.load(onnx_path, load_external_data=False)
 
     assert any(node.op_type == "MatMulNBits" for node in onnx_model.graph.node)
+
+
+@pytest.mark.llm_model
+def test_proxy_toggle_onnx_transform_policy_for_causal_lm():
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
+    try:
+        qeff_default = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
+        qeff_proxy = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True, enable_proxy=True)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
+    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+@pytest.mark.llm_model
+def test_proxy_toggle_onnx_transform_policy_for_embedding():
+    model_id = TINY_TEXT_EMBEDDING_MODEL_ID
+    try:
+        qeff_default = QEFFAutoModel.from_pretrained(model_id)
+        qeff_proxy = QEFFAutoModel.from_pretrained(model_id, enable_proxy=True)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_proxy_only_onnx_transform_policy(
+        qeff_default, enable_proxy=False, always_on_transforms={"FP16ClipTransform"}
+    )
+    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+@pytest.mark.llm_model
+def test_proxy_toggle_onnx_transform_policy_for_whisper():
+    model_id = TINY_WHISPER_MODEL_ID
+    try:
+        qeff_default = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_id, trust_remote_code=True)
+        qeff_proxy = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_id, trust_remote_code=True, enable_proxy=True)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
+    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+@pytest.mark.llm_model
+def test_proxy_toggle_onnx_transform_policy_for_vlm():
+    model_id = VLM_TEXT_RUNTIME_MODEL_ID
+    try:
+        qeff_default = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_id, trust_remote_code=True, kv_offload=False
+        )
+        qeff_proxy = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_id, trust_remote_code=True, enable_proxy=True, kv_offload=False
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
+    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)

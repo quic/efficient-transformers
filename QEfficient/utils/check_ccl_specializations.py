@@ -134,14 +134,15 @@ def validate_ccl_lists(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len):
     # Check CCL values are not negative and more than the CCL minimum context length = constants.CCL_MIN_CTX_LEN
     if ccl_prefill:
         ccl_prefill = [x if x >= constants.CCL_MIN_CTX_LEN else constants.CCL_MIN_CTX_LEN for x in ccl_prefill]
+        # Check the last element of ccl_prefill and ccl_decode to make sure it's not less than ctx_len
+        if ccl_prefill[-1] < ctx_len:
+            ccl_prefill.append(ctx_len)
+
     if ccl_decode:
         ccl_decode = [x if x >= constants.CCL_MIN_CTX_LEN else constants.CCL_MIN_CTX_LEN for x in ccl_decode]
-
-    # Check the last element of ccl_prefill and ccl_decode to make sure it's not less than ctx_len
-    if ccl_prefill[-1] < ctx_len - 1:
-        ccl_prefill.append(ctx_len)
-    if ccl_decode[-1] < ctx_len:
-        ccl_decode.append(ctx_len)
+        # Check the last element of ccl_prefill and ccl_decode to make sure it's not less than ctx_len
+        if ccl_decode[-1] < ctx_len:
+            ccl_decode.append(ctx_len)
 
     if prefill_seq_len == 1:
         # both prefill and decode ccl can share the same specializations since prefill_seq_len=1. So, a sorted union of both lists can be used for both of them.
@@ -155,22 +156,25 @@ def validate_ccl_lists(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len):
         if ccl_decode:
             ccl_decode = sorted({min(x, ctx_len) for x in (ccl_decode)})
 
-        # Handling the common values between ccl_prefill and ccl_decode. The elements of these two lists should be unique (COMPILER)
-        tmp_prefill = ccl_prefill
-        ccl_prefill = []
-        for val in tmp_prefill:
-            while val in ccl_decode or val in ccl_prefill:
-                val -= 1
-                if val < 0:
-                    break  # Prevent negative values
-            if val >= 0:
-                ccl_prefill.append(val)
-        ccl_prefill.sort()
+        # This cheking is related to disaggregated serving application since it generates two separate QPCs for prefilling and decoding. So, ccl_prefill will be None in decode QPC and ccl_decode will be None in prefill QPC
+        if ccl_prefill and ccl_decode:
+            # Handling the common values between ccl_prefill and ccl_decode. The elements of these two lists should be unique (COMPILER)
+            tmp_prefill = ccl_prefill
+            ccl_prefill = []
+            for val in tmp_prefill:
+                while val in ccl_decode or val in ccl_prefill:
+                    # In case of common values between ccl_prefill and ccl_decode, change the value in ccl_prefill and set it to the closest value which is multiple of CCL_UNIQNE_STEP to avoid repetition and also be hardware and compiler efficient
+                    val = (val - 1) // constants.CCL_UNIQNE_STEP * constants.CCL_UNIQNE_STEP
+                    if val < 0:
+                        break  # Prevent negative values
+                if val >= 0:
+                    ccl_prefill.append(val)
+            ccl_prefill.sort()
 
     return ccl_prefill, ccl_decode
 
 
-def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len):
+def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_len, enable_chunking=False):
     """
     This function evaluates the values of CCL lists based on three inputs:
       - ccl_prefill: optional [list]
@@ -195,7 +199,7 @@ def process_ccl_specializations(ccl_prefill, ccl_decode, ctx_len, prefill_seq_le
 
     # One of ccl lists is [] or None -> replace it with [ctx_len] -> CCL lists have to have a value when CCL is enabled
     # Condition #3, #4, #5, and #6
-    elif not ccl_prefill or not ccl_decode:
+    elif not ccl_prefill or not ccl_decode and not enable_chunking:
         # Initial setting and will be checked with edge cases later
         ccl_prefill = ccl_prefill if ccl_prefill else [ctx_len]
         ccl_decode = ccl_decode if ccl_decode else [ctx_len]

@@ -522,6 +522,8 @@ class QEffFluxPipeline:
                 - encoder_perf_times (List[float]): Performance times [CLIP_time, T5_time]
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
+        text_encoder_perf = 0.0
+        text_encoder_2_perf = 0.0
 
         if prompt_embeds is None:
             # Use primary prompt for both encoders if secondary not provided
@@ -690,17 +692,15 @@ class QEffFluxPipeline:
 
         # Encode negative prompts if using true classifier-free guidance
         if do_true_cfg:
-            (
-                negative_prompt_embeds,
-                negative_pooled_prompt_embeds,
-                negative_text_ids,
-            ) = self.encode_prompt(
-                prompt=negative_prompt,
-                prompt_2=negative_prompt_2,
-                prompt_embeds=negative_prompt_embeds,
-                pooled_prompt_embeds=negative_pooled_prompt_embeds,
-                num_images_per_prompt=num_images_per_prompt,
-                max_sequence_length=max_sequence_length,
+            (negative_prompt_embeds, negative_pooled_prompt_embeds, negative_text_ids, text_encoder_perf_2) = (
+                self.encode_prompt(
+                    prompt=negative_prompt,
+                    prompt_2=negative_prompt_2,
+                    prompt_embeds=negative_prompt_embeds,
+                    pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                    num_images_per_prompt=num_images_per_prompt,
+                    max_sequence_length=max_sequence_length,
+                )
             )
 
         # Step 4: Prepare timesteps for denoising

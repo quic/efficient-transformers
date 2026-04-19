@@ -45,4 +45,4 @@ for t in threads:
 # -------------------------------
 # Graceful shutdown
 # -------------------------------
-QEFFLogger.close_logger()
+# QEFFLogger.close_logger()

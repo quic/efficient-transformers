@@ -9,6 +9,68 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
+from transformers import (
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+)
+
+
+def load_vlm_model(config):
+    try:
+        model_hf = AutoModelForImageTextToText.from_pretrained(
+            config._name_or_path,
+            low_cpu_mem_usage=False,
+            config=config,
+        )
+    except ValueError:
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            config._name_or_path,
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            config=config,
+        )
+    model_hf.eval()
+    return model_hf
+
+
+def load_vlm_model_from_config(config):
+    try:
+        model_hf = AutoModelForImageTextToText.from_config(
+            config,
+            attn_implementation="eager",
+            trust_remote_code=True,
+        )
+    except ValueError:
+        model_hf = AutoModelForCausalLM.from_config(
+            config,
+            attn_implementation="eager",
+            trust_remote_code=True,
+        )
+    torch_dtype = getattr(model_hf.config, "torch_dtype", None)
+    if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
+        model_hf = model_hf.to(torch.float32)
+    model_hf.eval()
+    return model_hf
+
+
+def set_num_layers_vlm(config, n_layer=1):
+    ## -1 indicates use all the layers of the model.
+    if n_layer == -1:
+        return config
+    elif hasattr(config, "model_type") and "mllama" in config.model_type:
+        config.text_config.num_hidden_layers = n_layer
+        config.text_config.cross_attention_layers = [
+            x for x in config.text_config.cross_attention_layers if x < n_layer
+        ]
+    elif hasattr(config, "text_config"):
+        config.text_config.num_hidden_layers = n_layer
+        config.vision_config.num_hidden_layers = n_layer
+    elif hasattr(config, "llm_config"):
+        config.llm_config.num_hidden_layers = n_layer
+        config.vision_config.num_hidden_layers = n_layer
+    else:
+        config.num_hidden_layers = n_layer
+    return config
 
 
 # Processor class for InternVL models
@@ -167,6 +229,38 @@ class ModelConfig:
         "neuralmagic/Llama-3.2-3B-Instruct-FP8",
         "TheBloke/Llama-2-7B-GPTQ",
         "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
+    }
+
+    STANDARD_VLM_MODELS = {
+        "llava-hf/llava-1.5-7b-hf",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "google/gemma-3-4b-it",
+        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    }
+
+    INTERNVL_MODELS = {
+        "OpenGVLab/InternVL2_5-1B",
+        "OpenGVLab/InternVL3_5-1B",
+    }
+
+    MOLMO_MODELS = {
+        "allenai/Molmo-7B-D-0924",
+    }
+
+    SKIPPED_MODELS = {
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "allenai/Molmo-7B-D-0924",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    }
+
+    DUAL_QPC_MODELS = {
+        "OpenGVLab/InternVL2_5-1B",
+        "OpenGVLab/InternVL3_5-1B",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "Qwen/Qwen3-VL-2B-Instruct",
     }
 
     EXTERNAL_MODELS = {
