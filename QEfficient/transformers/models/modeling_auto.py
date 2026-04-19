@@ -77,9 +77,7 @@ from QEfficient.utils.check_ccl_specializations import process_ccl_specializatio
 from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
-<<<<<<< HEAD
 logger = QEFFLogger.get_logger("MODEL")
-=======
 CUSTOM_IO_DTYPE_MAP = {
     torch.float16: "float16",
     torch.bfloat16: "bfloat16",
@@ -92,7 +90,6 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
     torch.float32: np.float32,
 }
->>>>>>> main
 
 
 class QEFFTransformersBase(QEFFBaseModel):
