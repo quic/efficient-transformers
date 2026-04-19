@@ -56,7 +56,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+
 test = ["pytest","pytest-mock","pytest-xdist"]
+
 docs = ["Sphinx==7.1.2","sphinx-rtd-theme==2.0.0","myst-parser==3.0.1","sphinx-multiversion"]
 quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
 
@@ -82,7 +84,7 @@ lint.extend-select = ["I"]
 target-version = "py310"
 
 [tool.pytest.ini_options]
-addopts = "-W ignore -s -v"
+addopts = "-W ignore -v"
 junit_logging = "all"
 doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
 markers = [

@@ -65,6 +65,7 @@ class QAICInferenceSession:
 
         # Build dtype mapping once (depends on aicapi constants)
         self.aic_to_np_dtype_mapping = {
+            getattr(aicapi, "BFLOAT16_TYPE", 11): np.dtype(np.float16),
             aicapi.FLOAT_TYPE: np.dtype(np.float32),
             aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
             aicapi.INT8_Q_TYPE: np.dtype(np.int8),

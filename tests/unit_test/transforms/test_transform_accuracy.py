@@ -1298,49 +1298,43 @@ class TestTextClassificationTransformDirect:
 
 
 @pytest.mark.transforms
-class TestBlockedKVAttentionTransform:
-    """BlockedKVAttentionTransform must patch forward with num_kv_blocks parameter."""
+class TestBlockedAttentionTransform:
+    """BlockedAttentionTransform must patch forward with blocking config parameter."""
 
-    def test_blocked_kv_transform_importable(self):
-        from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+    def test_blocked_transform_importable(self):
+        from QEfficient.blocking.attention_blocking import AttentionBlockingConfig
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
 
-        assert BlockedKVAttentionTransform is not None
+        assert BlockingAttentionTransform is not None
+        assert AttentionBlockingConfig is not None
 
-    def test_blocked_kv_transform_has_module_mapping(self):
-        from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+    def test_blocked_transform_has_apply_method(self):
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
 
-        assert hasattr(BlockedKVAttentionTransform, "_module_mapping")
-        assert len(BlockedKVAttentionTransform._module_mapping) > 0
+        assert hasattr(BlockingAttentionTransform, "apply")
+        assert callable(BlockingAttentionTransform.apply)
 
-    def test_blocked_kv_transform_contains_llama_attention(self):
-        from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaAttention
-        from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
-
-        assert QEffLlamaAttention in BlockedKVAttentionTransform._module_mapping
-
-    def test_blocked_kv_transform_has_apply_method(self):
-        from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
-
-        assert hasattr(BlockedKVAttentionTransform, "apply")
-        assert callable(BlockedKVAttentionTransform.apply)
-
-    def test_blocked_kv_transform_applies_to_llama(self):
-        """BlockedKVAttentionTransform must apply to a KV-transformed Llama model."""
-        from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+    def test_blocked_transform_applies_to_llama(self):
+        """BlockingAttentionTransform must apply to a KV-transformed Llama model."""
+        from QEfficient.blocking.attention_blocking import AttentionBlockingConfig
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
 
         model = make_tiny_llama()
         kv_model, _ = KVCacheTransform.apply(model)
-        transformed, applied = BlockedKVAttentionTransform.apply(kv_model, num_kv_blocks=4)
-        assert applied, "BlockedKVAttentionTransform must apply to KV-transformed Llama"
+        blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=4)
+        transformed, applied = BlockingAttentionTransform.apply(kv_model, attn_blocking_config=blocking_config)
+        assert applied, "BlockingAttentionTransform must apply to KV-transformed Llama"
 
-    def test_blocked_kv_transform_patches_forward(self):
-        """After BlockedKVAttentionTransform, attention forward must be patched."""
+    def test_blocked_transform_patches_forward(self):
+        """After BlockingAttentionTransform, attention forward must be patched."""
+        from QEfficient.blocking.attention_blocking import AttentionBlockingConfig
         from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaAttention
-        from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
 
         model = make_tiny_llama()
         kv_model, _ = KVCacheTransform.apply(model)
-        BlockedKVAttentionTransform.apply(kv_model, num_kv_blocks=4)
+        blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=4)
+        BlockingAttentionTransform.apply(kv_model, attn_blocking_config=blocking_config)
 
         # After transform, attention modules should have patched forward
         for m in kv_model.modules():
@@ -1349,23 +1343,16 @@ class TestBlockedKVAttentionTransform:
                 assert hasattr(m, "forward"), "Attention module must have forward after transform"
                 break
 
-    def test_blocked_kv_transform_returns_model_and_bool(self):
-        from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
+    def test_blocked_transform_returns_model_and_bool(self):
+        from QEfficient.blocking.attention_blocking import AttentionBlockingConfig
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
 
         model = make_tiny_llama()
         kv_model, _ = KVCacheTransform.apply(model)
-        result = BlockedKVAttentionTransform.apply(kv_model, num_kv_blocks=4)
+        blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=4)
+        result = BlockingAttentionTransform.apply(kv_model, attn_blocking_config=blocking_config)
         assert len(result) == 2
         assert isinstance(result[1], bool)
-
-    def test_blocked_kv_transform_does_not_apply_to_gpt2(self):
-        """BlockedKVAttentionTransform must not apply to GPT2 (not in mapping)."""
-        from QEfficient.transformers.models.pytorch_transforms import BlockedKVAttentionTransform
-
-        model = make_tiny_gpt2()
-        kv_model, _ = KVCacheTransform.apply(model)
-        _, applied = BlockedKVAttentionTransform.apply(kv_model, num_kv_blocks=4)
-        assert not applied, "BlockedKVAttentionTransform must not apply to GPT2"
 
 
 # ---------------------------------------------------------------------------

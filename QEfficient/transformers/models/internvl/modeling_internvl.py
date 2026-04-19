@@ -315,9 +315,13 @@ class QEffInternVLModel(nn.Module):
         # Define inputs
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros(
+            (inputs_shapes["pixel_values"]), dtype=self.config.vision_config.torch_dtype
+        )
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros(
+            (inputs_shapes["vision_embeds"]), dtype=self.config.vision_config.torch_dtype
+        )
         lang_inputs["position_ids"] = (
             torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -338,7 +342,9 @@ class QEffInternVLModel(nn.Module):
         lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(
+                    torch.zeros(kv_cache_shape, dtype=self.config.llm_config.torch_dtype)
+                )
 
         if comp_ctx_lengths is not None:
             lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
@@ -399,7 +405,11 @@ class QEffInternVLModel(nn.Module):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("num_patches", 3, "img_size", "img_size")),
+            IOInfo(
+                name="pixel_values",
+                datatype=self.config.vision_config.torch_dtype,
+                shape=("num_patches", 3, "img_size", "img_size"),
+            ),
         ]
 
 

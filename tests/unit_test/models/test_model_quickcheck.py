@@ -531,20 +531,24 @@ def test_causal_subfunction_export_smoke_all_models(model_type, model_id, tmp_pa
     if model_type == "gpt_oss":
         pytest.skip("Subfunction runtime parity is currently excluded for gpt_oss in quickcheck.")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            **MODEL_KWARGS,
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
     if hasattr(tokenizer, "model_input_names"):
         tokenizer.model_input_names = ["input_ids", "attention_mask"]
     prompt = ["hello world"]
     prompt_len = 8
     ctx_len = 12
 
-    model_hf = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        **MODEL_KWARGS,
-        low_cpu_mem_usage=False,
-        trust_remote_code=True,
-        torch_dtype=torch.float32,
-    )
     model_hf.eval()
 
     api_runner = ApiRunner(
@@ -633,7 +637,10 @@ def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
 @pytest.mark.llm_model
 def test_awq_export_smoke(tmp_path):
     replace_transformers_quantizers()
-    model_hf = AutoModelForCausalLM.from_pretrained(TINY_AWQ_MODEL_ID, low_cpu_mem_usage=False)
+    try:
+        model_hf = AutoModelForCausalLM.from_pretrained(TINY_AWQ_MODEL_ID, low_cpu_mem_usage=False)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, TINY_AWQ_MODEL_ID)
     model_hf.eval()
 
     qeff_model = QEFFAutoModelForCausalLM(model_hf, pretrained_model_name_or_path=TINY_AWQ_MODEL_ID)

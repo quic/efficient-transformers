@@ -72,7 +72,6 @@ def get_function(onnx_path):
     return function_names
 
 
-@pytest.mark.on_qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_subfunction_vs_nonsubfunction(config, tmp_path):

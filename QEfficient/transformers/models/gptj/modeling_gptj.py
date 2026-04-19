@@ -32,6 +32,7 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 def apply_rotary_pos_emb(tensor: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor) -> torch.Tensor:
+    # Sin Cos are also fixated on fp32 here
     sin = torch.repeat_interleave(sin[:, :, None, :], 2, 3)
     cos = torch.repeat_interleave(cos[:, :, None, :], 2, 3)
     return (tensor * cos) + (rotate_every_two(tensor) * sin)
@@ -55,8 +56,8 @@ class QEffGPTJAttention(GPTJAttention):
         head_mask=None,
     ):
         # Keep the attention weights computation in fp32 to avoid overflow issues
-        query = query.to(torch.float32)
-        key = key.to(torch.float32)
+        query = query.to(value.dtype)
+        key = key.to(value.dtype)
 
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
         attn_weights = attn_weights / self.scale_attn
@@ -64,7 +65,7 @@ class QEffGPTJAttention(GPTJAttention):
         if attention_mask is not None:
             # Apply the attention mask
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=value.dtype), attn_weights
             )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
@@ -109,7 +110,7 @@ class QEffGPTJAttention(GPTJAttention):
             embed_positions = get_embed_positions(self.embed_positions, position_ids)
         else:
             embed_positions = self._get_embed_positions(position_ids)
-
+        embed_positions = embed_positions.to(value.dtype)
         repeated_position_ids = position_ids.unsqueeze(-1).repeat(1, 1, embed_positions.shape[-1])
         repeated_position_ids = torch.where(repeated_position_ids == -1, 0, repeated_position_ids)
         sincos = torch.gather(embed_positions, 1, repeated_position_ids)

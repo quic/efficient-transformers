@@ -20,7 +20,9 @@ from QEfficient.utils import (
 
 
 class InputHandler:
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size):
+    def __init__(
+        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, dtype=torch.float32
+    ):
         """
         Initialization
 
@@ -41,6 +43,7 @@ class InputHandler:
         self.ctx_len = ctx_len
         self.full_batch_size = full_batch_size
         self.config = config
+        self.dtype = dtype
         self.n_layer = get_num_layers_from_config(config)
         self.padding_shape = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
@@ -100,8 +103,8 @@ class InputHandler:
                 pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
             else:
                 pad_shape = self.padding_shape
-            past_key = torch.zeros((pad_shape), dtype=torch.float32)
-            past_value = torch.zeros((pad_shape), dtype=torch.float32)
+            past_key = torch.zeros((pad_shape), dtype=self.dtype)
+            past_value = torch.zeros((pad_shape), dtype=self.dtype)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
@@ -236,7 +239,18 @@ class InputHandler:
 
 class InputHandlerVLM:
     def __init__(
-        self, batch_size, config, image, conversation, processor, prompt, prompt_len, ctx_len, max_gen_len, n_layer
+        self,
+        batch_size,
+        config,
+        image,
+        conversation,
+        processor,
+        prompt,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+        dtype=torch.float32,
     ):
         self.ctx_len = ctx_len
         self.prompt_len = prompt_len
@@ -248,6 +262,7 @@ class InputHandlerVLM:
         self.n_layer = n_layer
         self.processor = processor
         self.conversation = conversation
+        self.dtype = dtype
 
     def prepare_pytorch_inputs(self):
         """
@@ -281,15 +296,15 @@ class InputHandlerVLM:
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
                 inputs["past_key_values"].append(
                     (
-                        torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim),
-                        torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim),
+                        torch.zeros((1, num_key_value_heads, image_tokens_len, head_dim), dtype=self.dtype),
+                        torch.zeros((1, num_key_value_heads, image_tokens_len, head_dim), dtype=self.dtype),
                     )
                 )
             else:
                 inputs["past_key_values"].append(
                     (
-                        torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
-                        torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
+                        torch.zeros((1, num_key_value_heads, self.ctx_len, head_dim), dtype=self.dtype),
+                        torch.zeros((1, num_key_value_heads, self.ctx_len, head_dim), dtype=self.dtype),
                     )
                 )
 
@@ -403,7 +418,19 @@ class InputHandlerVLM:
 
 
 class InputHandlerInternVL(InputHandlerVLM):
-    def __init__(self, batch_size, config, image, processor, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
+    def __init__(
+        self,
+        batch_size,
+        config,
+        image,
+        processor,
+        prompt,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+        dtype=torch.float32,
+    ):
         self.ctx_len = ctx_len
         self.prompt_len = prompt_len
         self.max_gen_len = max_gen_len
@@ -413,6 +440,7 @@ class InputHandlerInternVL(InputHandlerVLM):
         self.batch_size = batch_size
         self.n_layer = n_layer
         self.processor = processor
+        self.dtype = dtype
 
     def prepare_pytorch_inputs(self):
         question = "<image>\n" + self.prompt
@@ -438,8 +466,8 @@ class InputHandlerInternVL(InputHandlerVLM):
         for i in range(num_hidden_layers):
             inputs["past_key_values"].append(
                 (
-                    torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
-                    torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
+                    torch.zeros((1, num_key_value_heads, self.ctx_len, head_dim), dtype=self.dtype),
+                    torch.zeros((1, num_key_value_heads, self.ctx_len, head_dim), dtype=self.dtype),
                 )
             )
 

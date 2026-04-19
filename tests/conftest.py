@@ -7,10 +7,12 @@
 
 import os
 import shutil
+from pathlib import Path
 
+import pytest
 from transformers import logging
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.logging_utils import QEFFLogger
 
 logger = QEFFLogger.get_logger("INFRA")
@@ -65,10 +67,39 @@ _QUICKCHECK_META = {
 }
 
 
-def qeff_models_clean_up():
-    if os.path.exists(QEFF_MODELS_DIR):
-        shutil.rmtree(QEFF_MODELS_DIR)
-        logger.info(f"\n.............Cleaned up {QEFF_MODELS_DIR}")
+def qeff_models_clean_up(qeff_dir=QEFF_HOME):
+    """
+    Clean up QEFF models and cache.
+
+    Args:
+        qeff_dir: Can be a string (file/dir path), PosixPath, or list of strings/PosixPath objects
+                 If a file path is provided, its parent directory will be deleted
+    """
+    if isinstance(qeff_dir, (str, Path)):
+        paths = [qeff_dir]
+    else:
+        paths = qeff_dir
+
+    for path in paths:
+        try:
+            path_str = str(path)
+            if os.path.isfile(path_str):
+                dir_to_delete = os.path.dirname(path_str)
+                if os.path.exists(dir_to_delete):
+                    shutil.rmtree(dir_to_delete)
+                    print(f"\n.............Cleaned up {dir_to_delete}")
+            elif os.path.isdir(path_str):
+                if os.path.exists(path_str):
+                    shutil.rmtree(path_str)
+                    print(f"\n.............Cleaned up {path_str}")
+        except Exception as e:
+            print(f"\n.............Error cleaning up {path}: {e}")
+
+
+@pytest.fixture
+def manual_cleanup():
+    """Fixture to manually trigger cleanup"""
+    return qeff_models_clean_up
 
 
 def pytest_sessionstart(session):
