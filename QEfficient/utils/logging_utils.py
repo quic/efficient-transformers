@@ -280,7 +280,17 @@ class QEFFLogger:
                 last_ts = ts
 
         if t_start is None:
-            raise ValueError("Missing required milestone: 'Initiating the model weight loading.'")
+            logging.warning(
+                "Missing required milestone: 'Initiating the model weight loading.' "
+                "Defaulting t_start to first available timestamp (0.0 baseline)."
+            )
+
+            if times:
+                # Use earliest recorded milestone as baseline
+                t_start = min(times.values())
+            else:
+                # Absolute fallback: zero baseline
+                t_start = datetime.min
 
         t2 = times.get("LOAD_DONE", t_start)  # end of loading
         t3 = times.get("ONNX_SAVED") or t2  # export end
