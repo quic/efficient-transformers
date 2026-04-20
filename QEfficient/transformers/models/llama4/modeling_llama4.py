@@ -111,7 +111,7 @@ class QEffLlama4VisionRotaryEmbedding(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.n_heads = config.num_attention_heads
-        self.theta = config.rope_theta
+        self.theta = config.rope_parameters["rope_theta"]
         self.patch_size = config.patch_size
 
         # Build the initial cache for the reference image resolution
@@ -692,13 +692,13 @@ class QEffLlama4TextModel(Llama4TextModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
             layer_outputs = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask_mapping[decoder_layer.attention_type],
+                attention_mask=causal_mask_mapping[self.config.layer_types[i]],
                 position_ids=position_ids,
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
@@ -841,14 +841,13 @@ class QEffLlama4EncoderWrapper(nn.Module):
         return {self.model.vision_model.model.layers[0].__class__}
 
     def forward(self, pixel_values):
-        vision_feature_layer = self.model.config.vision_config.vision_feature_layer
         vision_feature_select_strategy = self.model.config.vision_config.vision_feature_select_strategy
         image_features = self.model.get_image_features(
             pixel_values=pixel_values,
-            vision_feature_layer=vision_feature_layer,
             vision_feature_select_strategy=vision_feature_select_strategy,
             image_sizes=None,
-        )
+            return_dict=True,
+        ).last_hidden_state
         vision_flat = image_features.view(-1, image_features.size(-1))
         projected_vision_flat = self.model.multi_modal_projector(vision_flat)
         return projected_vision_flat  # , pixel_values
