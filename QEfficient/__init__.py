@@ -24,14 +24,16 @@ from QEfficient.base import (
     QEFFAutoModelForCausalLM,
     QEFFAutoModelForCTC,
     QEFFAutoModelForImageTextToText,
+    QEFFAutoModelForMultimodalLM,
     QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
     QEFFCommonLoader,
 )
 from QEfficient.compile.compile_helper import compile
-from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
-from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
-from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
+
+# from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
+# from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
+# from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.peft import QEffAutoPeftModelForCausalLM
@@ -55,6 +57,7 @@ __all__ = [
     "QEFFAutoModelForCTC",
     "QEffAutoPeftModelForCausalLM",
     "QEFFAutoModelForImageTextToText",
+    "QEFFAutoModelForMultimodalLM",
     "QEFFAutoModelForSequenceClassification",
     "QEFFAutoModelForSpeechSeq2Seq",
     "QEFFCommonLoader",

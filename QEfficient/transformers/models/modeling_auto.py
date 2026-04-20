@@ -20,6 +20,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForCTC,
     AutoModelForImageTextToText,
+    AutoModelForMultimodalLM,
     AutoModelForSequenceClassification,
     AutoModelForSpeechSeq2Seq,
     PreTrainedTokenizer,
@@ -1001,6 +1002,108 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         return self.model.model.config.__dict__
 
 
+class QEffAudioEncoderForMultimodalLM(QEFFBaseModel):
+    """
+    QEfficient wrapper for the audio encoder component of a multimodal LM.
+    """
+
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+        KVCacheExternalModuleMapperTransform,
+    ]
+    _onnx_transforms = []
+
+    def __init__(self, model: nn.modules, **kwargs):
+        _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        super().__init__(model, **kwargs)
+        self.model = model.get_qeff_audio_encoder()
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
+        return self._export(
+            inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=offload_pt_weights,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+        )
+
+    def compile(
+        self,
+        compile_dir,
+        compile_only,
+        specializations,
+        convert_to_fp16,
+        mxfp6_matmul,
+        mdp_ts_num_devices,
+        aic_num_cores,
+        custom_io,
+        use_onnx_subfunctions: bool = False,
+        **compiler_options,
+    ) -> str:
+        """
+        Compiles the vision encoder component to a QPC package.
+
+        Parameters
+        ----------
+        compile_dir : str
+            Directory to save the generated QPC package.
+        compile_only : bool
+            If True, only compilation occurs without running inference.
+        specializations : List[Dict[str, Union[int, str]]]
+            List of dictionaries, each specifying a compilation specialization.
+        convert_to_fp16 : bool
+            If True, converts model to FP16 precision during compilation.
+        mxfp6_matmul : bool
+            If True, uses MXFP6 compression for MatMul weights.
+        mdp_ts_num_devices : int
+            Number of devices for multi-device (tensor slicing) compilation.
+        aic_num_cores : int
+            Number of cores to use for compilation.
+        custom_io : Dict[str, str]
+            Custom I/O configurations for the compiler.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        **compiler_options :
+            Additional compiler options passed to the underlying compilation command.
+
+        Returns
+        -------
+        str
+            Path to the compiled QPC package for the vision encoder.
+        """
+        return self._compile(
+            compile_dir=compile_dir,
+            compile_only=compile_only,
+            specializations=specializations,
+            convert_to_fp16=convert_to_fp16,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=mdp_ts_num_devices,
+            aic_num_cores=aic_num_cores,
+            custom_io=custom_io,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            **compiler_options,
+        )
+
+    @property
+    def get_model_config(self) -> dict:
+        """
+        Get the configuration dictionary of the underlying HuggingFace vision model.
+
+        Returns
+        -------
+        dict
+            The configuration dictionary.
+        """
+        if hasattr(self.model.model, "audio_model"):
+            return self.model.model.audio_model.config.__dict__
+        return self.model.model.config.__dict__
+
+
 class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     """
     QEfficient wrapper for the Causal Language Model (decoder) component of a Text-to-Image-to-Text model.
@@ -1399,6 +1502,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             qaic_config=qaic_config,
             **compiler_options,
         )
+        if self.audio_model is not None:
+            self.audio_model.transform(
+                ctx_len=ctx_len,
+                seq_len=seq_len,
+                bs=bs,
+                num_devices=num_devices,
+                qaic_config=qaic_config,
+                **compiler_options,
+            )
 
         self.lang_model.transform(
             ctx_len=ctx_len,
@@ -1860,6 +1972,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         if not_mllama:
             lang_inputs["image_idx"] = np.array([[0]])
+            if self.audio_model is not None:
+                lang_inputs["audio_idx"] = np.array([[0]])
         if self.vision_model.qpc_path:
             vision_session.deactivate()
         lang_session.activate()
@@ -1890,6 +2004,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ]
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
+            if "audio_idx_output" in outputs:
+                chunk_inputs["audio_idx"] = outputs["audio_idx_output"]
 
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
@@ -1905,6 +2021,873 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
         if not_mllama:
             lang_session.skip_buffers(vision_outputs.keys())
+        # Get first token
+        lang_inputs["input_ids"] = outputs["logits"].argmax(2)
+        lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
+        if "cross_attention_mask" in lang_inputs:
+            bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
+            lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
+        generated_ids[:, 0] = lang_inputs["input_ids"].squeeze(1)
+
+        if streamer:
+            streamer.put(lang_inputs["input_ids"][0])
+
+        # Decode loop
+        if self.comp_ctx_lengths_decode is not None:
+            max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
+            list_of_comp_ctx_lengths_decode = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+            ]
+            max_position_id = np.max(lang_inputs["position_ids"])
+            ccl_id_initial = 0
+            ccl_id = ccl_id_initial
+            for i in range(ccl_id_initial, len(self.comp_ctx_lengths_decode)):
+                if max_position_id < self.comp_ctx_lengths_decode[i]:
+                    ccl_id = i
+                    break
+            lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
+
+        decode_start = perf_counter()
+        for num_token in range(1, generation_len):
+            if self.comp_ctx_lengths_decode is not None:
+                if max_position_id >= self.comp_ctx_lengths_decode[ccl_id] - 1:
+                    ccl_id = min(ccl_id + 1, max_ccl_id)
+                    lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
+
+            outputs = lang_session.run(lang_inputs)
+            if self._write_io_dir is not None:
+                write_io_files(lang_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
+                self._write_io_dir = None
+
+            # Prepare inputs for next iteration
+            lang_inputs["input_ids"] = outputs["logits"].argmax(2)
+            lang_inputs["position_ids"] += 1
+            generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
+            if streamer:
+                streamer.put(lang_inputs["input_ids"][0])
+
+        decode_end = perf_counter()
+        if streamer:
+            streamer.end()
+
+        decode_perf = (num_token - 1) / (decode_end - decode_start)
+        total_time = decode_end - decode_start + prefill_time
+        total_perf = num_token / total_time
+
+        return CloudAI100ExecInfoNew(
+            batch_size=batch_size,
+            generated_ids=generated_ids,
+            perf_metrics=PerfMetrics(
+                prefill_time=prefill_time, decode_perf=decode_perf, total_perf=total_perf, total_time=total_time
+            ),
+        )
+
+
+class _QEFFAutoModelForMultimodalLMMultiQPC:
+    """
+    Internal class handling multimodal image-text-to-text models using a dual QPC approach.
+
+    In this approach, the vision encoder and language model decoder are compiled
+    into separate QPC packages. The vision encoder's KV cache might be offloaded
+    to CPU or managed differently from the language model's KV cache.
+    """
+
+    _hf_auto_class = AutoModelForMultimodalLM
+
+    def __init__(
+        self,
+        model: nn.Module,
+        continuous_batching: bool = False,
+        qaic_config: Optional[dict] = None,
+        **kwargs,
+    ):
+        """
+        Initializes the dual QPC multimodal model wrapper.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The full HuggingFace multimodal model.
+        qaic_config : dict, optional
+            A dictionary for QAIC-specific configurations.
+        **kwargs :
+            Additional keyword arguments.
+        """
+        if kwargs.pop("full_batch_size", None):
+            continuous_batching = True
+            warnings.warn(
+                "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
+            )
+        self.model = model
+        self.config = model.config
+
+        self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
+        self.audio_model = QEffAudioEncoderForMultimodalLM(model, **kwargs)
+
+        self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
+        self.continuous_batching = continuous_batching
+        self.ccl_enabled = False
+        if qaic_config:
+            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+        self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
+        self.input_shapes, self.output_names = None, None
+        # ---Sampling---
+        # Note: SamplerTransform should be applied after all other transforms
+        # are done. The role of the sampler is to just add nodes at the output of the
+        # previous transform function.
+        self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
+        """
+        Load a QEfficient multimodal model for dual QPC from a pretrained HuggingFace model or local path.
+
+        Parameters
+        ----------
+        pretrained_model_name_or_path : str
+            Model card name from HuggingFace or local path to model directory.
+        **kwargs :
+            Additional keyword arguments passed directly to `cls._hf_auto_class.from_pretrained`.
+            Note: `attn_implementation` and `low_cpu_mem_usage` are automatically
+            set to "eager" and False respectively to ensure compatibility.
+
+        Returns
+        -------
+        _QEffAutoModelForImageTextToTextDualQPC
+            An instance initialized with the pretrained weights.
+        """
+        enable_proxy = kwargs.pop("enable_proxy", False)
+
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
+            logger.warning('Updating attn_implementation="eager"')
+
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+
+        return cls(
+            model,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            qaic_config=qaic_config,
+            **kwargs,
+        )
+
+    @property
+    def onnx_path(self):
+        """
+        Get the ONNX paths for the vision and language model components.
+
+        Returns
+        -------
+        List[str]
+            A list containing the ONNX paths of the vision model and the language model.
+        """
+        onnx_paths = [self.vision_model.onnx_path, self.lang_model.onnx_path]
+        if self.audio_model is not None:
+            onnx_paths.append(self.audio_model.onnx_path)
+        return onnx_paths
+
+    def export(
+        self,
+        export_dir: Optional[str] = None,
+        use_onnx_subfunctions: bool = False,
+        skip_vision: Optional[bool] = False,
+        skip_audio: Optional[bool] = False,
+        skip_lang: Optional[bool] = False,
+        prefill_seq_len: Optional[int] = None,
+        prefill_only: bool = False,
+        enable_chunking: bool = False,
+        **kwargs,
+    ) -> str:
+        """
+        Exports both the vision encoder and language decoder components to ONNX format.
+
+        This method exports the vision component (optionally without offloading PyTorch weights)
+        and the language component (with offloading PyTorch weights).
+
+        Parameters
+        ----------
+        export_dir : str, optional
+            Directory path where the exported ONNX graphs will be saved. Default is None.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        **kwargs :
+            Additional keyword arguments.
+
+        Returns
+        -------
+        List[str]
+            A list containing the paths to the generated ONNX graph files for both components.
+        """
+        # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
+        try:
+            inputs = self.model.get_dummy_inputs(
+                kv_offload=True,
+                continuous_batching=self.continuous_batching,
+                comp_ctx_lengths=self.comp_ctx_lengths_decode,
+            )
+            dynamic_axes = self.model.get_onnx_dynamic_axes(
+                kv_offload=True,
+                continuous_batching=self.continuous_batching,
+                comp_ctx_lengths=self.comp_ctx_lengths_decode,
+            )
+        except TypeError:
+            inputs = self.model.get_dummy_inputs(kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode)
+            dynamic_axes = self.model.get_onnx_dynamic_axes(
+                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
+            )
+        output_names = self.model.get_output_names(kv_offload=True)
+        if self.lang_model.model.qaic_config is not None and self.lang_model.model.qaic_config.get(
+            "include_sampler", False
+        ):
+            logits_index = output_names["lang"].index("logits")
+            output_names["lang"][logits_index] = "next_tokens"
+            inputs["lang"], output_names["lang"], dynamic_axes["lang"] = get_sampling_inputs_and_outputs(
+                example_inputs=inputs["lang"],
+                output_names=output_names["lang"],
+                dynamic_axes=dynamic_axes["lang"],
+                continuous_batching=self.continuous_batching,
+                vocab_size=self.model.language_model.config.vocab_size,
+                qaic_config=self.lang_model.model.qaic_config,
+            )
+        if not skip_vision:
+            self.vision_model.export(
+                inputs["vision"],
+                output_names["vision"],
+                dynamic_axes["vision"],
+                export_dir=export_dir,
+                offload_pt_weights=False,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+            )
+        if (
+            self.audio_model is not None
+            and "audio" in inputs
+            and "audio" in output_names
+            and "audio" in dynamic_axes
+            and not skip_audio
+        ):
+            self.audio_model.export(
+                inputs["audio"],
+                output_names["audio"],
+                dynamic_axes["audio"],
+                export_dir=export_dir,
+                offload_pt_weights=False,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+            )
+
+        if prefill_only and prefill_seq_len > 1:
+            offload_pt_weights = False  # to keep weight for decode onnx
+        else:
+            offload_pt_weights = kwargs.get("offload_pt_weights", True)
+
+        if not skip_lang:
+            self.lang_model.export(
+                inputs["lang"],
+                output_names["lang"],
+                dynamic_axes["lang"],
+                export_dir=export_dir,
+                offload_pt_weights=offload_pt_weights,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                prefill_seq_len=prefill_seq_len,
+            )
+        return self.onnx_path
+
+    def transform(
+        self,
+        ctx_len: Optional[int] = None,
+        seq_len: Optional[int] = None,
+        bs: Optional[int] = 1,
+        num_devices: int = 1,
+        qaic_config: Optional[dict] = None,
+        **compiler_options,
+    ):
+        self.vision_model.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
+
+        self.lang_model.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
+
+    def compile(
+        self,
+        img_size: Optional[int] = None,
+        vision_onnx_path: Optional[str] = None,
+        audio_onnx_path: Optional[str] = None,
+        lang_onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        prefill_seq_len: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
+        ctx_len: Optional[int] = None,
+        batch_size: int = 1,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
+        num_devices: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        skip_vision: Optional[bool] = False,
+        skip_audio: Optional[bool] = False,
+        skip_lang: Optional[bool] = False,
+        use_onnx_subfunctions: bool = False,
+        prefill_only=None,
+        enable_chunking=False,
+        qaic_config: Optional[dict] = None,
+        **compiler_options,
+    ) -> str:
+        """
+        Compiles both the vision encoder and language decoder components into QPC packages.
+
+        Parameters
+        ----------
+        img_size : int, optional
+            The image size to compile the vision model for. Default is None.
+        vision_onnx_path : str, optional
+            Path to a pre-exported ONNX file for the vision encoder. If None, it will be exported.
+        lang_onnx_path : str, optional
+            Path to a pre-exported ONNX file for the language decoder. If None, it will be exported.
+        compile_dir : str, optional
+            Directory to save the generated QPC packages.
+        prefill_seq_len : int, optional
+            Length of the prefill prompt for the language model. Default is None.
+        ctx_len : int, optional
+            Maximum context length for the language model. Default is None.
+        batch_size : int, optional
+            Batch size. Default is 1.
+        full_batch_size : int, optional
+            Not supported for this model; must be None.
+        kv_cache_batch_size : int, optional
+            Not supported for this model; must be None.
+        num_devices : int, optional
+            Number of devices to compile for. Default is 1.
+        num_cores : int, optional
+            Number of cores to use for compilation.
+        mxfp6_matmul : bool, optional
+            Use MXFP6 compression for weights in the language model. Default is False.
+        mxint8_kv_cache : bool, optional
+            Use MXINT8 compression for KV cache. Default is False.
+        num_speculative_tokens : int, optional
+            Not supported for this model; must be None.
+        skip_vision : bool, optional
+            If True, skips compilation of the vision encoder. Default is False.
+        skip_lang : bool, optional
+            If True, skips compilation of the language decoder. Default is False.
+        use_onnx_subfunctions: bool, optional
+            whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        **compiler_options : dict
+            Additional compiler options for QAIC or QNN compilers.
+
+        Returns
+        -------
+        Union[List[str], str, None]
+            A list of paths to the compiled QPC packages, or a single path if only
+            one component is compiled, or None if neither is compiled.
+
+        Raises
+        ------
+        ValueError
+            If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
+            If both `skip_lang` and `skip_vision` are True.
+        """
+        if skip_lang and skip_vision and (skip_audio or self.audio_model is None):
+            raise ValueError("Expected at least one of 'skip_lang', 'skip_vision', or 'skip_audio' to be False")
+
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+
+        if kv_cache_batch_size and not full_batch_size:
+            raise ValueError(
+                "KV caching requires continuous batching. Please set `full_batch_size` and "
+                "enable `continuous_batching=True` in `from_pretrained`."
+            )
+
+        # Infer kv_cache_batch_size if not provided
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
+
+        output_names = self.model.get_output_names(kv_offload=True)
+
+        # if ccl_enabled is True read Compute-Context-Length lists
+        if self.ccl_enabled:
+            if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
+                logger.info("Auto-generating CCL-prefill and CCL-decode lists based on Context Length (CL).")
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
+                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
+            )
+        # For supporting VLLM and Disaggregated with CCL
+        elif comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode, ctx_len = process_ccl_specializations(
+                comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
+            )
+
+        # Apply compile-dependent transforms like blocking transform
+        self.transform(
+            ctx_len=ctx_len,
+            seq_len=prefill_seq_len,
+            batch_size=batch_size,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+            aic_num_cores=num_cores,
+        )
+
+        specializations, compiler_options = self.model.get_specializations(
+            batch_size=batch_size,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
+            comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
+            img_size=img_size,
+            kv_offload=True,
+            continuous_batching=self.continuous_batching,
+            kv_cache_batch_size=kv_cache_batch_size,
+            full_batch_size=full_batch_size,
+            **compiler_options,
+        )
+
+        custom_io_vision = {}
+        target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
+        molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
+        if molmo:
+            custom_io_vision["image_masks"] = CUSTOM_IO_DTYPE_MAP[target_dtype]
+        custom_io_vision["pixel_values"] = CUSTOM_IO_DTYPE_MAP[target_dtype]
+
+        for output_name in output_names["vision"]:
+            if output_name.startswith("past_"):
+                custom_io_vision[output_name] = kv_cache_dtype
+            else:
+                custom_io_vision[output_name] = CUSTOM_IO_DTYPE_MAP[target_dtype]
+
+        if vision_onnx_path:
+            self.vision_model.onnx_path = vision_onnx_path
+        if audio_onnx_path and self.audio_model is not None:
+            self.audio_model.onnx_path = audio_onnx_path
+        if lang_onnx_path:
+            self.lang_model.onnx_path = lang_onnx_path
+
+        if (
+            vision_onnx_path is None
+            or lang_onnx_path is None
+            or (self.audio_model is not None and audio_onnx_path is None and not skip_audio)
+        ):
+            self.export(
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                skip_vision=skip_vision,
+                skip_audio=skip_audio,
+                skip_lang=skip_lang,
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                prefill_seq_len=prefill_seq_len,
+            )
+
+        # TODO this hould be removed once the continous batching is supported for all the models.
+        compiler_options.pop("continuous_batching", None)
+        compiler_options.pop("kv_cache_batch_size", None)
+        compiler_options.pop("full_batch_size", None)
+        self.qpc_paths = {}
+        if not skip_vision:
+            vision_qpc_path = self.vision_model._compile(
+                compile_dir=compile_dir,
+                compile_only=True,
+                specializations=specializations["vision"],
+                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
+                mdp_ts_num_devices=num_devices,
+                aic_num_cores=num_cores,
+                custom_io=custom_io_vision,
+                mxint8_kv_cache=mxint8_kv_cache,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                **compiler_options,
+            )
+            self.qpc_paths["vision_qpc_path"] = vision_qpc_path
+
+        if self.audio_model is not None and not skip_audio:
+            custom_io_audio = {}
+            try:
+                audio_example_inputs = self.model.get_dummy_inputs(
+                    kv_offload=True,
+                    continuous_batching=self.continuous_batching,
+                    comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                ).get("audio", {})
+            except TypeError:
+                audio_example_inputs = self.model.get_dummy_inputs(
+                    kv_offload=True,
+                    comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                ).get("audio", {})
+            for input_name, input_value in audio_example_inputs.items():
+                if isinstance(input_value, torch.Tensor) and input_value.dtype.is_floating_point:
+                    custom_io_audio[input_name] = CUSTOM_IO_DTYPE_MAP[target_dtype]
+            for output_name in output_names.get("audio", []):
+                custom_io_audio[output_name] = CUSTOM_IO_DTYPE_MAP[target_dtype]
+
+            audio_specializations = specializations.get("audio")
+            if audio_specializations is None:
+                audio_specializations = specializations["vision"]
+            audio_qpc_path = self.audio_model._compile(
+                compile_dir=compile_dir,
+                compile_only=True,
+                specializations=audio_specializations,
+                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
+                mdp_ts_num_devices=num_devices,
+                aic_num_cores=num_cores,
+                custom_io=custom_io_audio,
+                mxint8_kv_cache=mxint8_kv_cache,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                **compiler_options,
+            )
+            self.qpc_paths["audio_qpc_path"] = audio_qpc_path
+
+        # Custom NPI file options
+        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
+            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
+
+        if not skip_lang:
+            custom_io_lang = {}
+            # Inputs
+            for output_name in output_names["lang"]:
+                if output_name.endswith("_RetainedState"):
+                    custom_io_lang[output_name[: -len("_RetainedState")]] = (
+                        CUSTOM_IO_DTYPE_MAP[target_dtype]
+                        if (
+                            "vision_embeds" in output_name
+                            or "deepstack_features" in output_name
+                            or "audio_embeds" in output_name
+                        )
+                        else kv_cache_dtype
+                    )
+
+            # outputs
+            for output_name in output_names["lang"]:
+                if output_name.endswith("_RetainedState"):
+                    custom_io_lang[output_name] = (
+                        CUSTOM_IO_DTYPE_MAP[target_dtype]
+                        if (
+                            "vision_embeds" in output_name
+                            or "deepstack_features" in output_name
+                            or "audio_embeds" in output_name
+                        )
+                        else kv_cache_dtype
+                    )
+            if prefill_only:
+                specializations = specializations["lang"][:1]
+                qpc_key = "lang_prefill_qpc_path"
+            elif prefill_seq_len == 1:
+                specializations = specializations["lang"][-1:]
+                qpc_key = "lang_decode_qpc_path"
+            else:
+                specializations = specializations["lang"]
+                qpc_key = "lang_qpc_path"
+
+            lang_qpc_path = self.lang_model._compile(
+                compile_dir=compile_dir,
+                compile_only=True,
+                retained_state=True,
+                specializations=specializations,
+                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                mxfp6_matmul=mxfp6_matmul,
+                mdp_ts_num_devices=num_devices,
+                aic_num_cores=num_cores,
+                custom_io=custom_io_lang,
+                mxint8_kv_cache=mxint8_kv_cache,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                **compiler_options,
+            )
+            self.qpc_paths.update({qpc_key: lang_qpc_path})
+        return self.qpc_paths
+
+    def generate(
+        self,
+        inputs: Optional[torch.Tensor] = None,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer] = None,
+        processor: Optional[AutoImageProcessor] = None,
+        images: List[str] = None,
+        prompts: List[str] = None,
+        streamer: Optional[TextStreamer] = None,
+        device_ids: List[int] = None,
+        runtime_ai100: bool = True,
+        generation_len: Optional[int] = None,
+        image_height: Optional[int] = None,
+        image_width: Optional[int] = None,
+        **kwargs,
+    ) -> Union[torch.Tensor, np.ndarray]:
+        """
+        Generates output by executing the compiled QPC(s) on Cloud AI 100 Hardware cards.
+
+        This method coordinates inference between the vision encoder and language model decoder.
+
+        Parameters
+        ----------
+        inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
+            Inputs to run the execution, typically includes `pixel_values`, `input_ids`,
+            `attention_mask`, etc.
+        tokenizer : PreTrainedTokenizer or PreTrainedTokenizerFast, optional
+            Tokenizer for the model. Used when images and prompts are provided.
+        processor : AutoImageProcessor, optional
+            Processor for the model. Used when images and prompts are provided.
+        images : List[str], optional
+            List of image paths or PIL images to process.
+        prompts : List[str], optional
+            List of text prompts corresponding to the images.
+        streamer : TextStreamer, optional
+            A streamer object to display generated tokens in real-time. Default is None.
+        device_ids : List[int], optional
+            IDs of devices for running the QPC. E.g., `[0]` for a single device or
+            `[0, 1, 2, 3]` for tensor slicing. Defaults to `[0]` if not specified.
+        runtime_ai100 : bool, optional
+            If True, uses the AI 100 runtime. PyTorch runtime is not supported for this model.
+            Default is True.
+        generation_len : int, optional
+            The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
+
+        Returns
+        -------
+        CloudAI100ExecInfoNew or np.ndarray
+            Output from the AI 100 runtime, including generated IDs and performance metrics.
+
+        Raises
+        ------
+        NotImplementedError
+            If `runtime_ai100` is False.
+        """
+        if not runtime_ai100:
+            raise NotImplementedError("PyTorch execution is not supported yet for this model!")
+
+        write_io = kwargs.pop("write_io", False)
+        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path[1]), "io_dir") if write_io else None
+
+        # Use VisionLanguageGeneration for image-prompt pairs
+        if (processor and images) or (tokenizer and prompts):
+            # Create VisionLanguageGeneration instance
+            batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
+            vlm_gen = VisionLanguageGeneration(
+                qeff_model=self,
+                lang_qpc_path=self.lang_model.qpc_path,
+                vision_qpc_path=self.vision_model.qpc_path,
+                tokenizer=tokenizer,
+                processor=processor,
+                device_id=device_ids,  # if device_ids is not None else [0],
+                ctx_len=ctx_len_comp,
+                full_batch_size=fbs,
+                comp_ctx_lengths_prefill=self.comp_ctx_lengths_prefill,
+                comp_ctx_lengths_decode=self.comp_ctx_lengths_decode,
+                image_height=image_height,
+                image_width=image_width,
+                write_io_dir=self._write_io_dir,
+                **kwargs,
+            )
+
+            # Call generate method
+            return vlm_gen.generate(
+                images=images,
+                prompts=prompts,
+                generation_len=generation_len,
+                stream=streamer is not None,
+            )
+
+        # Fallback to kv_offload_generate for direct inputs (backward compatibility)
+        return self.kv_offload_generate(
+            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+        )
+
+    def kv_offload_generate(
+        self,
+        inputs: List[str] = None,
+        streamer: Optional[TextStreamer] = None,
+        device_ids: List[int] = None,
+        generation_len: int = None,
+    ):
+        """
+        Performs generation for multimodal models with KV offloading to CPU.
+
+        This method orchestrates the inference by running the vision encoder (if compiled)
+        and then iteratively running the language decoder, managing KV cache states.
+
+        Parameters
+        ----------
+        inputs : Dict[str, Union[torch.Tensor, np.ndarray]]
+            Input tensors for the multimodal model.
+        streamer : TextStreamer, optional
+            A streamer object to display generated tokens in real-time. Default is None.
+        device_ids : List[int], optional
+            IDs of devices for running the QPC. Defaults to `[0]` if not specified.
+        generation_len : int, optional
+            The maximum number of tokens to generate. If None, it's inferred from `ctx_len`.
+
+        Returns
+        -------
+        CloudAI100ExecInfoNew
+            Execution information including generated IDs and performance metrics.
+
+        Raises
+        ------
+        TypeError
+            If the language model QPC is not compiled.
+        AssertionError
+            If `generation_len` is not greater than zero.
+        """
+        if not self.lang_model.qpc_path:
+            raise TypeError("Please run compile API for language model first!")
+
+        lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
+
+        if self.vision_model.qpc_path:
+            vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
+        if self.audio_model is not None and self.audio_model.qpc_path:
+            audio_session = QAICInferenceSession(self.audio_model.qpc_path, device_ids)
+
+        batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
+
+        pad_token_id = 1
+
+        # Skip inputs/outputs
+        lang_session.skip_buffers(
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
+        )
+
+        # Read prompt and ctx len from session
+        batch_size = max(
+            [x[lang_session.binding_index_map["input_ids"]][1][0] for x in lang_session.allowed_shapes]
+            + [lang_session.bindings[lang_session.binding_index_map["input_ids"]].dims[0]]
+        )
+
+        prefill_seq_len = max(
+            [x[lang_session.binding_index_map["input_ids"]][1][1] for x in lang_session.allowed_shapes]
+            + [lang_session.bindings[lang_session.binding_index_map["input_ids"]].dims[1]]
+        )
+        input_len = inputs["attention_mask"].sum(1, keepdims=True)
+        input_ids_length = inputs["input_ids"].shape[1]
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+
+        if generation_len is None:
+            generation_len = ctx_len - input_len.max()
+        assert generation_len > 0, "generation length should be greater than zero"
+        generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
+
+        inputs["input_ids"] = torch.nn.functional.pad(
+            inputs["input_ids"],
+            (0, padded_len - input_ids_length),
+            "constant",
+            pad_token_id,
+        )
+        inputs["attention_mask"] = torch.nn.functional.pad(
+            inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
+        )
+        if "cross_attention_mask" in inputs:
+            inputs["cross_attention_mask"] = torch.nn.functional.pad(
+                inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
+            )
+
+        for k, v in inputs.items():
+            inputs[k] = np.array(v)
+
+        vision_inputs = {
+            k: v
+            for k, v in inputs.items()
+            if k
+            in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
+        }
+        audio_inputs = {}
+        if self.audio_model is not None and self.audio_model.qpc_path:
+            audio_inputs = {k: v for k, v in inputs.items() if k in set(audio_session.input_names)}
+
+        vision_inputs_fp16 = {"pixel_values", "image_masks"}
+        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        audio_inputs_fp16 = {"input_features"}
+        audio_inputs.update({k: audio_inputs[k].astype("float16") for k in audio_inputs_fp16 if k in audio_inputs})
+        vision_start = perf_counter()
+
+        vision_outputs = {}
+        if vision_inputs:
+            vision_outputs = vision_session.run(vision_inputs)
+        audio_outputs = {}
+        if audio_inputs:
+            audio_outputs = audio_session.run(audio_inputs)
+        vision_end = perf_counter()
+
+        lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs and k not in audio_inputs}
+        if "position_ids" in inputs:
+            lang_inputs["position_ids"] = inputs["position_ids"]
+            lang_inputs.pop("attention_mask")
+        else:
+            lang_inputs["position_ids"] = np.where(
+                lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
+            )  # Need to use -1 as position_ids for invalid tokens
+
+        not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
+        if not_mllama:
+            lang_inputs["image_idx"] = np.array([[0]])
+        if self.vision_model.qpc_path:
+            vision_session.deactivate()
+        if self.audio_model is not None and self.audio_model.qpc_path:
+            audio_session.deactivate()
+        lang_session.activate()
+
+        lang_session.set_buffers({**vision_outputs, **audio_outputs})
+
+        if self.comp_ctx_lengths_prefill is not None:
+            list_of_comp_ctx_lengths_prefill = [
+                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+            ]
+            prefill_ccl_id = 0
+            lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
+        lang_start = perf_counter()
+        # Run prefill
+        chunk_inputs = lang_inputs.copy()
+        for i in range(num_chunks):
+            if (
+                self.comp_ctx_lengths_prefill is not None
+                and (i + 1) * prefill_seq_len > self.comp_ctx_lengths_prefill[prefill_ccl_id]
+            ):
+                prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
+                chunk_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
+
+            chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs["position_ids"] = lang_inputs["position_ids"][
+                ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
+            ]
+            outputs = lang_session.run(chunk_inputs)
+            chunk_inputs["image_idx"] = outputs["image_idx_output"]
+            chunk_inputs["audio_idx"] = outputs["audio_idx_output"]
+
+            if self._write_io_dir is not None:
+                write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+
+        prefill_time = perf_counter() - lang_start + vision_end - vision_start
+        # Skip inputs/outputs again
+        lang_session.skip_buffers(
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
+        )
+        if not_mllama:
+            lang_session.skip_buffers(set(vision_outputs.keys()) | set(audio_outputs.keys()))
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
         lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
@@ -2681,6 +3664,72 @@ class QEFFAutoModelForImageTextToText:
         ------
         NotImplementedError
             If `continuous_batching` is provided as True.
+        """
+        enable_proxy = kwargs.pop("enable_proxy", False)
+
+        # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
+        if continuous_batching and not kv_offload:
+            NotImplementedError("Continuous batching is not supported for kv_offload = False")
+
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
+            logger.warning('Updating attn_implementation="eager"')
+
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+
+        kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+
+        return cls(
+            model,
+            kv_offload=kv_offload,
+            continuous_batching=continuous_batching,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            qaic_config=qaic_config,
+            **kwargs,
+        )
+
+
+class QEFFAutoModelForMultimodalLM:
+    """
+    QEfficient class for multimodal language models from the HuggingFace hub.
+
+    This class supports both single and dual QPC (Quantized Package Compilation)
+    approaches and mirrors the image-text-to-text multimodal workflow.
+    """
+
+    _hf_auto_class = AutoModelForMultimodalLM
+
+    def __new__(
+        self,
+        model: nn.Module,
+        kv_offload: Optional[bool] = True,
+        continuous_batching: bool = False,
+        qaic_config: Optional[dict] = None,
+        **kwargs,
+    ):
+        """
+        Instantiate the appropriate internal class for single or dual QPC mode.
+        """
+        if kv_offload:
+            return _QEFFAutoModelForMultimodalLMMultiQPC(model, continuous_batching, qaic_config=qaic_config, **kwargs)
+        else:
+            return _QEFFAutoModelForImageTextToTextSingleQPC(model, qaic_config=qaic_config, **kwargs)
+
+    @classmethod
+    @with_replaced_quantizers
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        kv_offload: Optional[bool] = None,
+        continuous_batching: bool = False,
+        qaic_config: Optional[dict] = None,
+        **kwargs,
+    ):
+        """
+        Load a QEfficient multimodal LM from a pretrained HuggingFace model or local path.
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
 

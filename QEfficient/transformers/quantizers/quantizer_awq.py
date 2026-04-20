@@ -7,7 +7,7 @@
 
 import torch
 from transformers.quantizers.quantizer_awq import AwqQuantizer
-from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
+from transformers.utils.quantization_config import AwqBackend, AwqConfig, AwqFormat
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.quantizer_utils import (
@@ -24,23 +24,20 @@ class QEffAwqConfig(AwqConfig):
         Safety checker that arguments are correct
         """
 
-        if self.backend not in [AwqBackendPackingMethod.AUTOAWQ]:
+        if self.backend not in [AwqBackend.LEGACY_AWQ]:
             raise ValueError(
-                f"Only quantization backend {AwqBackendPackingMethod.AUTOAWQ} is supported - not recognized backend {self.backend}"
+                f"Only quantization backend {AwqBackend.LEGACY_AWQ} is supported - not recognized backend {self.backend}"
             )
 
-        if isinstance(self.version, str):
-            self.version = AWQLinearVersion.from_str(self.version)
-        if self.version not in [AWQLinearVersion.GEMM]:
-            raise ValueError(
-                f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}"
-            )
+        self.version = self.version.lower()
+        # self.version = AwqFormat(self.version)
+        breakpoint()
+        if self.version not in [AwqFormat.GEMM]:
+            raise ValueError(f"Only {AwqFormat.GEMM} version in supported - not recognized version {self.version}")
 
-        do_fuse = getattr(self, "do_fuse", None)
-        fuse_max_seq_len = getattr(self, "fuse_max_seq_len", None)
-        if do_fuse or fuse_max_seq_len is not None:
+        if self.do_fuse or self.fuse_max_seq_len is not None:
             raise ValueError(
-                f"fused modules are not supported, got do_fuse={do_fuse}, fuse_max_seq_len={fuse_max_seq_len}"
+                f"fused modules are not supported, got do_fuse={self.do_fuse}, fuse_max_seq_len={self.fuse_max_seq_len}"
             )
 
         if self.bits != 4:
@@ -65,9 +62,6 @@ class QEffAwqQuantizer(AwqQuantizer):
         if torch_dtype not in [None, torch.float32]:
             logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
         return None
-
-    def update_dtype(self, dtype):
-        return self.update_torch_dtype(dtype)
 
     def _process_model_before_weight_loading(self, model, **kwargs):
         self.modules_to_not_convert = get_keys_to_not_convert(model)
