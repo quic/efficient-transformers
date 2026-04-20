@@ -25,9 +25,6 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5ModelOutputWithPast,
     Qwen3_5TextModel,
     Qwen3_5TextRotaryEmbedding,
-    Qwen3_5VisionAttention,
-    Qwen3_5VisionModel,
-    apply_rotary_pos_emb_vision,
     l2norm,
     repeat_kv,
     rotate_half,
@@ -240,7 +237,6 @@ class QEffQwen3_5TextRotaryEmbedding(Qwen3_5TextRotaryEmbedding):
         )
 
 
-
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
     """Apply interleaved MRoPE to 3D rotary embeddings.
     Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
@@ -297,8 +293,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    
-    
+
     cos = cos[position_ids]
     sin = sin[position_ids]
 
@@ -591,11 +586,11 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        # for i in range(1, chunk_size):
+        #     row = attn[..., i, :i].clone()
+        #     sub = attn[..., :i, :i].clone()
+        #     attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -607,7 +602,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         #     L = L + Ak
         #     Ak = Ak @ A
 
-        # attn = L
+        attn = L
 
         ## Factorized Approximation code ##
         # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
