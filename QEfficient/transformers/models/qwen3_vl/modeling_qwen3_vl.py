@@ -67,7 +67,15 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
     return freqs_t
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqueeze_dim=1):
+def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
+    cos = cos[position_ids]
+    sin = sin[position_ids]
+    cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
+    sin = qeff_apply_interleaved_mrope(sin, mrope_section).unsqueeze(1)
+    return cos, sin
+
+
+def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
@@ -99,12 +107,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids]
-    sin = sin[position_ids]
-    cos = qeff_apply_interleaved_mrope(cos, mrope_section)
-    sin = qeff_apply_interleaved_mrope(sin, mrope_section)
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
@@ -399,14 +401,7 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states,
-            key_states,
-            cos_cached,
-            sin_cached,
-            position_ids[1:],
-            self.config.rope_scaling["mrope_section"],
-        )
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
@@ -582,6 +577,9 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
 
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
+        cos, sin = qeff_prepare_mrope_cos_sin(
+            self.cos_cached, self.sin_cached, position_ids[1:], self.config.rope_scaling["mrope_section"]
+        )
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -602,8 +600,8 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                sin_cached=sin,
+                cos_cached=cos,
                 **kwargs,
             )
 

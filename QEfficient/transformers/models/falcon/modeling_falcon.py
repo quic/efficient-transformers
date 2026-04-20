@@ -60,7 +60,7 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -81,9 +81,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
-
     # Apply rotation
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -127,7 +124,7 @@ class QEffFalconAttention(FalconAttention):
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos_cached, sin_cached, position_ids)
+        query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos_cached, sin_cached)
 
         if layer_past is not None:
             past_seen_tokens = layer_past.get_seq_length()
@@ -308,6 +305,8 @@ class QEffFalconModel(FalconModel):
 
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
 
         for i, block in enumerate(self.h):
             if output_hidden_states:
@@ -326,8 +325,8 @@ class QEffFalconModel(FalconModel):
                 output_attentions=output_attentions,
                 alibi=alibi,
                 cache_position=cache_position,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                sin_cached=sin,
+                cos_cached=cos,
             )
 
             hidden_states = outputs[0]

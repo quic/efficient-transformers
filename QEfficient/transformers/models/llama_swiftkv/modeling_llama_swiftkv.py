@@ -114,9 +114,9 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         key_states, value_states = past_key_values.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
         position_ids = position_ids[torch.arange(bsz), position_ids.to(torch.int32).argmax(1)].unsqueeze(1)
-        query_states, _ = qeff_apply_rotary_pos_emb(
-            query_states, torch.empty_like(query_states), cos_cached, sin_cached, position_ids
-        )
+        cos = cos_cached[position_ids].unsqueeze(1)
+        sin = sin_cached[position_ids].unsqueeze(1)
+        query_states, _ = qeff_apply_rotary_pos_emb(query_states, torch.empty_like(query_states), cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -232,6 +232,8 @@ class QEffLlamaSwiftKVModel(nn.Module):
         causal_mask,
         batch_index,
     ) -> torch.Tensor:
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
         for layer_idx in range(self.config.num_key_value_layers, self.config.num_hidden_layers):
             layer = self.layers[layer_idx]
             hidden_states = layer(
@@ -241,8 +243,8 @@ class QEffLlamaSwiftKVModel(nn.Module):
                 comp_ctx_lengths,
                 causal_mask,
                 batch_index,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                sin_cached=sin,
+                cos_cached=cos,
             )
 
         hidden_states = self.norm(hidden_states)
@@ -352,6 +354,8 @@ class QEffLlamaSwiftKVModel(nn.Module):
         )
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
 
         causal_mask = self._update_causal_mask(
             None, inputs_embeds, cache_position, position_ids, past_key_values, False
@@ -371,8 +375,8 @@ class QEffLlamaSwiftKVModel(nn.Module):
                 batch_index=batch_index,
                 output_attentions=False,
                 use_cache=True,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                sin_cached=sin,
+                cos_cached=cos,
             )
 
         bsz, q_len, _ = hidden_states.size()

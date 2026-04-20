@@ -91,3 +91,22 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
         pytest.skip("No available devices to run model on Cloud AI 100")
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
     model_0_0.compile(onnx_path=with_sub_func_onnx, **compile_params, use_onnx_subfunctions=True)
+
+
+@pytest.mark.feature
+def test_tinyllama_exports_single_decoder_subfunction(tmp_path):
+    model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+    try:
+        qeff_model = QEFFAutoModelForCausalLM(
+            AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs),
+            cb=False,
+        )
+    except Exception as exc:
+        pytest.skip(f"Skipping {model_id}: unable to load model in this environment ({type(exc).__name__}: {exc})")
+
+    with_sub_func_onnx = qeff_model.export(tmp_path, use_onnx_subfunctions=True, offload_pt_weights=False)
+    functions_names = get_function(with_sub_func_onnx)
+    filtered = [name for name in functions_names if "DecoderLayer" in name]
+
+    assert len(filtered) == 1, f"Expected a single decoder subfunction, found {len(filtered)}: {functions_names}"

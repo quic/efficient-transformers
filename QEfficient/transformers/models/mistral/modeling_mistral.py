@@ -65,7 +65,7 @@ class QEffMistralRotaryEmbedding(MistralRotaryEmbedding):
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -86,9 +86,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
-
     # Apply rotation
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -155,9 +152,7 @@ class QEffMistralAttention(MistralAttention):
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids
-        )
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -339,6 +334,8 @@ class QEffMistralModel(MistralModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
@@ -354,8 +351,8 @@ class QEffMistralModel(MistralModel):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                sin_cached=sin,
+                cos_cached=cos,
                 **kwargs,
             )
 

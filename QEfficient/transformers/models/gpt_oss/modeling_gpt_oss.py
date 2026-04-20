@@ -541,7 +541,7 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
@@ -573,9 +573,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -703,9 +700,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         hidden_shape = (*input_shape, -1, self.head_dim)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids
-        )
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
 
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -787,9 +782,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         hidden_shape = (*input_shape, -1, self.head_dim)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids
-        )
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
 
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -868,9 +861,7 @@ class QEffGptOssAttention(GptOssAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids
-        )
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
 
         if self.sliding_window is not None:
             attention_mask = sliding_mask
@@ -1044,6 +1035,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
@@ -1059,8 +1052,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
                 output_attentions=output_attentions,
                 cache_position=cache_position,
                 sliding_mask=sliding_mask,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                sin_cached=sin,
+                cos_cached=cos,
                 **kwargs,
             )
             hidden_states = layer_outputs[0]
@@ -1144,6 +1137,8 @@ class QEffGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
@@ -1160,8 +1155,8 @@ class QEffGptOssModel(GptOssModel):
                 output_attentions=output_attentions,
                 cache_position=cache_position,
                 sliding_mask=sliding_mask,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                sin_cached=sin,
+                cos_cached=cos,
                 **kwargs,
             )
             hidden_states = layer_outputs[0]
