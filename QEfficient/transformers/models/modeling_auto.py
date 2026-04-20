@@ -2310,8 +2310,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         if "pixel_values_RetainedState" in qpc_session.output_names:
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
 
-        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-        inputs["image_idx"] = np.array([[0]])
+        inputs["position_ids"] = np.repeat(
+            np.where(inputs["attention_mask"], np.arange(padded_len), -1)[np.newaxis, ...], 4, axis=0
+        )
+
+        # inputs["image_idx"] = np.array([[0]])
 
         if self.comp_ctx_lengths_prefill is not None:
             list_of_comp_ctx_lengths_prefill = [
@@ -2334,18 +2337,19 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 chunk_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-            chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs["position_ids"] = inputs["position_ids"][..., i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
 
             if self._write_io_dir is not None:
                 write_io_files(chunk_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
 
-            chunk_inputs["image_idx"] = outputs["image_idx_output"]
+            # chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - prefill_start
         # Get first token
         inputs["input_ids"] = outputs["logits"].argmax(2)
-        inputs["position_ids"] = input_len.numpy()
+        # inputs["position_ids"] = input_len.numpy()
+        inputs["position_ids"] = np.max(inputs["position_ids"], axis=-1, keepdims=True) + 1
 
         if "cross_attention_mask" in inputs:
             bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape

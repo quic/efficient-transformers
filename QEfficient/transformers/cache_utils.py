@@ -10,7 +10,16 @@ from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from transformers.cache_utils import DynamicCache, DynamicLayer, EncoderDecoderCache, HybridCache, HybridChunkedCache
+from transformers.cache_utils import Cache, DynamicCache, DynamicLayer, EncoderDecoderCache
+
+try:
+    from transformers.cache_utils import HybridCache, HybridChunkedCache
+except ImportError:
+    # Newer transformers builds may not expose these cache helpers. Fall back to
+    # DynamicCache so QEfficient can still import in environments where the
+    # hybrid-cache-specific models are not exercised.
+    HybridCache = DynamicCache
+    HybridChunkedCache = DynamicCache
 
 from QEfficient.customop import (
     CtxGatherFunc,
@@ -309,7 +318,6 @@ class QEffDynamicCache(DynamicCache):
     def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
         # Remove layer_classes if present to avoid duplicate argument
         kwargs.pop("layer_classes", None)
-        from transformers.cache_utils import Cache  # Import here to avoid circular import
 
         Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
         if ddp_cache_data is not None:

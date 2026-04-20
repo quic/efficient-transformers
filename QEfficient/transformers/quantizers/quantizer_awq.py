@@ -7,7 +7,14 @@
 
 import torch
 from transformers.quantizers.quantizer_awq import AwqQuantizer
-from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
+from transformers.utils.quantization_config import AwqConfig
+
+try:
+    from transformers.utils.quantization_config import AwqBackendPackingMethod, AWQLinearVersion
+except ImportError:
+    from transformers.utils.quantization_config import AwqBackend as AwqBackendPackingMethod
+    from transformers.utils.quantization_config import AwqFormat as AWQLinearVersion
+
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.quantizer_utils import (
@@ -24,12 +31,21 @@ class QEffAwqConfig(AwqConfig):
         Safety checker that arguments are correct
         """
 
-        if self.backend not in [AwqBackendPackingMethod.AUTOAWQ]:
+        autoawq_backend = getattr(AwqBackendPackingMethod, "AUTOAWQ", None)
+        if autoawq_backend is None:
+            autoawq_backend = getattr(AwqBackendPackingMethod, "LEGACY_AWQ")
+
+        if self.backend not in [autoawq_backend]:
             raise ValueError(
-                f"Only quantization backend {AwqBackendPackingMethod.AUTOAWQ} is supported - not recognized backend {self.backend}"
+                f"Only quantization backend {autoawq_backend} is supported - not recognized backend {self.backend}"
             )
 
-        self.version = AWQLinearVersion.from_str(self.version)
+        if isinstance(self.version, str):
+            if hasattr(AWQLinearVersion, "from_str"):
+                self.version = AWQLinearVersion.from_str(self.version)
+            else:
+                self.version = AWQLinearVersion(self.version)
+
         if self.version not in [AWQLinearVersion.GEMM]:
             raise ValueError(
                 f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}"

@@ -176,7 +176,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLVisionAttention,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2RMSNorm as Qwen2_5RMSNorm,
+    Qwen2_5_VLRMSNorm as Qwen2_5RMSNorm,
 )
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
@@ -184,6 +184,17 @@ from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3ForCausalLM,
     Qwen3Model,
     Qwen3RMSNorm,
+)
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5Attention,
+    Qwen3_5DecoderLayer,
+    Qwen3_5DynamicCache,
+    Qwen3_5ForConditionalGeneration,
+    Qwen3_5GatedDeltaNet,
+    Qwen3_5Model,
+    Qwen3_5RMSNorm,
+    Qwen3_5RMSNormGated,
+    Qwen3_5TextModel,
 )
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
@@ -424,6 +435,16 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3ForCausalLM,
     QEffQwen3Model,
 )
+from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
+    QEffQwen3_5Attention,
+    QEffQwen3_5DecoderLayer,
+    QEffQwen3_5DynamicCache,
+    QEffQwen3_5ForConditionalGeneration,
+    QEffQwen3_5GatedDeltaNet,
+    QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
+    QEffQwen3_5Model,
+    QEffQwen3_5TextModel,
+)
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     QEffQwen3MoeAttention,
@@ -480,6 +501,8 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
         Olmo2RMSNorm: CustomRMSNormAIC,
+        Qwen3_5RMSNorm: GemmaCustomRMSNormAIC,
+        Qwen3_5RMSNormGated: QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
     }
 
 
@@ -621,6 +644,14 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3DecoderLayer: QEffQwen3DecoderLayer,
         Qwen3Model: QEffQwen3Model,
         Qwen3ForCausalLM: QEffQwen3ForCausalLM,
+        # Qwen3_5
+        Qwen3_5DynamicCache: QEffQwen3_5DynamicCache,
+        Qwen3_5GatedDeltaNet: QEffQwen3_5GatedDeltaNet,
+        Qwen3_5DecoderLayer: QEffQwen3_5DecoderLayer,
+        Qwen3_5TextModel: QEffQwen3_5TextModel,
+        Qwen3_5Model: QEffQwen3_5Model,
+        Qwen3_5ForConditionalGeneration: QEffQwen3_5ForConditionalGeneration,
+        Qwen3_5Attention: QEffQwen3_5Attention,
         # Qwen2.5 VL
         Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
         Qwen2_5_VLModel: QEffQwen2_5_VLModel,

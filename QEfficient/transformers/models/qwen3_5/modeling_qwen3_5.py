@@ -24,13 +24,12 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5ModelOutputWithPast,
     Qwen3_5TextModel,
     Qwen3_5TextRotaryEmbedding,
-    apply_rotary_pos_emb,
     l2norm,
     repeat_kv,
     rotate_half,
 )
 
-from QEfficient.customop import CustomRMSNormFunc
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicLayer
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
@@ -216,29 +215,28 @@ class QEffQwen3_5TextRotaryEmbedding(Qwen3_5TextRotaryEmbedding):
         )
 
 
-
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
-        """Apply interleaved MRoPE to 3D rotary embeddings.
-        Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
-        interleaved [THWTHWTHW...TT], preserving frequency continuity.
-        args:
-            x: (3, bs, seq_len, head_dim // 2)
-            mrope_section: (3,)
-        returns:
-            x_t: (bs, seq_len, head_dim // 2)
-        """
+    """Apply interleaved MRoPE to 3D rotary embeddings.
+    Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
+    interleaved [THWTHWTHW...TT], preserving frequency continuity.
+    args:
+        x: (3, bs, seq_len, head_dim // 2)
+        mrope_section: (3,)
+    returns:
+        x_t: (bs, seq_len, head_dim // 2)
+    """
 
-        half_shape = freqs[0].shape // 2
-        freqs_t = freqs[0] 
-        for dim, offset in enumerate((1, 2), start=1):  # H, W
-            length = mrope_section[dim] * 3
-            idx = slice(offset, length, 3)
-            freqs_t[..., idx] = freqs[dim, ..., idx]
-            offset += half_shape
-            length += half_shape
-            idx = slice(offset, length, 3)
-            freqs_t[..., idx] = freqs[dim, ..., idx]
-        return freqs_t
+    half_shape = freqs[0].shape[-1] // 2
+    freqs_t = freqs[0]
+    for dim, offset in enumerate((1, 2), start=1):  # H, W
+        length = mrope_section[dim] * 3
+        idx = slice(offset, length, 3)
+        freqs_t[..., idx] = freqs[dim, ..., idx]
+        offset += half_shape
+        length += half_shape
+        idx = slice(offset, length, 3)
+        freqs_t[..., idx] = freqs[dim, ..., idx]
+    return freqs_t
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqueeze_dim=1):
@@ -273,22 +271,21 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    
-    
+
     cos = cos[position_ids]
     sin = sin[position_ids]
 
     cos = qeff_apply_interleaved_mrope(cos, mrope_section)
-    sin  = qeff_apply_interleaved_mrope(sin, mrope_section)
+    sin = qeff_apply_interleaved_mrope(sin, mrope_section)
 
-    cos  = cos.unsqueeze(unsqueeze_dim)
+    cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
 
     # import ipdb; ipdb.set_trace()
     # Keep half or full tensor for later concatenation
     rotary_dim = cos.shape[-1]
-    q_rot, q_pass = q[:,:,:, :rotary_dim], q[:,:,:, rotary_dim:]
-    k_rot, k_pass = k[:,:,:, :rotary_dim], k[:,:,:, rotary_dim:]
+    q_rot, q_pass = q[:, :, :, :rotary_dim], q[:, :, :, rotary_dim:]
+    k_rot, k_pass = k[:, :, :, :rotary_dim], k[:, :, :, rotary_dim:]
 
     # Apply rotary embeddings on the first half or full tensor
     q_embed = (q_rot * cos) + (rotate_half(q_rot) * sin)
@@ -396,7 +393,6 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
         query_states, key_states = qeff_apply_rotary_pos_emb(
             query_states, key_states, cos, sin, position_ids[1:], self.rotary_emb.mrope_section
         )
-
 
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -547,24 +543,23 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        # for i in range(1, chunk_size):
+        #     row = attn[..., i, :i].clone()
+        #     sub = attn[..., :i, :i].clone()
+        #     attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
-        # A = attn
-        # # # Approximate (I - A)^-1
-        # L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
-        # Ak = A
+        A = attn
+        L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        Ak = A
 
-        # K = 128
-        # for _ in range(K):
-        #     L = L + Ak
-        #     Ak = Ak @ A
+        K = 64
+        for _ in range(K):
+            L = L + Ak
+            Ak = Ak @ A
 
-        # attn = L
+        attn = L
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -1187,8 +1182,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         **compiler_options,
     ):
 
-        # comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
-        # comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
 
         lang_prefill = {
             "batch_size": 1 if continuous_batching else batch_size,
