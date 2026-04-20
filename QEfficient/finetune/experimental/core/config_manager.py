@@ -241,10 +241,6 @@ class ModelConfig:
         default="AutoModelForCausalLM",
         metadata={"help": "The AutoClass name to load the model (e.g., 'AutoModelForCausalLM')."},
     )
-    # load_in_4bit: bool = field(
-    #     default=False,
-    #     metadata={"help": "Whether to load the model in 4-bit quantization."},
-    # )
     use_peft: bool = field(
         default=True,
         metadata={"help": "Whether to use PEFT (Parameter-Efficient Fine-Tuning)."},
@@ -941,27 +937,30 @@ class ConfigManager:
                     f"LOCAL_WORLD_SIZE={local_world_size}).",
                 )
 
-            local_world_size_raw = os.environ.get("LOCAL_WORLD_SIZE")
-            if local_world_size_raw is not None:
-                try:
-                    local_world_size = int(local_world_size_raw)
-                except ValueError:
-                    local_world_size = -1
+        if (
+            world_size > 0
+            and isinstance(pp_degree, int)
+            and isinstance(tp_degree, int)
+            and isinstance(ddp_degree, int)
+            and (pp_degree > 1 or tp_degree > 1)
+        ):
+            expected_world_size = pp_degree * tp_degree * ddp_degree
+            self._push(
+                errors,
+                expected_world_size != world_size,
+                "Parallelism degree mismatch for TP/PP modes: pp_degree * tp_degree * ddp_degree "
+                f"must equal WORLD_SIZE ({pp_degree} * {tp_degree} * {ddp_degree} = {expected_world_size}, "
+                f"WORLD_SIZE={world_size}).",
+            )
 
-                self._push(
-                    errors,
-                    local_world_size < 1,
-                    f"Invalid LOCAL_WORLD_SIZE={local_world_size_raw!r}; expected a positive integer.",
-                )
-
-                if local_world_size > 0 and world_size > 0:
-                    multi_server = world_size > local_world_size
-                    self._push(
-                        errors,
-                        multi_server and tp_degree > 1,
-                        "Unsupported parallelism combination: TP and TP+DDP are supported only on a single server. "
-                        "Detected multi-server launch from WORLD_SIZE > LOCAL_WORLD_SIZE.",
-                    )
+        if local_world_size > 0 and world_size > 0:
+            multi_server = world_size > local_world_size
+            self._push(
+                errors,
+                multi_server and tp_degree > 1,
+                "Unsupported parallelism combination: TP and TP+DDP are supported only on a single server. "
+                "Detected multi-server launch from WORLD_SIZE > LOCAL_WORLD_SIZE.",
+            )
 
         # DDP config
         ddp = training.get("ddp_config", {})

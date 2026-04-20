@@ -35,12 +35,19 @@ def prepare_training_config(
 
     # Handle dtype conversion
     # To do: (For Tanisha) Check if torch_dtype should rather be added directly in model_config only in config_manager.py
-    # TODO: Add PC here
     parallelism_config = {}
-    if training_config.get("tp_degree", 1) > 1:
-        parallelism_config["tp_size"] = training_config["tp_degree"]
-    if training_config.get("ddp_degree", 1) > 1:
-        parallelism_config["dp_replicate_size"] = training_config["ddp_degree"]
+    tp_degree = training_config.get("tp_degree", 1)
+    pp_degree = training_config.get("pp_degree", 1)
+    ddp_degree = training_config.get("ddp_degree", 1)
+
+    if tp_degree > 1:
+        parallelism_config["tp_size"] = tp_degree
+
+    # ddp_degree is a TP+DDP shaping hint and should not force data-parallel sizing
+    # for pure DDP (single-node or multi-node), where Accelerate derives world size
+    # from launcher environment (RANK/WORLD_SIZE/LOCAL_WORLD_SIZE).
+    if ddp_degree > 1 and (tp_degree > 1 or pp_degree > 1):
+        parallelism_config["dp_replicate_size"] = ddp_degree
 
     if parallelism_config:  # Only inject if at least one parallelism dimension is active
         pc = ParallelismConfig(**parallelism_config)
