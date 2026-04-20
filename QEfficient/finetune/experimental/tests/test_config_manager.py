@@ -213,7 +213,7 @@ def test_parallelism_rejects_ddp_plus_pp_combo():
 
 
 def test_parallelism_world_size_product_mismatch(monkeypatch):
-    """WORLD_SIZE must match pp*tp*ddp when distributed env is set."""
+    """WORLD_SIZE must match pp*tp*ddp when TP/PP mode is enabled."""
     from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
 
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
@@ -226,6 +226,23 @@ def test_parallelism_world_size_product_mismatch(monkeypatch):
         config_manager.validate_config()
 
     assert "must equal WORLD_SIZE" in str(exc_info.value)
+
+
+def test_parallelism_multi_node_ddp_does_not_require_ddp_degree_world_size_match(monkeypatch):
+    """Pure multi-node DDP should not enforce pp*tp*ddp == WORLD_SIZE."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
+
+    # Pure DDP mode (pp=1, tp=1). ddp_degree is treated as TP+DDP shaping hint,
+    # so WORLD_SIZE mismatch should not fail validation in pure DDP launches.
+    training_config = TrainingConfig(tp_degree=1, pp_degree=1, ddp_degree=4)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    # Should not raise
+    config_manager.validate_config()
 
 
 def test_parallelism_multi_server_rejects_tp(monkeypatch):

@@ -9,6 +9,7 @@
 Main entry point for fine-tuning LLMs using the experimental finetune framework.
 """
 
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -128,11 +129,14 @@ class FineTuningPipeline:
         else:
             backend = "cpu:gloo,qaic:qccl"
 
-        dist.init_process_group(
-            backend=backend,  # "nccl" for GPUs, "gloo" for CPUs
-            world_size=WORLD_SIZE,  # total number of processes
-            rank=LOCAL_RANK,  # unique ID for this process
-        )
+        # Explicit initialization is required for TP/TP+DDP so that the process
+        # group backend is set correctly on QAIC.
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend=backend,  # "nccl" for GPUs, "gloo" for CPUs
+                world_size=WORLD_SIZE,  # total number of processes
+                rank=LOCAL_RANK,  # local rank of this process
+            )
 
     def _create_datasets(self) -> Tuple[Any, Any]:
         """
@@ -327,8 +331,24 @@ class FineTuningPipeline:
         if training_config.get("report_to") is None:
             training_config["report_to"] = "tensorboard"
 
+        # Filter out keys not accepted by the concrete args class (e.g. trl.SFTConfig
+        # variants that do not support group_by_length).
+        args_signature = inspect.signature(args_cls.__init__)
+        args_param_names = {
+            name for name, param in args_signature.parameters.items() if name != "self" and param.kind != param.VAR_KEYWORD
+        }
+        filtered_training_config = {k: v for k, v in training_config.items() if k in args_param_names}
+
+        removed_keys = sorted(set(training_config) - set(filtered_training_config))
+        if removed_keys:
+            logger.log_rank_zero(
+                "Dropping unsupported trainer args for "
+                f"{args_cls.__name__}: {', '.join(removed_keys)}",
+                level=logging.WARNING,
+            )
+
         # Create trainer arguments instance
-        args = args_cls(**training_config)
+        args = args_cls(**filtered_training_config)
         dataset_config_dict = self.config_manager.get_dataset_config()
         split_ratio = dataset_config_dict.get("split_ratio", 0.8)
         num_samples = dataset_config_dict.get("dataset_num_samples", -1)
