@@ -45,7 +45,7 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
     )
 
     messages = [
@@ -84,8 +84,6 @@ else:
         num_devices=4,
         height=354,
         width=536,
-        # height=1024,
-        # width=1024,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
@@ -95,10 +93,6 @@ else:
 
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
-    # image_url = (
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    # )
-
     image = Image.open(requests.get(image_url, stream=True).raw)
 
     messages_1 = [
@@ -110,16 +104,6 @@ else:
             ],
         },
     ]
-
-    # messages_2 = [
-    #     {
-    #         "role": "user",
-    #         "content": [
-    #             {"type": "image", "image": image},
-    #             {"type": "text", "text": "Describe about the color of the dog."},
-    #         ],
-    #     },
-    # ]
 
     messages = [messages_1] * batch_size
 

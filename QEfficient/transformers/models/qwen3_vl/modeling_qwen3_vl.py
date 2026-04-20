@@ -5,11 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 import math
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from qwen_vl_utils import smart_resize
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -30,12 +31,6 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     rotate_half,
 )
 
-from QEfficient.blocking.attention_blocking import (
-    AttentionBlockingConfig,
-    BlockingMode,
-    generic_blocked_attention_interface,
-    past_key_value_update,
-)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
@@ -360,7 +355,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -393,12 +388,6 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        # cos, sin = position_embeddings
-        # kv_seq_len = key_states.shape[-2]
-        # kv_seq_len = past_key_value.get_seq_length()
-        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
-        # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-
         query_states, key_states = qeff_apply_rotary_pos_emb(
             query_states,
             key_states,
@@ -407,44 +396,32 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
             position_ids[1:],
             self.config.rope_scaling["mrope_section"],
         )
-        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
-        if use_blocking:
-            attn_output, attn_weights = generic_blocked_attention_interface(
-                module=self,
-                query=query_states,
-                key=key_states,
-                value=value_states,
-                attention_mask=attention_mask,
-                scaling=self.scaling,
-                layer_idx=self.layer_idx,
-                past_key_value=past_key_values,
-                blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
-                batch_index=batch_index,
-                position_ids=position_ids[0],
-                past_seen_tokens=past_seen_tokens,
-            )
-        else:
-            key_states, value_states, _ = past_key_value_update(
-                module=self,
-                key=key_states,
-                value=value_states,
-                attention_mask=attention_mask,
-                past_key_value=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                position_ids=position_ids[0],
-            )
-            attn_output, attn_weights = eager_attention_forward(
-                self,
-                query_states,
-                key_states,
-                value_states,
-                attention_mask,
-                scaling=self.scaling,
-                **kwargs,
-            )
+        if past_key_values is not None:
+            # sin and cos are specific to RoPE models; cache_position needed for the static cache
+            cache_kwargs = {
+                "sin": sin_cached,
+                "cos": cos_cached,
+                "batch_index": batch_index,
+                "position_ids": position_ids[0],
+            }
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+        attention_interface: Callable = eager_attention_forward
+
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            cache_kwargs=cache_kwargs,
+            layer_idx=self.layer_idx,
+            past_key_values=past_key_values,
+            **kwargs,
+        )
 
         attn_output = attn_output.reshape(bsz, q_len, -1)
 
@@ -519,7 +496,7 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states[0]
+        hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
 
@@ -683,7 +660,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.language_model = self.model.model
+        self.language_model = self.model.model.language_model
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -926,11 +903,10 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: None,
-        height: int = None,
-        width: int = None,
+        height: int | List[int] = None,
+        width: int | List[int] = None,
         time: int = 1,
-        # dimensions: List = None,
-        num_frames: int = 1,
+        num_frames: int | List[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
@@ -939,87 +915,80 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+
         if height is None or width is None:
-            height = constants.QWEN3_VL_HEIGHT
-            width = constants.QWEN3_VL_WIDTH
+            height = constants.QWEN2_5_VL_HEIGHT
+            width = constants.QWEN2_5_VL_WIDTH
             logger.warning(
                 f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
+
+        height = [height] if isinstance(height, int) else height
+        width = [width] if isinstance(width, int) else width
+        num_frames = [num_frames] * len(height) if isinstance(num_frames, int) else num_frames
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         channel = 3
         patch_size = self.config.vision_config.patch_size
         temporal_patch_size = self.config.vision_config.temporal_patch_size
 
-        IMAGE_FACTOR = 32
-        MIN_PIXELS = 64 * 32 * 32
-        MAX_PIXELS = 16384 * 32 * 32
-        MAX_RATIO = 200
+        IMAGE_FACTOR = constants.IMAGE_FACTOR_QWEN_3
+        IMAGE_MIN_TOKEN_NUM = constants.IMAGE_MIN_TOKEN_NUM
+        IMAGE_MAX_TOKEN_NUM = constants.IMAGE_MAX_TOKEN_NUM
+        min_pixels = IMAGE_MIN_TOKEN_NUM * IMAGE_FACTOR**2
+        max_pixels = IMAGE_MAX_TOKEN_NUM * IMAGE_FACTOR**2
+        mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
+        if mm_processor_kwargs:
+            min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
+            max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
 
-        def round_by_factor(number: int, factor: int) -> int:
-            """Returns the closest integer to 'number' that is divisible by 'factor'."""
-            return round(number / factor) * factor
+        vision = []
+        max_vision_size = 0
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            max_vision_size = user_vision_size
 
-        def ceil_by_factor(number: int, factor: int) -> int:
-            """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
-            return math.ceil(number / factor) * factor
-
-        def floor_by_factor(number: int, factor: int) -> int:
-            """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
-            return math.floor(number / factor) * factor
-
-        def smart_resize(
-            height: int,
-            width: int,
-            factor: int = IMAGE_FACTOR,
-            min_pixels: int = MIN_PIXELS,
-            max_pixels: int = MAX_PIXELS,
-        ) -> tuple[int, int]:
-            """
-            Rescales the image so that the following conditions are met:
-
-            1. Both dimensions (height and width) are divisible by 'factor'.
-
-            2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
-
-            3. The aspect ratio of the image is maintained as closely as possible.
-            """
-            if max(height, width) / min(height, width) > MAX_RATIO:
-                raise ValueError(
-                    f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
+        for h, w, f in zip(height, width, num_frames):
+            resized_height, resized_width = smart_resize(
+                height=h, width=w, factor=IMAGE_FACTOR, min_pixels=min_pixels, max_pixels=max_pixels
+            )
+            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+            grid_height = grid_h * grid_w
+            grid_width = patch_size * patch_size * temporal_patch_size * channel
+            vision_size = grid_height // 4
+            vision_size = vision_size * time
+            grid_height = grid_height * time * batch_size
+            if not user_vision_size:
+                max_vision_size = max(max_vision_size, vision_size * f)
+                assert max_vision_size < ctx_len, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) must be less than ctx_len. Please adjust the image "
+                    "resolution."
                 )
-            h_bar = max(factor, round_by_factor(height, factor))
-            w_bar = max(factor, round_by_factor(width, factor))
-            if h_bar * w_bar > max_pixels:
-                beta = math.sqrt((height * width) / max_pixels)
-                h_bar = floor_by_factor(height / beta, factor)
-                w_bar = floor_by_factor(width / beta, factor)
-            elif h_bar * w_bar < min_pixels:
-                beta = math.sqrt(min_pixels / (height * width))
-                h_bar = ceil_by_factor(height * beta, factor)
-                w_bar = ceil_by_factor(width * beta, factor)
-            return h_bar, w_bar
+            else:
+                assert vision_size * f < user_vision_size, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) cannot exceed the provided "
+                    f"vision_size={user_vision_size}. Please adjust the image resolution or "
+                    "increase the vision_size."
+                )
 
-        resized_height, resized_width = smart_resize(height=height, width=width)
-        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        grid_height = grid_h * grid_w
-        grid_width = patch_size * patch_size * temporal_patch_size * channel
-        vision_size = grid_height // 4
-        vision_size = vision_size * num_frames * time
-        grid_height = grid_height * time * batch_size
-
-        vision = [
-            {
-                "batch_size": batch_size,
-                "vision_size": vision_size,
-                "grid_height": grid_height,
-                "grid_width": grid_width,
-                "time": time,
-                "grid_h": grid_h,
-                "grid_w": grid_w,
-                "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
-            }
-        ]
+            vision.append(
+                {
+                    "batch_size": batch_size,
+                    "vision_size": vision_size,
+                    "grid_height": grid_height,
+                    "grid_width": grid_width,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
+                    "time": time,
+                    "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
+                }
+            )
 
         if comp_ctx_lengths_prefill is not None:
             lang = []
@@ -1029,7 +998,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
-                    "vision_size": vision_size,
+                    "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "vision_batch_size": batch_size,
                     "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
@@ -1049,7 +1018,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "vision_size": vision_size,
+                    "vision_size": max_vision_size,
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "vision_batch_size": batch_size,
                     "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
@@ -1066,7 +1035,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "vision_size": vision_size,
+                "vision_size": max_vision_size,
                 "vision_batch_size": batch_size,
                 "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
             }
@@ -1082,7 +1051,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
-                "vision_size": vision_size,
+                "vision_size": max_vision_size,
                 "vision_batch_size": batch_size,
                 "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
             }
