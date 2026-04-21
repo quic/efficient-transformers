@@ -462,6 +462,7 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         custom_io: Optional[Dict[str, str]] = None,
         mdp_ts_num_devices: int = 1,
+        mdp_num_partitions: int = 1,
         num_speculative_tokens: Optional[int] = None,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
@@ -483,6 +484,11 @@ class QEFFBaseModel(ABC):
             :specializations (list): List of specializations to compile for
             :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
+            :mdp_num_partitions (int): Number of pipeline-parallel partitions for disaggregated prefill serving.
+                When > 1, the ONNX graph is read directly to generate a fully-populated MDP partition
+                config (nodeList per partition) without requiring a compiler round-trip.
+                Ignored when ``mdp_load_partition_config`` is already provided in compiler_options.
+                Defaults to 1 (template / tensor-slice MDP, existing behaviour).
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
@@ -546,22 +552,47 @@ class QEFFBaseModel(ABC):
             + [f"-m={onnx_path}"]
         )
 
-        # MDP partition config: prioritize dump over load
-        mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
+        # MDP partition config selection (three priorities, highest first):
+        #   1. User explicitly provides a pre-built MDP JSON to load.
+        #   2. Disaggregated (pipeline-parallel) MDP — generate from ONNX topsort.
+        #   3. Template (tensor-slice) MDP — single partition, nodeList absent.
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        # Silently discard any stale mdp_dump_partition_config key that callers
+        # may still pass; the compiler-round-trip dump path is no longer supported.
+        compiler_options.pop("mdp_dump_partition_config", None)
         mdp_ts_json = None
 
-        if mdp_dump_json_path:
-            if mdp_ts_json_path:
-                logger.warning(
-                    "Loading and Dumping partition is not supported at the same time. Prioritizing dump config over load config!"
-                )
-            command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
-        elif mdp_ts_json_path:
+        if mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
+        elif mdp_num_partitions > 1:
+            # Disaggregated (pipeline-parallel) MDP: generate a fully-populated
+            # nodeList per partition directly from the ONNX graph — no compiler
+            # round-trip required.
+            from QEfficient.compile.mdp_generator import generate_disagg_mdp_partition_config
+
+            num_layers = getattr(self, "num_layers", None)
+            if num_layers is None:
+                raise AttributeError("Model does not expose 'num_layers'. Cannot generate disagg MDP partition config.")
+            num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            logger.info(
+                f"Generating disagg MDP partition config from ONNX: "
+                f"num_devices={mdp_ts_num_devices}, num_partitions={mdp_num_partitions}, "
+                f"num_layers={num_layers}, num_cores={num_cores}"
+            )
+            mdp_ts_json = generate_disagg_mdp_partition_config(
+                onnx_path=str(onnx_path),
+                num_devices=mdp_ts_num_devices,
+                num_partitions=mdp_num_partitions,
+                num_layers=num_layers,
+                num_cores=num_cores,
+            )
+            mdp_ts_json_path = compile_dir / f"mdp_disagg_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json"
+            create_json(str(mdp_ts_json_path), mdp_ts_json)
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
         elif mdp_ts_num_devices > 1:
-            # Generate mdp config only if neither dump nor load is provided and num_devices > 1
+            # Template (tensor-slice) MDP: single partition, empty nodeList.
+            # Used when PP is disabled (stages=1). Compiler fills the nodeList.
             mdp_ts_json = generate_mdp_partition_config(
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )
@@ -586,6 +617,7 @@ class QEFFBaseModel(ABC):
             "specializations": specializations,
             "custom_io": custom_io,
             "mdp_ts_num_devices": mdp_ts_num_devices,
+            "mdp_num_partitions": mdp_num_partitions,
             "mdp_ts_json": mdp_ts_json,
             "num_speculative_tokens": num_speculative_tokens,
             "prefill_only": prefill_only,
