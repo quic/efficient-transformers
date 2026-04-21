@@ -1066,8 +1066,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
 class QEffGptOssModel(GptOssModel):
     def __qeff_init__(self):
         self.rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def forward(
         self,
