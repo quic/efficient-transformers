@@ -396,7 +396,7 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         # cos, sin = position_embeddings
         # kv_seq_len = key_states.shape[-2]
         # kv_seq_len = past_key_value.get_seq_length()
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(
