@@ -84,8 +84,7 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     keywords = ["DecoderLayer", "Block", "Layer"]
     filtered = [name for name in functions_names if any(key in name for key in keywords)]
 
-    if len(filtered) > 1:
-        raise AssertionError(f"function definition, but found {len(functions_names)} functions: {functions_names}")
+    assert len(filtered) == 1, f"Expected a single decoder subfunction, found {len(filtered)}: {functions_names}"
 
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
