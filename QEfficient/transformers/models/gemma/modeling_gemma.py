@@ -40,26 +40,13 @@ class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
     """
     Copied from GemmaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py
     The only differences are:
-    - Add static sin/cos computations.
+    - No override needed: the upstream v5.5 GemmaRotaryEmbedding.forward already computes
+      cos/sin dynamically via inv_freq @ position_ids, returning [batch, seq_len, head_dim].
+      inv_freq is a static buffer registered in __init__, making it ONNX-traceable as-is.
     """
 
     def __init__(self, config: GemmaConfig, device=None):
         super().__init__(config=config)
-
-        # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
-
-    def _set_cos_sin_cache(self, seq_len, device, dtype):
-        self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
-
-        freqs = torch.outer(t, self.inv_freq)
-
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -83,8 +70,10 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    # cos/sin are already shaped [batch, seq_len, head_dim] — position_ids were consumed
+    # upstream inside GemmaRotaryEmbedding.forward. No gather step needed.
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
 
     # Apply rotation
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -127,14 +116,13 @@ class QEffGemmaAttention(GemmaAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]],
+        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        cos_cached: Optional[torch.Tensor] = None,
-        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -144,9 +132,8 @@ class QEffGemmaAttention(GemmaAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos_cached, sin_cached, position_ids
-        )
+        cos, sin = position_embeddings
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -210,8 +197,7 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
         batch_index: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        sin_cached=None,
-        cos_cached=None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -234,6 +220,7 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
         # Self Attention
         hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
+            position_embeddings=position_embeddings,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_value,
@@ -241,8 +228,6 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
             batch_index=batch_index,
             use_cache=use_cache,
             cache_position=cache_position,
-            sin_cached=sin_cached,
-            cos_cached=cos_cached,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -265,8 +250,6 @@ class QEffGemmaModel(GemmaModel):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffGemmaRotaryEmbedding(config=self.config)
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
 
     def forward(
         self,
@@ -313,12 +296,6 @@ class QEffGemmaModel(GemmaModel):
         # embed positions
         hidden_states = inputs_embeds
 
-        # normalized
-        # Gemma downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
-        # See https://github.com/huggingface/transformers/pull/29402
-        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
-        hidden_states = hidden_states * normalizer
-
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
 
@@ -326,6 +303,7 @@ class QEffGemmaModel(GemmaModel):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
+            position_embeddings = self.rotary_emb(hidden_states, position_ids)
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
@@ -335,8 +313,7 @@ class QEffGemmaModel(GemmaModel):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                position_embeddings=position_embeddings,
                 **kwargs,
             )
 
