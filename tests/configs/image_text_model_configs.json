@@ -162,7 +162,7 @@
       "num_layers": 1,
       "img_url_list":[
             "https://picsum.photos/id/237/536/354",
-            "https://picsum.photos/id/238/536/354"
+            "https://picsum.photos/id/237/536/354"
         ],
       "text_prompt_list": [
             "Can you describe the image in detail?",
@@ -227,7 +227,7 @@
       "num_layers": 1,
       "img_url_list":[
             "https://picsum.photos/id/237/536/354",
-            "https://picsum.photos/id/238/536/354"
+            "https://picsum.photos/id/237/536/354"
         ],
       "text_prompt_list": [
             "Can you describe the image in detail?",
@@ -248,7 +248,7 @@
       "num_layers": 1,
       "img_url_list":[
             "https://picsum.photos/id/237/536/354",
-            "https://picsum.photos/id/238/536/354"
+            "https://picsum.photos/id/237/536/354"
         ],
       "text_prompt_list": [
             "Can you describe the image in detail.",
