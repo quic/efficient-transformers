@@ -6,9 +6,10 @@
 # -----------------------------------------------------------------------------
 """MDP generator for disaggregated prefill serving (PP-enabled, TS-enabled, stages>1)."""
 
-from typing import Any, Dict, List, Optional, Set
-import onnx
 import logging
+from typing import Any, Dict, List, Optional, Set
+
+import onnx
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def _get_compiler_folded_nodes(graph) -> Set[str]:
 
     # Keep marking nodes foldable until no new ones are found.
     foldable_nodes: Set[str] = set()
-    while(True):
+    while True:
         changed = False
         for node in graph.node:
             if not node.name or node.name in foldable_nodes:
@@ -111,9 +112,7 @@ def _get_inlined_node_map(model) -> tuple:
     for node in model.graph.node:
         if node.op_type in inlined_funcs:
             func = local_functions[node.op_type]
-            inlined_node_map[node.name] = [
-                f"{node.name}/{fn.name}" for fn in func.node if fn.name
-            ]
+            inlined_node_map[node.name] = [f"{node.name}/{fn.name}" for fn in func.node if fn.name]
 
     logger.info(f"Inlined sub-nodes mapped for {len(inlined_node_map)} call-sites")
     return inlined_node_map, non_inlined_funcs
