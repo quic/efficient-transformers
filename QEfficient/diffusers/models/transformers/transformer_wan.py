@@ -79,6 +79,10 @@ class QEffWanAttnProcessor(WanAttnProcessor):
         Returns:
             torch.Tensor: Processed hidden states after attention
         """
+        is_cross_attention = False
+        # encoder_hidden_states is only passed for cross-attention
+        if encoder_hidden_states is not None:
+            is_cross_attention = True
         # Project inputs to query, key, value
         query, key, value = _get_qkv_projections(attn, hidden_states, encoder_hidden_states)
 
@@ -126,6 +130,7 @@ class QEffWanAttnProcessor(WanAttnProcessor):
             num_q_blocks,
             blocking_mode=blocking_mode,
             attention_mask=attention_mask,
+            is_cross_attention=is_cross_attention,
         )
 
         # Reshape back to original format
