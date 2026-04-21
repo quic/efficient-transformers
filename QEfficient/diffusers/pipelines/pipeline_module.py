@@ -683,6 +683,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             # )
             
             example_inputs["cache_threshold"] = torch.tensor(0.5, dtype=torch.float32)
+            example_inputs["step_index"] = torch.zeros(1, 1, dtype=torch.int32)
             
             # Update output names
             output_names.extend([
@@ -702,6 +703,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
                 0: "batch_size",
                 1: "cl",
             }
+            dynamic_axes['step_index'] = {0: "batch_size"}
             # dynamic_axes['prev_low_hidden_state_residuals']={
             #     0: "batch_size",
             #     1: "num_channels",
@@ -757,16 +759,21 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
-        kv_cache_dtype = "float16"
-        
-        custom_io = {
+        if self.model.enable_first_cache:
+            kv_cache_dtype = "float16"
+            custom_io = {
                 "prev_first_block_residuals": kv_cache_dtype,
                 "prev_remain_block_residuals": kv_cache_dtype,
-                "prev_first_block_residuals_RetainedState":kv_cache_dtype,
+                "prev_first_block_residuals_RetainedState": kv_cache_dtype,
                 "prev_remain_block_residuals_RetainedState": kv_cache_dtype,
-                }
-        self._compile(specializations=specializations,
-                      retained_state=True,
-                      custom_io=custom_io,
-                    #   node_precision_info="/home/amitraj/project/first_cache/efficient-transformers/QEfficient/diffusers/pipelines/configs/wan2.yaml",
-                      **compiler_options)
+            }
+            self._compile(
+                specializations=specializations,
+                retained_state=True,
+                custom_io=custom_io,
+                # node_precision_info="/home/amitraj/project/first_cache/efficient-transformers/QEfficient/diffusers/pipelines/configs/wan2.yaml",
+                **compiler_options,
+            )
+            return
+
+        self._compile(specializations=specializations, **compiler_options)

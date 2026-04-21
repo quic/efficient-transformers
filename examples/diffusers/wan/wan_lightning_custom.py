@@ -85,20 +85,20 @@ pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers", e
 # Uncomment the following lines to use only a subset of transformer layers:
 #
 # Configure for 2-layer model (faster inference)
-pipeline.transformer_high.model.config['num_layers'] = 2
-pipeline.transformer_low.model.config['num_layers']= 2
+# pipeline.transformer_high.model.config['num_layers'] = 2
+# pipeline.transformer_low.model.config['num_layers']= 2
 
-# # Reduce high noise transformer blocks
-original_blocks = pipeline.transformer_high.model.blocks
-pipeline.transformer_high.model.blocks = torch.nn.ModuleList(
-    [original_blocks[i] for i in range(0, pipeline.transformer_high.model.config['num_layers'])]
-)
+# # # Reduce high noise transformer blocks
+# original_blocks = pipeline.transformer_high.model.blocks
+# pipeline.transformer_high.model.blocks = torch.nn.ModuleList(
+#     [original_blocks[i] for i in range(0, pipeline.transformer_high.model.config['num_layers'])]
+# )
 
-# Reduce low noise transformer blocks
-org_blocks = pipeline.transformer_low.model.blocks
-pipeline.transformer_low.model.blocks = torch.nn.ModuleList(
-    [org_blocks[i] for i in range(0, pipeline.transformer_low.model.config['num_layers'])]
-)
+# # Reduce low noise transformer blocks
+# org_blocks = pipeline.transformer_low.model.blocks
+# pipeline.transformer_low.model.blocks = torch.nn.ModuleList(
+#     [org_blocks[i] for i in range(0, pipeline.transformer_low.model.config['num_layers'])]
+# )
 
 
 # ============================================================================
@@ -171,13 +171,13 @@ output = pipeline(
     custom_config_path="/home/amitraj/project/first_cache/efficient-transformers/examples/diffusers/wan/wan_config.json",
     height=96,
     width=160,
-    use_onnx_subfunctions=True,  # Enable ONNX optimizations
-    parallel_compile=False,  # Set to True for parallel compilation
-    cache_threshold_high=0.1,
-    cache_threshold_low=0.075
+    use_onnx_subfunctions=False,  # Enable ONNX optimizations
+    parallel_compile=True,  # Set to True for parallel compilation
+    cache_threshold_high=0.01,
+    cache_threshold_low=0.01
 )
 
 # Extract generated frames and export to video
 frames = output.images[0]
-export_to_video(frames, "custom_wan_lightning_output.mp4", fps=16)
+export_to_video(frames, "custom_wan_lightning_output_with_subfunction.mp4", fps=16)
 print(output)

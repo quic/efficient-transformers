@@ -236,28 +236,7 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         hidden_state_residual= hidden_states - original_hidden_state
         
         return hidden_state_residual    
-    
-    # def _check_similarity(
-    #     self,
-    #     first_block_residuals: torch.Tensor,
-    #     prev_first_block_residuals: torch.Tensor,
-    # ) -> torch.Tensor:
-    #     """
-    #     Compute cache decision (returns boolean tensor).
 
-    #     Cache is used when:
-    #     1. Not in warmup period (current_step >= cache_warmup_steps)
-    #     2. Previous residual exists (not first step)
-    #     3. Similarity is below threshold
-    #     """
-    #     # Compute similarity (L1 distance normalized by magnitude)
-    #     # This must be computed BEFORE any conditional logic
-    #     diff = (first_block_residuals - prev_first_block_residuals).abs().mean()
-    #     norm = first_block_residuals.abs().mean()
-        
-    #     difference = diff / (norm + 1e-8)
-        
-    #     return   difference
     def _check_similarity(self, first_block_residuals: torch.Tensor, prev_first_block_residuals: torch.Tensor) -> torch.Tensor:
         """
         Compute the L1-normalised difference between the current and previous
@@ -280,14 +259,14 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         Returns:
             Scalar tensor representing the normalised L1 difference.
         """
-        # SCALE = 1.0 / 1024.0
+        SCALE = 1.0 / 1024.0
 
         # Both tensors are already downsampled — no further slicing needed here.
-        # a = first_block_residuals * SCALE
-        # b = prev_first_block_residuals * SCALE
+        a = first_block_residuals * SCALE
+        b = prev_first_block_residuals * SCALE
 
-        a = first_block_residuals
-        b = prev_first_block_residuals
+        # a = first_block_residuals
+        # b = prev_first_block_residuals
 
         diff = (a - b).abs().mean()
         norm = a.abs().mean()
@@ -302,13 +281,11 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         temb: torch.Tensor,
         timestep_proj: torch.Tensor,
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
-        
         # first cache related parms   
         prev_first_block_residuals: Optional[torch.tensor]= None,
         prev_remain_block_residuals: Optional[torch.tensor]= None,
-        cache_threshold: Optional[float] = None,
-
-            
+        cache_threshold: Optional[float] = None,  
+        
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -346,8 +323,6 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         # Concatenate image and text encoder states if image conditioning is present
         if encoder_hidden_states_image is not None:
             encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
-            
-        #################### Magic of first block caching begins here ####################    
 
         if cache_threshold is not None:
             # ── Step 1: always run blocks[0] ──────────────────────────────────
@@ -365,17 +340,19 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
             ds = self.FIRST_BLOCK_RESIDUAL_DOWNSAMPLE_FACTOR
             downsampled_first_block_residuals = current_first_block_residuals[..., ::ds].contiguous()
 
-            # ── Step 3: always run blocks[1:] and compute their residual ──────
-            remain_hidden_state = first_block_out
-            for block in self.blocks[1:]:
-                remain_hidden_state = block(remain_hidden_state, encoder_hidden_states, timestep_proj, rotary_emb)
-            current_remaning_block_residuals = remain_hidden_state - first_block_out
 
-            # ── Step 4: similarity check (both inputs are downsampled) ────────
+            # ── Step 3: similarity check (both inputs are downsampled) ────────
             difference = self._check_similarity(
                 first_block_residuals=downsampled_first_block_residuals,
                 prev_first_block_residuals=prev_first_block_residuals,
             )
+
+
+            # ── Step 4: always run blocks[1:] and compute their residual ──────
+            remain_hidden_state = first_block_out
+            for block in self.blocks[1:]:
+                remain_hidden_state = block(remain_hidden_state, encoder_hidden_states, timestep_proj, rotary_emb)
+            current_remaning_block_residuals = remain_hidden_state - first_block_out
 
             cache_hit = difference < cache_threshold
 
@@ -388,9 +365,7 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
 
             # ── Step 6: reconstruct final hidden state ────────────────────────
             hidden_states = final_remaining_block_residual + first_block_out
-         
-         ################### Magic of first block caching ends here #######################
-                    
+                             
         else: 
             # Standard forward pass
             for block in self.blocks:
@@ -425,10 +400,17 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         # the on-device buffer and the next step's similarity check both operate
         # on the smaller, downsampled tensor.
         if not return_dict:
-            return (output, downsampled_first_block_residuals, final_remaining_block_residual)
+            if cache_threshold is not None:
+                return (output, downsampled_first_block_residuals, final_remaining_block_residual, difference)
+            return (output,)
 
-        if cache_threshold:
-            return Transformer2DModelOutput(sample=output), downsampled_first_block_residuals, final_remaining_block_residual
+        if cache_threshold is not None:
+            return (
+                Transformer2DModelOutput(sample=output),
+                downsampled_first_block_residuals,
+                final_remaining_block_residual,
+                difference,
+            )
         return Transformer2DModelOutput(sample=output)
     
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -461,6 +443,15 @@ class QEffWanUnifiedWrapper(nn.Module):
         # Both high and low noise transformers share the same configuration
         self.config = transformer_high.config
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {WanTransformerBlock}
+
     def forward(
         self,
         hidden_states,
@@ -470,19 +461,6 @@ class QEffWanUnifiedWrapper(nn.Module):
         timestep_proj,
         tsp,
         attention_kwargs=None,
-        
-        # All the param related to first_cache
-        
-        cache_threshold: Optional[float]= None,
-        
-        # high
-        prev_high_hidden_state_residuals: Optional[torch.tensor]= None,
-        prev_high_first_block_residuals: Optional[torch.tensor]= None,
-        
-        #low
-        prev_low_hidden_state_residuals: Optional[torch.tensor]= None,
-        prev_low_first_block_residuals: Optional[torch.tensor]= None,
-        
         return_dict=False,
     ):
         # Condition based on timestep shape
@@ -494,33 +472,26 @@ class QEffWanUnifiedWrapper(nn.Module):
         ths = temb.detach()
         projhs = timestep_proj.detach()
 
-        noise_pred_high, prev_high_first_block_residuals, prev_high_hidden_state_residuals = self.transformer_high(
+        noise_pred_high = self.transformer_high(
             hidden_states=high_hs,
             encoder_hidden_states=ehs,
             rotary_emb=rhs,
             temb=ths,
             timestep_proj=projhs,
             attention_kwargs=attention_kwargs,
-            prev_first_block_residuals=prev_high_first_block_residuals,
-            prev_remain_block_residuals=prev_high_hidden_state_residuals,
-            cache_threshold=cache_threshold,
             return_dict=return_dict,
         )[0]
 
-        noise_pred_low, prev_low_first_block_residuals, prev_low_hidden_state_residuals = self.transformer_low(
+        noise_pred_low = self.transformer_low(
             hidden_states=hidden_states,
             encoder_hidden_states=encoder_hidden_states,
             rotary_emb=rotary_emb,
             temb=temb,
             timestep_proj=timestep_proj,
             attention_kwargs=attention_kwargs,
-            prev_first_block_residuals=prev_low_first_block_residuals,
-            prev_remain_block_residuals=prev_low_hidden_state_residuals,
-            cache_threshold=cache_threshold,
             return_dict=return_dict,
         )[0]
 
         # Select based on timestep condition
         noise_pred = torch.where(is_high_noise, noise_pred_high, noise_pred_low)
-
-        return noise_pred, prev_high_first_block_residuals, prev_high_hidden_state_residuals, prev_low_first_block_residuals, prev_low_hidden_state_residuals
+        return noise_pred
