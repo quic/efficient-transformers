@@ -25,6 +25,7 @@ class SamplerOutput(ModelOutput):
     probs: torch.FloatTensor = None
     next_tokens: torch.IntTensor = None
     vision_embeds: Optional[torch.FloatTensor] = None  # For VLMs
+    deepstack_features: Optional[torch.FloatTensor] = None  # For Qwen3VL
     image_idx: Optional[torch.IntTensor] = None  # for VLMs
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     past_repetition_penalty_buffer: Optional[torch.Tensor] = None
@@ -110,6 +111,7 @@ def sampler_forward(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     inputs_embeds: Optional[torch.FloatTensor] = None,
+    deepstack_features: Optional[torch.FloatTensor] = None,
     labels: Optional[torch.LongTensor] = None,
     use_cache: Optional[bool] = None,
     output_attentions: Optional[bool] = None,
@@ -195,11 +197,15 @@ def sampler_forward(
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
         )
+        output_keys = ["logits", "vision_embeds", "image_idx", "past_key_values"]
         if batch_index is not None:
             forward_kwargs["batch_index"] = batch_index
+        if deepstack_features is not None:
+            forward_kwargs["deepstack_features"] = deepstack_features
+            output_keys.insert(2, "deepstack_features")
 
-        logits, vision_embeds, image_idx, past_key_values = self.old_forward(**forward_kwargs)
-        outputs = dict(logits=logits, vision_embeds=vision_embeds, image_idx=image_idx, past_key_values=past_key_values)
+        result = self.old_forward(**forward_kwargs)
+        outputs = dict(zip(output_keys, result))
         if position_ids.dim() == 3:  # For models using m-rope
             position_ids = position_ids[0]
     else:
@@ -356,6 +362,7 @@ def sampler_forward(
         probs=probs,
         next_tokens=next_tokens,  # Return sampled next tokens instead of logits
         vision_embeds=outputs.get("vision_embeds", None),
+        deepstack_features=outputs.get("deepstack_features", None),
         image_idx=outputs.get("image_idx", None),
         past_key_values=outputs.get("past_key_values", None),
         past_repetition_penalty_buffer=past_repetition_penalty_buffer,

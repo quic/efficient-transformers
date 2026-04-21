@@ -457,6 +457,7 @@ from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeSparseMoeBlock,
 )
 from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
+    QEffQwen3VLDecoderWrapper,
     QEffQwen3VLForConditionalGeneration,
     QEffQwen3VLModel,
     QEffQwen3VLTextAttention,
@@ -854,6 +855,7 @@ class SamplerTransform:
         QEffPhi3ForCausalLM,
         QEffQwen2ForCausalLM,
         QEffQwen_2_5_vl_DecoderWrapper,
+        QEffQwen3VLDecoderWrapper,
     }
 
     @classmethod
