@@ -98,6 +98,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         query = self.q_proj_swiftkv(hidden_states)
         # Reshape the query, key, and value tensors.
         query_states = query.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        token_index = position_ids.to(torch.int32).argmax(1)
 
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         if past_key_values is not None:
@@ -113,9 +114,13 @@ class QEffLlamaSwiftKVAttention(nn.Module):
             # kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
         key_states, value_states = past_key_values.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
-        position_ids = position_ids[torch.arange(bsz), position_ids.to(torch.int32).argmax(1)].unsqueeze(1)
-        cos = cos_cached[position_ids].unsqueeze(1)
-        sin = sin_cached[position_ids].unsqueeze(1)
+        position_ids = position_ids[torch.arange(bsz), token_index].unsqueeze(1)
+        if cos_cached.dim() == 2:
+            cos = cos_cached[position_ids].unsqueeze(1)
+            sin = sin_cached[position_ids].unsqueeze(1)
+        else:
+            cos = cos_cached[torch.arange(bsz), :, token_index, :].unsqueeze(2)
+            sin = sin_cached[torch.arange(bsz), :, token_index, :].unsqueeze(2)
         query_states, _ = qeff_apply_rotary_pos_emb(query_states, torch.empty_like(query_states), cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
