@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 """
 Tests for NSP-blocked MoE prefill dispatch (Qwen3MOE + GPT-OSS).
 Uses EXPERT_BLOCKING_NUM_NSP=2 so tests run fast on any num_experts.

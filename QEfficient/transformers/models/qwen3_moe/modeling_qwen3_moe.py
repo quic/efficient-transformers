@@ -140,30 +140,36 @@ def _ctx_scatter_gather_expert_blocked(
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
     def __qeff_init__(self):
-        self.gate_proj_w = []
-        self.up_proj_w = []
-        self.down_proj_w = []
-        with torch.no_grad():
-            for e in range(self.num_experts):
-                self.gate_proj_w.append(self.experts[e].gate_proj.weight.T)
-                self.up_proj_w.append(self.experts[e].up_proj.weight.T)
-                self.down_proj_w.append(self.experts[e].down_proj.weight.T)
-            self.gate_proj_w = torch.stack(self.gate_proj_w)
-            self.up_proj_w = torch.stack(self.up_proj_w)
-            self.down_proj_w = torch.stack(self.down_proj_w)
-
-    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
-        T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
         if self.num_experts % num_nsp != 0:
             raise ValueError(
                 f"num_experts ({self.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
             )
         local_experts = self.num_experts // num_nsp
+        gate_proj_w = []
+        up_proj_w = []
+        down_proj_w = []
+        with torch.no_grad():
+            for e in range(self.num_experts):
+                gate_proj_w.append(self.experts[e].gate_proj.weight.T)
+                up_proj_w.append(self.experts[e].up_proj.weight.T)
+                down_proj_w.append(self.experts[e].down_proj.weight.T)
+            stacked_g = torch.stack(gate_proj_w)  # [E, H, I]
+            stacked_u = torch.stack(up_proj_w)
+            stacked_d = torch.stack(down_proj_w)  # [E, I, H]
+            H = stacked_g.shape[1]
+            I = stacked_g.shape[2]  # noqa: E741
+            self._blocked_W_g = stacked_g.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
+            self._blocked_W_u = stacked_u.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
+            self._blocked_W_d = stacked_d.view(local_experts, num_nsp, I, H).transpose(0, 1).contiguous()
+        self._blocked_num_nsp = num_nsp
+        self._blocked_local_experts = local_experts
+
+    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
+        T, H = x.shape
+        num_nsp = self._blocked_num_nsp
+        local_experts = self._blocked_local_experts
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = self.up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.down_proj_w.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
         expert_out_partial = x.new_zeros((num_nsp, T, H))
         for slot in range(local_experts):
             routing_weight = rw[:, slot, :].unsqueeze(-1)
@@ -171,9 +177,9 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             delta = _ctx_scatter_gather_expert_blocked(
                 x=x,
                 T2Ei=T2Ei,
-                W_g=W_g[:, slot],
-                W_u=W_u[:, slot],
-                W_d=W_d[:, slot],
+                W_g=self._blocked_W_g[:, slot],
+                W_u=self._blocked_W_u[:, slot],
+                W_d=self._blocked_W_d[:, slot],
                 act_fn=self.experts[0].act_fn,
                 T=T,
             )
