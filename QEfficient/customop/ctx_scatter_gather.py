@@ -78,8 +78,9 @@ def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates
 class CtxScatterFunc3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        data = data.clone()
         batch_idx = torch.arange(data.shape[0]).view(-1, 1)
-        ctx_idx = position_ids
+        ctx_idx = torch.where(position_ids == torch.iinfo(torch.int32).max, data.shape[1] - 1, position_ids)
         data[batch_idx, ctx_idx] = updates
         return data
 
@@ -103,6 +104,7 @@ class CtxGatherFunc3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
         batch_indices = torch.arange(data.shape[0]).view(-1, 1)
+        ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
         return data[batch_indices, ctx_indices]
 
     @staticmethod

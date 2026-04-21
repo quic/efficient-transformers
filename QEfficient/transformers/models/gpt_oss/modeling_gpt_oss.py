@@ -36,6 +36,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
+from QEfficient.customop.ctx_scatter_gather import CtxGatherFunc3D, CtxScatterFunc3D
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -50,7 +51,91 @@ class QEffGptOssExperts(GptOssExperts):
         self.up_proj_bias = nn.Parameter(torch.empty(self.num_experts, self.expert_dim))
 
 
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+
+
+def _ctx_scatter_gather_gptoss_expert_blocked(
+    x: torch.Tensor,
+    T2Ei: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    b_g: torch.Tensor,
+    b_u: torch.Tensor,
+    b_d: torch.Tensor,
+    limit: float,
+    alpha: float,
+    T: int,
+) -> torch.Tensor:
+    """Packed-prefix expert helper for GPT-OSS NSP-blocked dispatch."""
+    batch_size, hidden_size = T2Ei.shape[0], x.shape[1]
+    scatter_idx = (torch.cumsum(T2Ei.long(), dim=1) - 1).to(torch.int32)
+    invalid_mask = ~T2Ei
+    INT32_MAX = torch.tensor(torch.iinfo(torch.int32).max, dtype=torch.int32, device=x.device)
+    scatter_safe_idx = torch.where(invalid_mask, INT32_MAX, scatter_idx)
+
+    x_prime = torch.zeros(batch_size, T, hidden_size, dtype=x.dtype, device=x.device)
+    x_prime = CtxScatterFunc3D.apply(x_prime, scatter_safe_idx, x.unsqueeze(0).expand(batch_size, -1, -1))
+
+    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    row_range = torch.arange(T, device=x.device, dtype=torch.int32).unsqueeze(0)
+    valid_output_rows = row_range < valid_rows
+    x_prime = torch.where(valid_output_rows.unsqueeze(-1), x_prime, torch.zeros_like(x_prime))
+
+    gate = (x_prime @ W_g) + b_g.unsqueeze(1)
+    up = (x_prime @ W_u) + b_u.unsqueeze(1)
+    gate = gate.clamp(min=torch.finfo(torch.float16).min, max=limit)
+    up = up.clamp(min=-limit, max=limit)
+    glu = gate * torch.sigmoid(gate * alpha)
+    intermediate = (up + 1) * glu
+    down_prime = (intermediate @ W_d) + b_d.unsqueeze(1)
+    down_prime = torch.where(valid_output_rows.unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
+
+    gather_idx = torch.where(invalid_mask, INT32_MAX, scatter_idx)
+    delta_out = CtxGatherFunc3D.apply(down_prime, gather_idx)
+    delta_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(delta_out), delta_out)
+    return delta_out
+
+
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
+    def __qeff_init__(self):
+        pass
+
+    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
+        T, H = x.shape
+        num_nsp = EXPERT_BLOCKING_NUM_NSP
+        E = self.experts.num_experts
+        if E % num_nsp != 0:
+            raise ValueError(f"num_experts ({E}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})")
+        local_experts = E // num_nsp
+        I = self.experts.gate_proj.shape[2]  # noqa: E741
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj.view(local_experts, num_nsp, I, H).transpose(0, 1).contiguous()
+        b_g = self.experts.gate_proj_bias.view(local_experts, num_nsp, I).transpose(0, 1).contiguous()
+        b_u = self.experts.up_proj_bias.view(local_experts, num_nsp, I).transpose(0, 1).contiguous()
+        b_d = self.experts.down_proj_bias.view(local_experts, num_nsp, H).transpose(0, 1).contiguous()
+        expert_out_partial = x.new_zeros((num_nsp, T, H))
+        for slot in range(local_experts):
+            routing_weight = rw[:, slot, :].unsqueeze(-1)
+            T2Ei = routing_weight.squeeze(-1) > 0
+            delta = _ctx_scatter_gather_gptoss_expert_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=W_g[:, slot],
+                W_u=W_u[:, slot],
+                W_d=W_d[:, slot],
+                b_g=b_g[:, slot],
+                b_u=b_u[:, slot],
+                b_d=b_d[:, slot],
+                limit=self.experts.limit,
+                alpha=self.experts.alpha,
+                T=T,
+            )
+            expert_out_partial = expert_out_partial + (delta * routing_weight)
+        return expert_out_partial.sum(dim=0)
+
     def forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
         T = B * S
@@ -68,6 +153,10 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
 
         # Routing weights for each expert [T, E]
         routing_weights = masked_logits
+
+        if self.experts.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
+            expert_out = self._forward_expert_blocked(x=hidden, routing_weights=routing_weights)
+            return expert_out.view(B, S, H), router_logits
 
         # ────────────────── allocate the output tensor ─────
         expert_out = hidden.new_zeros((T, H))  # accumulation buffer
