@@ -14,8 +14,6 @@ The pipeline supports WAN 2.2 architectures with unified transformer.
 TODO: 1. Update umt5 to Qaic; present running on cpu
 """
 
-import copy
-import json
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -114,8 +112,10 @@ class QEffWanPipeline:
         self.unified_wrapper = QEffWanUnifiedWrapper(model.transformer, model.transformer_2)
         self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper, enable_first_cache=False)
         self.transformer_high = QEffWanUnifiedTransformer(model.transformer, enable_first_cache=self.enable_first_cache)
-        self.transformer_low = QEffWanUnifiedTransformer(model.transformer_2, enable_first_cache=self.enable_first_cache)
-        
+        self.transformer_low = QEffWanUnifiedTransformer(
+            model.transformer_2, enable_first_cache=self.enable_first_cache
+        )
+
         # VAE decoder for latent-to-video conversion
         self.vae_decoder = QEffVAE(model.vae, "decoder")
         # Store all modules in a dictionary for easy iteration during export/compile
@@ -279,60 +279,6 @@ class QEffWanPipeline:
         """
         return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/wan_config.json")
 
-    def _normalize_config_for_mode(self) -> None:
-        """Ensure config modules match the currently active WAN execution mode."""
-        modules_cfg = self.custom_config["modules"]
-
-        if self.execution_mode == "split_cache":
-            if "transformer_high" in modules_cfg and "transformer_low" in modules_cfg:
-                return
-            if "transformer" not in modules_cfg:
-                raise KeyError(
-                    "WAN config is missing transformer entries. Expected either "
-                    "`transformer_high`/`transformer_low` or `transformer`."
-                )
-            base_cfg = modules_cfg["transformer"]
-            high_cfg = copy.deepcopy(base_cfg)
-            low_cfg = copy.deepcopy(base_cfg)
-
-            shared_specs = base_cfg.get("specializations", {})
-            if isinstance(shared_specs, list):
-                if len(shared_specs) >= 2:
-                    high_cfg["specializations"] = copy.deepcopy(shared_specs[0])
-                    low_cfg["specializations"] = copy.deepcopy(shared_specs[1])
-                elif len(shared_specs) == 1:
-                    high_cfg["specializations"] = copy.deepcopy(shared_specs[0])
-                    low_cfg["specializations"] = copy.deepcopy(shared_specs[0])
-                else:
-                    high_cfg["specializations"] = {}
-                    low_cfg["specializations"] = {}
-
-            modules_cfg.setdefault("transformer_high", high_cfg)
-            modules_cfg.setdefault("transformer_low", low_cfg)
-            return
-
-        if "transformer" in modules_cfg:
-            return
-        fallback_cfg = modules_cfg.get("transformer_high") or modules_cfg.get("transformer_low")
-        if fallback_cfg is None:
-            raise KeyError(
-                "WAN config is missing transformer entries. Expected either "
-                "`transformer` or `transformer_high`/`transformer_low`."
-            )
-        unified_cfg = copy.deepcopy(fallback_cfg)
-        fallback_specs = fallback_cfg.get("specializations", {})
-        if isinstance(fallback_specs, list):
-            base_high_spec = copy.deepcopy(fallback_specs[0]) if len(fallback_specs) > 0 else {}
-            base_low_spec = copy.deepcopy(fallback_specs[1]) if len(fallback_specs) > 1 else copy.deepcopy(base_high_spec)
-        else:
-            base_high_spec = copy.deepcopy(fallback_specs)
-            base_low_spec = copy.deepcopy(fallback_specs)
-
-        base_high_spec["model_type"] = 1
-        base_low_spec["model_type"] = 2
-        unified_cfg["specializations"] = [base_high_spec, base_low_spec]
-        modules_cfg["transformer"] = unified_cfg
-
     def compile(
         self,
         compile_config: Optional[str] = None,
@@ -383,18 +329,20 @@ class QEffWanPipeline:
         """
         # Load compilation configuration
         config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
-        self._normalize_config_for_mode()
+
+        missing_modules = [
+            module_name for module_name in self.modules if module_name not in self.custom_config["modules"]
+        ]
+        if missing_modules:
+            raise KeyError(
+                f"WAN config is missing modules required for execution_mode={self.execution_mode}: {missing_modules}"
+            )
 
         # Set device IDs, qpc path if precompiled qpc exist
         set_execute_params(self)
 
         # Ensure all modules are exported to ONNX before compilation
-        required_onnx_paths = [self.vae_decoder.onnx_path]
-        if self.execution_mode == "split_cache":
-            required_onnx_paths.extend([self.transformer_high.onnx_path, self.transformer_low.onnx_path])
-        else:
-            required_onnx_paths.append(self.transformer.onnx_path)
-
+        required_onnx_paths = [module_obj.onnx_path for module_obj in self.modules.values()]
         if any(path is None for path in required_onnx_paths):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
@@ -409,8 +357,6 @@ class QEffWanPipeline:
             self.patch_width,
         )
         # Prepare dynamic specialization updates based on video dimensions
-        # import ipdb
-        # ipdb.set_trace()
         specialization_updates = {
             "vae_decoder": {
                 "latent_frames": latent_frames,
@@ -418,79 +364,37 @@ class QEffWanPipeline:
                 "latent_width": latent_width,
             },
         }
-        if self.execution_mode == "split_cache":
-            specialization_updates["transformer_high"] = {
-                "cl": cl,
-                "latent_height": latent_height,
-                "latent_width": latent_width,
-                "latent_frames": latent_frames,
-            }
-            specialization_updates["transformer_low"] = {
-                "cl": cl,
-                "latent_height": latent_height,
-                "latent_width": latent_width,
-                "latent_frames": latent_frames,
-            }
-        else:
-            specialization_updates["transformer"] = [
-                {
-                    "cl": cl,
-                    "latent_height": latent_height,
-                    "latent_width": latent_width,
-                    "latent_frames": latent_frames,
-                    "model_type": 1,
-                },
-                {
-                    "cl": cl,
-                    "latent_height": latent_height,
-                    "latent_width": latent_width,
-                    "latent_frames": latent_frames,
-                    "model_type": 2,
-                },
-            ]
+        transformer_common_specialization = {
+            "cl": cl,
+            "latent_height": latent_height,
+            "latent_width": latent_width,
+            "latent_frames": latent_frames,
+        }
+        transformer_updates_by_mode = {
+            "split_cache": {
+                "transformer_high": transformer_common_specialization,
+                "transformer_low": transformer_common_specialization,
+            },
+            "unified_no_cache": {
+                "transformer": [
+                    {
+                        **transformer_common_specialization,
+                        "model_type": 1,
+                    },
+                    {
+                        **transformer_common_specialization,
+                        "model_type": 2,
+                    },
+                ]
+            },
+        }
+        specialization_updates.update(transformer_updates_by_mode[self.execution_mode])
 
         # Use generic utility functions for compilation
         if parallel:
             compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
         else:
             compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
-
-    def write_io_files(
-        self,
-        inputs: Dict[str, np.ndarray],
-        write_io_dir: str,
-        write_io_subdir: str,
-        write_io_name: str,
-        include_dims: bool = False,
-    ):
-        """Write input/output files for debugging"""
-        os.makedirs(f"{write_io_dir}/{write_io_subdir}", exist_ok=True)
-        
-        io_specs = []
-        
-        # Write inputs
-        for name, array in inputs.items():
-            array.tofile(f"{write_io_dir}/{write_io_subdir}/{name}.raw")
-            spec = {
-                "path": f"{write_io_subdir}/{name}.raw",
-                "io-direction": "in",
-                "elem-size": array.itemsize,
-                "map-to": name,
-            }
-            if include_dims:
-                spec["dims"] = list(array.shape)
-            io_specs.append(spec)
-        
-        # Write JSON specification
-        with open(f"{write_io_dir}/{write_io_name}.json", "w") as fp:
-            json.dump({"IO-files": [io_specs]}, fp, indent=2)
-        
-        print(f"IO files written to: {write_io_dir}/{write_io_subdir}")
-
-
-
-# write_io_files(inputs=inputs_aic, write_io_dir="unified_720_io",write_io_subdir="io",write_io_name="wan_unified", include_dims=True)
-
 
     def __call__(
         self,
@@ -652,8 +556,6 @@ class QEffWanPipeline:
         )
 
         # Convert embeddings to transformer dtype for compatibility
-        # import ipdb
-        # ipdb.set_trace()
         active_transformer = self.transformer_high if self.execution_mode == "split_cache" else self.transformer
         transformer_dtype = active_transformer.model.dtype
         prompt_embeds = prompt_embeds.to(transformer_dtype)
@@ -707,7 +609,6 @@ class QEffWanPipeline:
                     str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
                 )
 
-
         # Calculate compressed latent dimension for transformer buffer allocation
         cl, _, _, _ = calculate_latent_dimensions_with_frames(
             height,
@@ -733,14 +634,16 @@ class QEffWanPipeline:
             self.transformer_high.qpc_session.skip_buffers(
                 [
                     x
-                    for x in self.transformer_high.qpc_session.input_names + self.transformer_high.qpc_session.output_names
+                    for x in self.transformer_high.qpc_session.input_names
+                    + self.transformer_high.qpc_session.output_names
                     if x.startswith("prev_") or x.endswith("_RetainedState")
                 ]
             )
             self.transformer_low.qpc_session.skip_buffers(
                 [
                     x
-                    for x in self.transformer_low.qpc_session.input_names + self.transformer_low.qpc_session.output_names
+                    for x in self.transformer_low.qpc_session.input_names
+                    + self.transformer_low.qpc_session.output_names
                     if x.startswith("prev_") or x.endswith("_RetainedState")
                 ]
             )
@@ -748,10 +651,8 @@ class QEffWanPipeline:
             self.transformer.qpc_session.set_buffers(output_buffer)
 
         transformer_perf = []
-        # import ipdb
-        # ipdb.set_trace()
         # Step 8: Denoising loop with dual-stage processing
-        
+
         count_low = 0
         with self.model.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -777,7 +678,9 @@ class QEffWanPipeline:
                     cache_threshold = 0.0 if count_low < 3 else low_cache_threshold
 
                 if self.execution_mode == "split_cache":
-                    picked_qpc_session = self.transformer_high.qpc_session if is_high_stage else self.transformer_low.qpc_session
+                    picked_qpc_session = (
+                        self.transformer_high.qpc_session if is_high_stage else self.transformer_low.qpc_session
+                    )
                 else:
                     picked_qpc_session = self.transformer.qpc_session
                 # Prepare latent input with proper dtype
@@ -838,8 +741,6 @@ class QEffWanPipeline:
                     inputs_aic["tsp"] = model_type.detach().numpy()
 
                 use_first_cache = self.execution_mode == "split_cache"
-                if use_first_cache:
-                    inputs_aic["step_index"] = np.array([[i]], dtype=np.int32)
 
                 # Prepare negative inputs for classifier-free guidance
                 if self.do_classifier_free_guidance:
@@ -852,8 +753,6 @@ class QEffWanPipeline:
                     }
                     if self.execution_mode == "unified_no_cache":
                         inputs_aic2["tsp"] = model_type.detach().numpy()
-                    if use_first_cache:
-                        inputs_aic2["step_index"] = np.array([[i]], dtype=np.int32)
 
                 # Run conditional prediction with caching context
                 with current_model.cache_context("cond"):

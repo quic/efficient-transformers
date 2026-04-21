@@ -1,14 +1,47 @@
 {
-  "description": "Default configuration for Wan pipeline with unified transformer (model_type: 1 for high noise; model_type:2 for low noise)",
+  "description": "Example WAN config supporting unified and split-cache transformer modules.",
   "modules": {
-    "transformer_high": {
-                    "specializations": 
-                                      {
+    "transformer": {
+                    "specializations": [
+                                        {
                                           "batch_size": "1",
                                           "num_channels": "16",
                                           "steps": "1",
                                           "sequence_length": "512",
                                           "model_type": 1
+                                        },
+                                        {
+                                          "batch_size": "1",
+                                          "num_channels": "16",
+                                          "steps": "1",
+                                          "sequence_length": "512",
+                                          "model_type": 2
+                                        }
+                                      ],
+                    "compilation":  {
+                                      "onnx_path": null,
+                                      "compile_dir": null,
+                                      "mdp_ts_num_devices": 16,
+                                      "mxfp6_matmul": true,
+                                      "convert_to_fp16": true,
+                                      "compile_only":true,
+                                      "aic_num_cores": 16,
+                                      "mos": 1,
+                                      "mdts_mos": 1
+                                    },
+                    "execute":     {
+                                        "device_ids": null,
+                                        "qpc_path" : null
+                                    }
+    },
+    "transformer_high": {
+                    "specializations":
+                                      {
+                                        "batch_size": "1",
+                                        "num_channels": "16",
+                                        "steps": "1",
+                                        "sequence_length": "512",
+                                        "model_type": 1
                                       },
                     "compilation":  {
                                       "onnx_path": null,
@@ -19,7 +52,7 @@
                                       "compile_only":true,
                                       "aic_num_cores": 16,
                                       "mos": 1,
-                                      "mdts_mos": 1                                  
+                                      "mdts_mos": 1
                                     },
                     "execute":     {
                                         "device_ids": null,
@@ -32,7 +65,7 @@
                                           "num_channels": "16",
                                           "steps": "1",
                                           "sequence_length": "512",
-                                          "model_type": 1
+                                          "model_type": 2
                                       },
                     "compilation":  {
                                       "onnx_path": null,

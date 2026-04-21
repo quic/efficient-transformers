@@ -216,8 +216,6 @@ def compile_modules_sequential(
 
     """
     for module_name, module_obj in tqdm(modules.items(), desc="Compiling modules", unit="module"):
-        # import ipdb
-        # ipdb.set_trace()
         module_config = config["modules"]
         specializations = module_config[module_name]["specializations"].copy()
         compile_kwargs = module_config[module_name]["compilation"]
@@ -243,6 +241,8 @@ def compile_modules_sequential(
         if module_obj.qpc_path is None:
             # Compile with prepared specializations
             module_obj.compile(specializations=specializations, **compile_kwargs)
+
+
 @dataclass(frozen=True)
 class ModulePerf:
     """
@@ -316,4 +316,4 @@ class QEffPipelineOutput:
 
 # List of module name that require special handling during export
 # when use_onnx_subfunctions is enabled
-ONNX_SUBFUNCTION_MODULE = ["transformer", "transformer_low","transformer_high"]
+ONNX_SUBFUNCTION_MODULE = ["transformer", "transformer_low", "transformer_high"]

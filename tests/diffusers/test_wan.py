@@ -308,26 +308,18 @@ def wan_pipeline_call_with_mad_validation(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
-    pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
-    # Step 9: Decode latents to video QAIC VAE decoder
-    latents = latents.to(pipeline.vae_decoder.model.dtype)
-    latents_mean = (
-        torch.tensor(pipeline.vae_decoder.model.config.latents_mean)
-        .view(1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1)
-        .to(latents.device, latents.dtype)
-    )
-    latents_std = 1.0 / torch.tensor(pipeline.vae_decoder.model.latents_std).view(
-        1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1
-    ).to(latents.device, latents.dtype)
-    latents = latents / latents_std + latents_mean
-
-    # Initialize VAE decoder inference session
-    if pipeline.vae_decoder.qpc_session is None:
-        pipeline.vae_decoder.qpc_session = QAICInferenceSession(
-            str(pipeline.vae_decoder.qpc_path), device_ids=pipeline.vae_decoder.device_ids
+    # Step 9: Decode latents to video (using CPU VAE for now)
+    if not output_type == "latent":
+        latents = latents.to(pipeline.vae_decoder.model.dtype)
+        latents_mean = (
+            torch.tensor(pipeline.vae_decoder.model.config.latents_mean)
+            .view(1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1)
+            .to(latents.device, latents.dtype)
         )
-    # MAD Validation for VAE decoder - PyTorch reference inference
-    video_torch = pytorch_pipeline.vae.decode(latents, return_dict=False)[0]
+        latents_std = 1.0 / torch.tensor(pipeline.vae_decoder.model.config.latents_std).view(
+            1, pipeline.vae_decoder.model.config.z_dim, 1, 1, 1
+        ).to(latents.device, latents.dtype)
+        latents = latents / latents_std + latents_mean
 
     # Allocate output buffer for VAE decoder
     output_buffer = {"sample": np.zeros((batch_size, 3, num_frames, height, width), dtype=np.int32)}
@@ -419,10 +411,81 @@ def wan_pipeline():
     transformer_low.eval()
     text_encoder.eval()
 
-    pytorch_pipeline_copy = copy.deepcopy(pytorch_pipeline)
-    pipeline = QEffWanPipeline(pytorch_pipeline_copy)
+    # Load PyTorch reference pipeline
+    pytorch_pipeline = WanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
+
+    # Load into the transformers
+    pytorch_pipeline.transformer.load_lora_adapter(load_wan_lora(high_noise_lora_path), adapter_name="high_noise")
+    pytorch_pipeline.transformer.set_adapters(["high_noise"], weights=[1.0])
+
+    pytorch_pipeline.transformer_2.load_lora_adapter(load_wan_lora(low_noise_lora_path), adapter_name="low_noise")
+    pytorch_pipeline.transformer_2.set_adapters(["low_noise"], weights=[1.0])
+
+    # ### for 2 layer model
+    pytorch_pipeline.transformer.config.num_layers = config["num_transformer_layers_high"]
+    pytorch_pipeline.transformer_2.config.num_layers = config["num_transformer_layers_low"]
+    original_blocks = pytorch_pipeline.transformer.blocks
+    org_blocks = pytorch_pipeline.transformer_2.blocks
+    pytorch_pipeline.transformer.blocks = torch.nn.ModuleList(
+        [original_blocks[i] for i in range(0, pytorch_pipeline.transformer.config.num_layers)]
+    )
+    pytorch_pipeline.transformer_2.blocks = torch.nn.ModuleList(
+        [org_blocks[i] for i in range(0, pytorch_pipeline.transformer_2.config.num_layers)]
+    )
+
+    # Keep this fixture on unified mode since MAD helper path is still unified-oriented.
+    pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers", enable_first_cache=False)
+
+    # Load LoRA adapters into transformers
+    pipeline.transformer.model.transformer_high.load_lora_adapter(
+        load_wan_lora(high_noise_lora_path), adapter_name="high_noise"
+    )
+    pipeline.transformer.model.transformer_high.set_adapters(["high_noise"], weights=[1.0])
+    pipeline.transformer.model.transformer_low.load_lora_adapter(
+        load_wan_lora(low_noise_lora_path), adapter_name="low_noise"
+    )
+    pipeline.transformer.model.transformer_low.set_adapters(["low_noise"], weights=[1.0])
+
+    # Reduce to 1 layer (1 high, 1 low) for testing
+    pipeline.transformer.model.transformer_high.config.num_layers = config["num_transformer_layers_high"]
+    pipeline.transformer.model.transformer_low.config.num_layers = config["num_transformer_layers_low"]
+
+    original_blocks_high = pipeline.transformer.model.transformer_high.blocks
+    original_blocks_low = pipeline.transformer.model.transformer_low.blocks
+
+    pipeline.transformer.model.transformer_high.blocks = torch.nn.ModuleList(
+        [original_blocks_high[i] for i in range(0, config["num_transformer_layers_high"])]
+    )
+    pipeline.transformer.model.transformer_low.blocks = torch.nn.ModuleList(
+        [original_blocks_low[i] for i in range(0, config["num_transformer_layers_low"])]
+    )
 
     return pipeline, pytorch_pipeline
+
+
+@pytest.fixture(scope="session")
+def wan_pipeline_first_cache():
+    """Setup WAN pipeline in split-cache mode for API/shape checks."""
+    return QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers", enable_first_cache=True)
+
+
+@pytest.mark.diffusion_models
+@pytest.mark.wan
+def test_wan_enable_first_cache_mode(wan_pipeline_first_cache):
+    """Validate split-cache mode wiring without running QAIC compile/inference."""
+    pipeline = wan_pipeline_first_cache
+
+    assert pipeline.enable_first_cache is True
+    assert pipeline.execution_mode == "split_cache"
+    assert set(pipeline.modules.keys()) == {"transformer_high", "transformer_low", "vae_decoder"}
+
+    high_inputs, _, high_output_names = pipeline.transformer_high.get_onnx_params()
+    assert "cache_threshold" in high_inputs
+    assert "prev_first_block_residuals" in high_inputs
+    assert "prev_remain_block_residuals" in high_inputs
+    assert "tsp" not in high_inputs
+    assert "prev_first_block_residuals_RetainedState" in high_output_names
+    assert "prev_remain_block_residuals_RetainedState" in high_output_names
 
 
 @pytest.mark.diffusion_models

@@ -220,24 +220,26 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         ]  # updated to use WanTransformer3DModel
         weights = scale_expansion_fn(self, weights)
         set_weights_and_activate_adapters(self, adapter_names, weights)
-        
+
     def _compute_remaining_block(
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep_proj: torch.Tensor,
-        rotary_emb: torch.Tensor
+        rotary_emb: torch.Tensor,
     ):
-        original_hidden_state=hidden_states
-        
-        for block in self.blocks[1:]:
-           hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
-           
-        hidden_state_residual= hidden_states - original_hidden_state
-        
-        return hidden_state_residual    
+        original_hidden_state = hidden_states
 
-    def _check_similarity(self, first_block_residuals: torch.Tensor, prev_first_block_residuals: torch.Tensor) -> torch.Tensor:
+        for block in self.blocks[1:]:
+            hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+
+        hidden_state_residual = hidden_states - original_hidden_state
+
+        return hidden_state_residual
+
+    def _check_similarity(
+        self, first_block_residuals: torch.Tensor, prev_first_block_residuals: torch.Tensor
+    ) -> torch.Tensor:
         """
         Compute the L1-normalised difference between the current and previous
         first-block residuals to decide whether the cache can be reused.
@@ -281,11 +283,10 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         temb: torch.Tensor,
         timestep_proj: torch.Tensor,
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
-        # first cache related parms   
-        prev_first_block_residuals: Optional[torch.tensor]= None,
-        prev_remain_block_residuals: Optional[torch.tensor]= None,
-        cache_threshold: Optional[float] = None,  
-        
+        # first cache related parms
+        prev_first_block_residuals: Optional[torch.tensor] = None,
+        prev_remain_block_residuals: Optional[torch.tensor] = None,
+        cache_threshold: Optional[float] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -340,13 +341,11 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
             ds = self.FIRST_BLOCK_RESIDUAL_DOWNSAMPLE_FACTOR
             downsampled_first_block_residuals = current_first_block_residuals[..., ::ds].contiguous()
 
-
             # ── Step 3: similarity check (both inputs are downsampled) ────────
             difference = self._check_similarity(
                 first_block_residuals=downsampled_first_block_residuals,
                 prev_first_block_residuals=prev_first_block_residuals,
             )
-
 
             # ── Step 4: always run blocks[1:] and compute their residual ──────
             remain_hidden_state = first_block_out
@@ -365,8 +364,8 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
 
             # ── Step 6: reconstruct final hidden state ────────────────────────
             hidden_states = final_remaining_block_residual + first_block_out
-                             
-        else: 
+
+        else:
             # Standard forward pass
             for block in self.blocks:
                 hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
@@ -412,7 +411,7 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
                 difference,
             )
         return Transformer2DModelOutput(sample=output)
-    
+
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
         Return the set of class used as the repeated layer across the model for subfunction extraction.
@@ -421,6 +420,7 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
         return {WanTransformerBlock}
+
 
 class QEffWanUnifiedWrapper(nn.Module):
     """

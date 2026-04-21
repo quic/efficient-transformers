@@ -574,7 +574,10 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         """
         super().__init__(unified_transformer)
         self.model = unified_transformer
-        self.model.enable_first_cache=enable_first_cache
+        self.model.enable_first_cache = enable_first_cache
+        self.get_onnx_params = (
+            self.get_onnx_params_with_cache if enable_first_cache else self.get_onnx_params_without_cache
+        )
 
     @property
     def get_model_config(self) -> Dict:
@@ -586,22 +589,9 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def get_onnx_params(self):
-        """
-        Generate ONNX export configuration for the Wan transformer.
-
-        Creates example inputs for all Wan-specific inputs including hidden states,
-        text embeddings, timestep conditioning,
-        Returns:
-            Tuple containing:
-                - example_inputs (Dict): Sample inputs for ONNX export
-                - dynamic_axes (Dict): Specification of dynamic dimensions
-                - output_names (List[str]): Names of model outputs
-        """
+    def _get_base_onnx_params(self):
+        """Build base ONNX params shared by WAN cached and non-cached exports."""
         batch_size = constants.WAN_ONNX_EXPORT_BATCH_SIZE
-        cl = constants.WAN_ONNX_EXPORT_CL_180P
-        hidden_dim = self.model.config.hidden_size if hasattr(self.model.config, 'hidden_size') else 5120
-        
         example_inputs = {
             # hidden_states = [ bs, in_channels, frames, latent_height, latent_width]
             "hidden_states": torch.randn(
@@ -633,11 +623,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             "tsp": torch.ones(1, dtype=torch.int64),
         }
 
-
-        output_names = [
-            "output",
-            ]
-        
+        output_names = ["output"]
         dynamic_axes = {
             "hidden_states": {
                 0: "batch_size",
@@ -652,74 +638,61 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             "tsp": {0: "model_type"},
         }
 
-        # downsampled_hidden_dim= hidden_dim/4
+        return example_inputs, dynamic_axes, output_names
 
-        if self.model.enable_first_cache:
-            
-            example_inputs["prev_remain_block_residuals"]= torch.randn(
-                batch_size,
-                cl,
-                hidden_dim,
-                dtype=torch.float32,
-            )
-            example_inputs["prev_first_block_residuals"]= torch.randn(
-                batch_size,
-                cl,
-                1280,
-                dtype=torch.float32,
-            )
-            # example_inputs["prev_low_hidden_state_residuals"] = torch.randn(
-            #     batch_size,
-            #     cl,
-            #     hidden_dim,
-            #     dtype=torch.float32,
-            # )
-            
-            # example_inputs["prev_low_first_block_residuals"]= torch.randn(
-            #     batch_size,
-            #     cl,
-            #     hidden_dim,
-            #     dtype=torch.float32,
-            # )
-            
-            example_inputs["cache_threshold"] = torch.tensor(0.5, dtype=torch.float32)
-            example_inputs["step_index"] = torch.zeros(1, 1, dtype=torch.int32)
-            
-            # Update output names
-            output_names.extend([
+    def get_onnx_params_without_cache(self):
+        """ONNX params for unified WAN transformer export (no retained-state cache)."""
+        return self._get_base_onnx_params()
+
+    def get_onnx_params_with_cache(self):
+        """ONNX params for split WAN transformer export with retained-state cache."""
+        batch_size = constants.WAN_ONNX_EXPORT_BATCH_SIZE
+        cl = constants.WAN_ONNX_EXPORT_CL_180P
+        hidden_dim = self.model.config.hidden_size if hasattr(self.model.config, "hidden_size") else 5120
+
+        example_inputs, dynamic_axes, output_names = self._get_base_onnx_params()
+        example_inputs.pop("tsp", None)
+        dynamic_axes.pop("tsp", None)
+
+        example_inputs["prev_remain_block_residuals"] = torch.randn(
+            batch_size,
+            cl,
+            hidden_dim,
+            dtype=torch.float32,
+        )
+        example_inputs["prev_first_block_residuals"] = torch.randn(
+            batch_size,
+            cl,
+            1280,
+            dtype=torch.float32,
+        )
+        example_inputs["cache_threshold"] = torch.tensor(0.5, dtype=torch.float32)
+
+        output_names.extend(
+            [
                 "prev_first_block_residuals_RetainedState",
                 "prev_remain_block_residuals_RetainedState",
-                # "prev_low_first_block_residuals_RetainedState",
-                # "prev_low_hidden_state_residuals_RetainedState"
-                # "difference"
-            ])
+            ]
+        )
 
-            # update dynamic axes 
-            dynamic_axes['prev_remain_block_residuals']={
-                0: "batch_size",
-                1: "cl",
-            }
-            dynamic_axes['prev_first_block_residuals']={
-                0: "batch_size",
-                1: "cl",
-            }
-            dynamic_axes['step_index'] = {0: "batch_size"}
-            # dynamic_axes['prev_low_hidden_state_residuals']={
-            #     0: "batch_size",
-            #     1: "num_channels",
-            #     2: "latent_frames",
-            #     3: "latent_height",
-            #     4: "latent_width"
-            # }
-            # dynamic_axes['prev_low_first_block_residuals']={
-            #     0: "batch_size",
-            #     1: "num_channels",
-            #     2: "latent_frames",
-            #     3: "latent_height",
-            #     4: "latent_width"
-            # }
-            
+        dynamic_axes["prev_remain_block_residuals"] = {
+            0: "batch_size",
+            1: "cl",
+        }
+        dynamic_axes["prev_first_block_residuals"] = {
+            0: "batch_size",
+            1: "cl",
+        }
+
         return example_inputs, dynamic_axes, output_names
+
+    def get_onnx_params(self):
+        """
+        Backward-compatible dispatcher. Concrete selection is mapped by pipeline init.
+        """
+        if self.model.enable_first_cache:
+            return self.get_onnx_params_with_cache()
+        return self.get_onnx_params_without_cache()
 
     def export(
         self,
