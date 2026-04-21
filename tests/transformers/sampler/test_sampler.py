@@ -166,9 +166,10 @@ def test_sampler_transform(
         mxfp6_matmul=True,
     )
     if is_vlm:
-        model_w_sampler_qpc_path = model_w_sampler_qpc_path[1]
-        model_w_sampler_w_guided_decoding_qpc_path = model_w_sampler_w_guided_decoding_qpc_path[1]
-        model_wo_sampler_qpc_path = model_wo_sampler_qpc_path[1]
+        lang_qpc_path = "lang_qpc_path"
+        model_w_sampler_qpc_path = model_w_sampler_qpc_path[lang_qpc_path]
+        model_w_sampler_w_guided_decoding_qpc_path = model_w_sampler_w_guided_decoding_qpc_path[lang_qpc_path]
+        model_wo_sampler_qpc_path = model_wo_sampler_qpc_path[lang_qpc_path]
 
     # Init qaic session
     model_w_sampler_session = QAICInferenceSession(model_w_sampler_qpc_path)
