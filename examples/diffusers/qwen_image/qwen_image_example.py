@@ -22,10 +22,14 @@ positive_magic = {
     "en": ", Ultra HD, 4K, cinematic composition.",  # for english prompt
 }
 
+# # # Config for two layers
+# original_blocks = pipe.transformer.model.transformer_blocks
+# pipe.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1]])
+# pipe.transformer.model.config.num_layers = 2
+
 # Generate image
-prompt = """A coffee shop entrance features a chalkboard sign reading "Qwen Coffee 😊 $2 per cup," with a neon light beside it displaying "通义千问". Next to it hangs a poster showing a beautiful Chinese woman, and beneath the poster is written "π≈3.1415926-53589793-23846264-33832795-02384197". Ultra HD, 4K, cinematic composition"""
-# negative_prompt = " "  # using an empty string if you do not have specific concept to remove
-negative_prompt = "do not use green color" * 24 + " "  # TODO: resolve issue with dynamic shapes
+prompt = """A coffee shop entrance features a chalkboard sign reading "Qwen Coffee 😊 $2 per cup," with a neon light beside it displaying "通义千问". Next to it hangs a poster showing a beautiful Chinese woman, and beneath the poster is written "π≈3.1415926-53589793-23846264-33832795-02384197"."""
+negative_prompt = ""
 
 # Generate with different aspect ratios
 aspect_ratios = {
@@ -38,28 +42,23 @@ aspect_ratios = {
     "2:3": (1056, 1584),
 }
 
-width, height = aspect_ratios["16:9"]
-
-# # Config for two layers
-# original_blocks = pipe.transformer.model.transformer_blocks
-# pipe.transformer.model.transformer_blocks = torch.nn.ModuleList([original_blocks[0], original_blocks[1]])
-# pipe.transformer.model.config.num_layers = 2
-
+width, height = aspect_ratios["16:9"]  # 512, 512
 
 output = pipe(
     prompt=prompt + positive_magic["en"],
     negative_prompt=negative_prompt,
     width=width,
     height=height,
-    num_inference_steps=50,
+    num_inference_steps=5,
     true_cfg_scale=4.0,
     generator=torch.Generator(device="cpu").manual_seed(42),
     parallel_compile=True,
+    max_sequence_length=128,
 )
 
 # Extract the generated image from the output
 image = output.images[0]
 
 # Save the generated image to disk
-image.save("output.png")  # working with neg prompt
+image.save("qwen_image_t2v.png")  # working with neg prompt
 print(output)

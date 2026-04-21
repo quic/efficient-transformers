@@ -343,7 +343,7 @@ class QEffVAE(QEFFBaseModel):
         if self.model.__class__.__name__ == "AutoencoderKLQwenImage":
             latent_frames = 1
             latent_height = 116
-            latent_width = 208 # TODO make this constants and verify with lower dims
+            latent_width = 208  # TODO make this constants and verify with lower dims
         else:
             latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
             latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_45P
@@ -714,9 +714,6 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
 
 
 class QEffQwenImageTransformer2DModel(QEFFBaseModel):
-    _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
-    _onnx_transforms = [SplitTensorsTransform]
-
     """
     QEffQwenImageTransformer2DModel is a wrapper class for QwenImage Transformer2D models that provides ONNX export and compilation capabilities.
 
@@ -725,40 +722,50 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
     transformer-based diffusion models with unique latent packing and attention mechanisms.
     """
 
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
+    _onnx_transforms = [SplitTensorsTransform]
+
     def __init__(self, model: nn.modules):
         super().__init__(model)
         self.model = model
 
     def get_onnx_params(self):
+        """
+        Build representative inputs and dynamic-axis mappings for ONNX export.
+
+        Returns:
+            Tuple[Dict, Dict, List[str]]:
+                A tuple containing:
+                - example model inputs
+                - ONNX dynamic axis configuration
+                - ONNX output names
+        """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
 
         # For testing purpose I have set this to constant values from the original models
-        latent_seq_len = 6032  # image cl
-        text_seq_len = 126
-        hidden_dim = 64
-        encoder_hidden_dim = 3584
+        cl = constants.QWEN_IMAGE_CL
+        seq_length = constants.QWEN_IMAGE_SL
         rot_dim = 128
         example_inputs = {
-            "hidden_states": torch.randn(bs, latent_seq_len, hidden_dim, dtype=torch.float32),
-            "encoder_hidden_states": torch.randn(bs, text_seq_len, encoder_hidden_dim, dtype=torch.float32),
-            "encoder_hidden_states_mask": torch.ones(bs, text_seq_len, dtype=torch.int64),
-            "timestep": torch.tensor([1000.0], dtype=torch.float32),
-            "frame": torch.tensor([1], dtype=torch.int64),
-            "height": torch.tensor([58], dtype=torch.int64),
-            "width": torch.tensor([104], dtype=torch.int64),
-            "txt_seq_lens": torch.tensor([126], dtype=torch.int64),
-            "img_rotary_emb": torch.randn(latent_seq_len, rot_dim, dtype=torch.float32),
-            "txt_rotary_emb": torch.randn(text_seq_len, rot_dim, dtype=torch.float32),
+            "hidden_states": torch.randn(bs, cl, self.model.config.in_channels, dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(
+                bs, seq_length, self.model.config.joint_attention_dim, dtype=torch.float32
+            ),
+            "encoder_hidden_states_mask": torch.ones(bs, seq_length, dtype=torch.int64),
+            "txt_seq_lens": torch.tensor([seq_length], dtype=torch.int64),
+            "img_rotary_emb": torch.randn(cl, rot_dim, dtype=torch.float32),
+            "txt_rotary_emb": torch.randn(seq_length, rot_dim, dtype=torch.float32),
+            "timestep": torch.tensor([1.0], dtype=torch.float32),
         }
 
         output_names = ["output"]
 
         dynamic_axes = {
-            "hidden_states": {0: "batch_size", 1: "latent_seq_len"},
-            "encoder_hidden_states": {0: "batch_size", 1: "text_seq_len"},
-            "encoder_hidden_states_mask": {0: "batch_size", 1: "text_seq_len"},
-            "img_rotary_emb": {0: "latent_seq_len"},
-            "txt_rotary_emb": {0: "text_seq_len"},
+            "hidden_states": {0: "batch_size", 1: "cl"},
+            "encoder_hidden_states": {0: "batch_size", 1: "seq_length"},
+            "encoder_hidden_states_mask": {0: "batch_size", 1: "seq_length"},
+            "img_rotary_emb": {0: "cl"},
+            "txt_rotary_emb": {0: "seq_length"},
         }
 
         return example_inputs, dynamic_axes, output_names
@@ -772,7 +779,26 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
-        """#TODO update docs"""
+        """
+        Export the Qwen Image transformer to ONNX.
+
+        Args:
+            inputs (`Dict`):
+                Example input tensors used for tracing during export.
+            output_names (`List[str]`):
+                Ordered list of ONNX output tensor names.
+            dynamic_axes (`Dict`):
+                Dynamic axis configuration for ONNX inputs/outputs.
+            export_dir (`str`, *optional*):
+                Directory to write the ONNX model into.
+            export_kwargs (`Dict`, *optional*):
+                Additional keyword arguments forwarded to `torch.onnx.export`.
+            use_onnx_subfunctions (`bool`, *optional*, defaults to `False`):
+                Enables exporting transformer blocks as ONNX subfunctions.
+
+        Returns:
+            `str`: Path to the exported ONNX model.
+        """
 
         if use_onnx_subfunctions:
             export_kwargs = {

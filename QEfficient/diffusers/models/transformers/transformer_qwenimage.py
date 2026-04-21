@@ -7,7 +7,7 @@
 
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -32,13 +32,19 @@ def qeff_apply_rotary_emb_qwen(x, freqs_cos, freqs_sin):
 
     Args:
         x (`torch.Tensor`):
-            Query or key tensor to apply rotary embeddings. [B, S, H, D] xk (torch.Tensor): Key tensor to apply
-        freqs_cis (`Tuple[torch.Tensor]`): Precomputed frequency tensor for complex exponentials. ([S, D], [S, D],)
+            Query or key tensor with shape `[B, S, H, D]`.
+        freqs_cos (`torch.Tensor`):
+            Cosine frequencies with shape `[S, D/2]`.
+        freqs_sin (`torch.Tensor`):
+            Sine frequencies with shape `[S, D/2]`.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
+        `torch.Tensor`:
+            Tensor with rotary embedding applied, with the same shape and dtype as `x`.
     """
-    x_reshaped = x.float().reshape(*x.shape[:-1], -1, 2)  # [B, S, H, D//2, 2]
+    B, C, H, D = x.shape
+    x = x.float()
+    x_reshaped = x.reshape(B, -1, H, D // 2, 2)
     x1 = x_reshaped[..., 0]  # [B, S, H, D//2]
     x2 = x_reshaped[..., 1]  # [B, S, H, D//2]
 
@@ -188,123 +194,6 @@ class QEffQwenEmbedRope(nn.Module):
         freqs_cos = torch.cos(freqs)
         freqs_sin = torch.sin(freqs)
         return freqs_cos, freqs_sin
-
-
-class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
-    def __qeff_init__(self):
-        self.pos_embed = QEffQwenEmbedRope(theta=10000, axes_dim=list(self.axes_dims_rope), scale_rope=True)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        encoder_hidden_states: torch.Tensor = None,
-        encoder_hidden_states_mask: torch.Tensor = None,
-        timestep: torch.LongTensor = None,
-        frame: torch.Tensor = None,
-        height: torch.Tensor = None,
-        width: torch.Tensor = None,
-        txt_seq_lens: torch.Tensor = None,
-        img_shapes: Optional[List[Tuple[int, int, int]]] = None,
-        img_rotary_emb: torch.Tensor = None,
-        txt_rotary_emb: torch.Tensor = None,
-        guidance: torch.Tensor = None,  # TODO: this should probably be removed
-        attention_kwargs: Optional[Dict[str, Any]] = None,
-        return_dict: bool = True,
-    ) -> Union[torch.Tensor, Transformer2DModelOutput]:
-        """
-        The [`QwenTransformer2DModel`] forward method.
-
-        Args:
-            hidden_states (`torch.Tensor` of shape `(batch_size, image_sequence_length, in_channels)`):
-                Input `hidden_states`.
-            encoder_hidden_states (`torch.Tensor` of shape `(batch_size, text_sequence_length, joint_attention_dim)`):
-                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
-            encoder_hidden_states_mask (`torch.Tensor` of shape `(batch_size, text_sequence_length)`):
-                Mask of the input conditions.
-            timestep ( `torch.LongTensor`):
-                Used to indicate denoising step.
-            attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
-                tuple.
-
-        Returns:
-            If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
-            `tuple` where the first element is the sample tensor.
-        """
-        # Convert scalar tensors to Python integers and create img_shapes list
-        global sf_value
-        if isinstance(frame, torch.Tensor):
-            frame = frame.item() if frame.numel() == 1 else int(frame[0])
-        if isinstance(height, torch.Tensor):
-            height = height.item() if height.numel() == 1 else int(height[0])
-        if isinstance(width, torch.Tensor):
-            width = width.item() if width.numel() == 1 else int(width[0])
-
-        if not img_shapes:
-            img_shapes = [(frame, height, width)]
-
-        # Convert txt_seq_lens to list if it's a tensor
-        if isinstance(txt_seq_lens, torch.Tensor):
-            txt_seq_lens = txt_seq_lens.tolist()
-
-        hidden_states = self.img_in(hidden_states)
-
-        timestep = timestep.to(hidden_states.dtype)
-        encoder_hidden_states = self.txt_norm(encoder_hidden_states)
-        encoder_hidden_states = self.txt_in(encoder_hidden_states)
-
-        if guidance is not None:
-            guidance = guidance.to(hidden_states.dtype) * 1000
-        temb = (
-            self.time_text_embed(timestep, hidden_states)
-            if guidance is None
-            else self.time_text_embed(timestep, guidance, hidden_states)
-        )
-
-        for index_block, block in enumerate(self.transformer_blocks):
-            if index_block < 59:
-                sf_value = 32
-            else:
-                sf_value = 256
-
-            encoder_hidden_states, hidden_states = block(
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_hidden_states_mask=encoder_hidden_states_mask,
-                temb=temb,
-                img_rotary_emb=img_rotary_emb,
-                txt_rotary_emb=txt_rotary_emb,
-                joint_attention_kwargs=attention_kwargs,
-            )
-
-        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)
-        hidden_states = hidden_states / (sf_value * sf_value * 4)
-
-        # if encoder_hidden_states.dtype == torch.float16:
-        #     encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
-        # if hidden_states.dtype == torch.float16:
-        #     hidden_states = hidden_states.clip(-65504, 65504)
-
-        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)
-        hidden_states = hidden_states / (sf_value * sf_value * 4)
-
-        # if encoder_hidden_states.dtype == torch.float16:
-        #     encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
-        # if hidden_states.dtype == torch.float16:
-        #     hidden_states = hidden_states.clip(-65504, 65504)
-
-        # Use only the image part (hidden_states) from the dual-stream blocks
-        hidden_states = self.norm_out(hidden_states, temb)
-        output = self.proj_out(hidden_states)
-
-        if not return_dict:
-            return (output,)
-
-        return Transformer2DModelOutput(sample=output)
 
 
 class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
@@ -491,10 +380,97 @@ class QEffQwenImageTransformerBlock(QwenImageTransformerBlock):
         hidden_states = hidden_states * (sf_value * sf_value * 4)  # FP32
         encoder_hidden_states = encoder_hidden_states * (sf_value * sf_value * 64)  # FP32
 
-        # Clip to prevent overflow for fp16
-        # if encoder_hidden_states.dtype == torch.float16:
-        #     encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
-        # if hidden_states.dtype == torch.float16:
-        #     hidden_states = hidden_states.clip(-65504, 65504)
-
         return encoder_hidden_states, hidden_states
+
+
+class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
+    def __qeff_init__(self):
+        self.pos_embed = QEffQwenEmbedRope(theta=10000, axes_dim=list(self.axes_dims_rope), scale_rope=True)
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
+        return {QEffQwenImageTransformerBlock}
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor = None,
+        encoder_hidden_states_mask: torch.Tensor = None,
+        timestep: torch.LongTensor = None,
+        txt_seq_lens: torch.Tensor = None,
+        img_rotary_emb: torch.Tensor = None,
+        txt_rotary_emb: torch.Tensor = None,
+        guidance: torch.Tensor = None,  # TODO: this should probably be removed
+        attention_kwargs: Optional[Dict[str, Any]] = None,
+        return_dict: bool = True,
+    ) -> Union[torch.Tensor, Transformer2DModelOutput]:
+        """
+        The [`QwenTransformer2DModel`] forward method.
+
+        Args:
+            hidden_states (`torch.Tensor` of shape `(batch_size, image_sequence_length, in_channels)`):
+                Input `hidden_states`.
+            encoder_hidden_states (`torch.Tensor` of shape `(batch_size, text_sequence_length, joint_attention_dim)`):
+                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
+            encoder_hidden_states_mask (`torch.Tensor` of shape `(batch_size, text_sequence_length)`):
+                Mask of the input conditions.
+            timestep ( `torch.LongTensor`):
+                Used to indicate denoising step.
+            attention_kwargs (`dict`, *optional*):
+                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
+                `self.processor` in
+                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
+                tuple.
+
+        Returns:
+            If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
+            `tuple` where the first element is the sample tensor.
+        """
+        # Convert scalar tensors to Python integers and create img_shapes list
+        global sf_value
+        # Convert txt_seq_lens to list if it's a tensor
+        if isinstance(txt_seq_lens, torch.Tensor):
+            txt_seq_lens = txt_seq_lens.tolist()
+
+        hidden_states = self.img_in(hidden_states)
+
+        timestep = timestep.to(hidden_states.dtype)
+        encoder_hidden_states = self.txt_norm(encoder_hidden_states)
+        encoder_hidden_states = self.txt_in(encoder_hidden_states)
+
+        temb = self.time_text_embed(timestep, hidden_states)
+
+        for index_block, block in enumerate(self.transformer_blocks):
+            if index_block < 59:
+                sf_value = 32
+            else:
+                sf_value = 256
+
+            encoder_hidden_states, hidden_states = block(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_hidden_states_mask=encoder_hidden_states_mask,
+                temb=temb,
+                img_rotary_emb=img_rotary_emb,
+                txt_rotary_emb=txt_rotary_emb,
+                joint_attention_kwargs=attention_kwargs,
+            )
+
+        encoder_hidden_states = encoder_hidden_states / (sf_value * sf_value * 64)
+        hidden_states = hidden_states / (sf_value * sf_value * 4)
+
+        # Use only the image part (hidden_states) from the dual-stream blocks
+        hidden_states = self.norm_out(hidden_states, temb)
+        output = self.proj_out(hidden_states)
+
+        if not return_dict:
+            return (output,)
+
+        return Transformer2DModelOutput(sample=output)

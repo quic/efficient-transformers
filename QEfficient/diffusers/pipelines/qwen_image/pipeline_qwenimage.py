@@ -62,7 +62,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
         self.text_encoder = model.text_encoder  # TODO: Text encoder on QAIC
         self.transformer = QEffQwenImageTransformer2DModel(model.transformer)
-        self.vae_decoder = QEffVAE(model.vae, "decoder")  # TODO make as vae_decoder
+        self.vae_decoder = QEffVAE(model.vae, "decoder")
 
         # Store all modules in a dictionary for easy iteration during export/compile
         self.modules = {
@@ -72,7 +72,6 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
         # Copy tokenizers and scheduler from the original model
         self.tokenizer = model.tokenizer
-        self.text_encoder.tokenizer = model.tokenizer  # TODO check and remove if not utlising it
         self.tokenizer_max_length = model.tokenizer_max_length
         self.scheduler = model.scheduler
 
@@ -193,8 +192,8 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         self,
         compile_config: Optional[str] = None,
         parallel: bool = False,
-        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_180P,
-        width: int = constants.WAN_ONNX_EXPORT_WIDTH_180P,
+        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_45P,  # TODO update with QWEN values
+        width: int = constants.WAN_ONNX_EXPORT_WIDTH_45P,
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """
@@ -245,6 +244,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             path is None
             for path in [
                 self.transformer.onnx_path,
+                self.vae_decoder.onnx_path,
             ]
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
@@ -257,10 +257,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         # Prepare dynamic specialization updates based on video dimensions
         specialization_updates = {
             "transformer": {
-                "latent_seq_len": cl,  # TODO : Make it dynamic
-                # "cl": cl,  # Compressed latent dimension
-                # "latent_height": latent_height,  # Latent space height
-                # "latent_width": latent_width,  # Latent space width
+                "cl": cl,  # Compressed latent dimension
             },
             "vae_decoder": {
                 "latent_frames": 1,
@@ -274,6 +271,106 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
         else:
             compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
+
+    def _get_qwen_prompt_embeds(
+        self,
+        prompt: Union[str, List[str]] = None,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
+        """
+        Tokenize prompt text and return encoder hidden states plus attention mask.
+
+        Args:
+            prompt (`str` or `List[str]`, *optional*):
+                Input prompt(s) to encode.
+            device (`torch.device`, *optional*):
+                Device used for tokenization and text encoding.
+            dtype (`torch.dtype`, *optional*):
+                Target dtype for returned prompt embeddings.
+
+        Returns:
+            Tuple[`torch.Tensor`, `torch.Tensor`]:
+                Prompt embeddings and corresponding attention mask, both trimmed
+                to remove template prefix tokens.
+        """
+        device = device or self._execution_device
+        dtype = dtype or self.text_encoder.dtype
+
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+
+        template = self.prompt_template_encode
+        drop_idx = self.prompt_template_encode_start_idx
+        txt = [template.format(e) for e in prompt]
+        txt = txt[0]  # batch size is 1
+        txt_tokens = self.tokenizer(
+            txt,
+            max_length=self.tokenizer_max_length + drop_idx,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        ).to(device)
+        encoder_hidden_states = self.text_encoder(
+            input_ids=txt_tokens.input_ids,
+            attention_mask=txt_tokens.attention_mask,
+            output_hidden_states=True,
+        )
+        hidden_states = encoder_hidden_states.hidden_states[-1]
+        atten_mask = txt_tokens.attention_mask[:, drop_idx:]
+        prompt_embeds = hidden_states[:, drop_idx:, :]
+        prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
+        return prompt_embeds, atten_mask
+
+    def encode_prompt(
+        self,
+        prompt: Union[str, List[str]],
+        device: Optional[torch.device] = None,
+        num_images_per_prompt: int = 1,
+        prompt_embeds: Optional[torch.Tensor] = None,
+        prompt_embeds_mask: Optional[torch.Tensor] = None,
+        max_sequence_length: int = 1024,
+    ):
+        """
+        Prepare prompt embeddings and masks for image generation.
+
+        Args:
+            prompt (`str` or `List[str]`):
+                Prompt text to encode.
+            device (`torch.device`, *optional*):
+                Torch device used for embedding computation.
+            num_images_per_prompt (`int`):
+                Number of images to generate per prompt.
+            prompt_embeds (`torch.Tensor`, *optional*):
+                Precomputed prompt embeddings. If omitted, embeddings are
+                computed from `prompt`.
+            prompt_embeds_mask (`torch.Tensor`, *optional*):
+                Attention mask aligned with `prompt_embeds`.
+            max_sequence_length (`int`, *optional*):
+                Maximum text sequence length retained from the embeddings.
+
+        Returns:
+            Tuple[`torch.Tensor`, `torch.Tensor`]:
+                Prompt embeddings and masks repeated for
+                `num_images_per_prompt`.
+        """
+        device = device or self._execution_device
+
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+        batch_size = len(prompt) if prompt_embeds is None else prompt_embeds.shape[0]
+
+        if prompt_embeds is None:
+            prompt_embeds, prompt_embeds_mask = self._get_qwen_prompt_embeds(prompt, device)
+
+        prompt_embeds = prompt_embeds[:, :max_sequence_length]
+        prompt_embeds_mask = prompt_embeds_mask[:, :max_sequence_length]
+
+        _, seq_len, _ = prompt_embeds.shape
+        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
+        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
+        prompt_embeds_mask = prompt_embeds_mask.repeat(1, num_images_per_prompt, 1)
+        prompt_embeds_mask = prompt_embeds_mask.view(batch_size * num_images_per_prompt, seq_len)
+
+        return prompt_embeds, prompt_embeds_mask
 
     def __call__(
         self,
@@ -445,17 +542,12 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
-        # handle guidance
-        if self.transformer.model.config.guidance_embeds:
-            guidance = torch.full([1], guidance_scale, device=device, dtype=torch.float32)
-            guidance = guidance.expand(latents.shape[0])
-        else:
-            guidance = None
-
-        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist() if prompt_embeds_mask is not None else None
-        negative_txt_seq_lens = (
-            negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None
-        )
+        txt_seq_lens = [
+            max_sequence_length
+        ]  # prompt_embeds_mask.sum(dim=1).tolist() if prompt_embeds_mask is not None else None
+        negative_txt_seq_lens = [
+            max_sequence_length
+        ]  # (negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None)
 
         # # Initialize transformer session
         if self.transformer.qpc_session is None:
@@ -484,13 +576,11 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                 transformer_inputs = {
                     "hidden_states": latents.detach().numpy().astype(np.float32),
                     "encoder_hidden_states": prompt_embeds.detach().numpy().astype(np.float32),
+                    "encoder_hidden_states_mask": prompt_embeds_mask.detach().numpy().astype(np.int64),
                     "img_rotary_emb": img_rotary_emb.detach().numpy().astype(np.float32),
                     "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
                     "timestep": timestep,
                 }
-                if guidance is not None:
-                    transformer_inputs["guidance"] = guidance.numpy().astype(np.float32)
-
                 # Run transformer inference and measure time
                 start_transformer_step_time = time.perf_counter()
                 noise_pred = self.transformer.qpc_session.run(transformer_inputs)
@@ -504,10 +594,11 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                     transformer_inputs_uncond = {
                         "hidden_states": latents.detach().numpy().astype(np.float32),
                         "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
+                        "encoder_hidden_states_mask": negative_prompt_embeds_mask.detach().numpy().astype(np.float32),
+                        "img_rotary_emb": img_rotary_emb.detach().numpy().astype(np.float32),
+                        "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
                         "timestep": timestep,
                     }
-                    if guidance is not None:
-                        transformer_inputs_uncond["guidance"] = guidance.numpy().astype(np.float32)
 
                     start_cfg_step_time = time.perf_counter()
                     neg_noise_pred = self.transformer.qpc_session.run(transformer_inputs_uncond)
