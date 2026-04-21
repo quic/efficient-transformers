@@ -1,0 +1,25 @@
+{
+  "pipeline_configs": [
+    {
+      "config_name": "standard_config",
+      "description": "Standard configuration - medium performance targets",
+      "baseline_dir": "~/.cache/Nightly_Pipeline",
+      "output_dir": "./nightly_pipeline_outputs",
+      "num_export_workers": 2,
+      "export_params": {},
+      "num_compile_workers": 4,
+      "compile_params": {
+        "prefill_seq_len": 32,
+        "ctx_len": 128,
+        "num_cores": 16,
+        "num_devices": 4,
+        "aic_hw_version": "ai100"
+      },
+      "generation_params": {
+        "generation_len": 100,
+        "prompt": "My name is"
+      }
+    }
+  ]
+}
+
