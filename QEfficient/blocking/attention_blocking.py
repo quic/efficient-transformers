@@ -19,6 +19,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_h_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
+    blocked_kv_mla_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
 )
@@ -150,6 +151,52 @@ def generic_blocked_attention_interface(
         cache_kwargs=cache_kwargs,
         layer_idx=layer_idx,
         past_key_value=past_key_value,
+        num_kv_blocks=blocking_config.num_kv_blocks,
+        num_q_blocks=blocking_config.num_q_blocks,
+        head_block_size=blocking_config.head_block_size,
+        num_batch_blocks=blocking_config.num_batch_blocks,
+        score_mod=score_mod,
+        position_bias=position_bias,
+        sinks=sinks,
+    )
+
+    return attn_output, attn_weights
+
+
+def generic_blocked_mla_attention_interface(
+    module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    layer_idx: int,
+    compressed_kvs: torch.Tensor,
+    enable_absorption: bool,
+    blocking_config: AttentionBlockingConfig,
+    comp_ctx_lengths: Optional[torch.LongTensor] = None,
+    batch_index: Optional[torch.LongTensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    past_seen_tokens: Optional[int] = None,
+    non_blocked_forward: Callable = None,
+    score_mod: Optional[Callable] = None,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    sliding_window: Optional[int] = None,
+    **kwargs,
+):
+    cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+    attn_output, attn_weights = blocked_kv_mla_attention_forward(
+        module=module,
+        query=query,
+        key=key,
+        value=value,
+        attention_mask=attention_mask,
+        scaling=scaling,
+        cache_kwargs=cache_kwargs,
+        layer_idx=layer_idx,
+        compressed_kvs=compressed_kvs,
+        enable_absorption=enable_absorption,
         num_kv_blocks=blocking_config.num_kv_blocks,
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,

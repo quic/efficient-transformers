@@ -17,6 +17,7 @@ import math
 from typing import Any, Dict, List, Optional
 
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
+from QEfficient.blocking.get_num_blocks import get_num_kv_blocks_for_mla
 from QEfficient.utils import get_attr_or_key, require_value
 from QEfficient.utils.constants import VTCM_SIZE_THRESHOLD
 
@@ -200,6 +201,8 @@ def build_transformer_blocking_config(
         int(data_bytes),
         blocking_mode=blocking_mode,
     )
+    if model_config.model_type == "kimi_k2":
+        attention_cfg["num_kv_blocks"] = get_num_kv_blocks_for_mla(seq_len, num_heads, ctx_len)
 
     resolved_mode = _normalize_attention_mode(blocking_mode or "hqkv")
     effective_mode = _resolve_effective_blocking_mode(attention_cfg, resolved_mode)

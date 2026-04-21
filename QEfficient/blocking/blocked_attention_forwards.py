@@ -817,3 +817,107 @@ def blocked_q_attention_forward(
     attn_weights = torch.cat(q_attn_blocks, dim=2)
 
     return attn_output, attn_weights
+
+
+def blocked_kv_mla_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    compressed_kvs: Optional[torch.Tensor],
+    enable_absorption: bool,
+    *,
+    use_causal_mask: bool = False,
+    sliding_window: Optional[int] = None,
+    skip_kv: bool = False,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    # Initialize result tensor
+    batch_size, num_heads, seq_len, _ = query.shape
+    output = torch.zeros(batch_size, num_heads, seq_len, module.config.kv_lora_rank, device=query.device)
+
+    # Initialize Running Maximum and Denominator
+    current_max = torch.full(
+        (batch_size, num_heads, seq_len),
+        float(MIN_MASKED_ATTENTION_VALUE),
+        device=query.device,
+    )
+    skip_kv = True
+    current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device)
+
+    ctx_len = compressed_kvs.layers[0].ckv.shape[2]
+    kv_block_size = -(-ctx_len // num_kv_blocks)
+
+    position_ids = cache_kwargs.get("position_ids")
+    current_position = position_ids.max(dim=-1).values
+
+    for j in range(num_kv_blocks):
+        start_index = j * kv_block_size
+        if j == num_kv_blocks - 1:
+            kv_len_block = ctx_len - start_index
+        else:
+            kv_len_block = kv_block_size
+        end_index = start_index + kv_len_block
+
+        skip_future = None
+        if skip_kv:
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            # Eager mode Only
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if skip_future.item():
+                    break
+
+        compressed_kv_block = compressed_kvs.read_only_blocked_ckv(start_index, end_index, layer_idx, cache_kwargs)
+        k_pe_block = compressed_kvs.read_only_blocked_k_pe(start_index, end_index, layer_idx, cache_kwargs)
+
+        causal_mask_block = _create_causal_mask(
+            position_ids=position_ids,
+            target_length=end_index,
+            start_index=start_index,
+        )
+
+        if enable_absorption:
+            krope_nope = torch.cat((compressed_kv_block, k_pe_block), dim=-1)
+            attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
+            # [1, 64, q_len, 576] X [1, 1, 576, kv_block_size] -> [1, 64, q_len, kv_block_size]
+            attn_weights_block = torch.where(
+                causal_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights_block
+            )
+            current_max, current_denominator, output = update_running_softmax(
+                current_max,
+                attn_weights_block,
+                current_denominator,
+                output,
+                compressed_kv_block,
+                skip_kv,
+                skip_future,
+            )  # [1, 64, q_len, kv_block_size] X [1, 1, kv_block_size, 512] -> [1, 64, q_len, 512]
+        else:
+            knope = torch.matmul(compressed_kv_block, key)
+            krope_nope = torch.cat((knope, k_pe_block.expand(-1, num_heads, -1, -1)), dim=-1)
+            attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
+            attn_weights_block = torch.where(
+                causal_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights_block
+            )
+            current_max, current_denominator, output = update_running_softmax(
+                current_max,
+                attn_weights_block,
+                current_denominator,
+                output,
+                compressed_kv_block,
+                skip_kv,
+                skip_future,
+            )
+
+    attn_output = torch.matmul(output, value)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    attn_weights = None
+
+    return attn_output, attn_weights

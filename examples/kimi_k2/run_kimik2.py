@@ -5,6 +5,8 @@
 #
 # ----------------------------------------------------------------------------
 
+import os
+
 import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -12,11 +14,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 
 prompt = "Once upon a time,"
-num_kv_heads_repeat = 4  # When using KIMI_BLOCKING="kv" or "basic", make sure this is set to 1. Use only for KIMI_BLOCKING="h" and this number should be equal to TS in that case.
+num_kv_heads_repeat = 1  # When using KIMI_BLOCKING="kv" or "basic", make sure num_kv_heads_repeat is set to 1. Use only for KIMI_BLOCKING="h" and this should be equal to TS in that case.
 num_hidden_layers = 2
 TS = 4
 enable_mla = True
 mla_absorption_config = {"enable": False, "online": False}
+qaic_config = None
+
+if os.environ.get("KIMI_BLOCKING", "0") == "kv":
+    qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}
+
+if os.environ.get("KIMI_BLOCKING", "0") == "h":
+    num_kv_heads_repeat = 4
 
 # model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
 model_path = (
@@ -81,7 +90,7 @@ else:
 
 prefill_qeff_out = qeff_model.model(**inputs)
 
-breakpoint()
+# breakpoint()
 # assert (prefill_qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
 
 position_ids = inputs["position_ids"]
@@ -123,6 +132,7 @@ qpc_path = qeff_model.compile(
     num_devices=TS,
     num_cores=16,
     use_onnx_subfunctions=True,
+    qaic_config=qaic_config,
 )
 
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)
