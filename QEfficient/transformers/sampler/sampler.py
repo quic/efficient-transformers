@@ -137,7 +137,7 @@ def sampler_forward(
     Perform the sampling of next tokens on the QAIC device (instead of the host)
     and return the next tokens and/or probability distributions.
 
-    The vision_embeds and image_idx parameters are optional
+    The vision_embeds, deepstack_features, and image_idx parameters are optional
     and are used only for VLMs when supported by the original forward function.
 
     Args:

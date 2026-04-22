@@ -41,6 +41,19 @@ test_configs = [
         None,  # spec_length
         True,  # is_vlm
     ),
+    pytest.param(
+        "Qwen/Qwen3-VL-2B-Instruct",  # model
+        (
+            ["https://picsum.photos/id/237/536/354"] * 2,
+            ["Can you describe the image in detail."] * 2,
+        ),  # images and prompts
+        128,  # prefill_seq_len
+        4096,  # ctx_len
+        20,  # generation_len
+        2,  # full_batch_size
+        None,  # spec_length
+        True,  # is_vlm
+    ),
 ]
 
 
@@ -519,6 +532,61 @@ def test_random_sampling(
                     11,
                     73056,
                     22875,
+                ]
+            ],
+        }
+    elif model == "Qwen/Qwen3-VL-2B-Instruct":
+        golden_texts = {
+            "w_sampler": "This is a close-up, top-down photograph of an adorable black puppy resting on weathered wooden flooring",
+            "wo_sampler": "This is a close-up, top-down photograph of a young black puppy, likely a Labrador Retri",
+        }
+        golden_ids = {
+            "w_sampler": [
+                [
+                    1986,
+                    374,
+                    264,
+                    3265,
+                    5239,
+                    11,
+                    1909,
+                    14875,
+                    10300,
+                    315,
+                    458,
+                    40608,
+                    3691,
+                    41189,
+                    40119,
+                    389,
+                    9104,
+                    291,
+                    22360,
+                    36148,
+                ]
+            ],
+            "wo_sampler": [
+                [
+                    1986,
+                    374,
+                    264,
+                    3265,
+                    5239,
+                    11,
+                    1909,
+                    14875,
+                    10300,
+                    315,
+                    264,
+                    3908,
+                    3691,
+                    41189,
+                    11,
+                    4363,
+                    264,
+                    79276,
+                    10392,
+                    461,
                 ]
             ],
         }
