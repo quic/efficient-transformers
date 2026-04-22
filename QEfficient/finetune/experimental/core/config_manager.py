@@ -330,6 +330,10 @@ class TrainingConfig:
         default="./training_results",
         metadata={"help": "The output directory where the model predictions and checkpoints will be written."},
     )
+    log_file_name: str = field(
+        default="training_logs.txt",
+        metadata={"help": "The log_file output name."},
+    )
     overwrite_output_dir: bool = field(
         default=False,
         metadata={"help": "Whether to overwrite the output directory."},
