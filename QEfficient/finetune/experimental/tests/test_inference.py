@@ -24,8 +24,9 @@ def _repo_adapter_checkpoint_exists() -> bool:
 
 
 if not _repo_adapter_checkpoint_exists():
-    pytest.skip("Skipping test_inference.py: No PEFT adapter checkpoint is present in the repository.",
-                allow_module_level=True)
+    pytest.skip(
+        "Skipping test_inference.py: No PEFT adapter checkpoint is present in the repository.", allow_module_level=True
+    )
 
 
 class DummyTokenizer:
@@ -123,8 +124,11 @@ def test_load_model_with_adapter_prefers_saved_tokenizer(tmp_path, monkeypatch):
             super().__init__()
             self.weight = torch.nn.Parameter(torch.zeros(1))
 
-    monkeypatch.setattr(inference.transformers.AutoModelForCausalLM, "from_pretrained", lambda *args, **kwargs: DummyModel())
+    monkeypatch.setattr(
+        inference.transformers.AutoModelForCausalLM, "from_pretrained", lambda *args, **kwargs: DummyModel()
+    )
     monkeypatch.setattr(inference.PeftModel, "from_pretrained", lambda model, *args, **kwargs: model)
+
     def fake_tokenizer_from_pretrained(source, **kwargs):
         captured["source"] = source
         return DummyTokenizer()
