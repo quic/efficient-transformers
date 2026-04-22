@@ -203,26 +203,28 @@ class QEffLlamaAttention(LlamaAttention):
         value_states = self.v_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
 
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
-        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
-        if use_blocking:
-            attn_output, attn_weights = generic_blocked_attention_interface(
-                module=self,
-                query=query_states,
-                key=key_states,
-                value=value_states,
-                attention_mask=attention_mask,
-                scaling=self.scaling,
-                layer_idx=self.layer_idx,
-                past_key_value=past_key_values,
-                blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
-                batch_index=batch_index,
-                position_ids=position_ids,
-                past_seen_tokens=past_seen_tokens,
-            )
+        cache_kwargs = None
+        if past_key_values is not None:
+            if num_kv_blocks is not None:
+                cache_kwargs = {
+                    "batch_index": batch_index,
+                    "position_ids": position_ids,
+                    "past_seen_tokens": past_seen_tokens,
+                }
+                past_key_values.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+                if comp_ctx_lengths is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                key_states, value_states = past_key_values.update(
+                    key_states, value_states, self.layer_idx, cache_kwargs
+                )
+
+        if num_kv_blocks is not None:
+            attention_interface = eager_attention_forward_blockedKV
         else:
             attention_interface = eager_attention_forward
 
