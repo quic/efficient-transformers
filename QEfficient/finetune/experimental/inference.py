@@ -192,6 +192,7 @@ def _trim_at_stop_strings(text: str, stop_strings: Optional[Sequence[str]]) -> s
 
 class _StopOnTokenSequences(StoppingCriteria):
     """Stop generation when any configured token sequence appears."""
+
     def __init__(self, stop_sequences: Sequence[Sequence[int]]):
         self.stop_sequences = [tuple(sequence) for sequence in stop_sequences if sequence]
 
@@ -199,7 +200,10 @@ class _StopOnTokenSequences(StoppingCriteria):
         for sequence in input_ids:
             sequence_list = sequence.tolist()
             for stop_sequence in self.stop_sequences:
-                if len(sequence_list) >= len(stop_sequence) and tuple(sequence_list[-len(stop_sequence) :]) == stop_sequence:
+                if (
+                    len(sequence_list) >= len(stop_sequence)
+                    and tuple(sequence_list[-len(stop_sequence) :]) == stop_sequence
+                ):
                     return True
         return False
 
@@ -308,7 +312,9 @@ def generate_text(
     generations: List[str] = []
     for output_ids in outputs:
         generated_tokens = output_ids[input_width:]
-        generation = tokenizer.decode(generated_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True).strip()
+        generation = tokenizer.decode(
+            generated_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True
+        ).strip()
         generations.append(_trim_at_stop_strings(generation, stop_strings))
 
     return generations
@@ -419,19 +425,73 @@ def main(
 def _build_parser() -> argparse.ArgumentParser:
     """Define the CLI for the experimental inference entrypoint."""
     parser = argparse.ArgumentParser(description="Run HF generation with a PEFT adapter on a finetuned checkpoint.")
-    parser.add_argument("--config-path", "--config_path", dest="config_path", type=str, default=None, help="Path to a YAML config file.")
-    parser.add_argument("--base-model-path", "--base_model_path", dest="base_model_path", type=str, default=None, help="Path or HF id of the base model.")
-    parser.add_argument("--adapter-path", "--adapter_path", dest="adapter_path", type=str, default=None, help="Path to the PEFT adapter checkpoint.")
+    parser.add_argument(
+        "--config-path", "--config_path", dest="config_path", type=str, default=None, help="Path to a YAML config file."
+    )
+    parser.add_argument(
+        "--base-model-path",
+        "--base_model_path",
+        dest="base_model_path",
+        type=str,
+        default=None,
+        help="Path or HF id of the base model.",
+    )
+    parser.add_argument(
+        "--adapter-path",
+        "--adapter_path",
+        dest="adapter_path",
+        type=str,
+        default=None,
+        help="Path to the PEFT adapter checkpoint.",
+    )
     parser.add_argument("--prompt", type=str, default=None, help="Single prompt or pipe-separated prompts.")
-    parser.add_argument("--prompts-file", "--prompts_file", dest="prompts_file", type=str, default=None, help="File with one prompt per line.")
-    parser.add_argument("--prompt-template", "--prompt_template", dest="prompt_template", type=str, default=None, help="Template used to format each prompt.")
-    parser.add_argument("--system-prompt", "--system_prompt", dest="system_prompt", type=str, default=None, help="Optional system message for chat prompts.")
-    parser.add_argument("--use-chat-template", "--use_chat_template", dest="use_chat_template", action="store_true", help="Format prompts with the tokenizer chat template.")
-    parser.add_argument("--max-new-tokens", "--max_new_tokens", dest="max_new_tokens", type=int, default=128, help="Maximum number of generated tokens.")
+    parser.add_argument(
+        "--prompts-file",
+        "--prompts_file",
+        dest="prompts_file",
+        type=str,
+        default=None,
+        help="File with one prompt per line.",
+    )
+    parser.add_argument(
+        "--prompt-template",
+        "--prompt_template",
+        dest="prompt_template",
+        type=str,
+        default=None,
+        help="Template used to format each prompt.",
+    )
+    parser.add_argument(
+        "--system-prompt",
+        "--system_prompt",
+        dest="system_prompt",
+        type=str,
+        default=None,
+        help="Optional system message for chat prompts.",
+    )
+    parser.add_argument(
+        "--use-chat-template",
+        "--use_chat_template",
+        dest="use_chat_template",
+        action="store_true",
+        help="Format prompts with the tokenizer chat template.",
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        "--max_new_tokens",
+        dest="max_new_tokens",
+        type=int,
+        default=128,
+        help="Maximum number of generated tokens.",
+    )
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature.")
-    parser.add_argument("--top-p", "--top_p", dest="top_p", type=float, default=1.0, help="Nucleus sampling probability.")
+    parser.add_argument(
+        "--top-p", "--top_p", dest="top_p", type=float, default=1.0, help="Nucleus sampling probability."
+    )
     parser.add_argument("--top-k", "--top_k", dest="top_k", type=int, default=50, help="Top-k sampling cutoff.")
-    parser.add_argument("--do-sample", "--do_sample", dest="do_sample", action="store_true", help="Enable stochastic sampling.")
+    parser.add_argument(
+        "--do-sample", "--do_sample", dest="do_sample", action="store_true", help="Enable stochastic sampling."
+    )
     parser.add_argument("--num-beams", "--num_beams", dest="num_beams", type=int, default=1, help="Beam search width.")
     parser.add_argument(
         "--repetition-penalty",
@@ -446,17 +506,59 @@ def _build_parser() -> argparse.ArgumentParser:
         "--stop_strings",
         dest="stop_strings",
         type=str,
-        default='####',
+        default="####",
         help="Pipe- or comma-separated stop strings, for example '####|</s>'.",
     )
-    parser.add_argument("--trust-remote-code", "--trust_remote_code", dest="trust_remote_code", action="store_true", help="Allow loading custom model code.")
+    parser.add_argument(
+        "--trust-remote-code",
+        "--trust_remote_code",
+        dest="trust_remote_code",
+        action="store_true",
+        help="Allow loading custom model code.",
+    )
     parser.add_argument("--device", type=str, default=None, help="Target device for inference.")
-    parser.add_argument("--device-map", "--device_map", dest="device_map", type=str, default=None, help="HF device map for model placement.")
-    parser.add_argument("--torch-dtype", "--torch_dtype", dest="torch_dtype", type=str, default=None, help="Model dtype such as fp16 or bf16.")
-    parser.add_argument("--auto-class-name", "--auto_class_name", dest="auto_class_name", type=str, default="AutoModelForCausalLM", help="HF auto model class name.")
-    parser.add_argument("--attn-implementation", "--attn_implementation", dest="attn_implementation", type=str, default="sdpa", help="Attention backend to use.")
-    parser.add_argument("--use-cache", "--use_cache", dest="use_cache", action="store_true", help="Enable KV cache during generation.")
-    parser.add_argument("--no-use-cache", "--no_use_cache", dest="use_cache", action="store_false", help="Disable KV cache during generation.")
+    parser.add_argument(
+        "--device-map",
+        "--device_map",
+        dest="device_map",
+        type=str,
+        default=None,
+        help="HF device map for model placement.",
+    )
+    parser.add_argument(
+        "--torch-dtype",
+        "--torch_dtype",
+        dest="torch_dtype",
+        type=str,
+        default=None,
+        help="Model dtype such as fp16 or bf16.",
+    )
+    parser.add_argument(
+        "--auto-class-name",
+        "--auto_class_name",
+        dest="auto_class_name",
+        type=str,
+        default="AutoModelForCausalLM",
+        help="HF auto model class name.",
+    )
+    parser.add_argument(
+        "--attn-implementation",
+        "--attn_implementation",
+        dest="attn_implementation",
+        type=str,
+        default="sdpa",
+        help="Attention backend to use.",
+    )
+    parser.add_argument(
+        "--use-cache", "--use_cache", dest="use_cache", action="store_true", help="Enable KV cache during generation."
+    )
+    parser.add_argument(
+        "--no-use-cache",
+        "--no_use_cache",
+        dest="use_cache",
+        action="store_false",
+        help="Disable KV cache during generation.",
+    )
     parser.set_defaults(use_cache=True)
     return parser
 
