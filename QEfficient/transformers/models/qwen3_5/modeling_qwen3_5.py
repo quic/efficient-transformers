@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from typing import List, Optional, Tuple, Type, Union
-
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -550,14 +550,26 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
-        A = attn
-        L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
-        Ak = A
+        # A = attn
+        # L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        # Ak = A
 
-        K = 64
-        for _ in range(K):
-            L = L + Ak
-            Ak = Ak @ A
+        # K = 16
+        # for _ in range(K):
+        #     L = L + Ak
+        #     Ak = Ak @ A
+
+        # attn = L
+
+        ## Factorized Approximation code ##
+        I = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        L = I.clone()
+        Apow = attn
+
+        K = 32
+        for _ in range(int(math.log2(K))):
+            L = L @ (I + Apow)
+            Apow = Apow @ Apow   # square for next power
 
         attn = L
 
