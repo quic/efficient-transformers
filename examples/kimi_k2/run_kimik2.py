@@ -14,7 +14,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 
 prompt = "Once upon a time,"
-num_kv_heads_repeat = 1  # When using KIMI_BLOCKING="kv" or "basic", make sure num_kv_heads_repeat is set to 1. Use only for KIMI_BLOCKING="h" and this should be equal to TS in that case.
+num_kv_heads_repeat = 1  # When using KIMI_BLOCKING="kv", make sure num_kv_heads_repeat is set to 1. Use only for KIMI_BLOCKING="h" when using MLA and this should be equal to TS in that case.
 num_hidden_layers = 2
 TS = 4
 enable_mla = True
@@ -23,9 +23,14 @@ qaic_config = None
 
 if os.environ.get("KIMI_BLOCKING", "0") == "kv":
     qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}
+    num_kv_heads_repeat = 1
 
 if os.environ.get("KIMI_BLOCKING", "0") == "h":
-    num_kv_heads_repeat = 4
+    if enable_mla:
+        num_kv_heads_repeat = TS
+    else:
+        num_kv_heads_repeat = 1  # head replication is not needed if MLA is not enabled
+    qaic_config = {"enable_blocking": True, "blocking_mode": "h", "head_block_size": TS}
 
 # model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
 model_path = (
@@ -50,7 +55,7 @@ padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 #    out = model(**inputs)
 #    predictions = torch.argmax(out.logits, dim=-1)
 
-qeff_model = QEFFAutoModelForCausalLM(model, num_kv_heads_repeat=num_kv_heads_repeat)
+qeff_model = QEFFAutoModelForCausalLM(model, num_kv_heads_repeat=num_kv_heads_repeat, qaic_config=qaic_config)
 qeff_model.mla(enable_mla=enable_mla, mla_absorption_config=mla_absorption_config)
 
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)

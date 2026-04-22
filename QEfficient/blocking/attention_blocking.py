@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import torch
 from transformers.cache_utils import Cache
@@ -17,6 +17,7 @@ from transformers.cache_utils import Cache
 from QEfficient.blocking.blocked_attention_forwards import (
     blocked_bhqkv_attention_forward,
     blocked_h_attention_forward,
+    blocked_h_mla_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
     blocked_kv_mla_attention_forward,
@@ -56,6 +57,11 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.QKV: blocked_qkv_attention_forward,
     BlockingMode.HQKV: blocked_hqkv_attention_forward,
     BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
+}
+
+_STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
+    BlockingMode.KV: blocked_kv_mla_attention_forward,
+    BlockingMode.H: blocked_h_mla_attention_forward,
 }
 
 
@@ -165,15 +171,23 @@ def generic_blocked_attention_interface(
 
 def generic_blocked_mla_attention_interface(
     module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
-    layer_idx: int,
-    compressed_kvs: torch.Tensor,
-    enable_absorption: bool,
+    mla_absorption: Dict[str, Any],
     blocking_config: AttentionBlockingConfig,
+    query: Optional[torch.Tensor] = None,
+    q_a_proj_out: Optional[torch.Tensor] = None,
+    fusedqk: Optional[torch.Tensor] = None,
+    q_nope: Optional[torch.Tensor] = None,
+    q_pe: Optional[torch.Tensor] = None,
+    kva: Optional[torch.Tensor] = None,
+    k_pe: Optional[torch.Tensor] = None,
+    per_head_q_up: Optional[torch.Tensor] = None,
+    per_head_k_up: Optional[torch.Tensor] = None,
+    per_head_v_up: Optional[torch.Tensor] = None,
+    per_head_k_up_normal: Optional[torch.Tensor] = None,
+    layer_idx: Optional[int] = None,
+    compressed_kvs: Optional[torch.Tensor] = None,
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
@@ -186,17 +200,26 @@ def generic_blocked_mla_attention_interface(
     **kwargs,
 ):
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-    attn_output, attn_weights = blocked_kv_mla_attention_forward(
+    mla_blocking_strategy = _STRATEGIES_MLA.get(blocking_config.mode)
+    attn_output, attn_weights = mla_blocking_strategy(
         module=module,
         query=query,
-        key=key,
-        value=value,
+        q_a_proj_out=q_a_proj_out,
+        fusedqk=fusedqk,
+        q_nope=q_nope,
+        q_pe=q_pe,
+        kva=kva,
+        k_pe=k_pe,
+        per_head_q_up=per_head_q_up,
+        per_head_k_up=per_head_k_up,
+        per_head_v_up=per_head_v_up,
+        per_head_k_up_normal=per_head_k_up_normal,
         attention_mask=attention_mask,
         scaling=scaling,
         cache_kwargs=cache_kwargs,
         layer_idx=layer_idx,
         compressed_kvs=compressed_kvs,
-        enable_absorption=enable_absorption,
+        mla_absorption=mla_absorption,
         num_kv_blocks=blocking_config.num_kv_blocks,
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,

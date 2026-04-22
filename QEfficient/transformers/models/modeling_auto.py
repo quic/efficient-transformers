@@ -2871,7 +2871,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
-        if self.model.config.model_type in {"kimi_k2", "kimi_k25"}:
+        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
             self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
             if replicate_kv_transformed:
                 self.hash_params["config"] = model.config.to_diff_dict()
@@ -3093,7 +3093,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params["mla_absorption_config"] = mla_absorption_config
             setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
 
-        if self.model.config.model_type in {"kimi_k2", "kimi_k25"}:
+        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
             if prefill_only:
                 self.prefill(enable=True)
                 self.hash_params["prefill_only"] = True
@@ -3203,7 +3203,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        if self.model.config.model_type in {"kimi_k2", "kimi_k25"}:
+        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
             if enable_mla:
                 for lay in self.model.model.layers:
                     if lay is not None:

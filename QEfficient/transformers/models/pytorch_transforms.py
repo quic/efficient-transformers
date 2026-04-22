@@ -1043,8 +1043,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward_full_kv": QEffDeepseekV3Attention.forward_full_kv,
             "forward_full_kv_h_blocking": QEffDeepseekV3Attention.forward_full_kv_h_blocking,
             "fused_forward": QEffDeepseekV3Attention.fused_forward,
-            "fused_forward_blocked_kv": QEffDeepseekV3Attention.fused_forward_blocked_kv,
-            "fused_forward_basic": QEffDeepseekV3Attention.fused_forward_basic,
+            "fused_forward_kv_blocking": QEffDeepseekV3Attention.fused_forward_kv_blocking,
             "fused_forward_orig": QEffDeepseekV3Attention.fused_forward_orig,
             "fused_forward_h_blocking": QEffDeepseekV3Attention.fused_forward_h_blocking,
             "__qeff_init__": QEffDeepseekV3Attention.__qeff_init__,
@@ -1153,7 +1152,9 @@ class BlockingAttentionTransform:
             if type(module) in cls._skip_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
                 continue
-            if type(module) in supported_attention_classes or model.config.model_type == "kimi_k2":
+            if type(module) in supported_attention_classes or "DeepseekV3ForCausalLM" in (
+                getattr(model.config, "architectures", None) or []
+            ):
                 module.attn_blocking_config = attn_blocking_config
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:

@@ -21,7 +21,6 @@ from QEfficient.utils.constants import VTCM_SIZE_THRESHOLD
 
 FP16_BYTES = 2
 DEFAULT_NUM_HEADS = 64
-VTCM_SIZE_THRESHOLD = int(VTCM_SIZE_THRESHOLD)
 
 
 def matmul1_bytes(q_len: int, kv_block_size: int, num_heads: int = DEFAULT_NUM_HEADS) -> int:
@@ -101,7 +100,6 @@ def get_num_kv_blocks_for_mla(q_len, num_heads, ctx_len):
     kv = max_kv_block_size(q_len, budget_bytes, num_heads)
     b1 = matmul1_bytes(q_len, kv, num_heads)
     b2 = matmul2_bytes(q_len, kv, num_heads)
-
     assert b1 < budget_bytes, "matmul1 is not under the budget"
     assert b2 < budget_bytes, "matmul2 is not under the budget"
     kv_block_size_list = block_candidates_generator(ctx_len)

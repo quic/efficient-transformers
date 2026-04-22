@@ -201,7 +201,7 @@ def build_transformer_blocking_config(
         int(data_bytes),
         blocking_mode=blocking_mode,
     )
-    if model_config.model_type == "kimi_k2":
+    if "DeepseekV3ForCausalLM" in (getattr(model_config, "architectures", None) or []):
         attention_cfg["num_kv_blocks"] = get_num_kv_blocks_for_mla(seq_len, num_heads, ctx_len)
 
     resolved_mode = _normalize_attention_mode(blocking_mode or "hqkv")
