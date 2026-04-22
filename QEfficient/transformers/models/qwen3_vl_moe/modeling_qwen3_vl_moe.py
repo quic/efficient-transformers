@@ -1001,7 +1001,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     "resolution."
                 )
             else:
-                assert vision_size * f < user_vision_size, (
+                assert vision_size * f <= user_vision_size, (
                     f"Computed vision_size of {vision_size * f} tokens "
                     f"(vision_size={vision_size}, num_frames={f}) for image resolution "
                     f"(width={w}, height={h}) cannot exceed the provided "
