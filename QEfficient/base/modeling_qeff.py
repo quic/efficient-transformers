@@ -565,7 +565,8 @@ class QEFFBaseModel(ABC):
         if mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
-        elif mdp_num_partitions > 1:
+        elif mdp_num_partitions > 1 or "stages" in compiler_options:
+            mdp_num_partitions = compiler_options.pop("stages", mdp_num_partitions)
             # Disaggregated (pipeline-parallel) MDP: generate a fully-populated
             # nodeList per partition directly from the ONNX graph — no compiler
             # round-trip required.
