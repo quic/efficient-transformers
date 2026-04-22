@@ -14,6 +14,7 @@ Supports single or multiple pipeline configurations.
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List
 
@@ -112,7 +113,7 @@ class MultiConfigPipelineRunner:
             output_dir = config.get("output_dir", "./nightly_pipeline_outputs")
             num_export_workers = config.get("num_export_workers", 1)
             num_compile_workers = config.get("num_compile_workers", 1)
-            baseline_dir = config.get("baseline_dir", None)
+            baseline_dir = os.environ.get("NIGHTLY_DIR", Path("~/.cache/Nightly_Pipeline").expanduser())
 
             # Extract parameter dictionaries
             export_params = config.get("export_params", {})

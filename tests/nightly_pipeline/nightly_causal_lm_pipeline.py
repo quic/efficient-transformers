@@ -102,9 +102,13 @@ class NightlyPipeline:
         self.CAUSAL_LM_MODELS = causal_lm_models
         self.num_export_workers = num_export_workers
         self.num_compile_workers = num_compile_workers
-        self.baseline_dir = Path(baseline_dir)
-        self.baseline_dir.mkdir(parents=True, exist_ok=True)
-        self.baseline_file = self.baseline_dir / "baseline_inference_results.json"
+        if baseline_dir is not None:
+            self.baseline_dir = Path(baseline_dir)
+            self.baseline_dir.mkdir(parents=True, exist_ok=True)
+            self.baseline_file = self.baseline_dir / "baseline_inference_results.json"
+        else:
+            self.baseline_dir = None
+            self.baseline_file = None
         self.validator = ResultValidator(baseline_file=self.baseline_file)
 
         self._export_params = export_params or {}

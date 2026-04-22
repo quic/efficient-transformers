@@ -1,6 +1,6 @@
 {
     "causal_lm_models":[
-        "openai-community/gpt2",
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+        "google/codegemma-7b",
+        "google/gemma-2b"
     ]
 }
