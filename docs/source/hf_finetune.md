@@ -54,9 +54,9 @@ pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp
 
 # Install transformers with QAIC backend support
 # Note: Upstream changes to transformer library
-git clone https://github.com/quic-swatia/transformers.git
+git clone https://github.com/quic-akuruvil/transformers.git
 cd transformers
-git checkout version-4.55.0 && pip install -e .
+git checkout version-4.57.3 && pip install -e .
 
 # accelerate (example wheel path for Python 3.10)
 pip install /opt/qti-aic/integrations/accelerate/py310/accelerate-1.10.0-py3-none-any.whl
@@ -101,9 +101,9 @@ pip install --index-url https://download.pytorch.org/whl/cpu \
 "torchvision==0.24.1+cpu" \
 "torchaudio==2.9.1+cpu"
 pip install trl==0.22.0
-cd .. && git clone https://github.com/quic-swatia/transformers.git
+cd .. && git clone https://github.com/quic-akuruvil/transformers.git
 cd transformers
-git checkout version-4.55.0 && pip install -e .
+git checkout version-4.57.3 && pip install -e .
 pip install datasets==4.5.0
 cd .. && cd efficient-transformers
 QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py \
@@ -122,9 +122,9 @@ pip install -e .
 pip install torch==2.9.1 torchvision==0.24.1 \
 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 pip install trl==0.22.0
-cd .. && git clone https://github.com/quic-swatia/transformers.git
+cd .. && git clone https://github.com/quic-akuruvil/transformers.git
 cd transformers
-git checkout version-4.55.0 && pip install -e .
+git checkout version-4.57.3 && pip install -e .
 pip install datasets==4.5.0
 cd .. && cd efficient-transformers
 CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_experimental \
