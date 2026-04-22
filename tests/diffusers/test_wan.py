@@ -33,7 +33,9 @@ from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
 
 # Test Configuration for 48 x 64 resolution with 1 layer
 CONFIG_PATH = "tests/diffusers/wan_test_config.json"
+NON_UNIFIED_CONFIG_PATH = "tests/diffusers/wan_test_non_unified_config.json"
 INITIAL_TEST_CONFIG = load_json(CONFIG_PATH)
+NON_UNIFIED_TEST_CONFIG = load_json(NON_UNIFIED_CONFIG_PATH)
 TEST_SEED = 42
 
 
@@ -161,7 +163,10 @@ def wan_pipeline_call_with_mad_validation(
         device=device,
     )
 
-    transformer_dtype = pipeline.transformer.model.transformer_high.dtype
+    if pipeline.use_unified:
+        transformer_dtype = pipeline.transformer.model.transformer_high.dtype
+    else:
+        transformer_dtype = pipeline.transformer_high.model.dtype
     prompt_embeds = prompt_embeds.to(transformer_dtype)
     pytorch_prompt_embeds = pytorch_prompt_embeds.to(transformer_dtype)
     if negative_prompt_embeds is not None:
@@ -171,9 +176,10 @@ def wan_pipeline_call_with_mad_validation(
     # Step 5: Prepare timesteps
     pipeline.scheduler.set_timesteps(num_inference_steps, device=device)
     timesteps = pipeline.scheduler.timesteps
+    reference_scheduler = copy.deepcopy(pipeline.scheduler)
 
     # Step 6: Prepare latent variables
-    num_channels_latents = pipeline.transformer.model.config.in_channels
+    num_channels_latents = pipeline.model.transformer.config.in_channels
     latents = pipeline.model.prepare_latents(
         batch_size * num_videos_per_prompt,
         num_channels_latents,
@@ -187,20 +193,27 @@ def wan_pipeline_call_with_mad_validation(
     )
 
     mask = torch.ones(latents.shape, dtype=torch.float32, device=device)
+    latents_torch = latents.clone()
 
-    # Step 7: Setup transformer inference session
-    if pipeline.transformer.qpc_session is None:
-        pipeline.transformer.qpc_session = QAICInferenceSession(
-            str(pipeline.transformer.qpc_path), device_ids=pipeline.transformer.device_ids
-        )
-
-    output_buffer = {
-        "output": np.zeros(
-            (batch_size, pipeline.cl, constants.WAN_DIT_OUT_CHANNELS),
-            dtype=np.int32,
-        ),
-    }
-    pipeline.transformer.qpc_session.set_buffers(output_buffer)
+    # Step 7: Setup transformer inference session(s)
+    output_buffer = {"output": np.zeros((batch_size, pipeline.cl, constants.WAN_DIT_OUT_CHANNELS), dtype=np.int32)}
+    if pipeline.use_unified:
+        if pipeline.transformer.qpc_session is None:
+            pipeline.transformer.qpc_session = QAICInferenceSession(
+                str(pipeline.transformer.qpc_path), device_ids=pipeline.transformer.device_ids
+            )
+        pipeline.transformer.qpc_session.set_buffers(output_buffer)
+    else:
+        if pipeline.transformer_high.qpc_session is None:
+            pipeline.transformer_high.qpc_session = QAICInferenceSession(
+                str(pipeline.transformer_high.qpc_path), device_ids=pipeline.transformer_high.device_ids
+            )
+        if pipeline.transformer_low.qpc_session is None:
+            pipeline.transformer_low.qpc_session = QAICInferenceSession(
+                str(pipeline.transformer_low.qpc_path), device_ids=pipeline.transformer_low.device_ids
+            )
+        pipeline.transformer_high.qpc_session.set_buffers(output_buffer)
+        pipeline.transformer_low.qpc_session.set_buffers(output_buffer)
     transformer_perf = []
 
     # Step 8: Denoising loop with transformer MAD validation
@@ -221,16 +234,26 @@ def wan_pipeline_call_with_mad_validation(
             # Determine which transformer to use (high or low noise)
             if boundary_timestep is None or t >= boundary_timestep:
                 # High-noise stage
-                current_model = pipeline.transformer.model.transformer_high
                 pytorch_current_model = pytorch_pipeline.transformer
-                model_type = torch.ones(1, dtype=torch.int64)
-                model_name = "transformer_high"
+                if pipeline.use_unified:
+                    current_model = pipeline.transformer.model.transformer_high
+                    current_qpc_session = pipeline.transformer.qpc_session
+                    model_type = torch.ones(1, dtype=torch.int64)
+                else:
+                    current_model = pipeline.transformer_high.model
+                    current_qpc_session = pipeline.transformer_high.qpc_session
+                    model_type = None
             else:
                 # Low-noise stage
-                current_model = pipeline.transformer.model.transformer_low
                 pytorch_current_model = pytorch_pipeline.transformer_2
-                model_type = torch.ones(2, dtype=torch.int64)
-                model_name = "transformer_low"
+                if pipeline.use_unified:
+                    current_model = pipeline.transformer.model.transformer_low
+                    current_qpc_session = pipeline.transformer.qpc_session
+                    model_type = torch.ones(2, dtype=torch.int64)
+                else:
+                    current_model = pipeline.transformer_low.model
+                    current_qpc_session = pipeline.transformer_low.qpc_session
+                    model_type = None
 
             latent_model_input = latents.to(transformer_dtype)
             if pipeline.model.config.expand_timesteps:
@@ -266,14 +289,15 @@ def wan_pipeline_call_with_mad_validation(
                 "rotary_emb": rotary_emb.detach().numpy(),
                 "temb": temb.detach().numpy(),
                 "timestep_proj": timestep_proj.detach().numpy(),
-                "tsp": model_type.detach().numpy(),
             }
+            if model_type is not None:
+                inputs_aic["tsp"] = model_type.detach().numpy()
 
             # PyTorch reference inference (standard WAN transformer has different signature)
             noise_pred_torch = pytorch_current_model(
-                hidden_states=latent_model_input,
+                hidden_states=latents_torch.to(transformer_dtype),
                 timestep=timestep,
-                encoder_hidden_states=prompt_embeds,
+                encoder_hidden_states=pytorch_prompt_embeds,
                 attention_kwargs=attention_kwargs,
                 return_dict=False,
             )[0]
@@ -281,7 +305,7 @@ def wan_pipeline_call_with_mad_validation(
             # QAIC inference
             with current_model.cache_context("cond"):
                 start_transformer_step_time = time.time()
-                outputs = pipeline.transformer.qpc_session.run(inputs_aic)
+                outputs = current_qpc_session.run(inputs_aic)
                 end_transformer_step_time = time.time()
                 transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
 
@@ -292,23 +316,27 @@ def wan_pipeline_call_with_mad_validation(
                 hidden_states = hidden_states.permute(0, 7, 1, 4, 2, 5, 3, 6)
                 noise_pred = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
 
-            # Transformer MAD validation
-            print(f" Performing MAD validation for {model_name} at step {i}...")
-            mad_validator.validate_module_mad(
-                noise_pred_torch.detach().cpu().numpy(),
-                noise_pred.detach().cpu().numpy(),
-                model_name,
-                f"step {i} (t={t.item():.1f})",
-            )
-
             # Update latents using scheduler
             latents = pipeline.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+            latents_torch = reference_scheduler.step(noise_pred_torch, t, latents_torch, return_dict=False)[0]
 
             # Update progress bar
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
-    pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
+    print(" Performing MAD validation for transformer final latent output...")
+    mad_validator.validate_module_mad(
+        latents_torch.detach().cpu().numpy(),
+        latents.detach().cpu().numpy(),
+        "transformer",
+        f"final latents after {num_inference_steps} steps",
+    )
+
+    if pipeline.use_unified:
+        pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
+    else:
+        pipeline.transformer_high.qpc_session.deactivate()
+        pipeline.transformer_low.qpc_session.deactivate()
     # Step 9: Decode latents to video QAIC VAE decoder
     latents = latents.to(pipeline.vae_decoder.model.dtype)
     latents_mean = (
@@ -366,8 +394,7 @@ def wan_pipeline_call_with_mad_validation(
     )
 
 
-@pytest.fixture(scope="session")
-def wan_pipeline():
+def _build_wan_pipeline(use_unified: bool = True):
     """Build the WAN pipeline with random weights/ dummy config."""
     torch.manual_seed(TEST_SEED)
     np.random.seed(TEST_SEED)
@@ -420,29 +447,64 @@ def wan_pipeline():
     text_encoder.eval()
 
     pytorch_pipeline_copy = copy.deepcopy(pytorch_pipeline)
-    pipeline = QEffWanPipeline(pytorch_pipeline_copy)
+    pipeline = QEffWanPipeline(pytorch_pipeline_copy, use_unified=use_unified)
 
     return pipeline, pytorch_pipeline
+
+
+@pytest.fixture(scope="session")
+def wan_pipeline():
+    return _build_wan_pipeline(use_unified=True)
+
+
+@pytest.fixture(scope="session")
+def wan_pipeline_non_unified():
+    return _build_wan_pipeline(use_unified=False)
 
 
 @pytest.mark.diffusion_models
 @pytest.mark.on_qaic
 @pytest.mark.wan
 def test_wan_pipeline(wan_pipeline):
+    _run_wan_pipeline_test_case(
+        wan_pipeline,
+        INITIAL_TEST_CONFIG,
+        CONFIG_PATH,
+        "WAN PIPELINE TEST",
+    )
+
+
+@pytest.mark.diffusion_models
+@pytest.mark.on_qaic
+@pytest.mark.wan
+def test_wan_pipeline_non_unified(wan_pipeline_non_unified):
+    _run_wan_pipeline_test_case(
+        wan_pipeline_non_unified,
+        NON_UNIFIED_TEST_CONFIG,
+        NON_UNIFIED_CONFIG_PATH,
+        "WAN PIPELINE NON-UNIFIED TEST",
+    )
+
+
+def _run_wan_pipeline_test_case(
+    wan_pipeline_data,
+    config,
+    compile_config_path: str,
+    test_label: str,
+):
     """
-    Comprehensive WAN pipeline test that focuses on transformer validation:
+    Comprehensive WAN pipeline test case runner that focuses on transformer validation:
     - 45p - 48x64 resolution - 2 transformer layers total (1 high + 1 low)
     - MAD validation for transformer modules only
     - Functional video generation test
     - Export/compilation checks for transformer and VAE decoder
     - Returns QEffPipelineOutput with performance metrics
     """
-    pipeline, pytorch_pipeline = wan_pipeline
-    config = INITIAL_TEST_CONFIG
+    pipeline, pytorch_pipeline = wan_pipeline_data
 
     # Print test header
     DiffusersTestUtils.print_test_header(
-        f"WAN PIPELINE TEST - {config['model_setup']['height']}x{config['model_setup']['width']} Resolution, {config['model_setup']['num_frames']} Frames, 2 Layers Total",
+        f"{test_label} - {config['model_setup']['height']}x{config['model_setup']['width']} Resolution, {config['model_setup']['num_frames']} Frames, 2 Layers Total",
         config,
     )
 
@@ -471,7 +533,7 @@ def test_wan_pipeline(wan_pipeline):
             guidance_scale_2=guidance_scale_2,
             num_inference_steps=num_inference_steps,
             max_sequence_length=max_sequence_length,
-            custom_config_path=CONFIG_PATH,
+            custom_config_path=compile_config_path,
             generator=generator,
             mad_tolerances=config["mad_validation"]["tolerances"],
             use_onnx_subfunctions=config["pipeline_params"]["use_onnx_subfunctions"],
@@ -523,16 +585,20 @@ def test_wan_pipeline(wan_pipeline):
             print(result)
 
         if config["validation_checks"]["onnx_export"]:
-            # Check if transformer ONNX file exists
             print("\n ONNX Export Validation:")
-            if hasattr(pipeline.transformer, "onnx_path") and pipeline.transformer.onnx_path:
+            if pipeline.use_unified:
                 DiffusersTestUtils.check_file_exists(str(pipeline.transformer.onnx_path), "transformer ONNX")
+            else:
+                DiffusersTestUtils.check_file_exists(str(pipeline.transformer_high.onnx_path), "transformer_high ONNX")
+                DiffusersTestUtils.check_file_exists(str(pipeline.transformer_low.onnx_path), "transformer_low ONNX")
 
         if config["validation_checks"]["compilation"]:
-            # Check if transformer QPC file exists
             print("\n Compilation Validation:")
-            if hasattr(pipeline.transformer, "qpc_path") and pipeline.transformer.qpc_path:
+            if pipeline.use_unified:
                 DiffusersTestUtils.check_file_exists(str(pipeline.transformer.qpc_path), "transformer QPC")
+            else:
+                DiffusersTestUtils.check_file_exists(str(pipeline.transformer_high.qpc_path), "transformer_high QPC")
+                DiffusersTestUtils.check_file_exists(str(pipeline.transformer_low.qpc_path), "transformer_low QPC")
 
         # Print test summary
         print(f"\nTotal execution time: {execution_time:.4f}s")
