@@ -545,6 +545,93 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         self._compile(specializations=specializations, **compiler_options)
 
 
+class QEffWanTransformer(QEFFBaseModel):
+    """
+    Wrapper for a single WAN Transformer3D model with ONNX export and QAIC compilation.
+
+    This wrapper is used by the non-unified WAN pipeline mode where high-noise and low-noise
+    transformers are exported/compiled/executed as separate modules.
+    """
+
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform, NormalizationTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    def __init__(self, transformer, module_name: str = "transformer"):
+        super().__init__(transformer, module_name=module_name)
+        self.model = transformer
+        # Ensure high/low non-unified transformers get distinct export hashes/paths
+        # even when configs are identical.
+        self.hash_params["module_name"] = module_name
+
+    @property
+    def get_model_config(self) -> Dict:
+        return self.model.config.__dict__
+
+    def get_onnx_params(self):
+        batch_size = constants.WAN_ONNX_EXPORT_BATCH_SIZE
+        example_inputs = {
+            "hidden_states": torch.randn(
+                batch_size,
+                self.model.config.in_channels,
+                constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
+                constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_45P,
+                constants.WAN_ONNX_EXPORT_LATENT_WIDTH_45P,
+                dtype=torch.float32,
+            ),
+            "encoder_hidden_states": torch.randn(
+                batch_size, constants.WAN_ONNX_EXPORT_SEQ_LEN, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
+            ),
+            "rotary_emb": torch.randn(
+                2, constants.WAN_ONNX_EXPORT_CL_45P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32
+            ),
+            "temb": torch.randn(batch_size, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32),
+            "timestep_proj": torch.randn(
+                batch_size,
+                constants.WAN_PROJECTION_DIM,
+                constants.WAN_TEXT_EMBED_DIM,
+                dtype=torch.float32,
+            ),
+            "return_dict": False,
+        }
+
+        output_names = ["output"]
+        dynamic_axes = {
+            "hidden_states": {
+                0: "batch_size",
+                1: "num_channels",
+                2: "latent_frames",
+                3: "latent_height",
+                4: "latent_width",
+            },
+            "encoder_hidden_states": {0: "batch_size", 1: "sequence_length"},
+            "rotary_emb": {1: "cl"},
+            "temb": {0: "batch_size"},
+            "timestep_proj": {0: "batch_size"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def export(
+        self,
+        inputs: Dict,
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_dir: str = None,
+        use_onnx_subfunctions: bool = False,
+    ) -> str:
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
+
+    def compile(self, specializations, **compiler_options) -> None:
+        self._compile(specializations=specializations, **compiler_options)
+
+
 class QEffWanUnifiedTransformer(QEFFBaseModel):
     """
     Wrapper for WAN Unified Transformer with ONNX export and QAIC compilation capabilities.

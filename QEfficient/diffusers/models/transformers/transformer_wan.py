@@ -213,6 +213,12 @@ class QEffWanTransformer3DModel(WanTransformer3DModel):
         weights = scale_expansion_fn(self, weights)
         set_weights_and_activate_adapters(self, adapter_names, weights)
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return repeated block classes used for ONNX subfunction extraction.
+        """
+        return {WanTransformerBlock}
+
     def forward(
         self,
         hidden_states: torch.Tensor,

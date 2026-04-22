@@ -9,13 +9,16 @@ QEfficient WAN Pipeline Implementation
 
 This module provides an optimized implementation of the WAN pipeline
 for high-performance text-to-video generation on Qualcomm AI hardware.
-The pipeline supports WAN 2.2 architectures with unified transformer.
+The pipeline supports WAN 2.2 architectures in:
+1) unified mode (single transformer module with stage routing), and
+2) non-unified mode (separate high/low transformer modules).
 
 TODO: 1. Update umt5 to Qaic; present running on cpu
 """
 
 import os
 import time
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
@@ -24,7 +27,7 @@ from diffusers import WanPipeline
 from tqdm import tqdm
 
 from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper
-from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanUnifiedTransformer
+from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanTransformer, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
@@ -57,8 +60,10 @@ class QEffWanPipeline:
 
     Attributes:
         text_encoder: UMT5 text encoder for semantic text understanding (TODO: QEfficient optimization)
-        unified_wrapper (QEffWanUnifiedWrapper): Wrapper combining transformer stages
-        transformer (QEffWanUnifiedTransformer): Optimized unified transformer for denoising
+        unified_wrapper (QEffWanUnifiedWrapper): Wrapper combining transformer stages (unified mode)
+        transformer (QEffWanUnifiedTransformer): Optimized unified transformer for denoising (unified mode)
+        transformer_high (QEffWanTransformer): High-noise transformer module (non-unified mode)
+        transformer_low (QEffWanTransformer): Low-noise transformer module (non-unified mode)
         vae_decode: VAE decoder for latent-to-video conversion
         modules (Dict[str, Any]): Dictionary of pipeline modules for batch operations
         model (WanPipeline): Original HuggingFace WAN model reference
@@ -81,7 +86,7 @@ class QEffWanPipeline:
 
     _hf_auto_class = WanPipeline
 
-    def __init__(self, model, **kwargs):
+    def __init__(self, model, use_unified: bool = True, **kwargs):
         """
         Initialize the QEfficient WAN pipeline.
 
@@ -92,25 +97,50 @@ class QEffWanPipeline:
 
         Args:
             model: Pre-loaded WanPipeline model with transformer and transformer_2 components
+            use_unified (bool): If True, use a unified transformer module that internally
+                selects high/low stage by `tsp`. If False, keep high/low transformers as
+                separate compiled modules and dispatch explicitly at runtime.
             **kwargs: Additional keyword arguments including configuration parameters
         """
         # Store original model and configuration
         self.model = model
+        self.use_unified = use_unified
         self.kwargs = kwargs
         self.custom_config = None
 
         # Text encoder (TODO: Replace with QEfficient UMT5 optimization)
         self.text_encoder = model.text_encoder
 
-        # Create unified transformer wrapper combining dual-stage models(high, low noise DiTs)
-        self.unified_wrapper = QEffWanUnifiedWrapper(model.transformer, model.transformer_2)
-        self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper)
+        # Build transformer modules based on selected architecture mode.
+        if self.use_unified:
+            # Unified mode: one wrapper containing both stages.
+            self.unified_wrapper = QEffWanUnifiedWrapper(model.transformer, model.transformer_2)
+            self.transformer = QEffWanUnifiedTransformer(self.unified_wrapper)
+            self.modules = {"transformer": self.transformer}
+            self._denoise_impl = self._run_denoise_loop_unified
+        else:
+            # Non-unified mode: independent high/low modules.
+            self.unified_wrapper = None
+            self.transformer_high = QEffWanTransformer(model.transformer, module_name="transformer_high")
+            self.transformer_low = QEffWanTransformer(model.transformer_2, module_name="transformer_low")
+            self.modules = {
+                "transformer_high": self.transformer_high,
+                "transformer_low": self.transformer_low,
+            }
+            self._denoise_impl = self._run_denoise_loop_non_unified
+            # Keep a lightweight compatibility handle for existing scripts that access
+            # `pipeline.transformer.model.transformer_high/low` to attach LoRA adapters.
+            self.transformer = SimpleNamespace(
+                model=SimpleNamespace(
+                    transformer_high=self.transformer_high.model,
+                    transformer_low=self.transformer_low.model,
+                )
+            )
 
         # VAE decoder for latent-to-video conversion
         self.vae_decoder = QEffVAE(model.vae, "decoder")
-        # Store all modules in a dictionary for easy iteration during export/compile
         # TODO: add text encoder on QAIC
-        self.modules = {"transformer": self.transformer, "vae_decoder": self.vae_decoder}
+        self.modules["vae_decoder"] = self.vae_decoder
 
         # Copy tokenizers and scheduler from the original model
         self.tokenizer = model.tokenizer
@@ -123,7 +153,7 @@ class QEffWanPipeline:
 
         self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
         # Extract patch dimensions from transformer configuration
-        _, self.patch_height, self.patch_width = self.transformer.model.config.patch_size
+        _, self.patch_height, self.patch_width = model.transformer.config.patch_size
 
     @property
     def do_classifier_free_guidance(self):
@@ -139,6 +169,7 @@ class QEffWanPipeline:
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
+        use_unified: bool = True,
         **kwargs,
     ):
         """
@@ -152,6 +183,9 @@ class QEffWanPipeline:
             pretrained_model_name_or_path (str or os.PathLike): Either a HuggingFace model identifier
                 or a local path to a saved WAN model directory. Should contain transformer, transformer_2,
                 text_encoder, and VAE components.
+            use_unified (bool, optional): Selects WAN execution architecture.
+                - True: unified high/low transformer module
+                - False: separate high and low transformer modules
             **kwargs: Additional keyword arguments passed to WanPipeline.from_pretrained().
 
         Returns:
@@ -185,6 +219,7 @@ class QEffWanPipeline:
         )
         return cls(
             model=model,
+            use_unified=use_unified,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
@@ -246,15 +281,15 @@ class QEffWanPipeline:
             if module_obj.qpc_path is None:
                 module_obj.export(**export_params)
 
-    @staticmethod
-    def get_default_config_path():
+    def get_default_config_path(self):
         """
         Get the default configuration file path for WAN pipeline.
 
         Returns:
             str: Path to the default WAN configuration JSON file.
         """
-        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/wan_config.json")
+        config_name = "wan_config.json" if self.use_unified else "wan_non_unified_config.json"
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), f"configs/{config_name}")
 
     def compile(
         self,
@@ -311,13 +346,8 @@ class QEffWanPipeline:
         set_execute_params(self)
 
         # Ensure all modules are exported to ONNX before compilation
-        if any(
-            path is None
-            for path in [
-                self.transformer.onnx_path,
-                self.vae_decoder.onnx_path,
-            ]
-        ):
+        onnx_paths = [module.onnx_path for module in self.modules.values()]
+        if any(path is None for path in onnx_paths):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Configure pipeline dimensions and calculate compressed latent parameters
@@ -330,36 +360,353 @@ class QEffWanPipeline:
             self.patch_height,
             self.patch_width,
         )
-        # Prepare dynamic specialization updates based on video dimensions
-        specialization_updates = {
-            "transformer": [
-                # high noise
-                {
-                    "cl": cl,  # Compressed latent dimension
-                    "latent_height": latent_height,  # Latent space height
-                    "latent_width": latent_width,  # Latent space width
-                    "latent_frames": latent_frames,  # Latent frames
+        if self.use_unified:
+            # Unified mode: one transformer module with two model_type specializations.
+            specialization_updates = {
+                "transformer": [
+                    {
+                        "cl": cl,
+                        "latent_height": latent_height,
+                        "latent_width": latent_width,
+                        "latent_frames": latent_frames,
+                    },
+                    {
+                        "cl": cl,
+                        "latent_height": latent_height,
+                        "latent_width": latent_width,
+                        "latent_frames": latent_frames,
+                    },
+                ],
+                "vae_decoder": {
+                    "latent_frames": latent_frames,
+                    "latent_height": latent_height,
+                    "latent_width": latent_width,
                 },
-                # low noise
-                {
-                    "cl": cl,  # Compressed latent dimension
-                    "latent_height": latent_height,  # Latent space height
-                    "latent_width": latent_width,  # Latent space width
-                    "latent_frames": latent_frames,  # Latent frames
-                },
-            ],
-            "vae_decoder": {
-                "latent_frames": latent_frames,
+            }
+        else:
+            # Non-unified mode: independent high/low modules.
+            shared_transformer_spec = {
+                "cl": cl,
                 "latent_height": latent_height,
                 "latent_width": latent_width,
-            },
-        }
+                "latent_frames": latent_frames,
+            }
+            specialization_updates = {
+                "transformer_high": shared_transformer_spec.copy(),
+                "transformer_low": shared_transformer_spec.copy(),
+                "vae_decoder": {
+                    "latent_frames": latent_frames,
+                    "latent_height": latent_height,
+                    "latent_width": latent_width,
+                },
+            }
 
         # Use generic utility functions for compilation
         if parallel:
             compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
         else:
             compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
+
+    def _get_transformer_dtype(self) -> torch.dtype:
+        if self.use_unified:
+            return self.transformer.model.transformer_high.dtype
+        return self.transformer_high.model.dtype
+
+    def _setup_transformer_session(self, module_obj, batch_size: int, cl: int) -> None:
+        if module_obj.qpc_session is None:
+            module_obj.qpc_session = QAICInferenceSession(str(module_obj.qpc_path), device_ids=module_obj.device_ids)
+        output_buffer = {
+            "output": np.random.rand(
+                batch_size,
+                cl,
+                constants.WAN_DIT_OUT_CHANNELS,
+            ).astype(np.int32),
+        }
+        module_obj.qpc_session.set_buffers(output_buffer)
+
+    def _prepare_transformer_sessions(self, batch_size: int, cl: int) -> None:
+        if self.use_unified:
+            self._setup_transformer_session(self.transformer, batch_size, cl)
+        else:
+            self._setup_transformer_session(self.transformer_high, batch_size, cl)
+            self._setup_transformer_session(self.transformer_low, batch_size, cl)
+
+    @staticmethod
+    def _reshape_noise_prediction(
+        outputs: Dict[str, np.ndarray],
+        batch_size: int,
+        post_patch_num_frames: int,
+        post_patch_height: int,
+        post_patch_width: int,
+        p_t: int,
+        p_h: int,
+        p_w: int,
+    ) -> torch.Tensor:
+        hidden_states = torch.tensor(outputs["output"])
+        hidden_states = hidden_states.reshape(
+            batch_size, post_patch_num_frames, post_patch_height, post_patch_width, p_t, p_h, p_w, -1
+        )
+        hidden_states = hidden_states.permute(0, 7, 1, 4, 2, 5, 3, 6)
+        return hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
+
+    def _run_denoise_loop_unified(
+        self,
+        latents: torch.Tensor,
+        timesteps: torch.Tensor,
+        batch_size: int,
+        guidance_scale: float,
+        guidance_scale_2: float,
+        boundary_timestep: Optional[float],
+        transformer_dtype: torch.dtype,
+        prompt_embeds: torch.Tensor,
+        negative_prompt_embeds: Optional[torch.Tensor],
+        mask: torch.Tensor,
+        num_inference_steps: int,
+        num_warmup_steps: int,
+        callback_on_step_end: Optional[Callable],
+        callback_on_step_end_tensor_inputs: List[str],
+    ):
+        transformer_perf = []
+        with self.model.progress_bar(total=num_inference_steps) as progress_bar:
+            for i, t in enumerate(timesteps):
+                if self._interrupt:
+                    continue
+
+                self._current_timestep = t
+
+                if boundary_timestep is None or t >= boundary_timestep:
+                    current_model = self.transformer.model.transformer_high
+                    current_guidance_scale = guidance_scale
+                    model_type = torch.ones(1, dtype=torch.int64)
+                else:
+                    current_model = self.transformer.model.transformer_low
+                    current_guidance_scale = guidance_scale_2
+                    model_type = torch.ones(2, dtype=torch.int64)
+
+                latent_model_input = latents.to(transformer_dtype)
+                if self.model.config.expand_timesteps:
+                    temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
+                    timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
+                else:
+                    timestep = t.expand(latents.shape[0])
+
+                _, _, latent_frames, latent_height, latent_width = latents.shape
+                p_t, p_h, p_w = current_model.config.patch_size
+                post_patch_num_frames = latent_frames // p_t
+                post_patch_height = latent_height // p_h
+                post_patch_width = latent_width // p_w
+
+                rotary_emb = current_model.rope(latent_model_input)
+                rotary_emb = torch.cat(rotary_emb, dim=0)
+                timestep = timestep.flatten()
+
+                temb, timestep_proj, encoder_hidden_states, _ = current_model.condition_embedder(
+                    timestep, prompt_embeds, encoder_hidden_states_image=None, timestep_seq_len=None
+                )
+
+                if self.do_classifier_free_guidance:
+                    _, _, encoder_hidden_states_neg, _ = current_model.condition_embedder(
+                        timestep,
+                        negative_prompt_embeds,
+                        encoder_hidden_states_image=None,
+                        timestep_seq_len=None,
+                    )
+
+                timestep_proj = timestep_proj.unflatten(1, (6, -1))
+                inputs_aic = {
+                    "hidden_states": latents.detach().numpy(),
+                    "encoder_hidden_states": encoder_hidden_states.detach().numpy(),
+                    "rotary_emb": rotary_emb.detach().numpy(),
+                    "temb": temb.detach().numpy(),
+                    "timestep_proj": timestep_proj.detach().numpy(),
+                    "tsp": model_type.detach().numpy(),
+                }
+
+                if self.do_classifier_free_guidance:
+                    inputs_aic2 = {
+                        "hidden_states": latents.detach().numpy(),
+                        "encoder_hidden_states": encoder_hidden_states_neg.detach().numpy(),
+                        "rotary_emb": rotary_emb.detach().numpy(),
+                        "temb": temb.detach().numpy(),
+                        "timestep_proj": timestep_proj.detach().numpy(),
+                        "tsp": model_type.detach().numpy(),
+                    }
+
+                with current_model.cache_context("cond"):
+                    start_transformer_step_time = time.perf_counter()
+                    outputs = self.transformer.qpc_session.run(inputs_aic)
+                    end_transformer_step_time = time.perf_counter()
+                    transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                    noise_pred = self._reshape_noise_prediction(
+                        outputs,
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height,
+                        post_patch_width,
+                        p_t,
+                        p_h,
+                        p_w,
+                    )
+
+                if self.do_classifier_free_guidance:
+                    with current_model.cache_context("uncond"):
+                        start_transformer_step_time = time.perf_counter()
+                        outputs = self.transformer.qpc_session.run(inputs_aic2)
+                        end_transformer_step_time = time.perf_counter()
+                        transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                        noise_uncond = self._reshape_noise_prediction(
+                            outputs,
+                            batch_size,
+                            post_patch_num_frames,
+                            post_patch_height,
+                            post_patch_width,
+                            p_t,
+                            p_h,
+                            p_w,
+                        )
+                        noise_pred = noise_uncond + current_guidance_scale * (noise_pred - noise_uncond)
+
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+
+                if callback_on_step_end is not None:
+                    callback_kwargs = {k: locals()[k] for k in callback_on_step_end_tensor_inputs}
+                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                    progress_bar.update()
+
+        return latents, transformer_perf
+
+    def _run_denoise_loop_non_unified(
+        self,
+        latents: torch.Tensor,
+        timesteps: torch.Tensor,
+        batch_size: int,
+        guidance_scale: float,
+        guidance_scale_2: float,
+        boundary_timestep: Optional[float],
+        transformer_dtype: torch.dtype,
+        prompt_embeds: torch.Tensor,
+        negative_prompt_embeds: Optional[torch.Tensor],
+        mask: torch.Tensor,
+        num_inference_steps: int,
+        num_warmup_steps: int,
+        callback_on_step_end: Optional[Callable],
+        callback_on_step_end_tensor_inputs: List[str],
+    ):
+        transformer_perf = []
+        with self.model.progress_bar(total=num_inference_steps) as progress_bar:
+            for i, t in enumerate(timesteps):
+                if self._interrupt:
+                    continue
+
+                self._current_timestep = t
+
+                if boundary_timestep is None or t >= boundary_timestep:
+                    current_transformer_module = self.transformer_high
+                    current_guidance_scale = guidance_scale
+                else:
+                    current_transformer_module = self.transformer_low
+                    current_guidance_scale = guidance_scale_2
+                current_model = current_transformer_module.model
+
+                latent_model_input = latents.to(transformer_dtype)
+                if self.model.config.expand_timesteps:
+                    temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
+                    timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
+                else:
+                    timestep = t.expand(latents.shape[0])
+
+                _, _, latent_frames, latent_height, latent_width = latents.shape
+                p_t, p_h, p_w = current_model.config.patch_size
+                post_patch_num_frames = latent_frames // p_t
+                post_patch_height = latent_height // p_h
+                post_patch_width = latent_width // p_w
+
+                rotary_emb = current_model.rope(latent_model_input)
+                rotary_emb = torch.cat(rotary_emb, dim=0)
+                timestep = timestep.flatten()
+
+                temb, timestep_proj, encoder_hidden_states, _ = current_model.condition_embedder(
+                    timestep, prompt_embeds, encoder_hidden_states_image=None, timestep_seq_len=None
+                )
+
+                if self.do_classifier_free_guidance:
+                    _, _, encoder_hidden_states_neg, _ = current_model.condition_embedder(
+                        timestep,
+                        negative_prompt_embeds,
+                        encoder_hidden_states_image=None,
+                        timestep_seq_len=None,
+                    )
+
+                timestep_proj = timestep_proj.unflatten(1, (6, -1))
+                inputs_aic = {
+                    "hidden_states": latents.detach().numpy(),
+                    "encoder_hidden_states": encoder_hidden_states.detach().numpy(),
+                    "rotary_emb": rotary_emb.detach().numpy(),
+                    "temb": temb.detach().numpy(),
+                    "timestep_proj": timestep_proj.detach().numpy(),
+                }
+
+                if self.do_classifier_free_guidance:
+                    inputs_aic2 = {
+                        "hidden_states": latents.detach().numpy(),
+                        "encoder_hidden_states": encoder_hidden_states_neg.detach().numpy(),
+                        "rotary_emb": rotary_emb.detach().numpy(),
+                        "temb": temb.detach().numpy(),
+                        "timestep_proj": timestep_proj.detach().numpy(),
+                    }
+
+                with current_model.cache_context("cond"):
+                    start_transformer_step_time = time.perf_counter()
+                    outputs = current_transformer_module.qpc_session.run(inputs_aic)
+                    end_transformer_step_time = time.perf_counter()
+                    transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                    noise_pred = self._reshape_noise_prediction(
+                        outputs,
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height,
+                        post_patch_width,
+                        p_t,
+                        p_h,
+                        p_w,
+                    )
+
+                if self.do_classifier_free_guidance:
+                    with current_model.cache_context("uncond"):
+                        start_transformer_step_time = time.perf_counter()
+                        outputs = current_transformer_module.qpc_session.run(inputs_aic2)
+                        end_transformer_step_time = time.perf_counter()
+                        transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
+                        noise_uncond = self._reshape_noise_prediction(
+                            outputs,
+                            batch_size,
+                            post_patch_num_frames,
+                            post_patch_height,
+                            post_patch_width,
+                            p_t,
+                            p_h,
+                            p_w,
+                        )
+                        noise_pred = noise_uncond + current_guidance_scale * (noise_pred - noise_uncond)
+
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+
+                if callback_on_step_end is not None:
+                    callback_kwargs = {k: locals()[k] for k in callback_on_step_end_tensor_inputs}
+                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                    progress_bar.update()
+
+        return latents, transformer_perf
 
     def __call__(
         self,
@@ -519,7 +866,7 @@ class QEffWanPipeline:
         )
 
         # Convert embeddings to transformer dtype for compatibility
-        transformer_dtype = self.transformer.model.transformer_high.dtype
+        transformer_dtype = self._get_transformer_dtype()
         prompt_embeds = prompt_embeds.to(transformer_dtype)
         if negative_prompt_embeds is not None:
             negative_prompt_embeds = negative_prompt_embeds.to(transformer_dtype)
@@ -529,7 +876,7 @@ class QEffWanPipeline:
         timesteps = self.scheduler.timesteps
 
         # Step 5: Prepare initial latent variables for video generation
-        num_channels_latents = self.transformer.model.config.in_channels
+        num_channels_latents = self.model.transformer.config.in_channels
 
         latents = self.model.prepare_latents(
             batch_size * num_videos_per_prompt,
@@ -555,13 +902,7 @@ class QEffWanPipeline:
         else:
             boundary_timestep = None
 
-        # Step 7: Initialize QAIC inference session for transformer
-        if self.transformer.qpc_session is None:
-            self.transformer.qpc_session = QAICInferenceSession(
-                str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
-            )
-
-        # Calculate compressed latent dimension for transformer buffer allocation
+        # Step 7: Initialize transformer sessions and buffers
         cl, _, _, _ = calculate_latent_dimensions_with_frames(
             height,
             width,
@@ -571,168 +912,28 @@ class QEffWanPipeline:
             self.patch_height,
             self.patch_width,
         )
-        # Allocate output buffer for QAIC inference
-        output_buffer = {
-            "output": np.random.rand(
-                batch_size,
-                cl,  # Compressed latent dimension
-                constants.WAN_DIT_OUT_CHANNELS,
-            ).astype(np.int32),
-        }
-        self.transformer.qpc_session.set_buffers(output_buffer)
-        transformer_perf = []
-
-        # Step 8: Denoising loop with dual-stage processing
-        with self.model.progress_bar(total=num_inference_steps) as progress_bar:
-            for i, t in enumerate(timesteps):
-                if self._interrupt:
-                    continue
-
-                self._current_timestep = t
-
-                # Determine which model to use based on boundary timestep
-                if boundary_timestep is None or t >= boundary_timestep:
-                    # High-noise stage
-                    current_model = self.transformer.model.transformer_high
-                    current_guidance_scale = guidance_scale
-                    model_type = torch.ones(1, dtype=torch.int64)  # High-noise model indicator
-                else:
-                    # Low-noise stage
-                    current_model = self.transformer.model.transformer_low
-                    current_guidance_scale = guidance_scale_2
-                    model_type = torch.ones(2, dtype=torch.int64)  # Low-noise model indicator
-
-                # Prepare latent input with proper dtype
-                latent_model_input = latents.to(transformer_dtype)
-
-                # Handle timestep expansion for temporal consistency
-                if self.model.config.expand_timesteps:
-                    # Expand timesteps spatially for better temporal modeling
-                    temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
-                    timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
-                else:
-                    # Standard timestep broadcasting
-                    timestep = t.expand(latents.shape[0])
-
-                # Extract dimensions for patch processing
-                batch_size, num_channels, latent_frames, latent_height, latent_width = latents.shape
-                p_t, p_h, p_w = current_model.config.patch_size
-                post_patch_num_frames = latent_frames // p_t
-                post_patch_height = latent_height // p_h
-                post_patch_width = latent_width // p_w
-
-                # Generate rotary position embeddings
-                rotary_emb = current_model.rope(latent_model_input)
-                rotary_emb = torch.cat(rotary_emb, dim=0)
-                ts_seq_len = None
-                timestep = timestep.flatten()
-
-                # Generate conditioning embeddings (time + text)
-                temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = (
-                    current_model.condition_embedder(
-                        timestep, prompt_embeds, encoder_hidden_states_image=None, timestep_seq_len=ts_seq_len
-                    )
-                )
-
-                # Generate negative conditioning for classifier-free guidance
-                if self.do_classifier_free_guidance:
-                    temb, timestep_proj, encoder_hidden_states_neg, encoder_hidden_states_image = (
-                        current_model.condition_embedder(
-                            timestep,
-                            negative_prompt_embeds,
-                            encoder_hidden_states_image=None,
-                            timestep_seq_len=ts_seq_len,
-                        )
-                    )
-
-                # Reshape timestep projection for transformer input
-                timestep_proj = timestep_proj.unflatten(1, (6, -1))
-
-                # Prepare inputs for QAIC inference
-                inputs_aic = {
-                    "hidden_states": latents.detach().numpy(),
-                    "encoder_hidden_states": encoder_hidden_states.detach().numpy(),
-                    "rotary_emb": rotary_emb.detach().numpy(),
-                    "temb": temb.detach().numpy(),
-                    "timestep_proj": timestep_proj.detach().numpy(),
-                    "tsp": model_type.detach().numpy(),  # Transformer stage pointer
-                }
-
-                # Prepare negative inputs for classifier-free guidance
-                if self.do_classifier_free_guidance:
-                    inputs_aic2 = {
-                        "hidden_states": latents.detach().numpy(),
-                        "encoder_hidden_states": encoder_hidden_states_neg.detach().numpy(),
-                        "rotary_emb": rotary_emb.detach().numpy(),
-                        "temb": temb.detach().numpy(),
-                        "timestep_proj": timestep_proj.detach().numpy(),
-                    }
-
-                # Run conditional prediction with caching context
-                with current_model.cache_context("cond"):
-                    # QAIC inference for conditional prediction
-                    start_transformer_step_time = time.perf_counter()
-                    outputs = self.transformer.qpc_session.run(inputs_aic)
-                    end_transformer_step_time = time.perf_counter()
-                    transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-                    print(f"DIT {i} time {end_transformer_step_time - start_transformer_step_time:.2f} seconds")
-
-                    # Process transformer output
-                    hidden_states = torch.tensor(outputs["output"])
-
-                    # Reshape output from patches back to video format
-                    hidden_states = hidden_states.reshape(
-                        batch_size, post_patch_num_frames, post_patch_height, post_patch_width, p_t, p_h, p_w, -1
-                    )
-
-                    # Permute dimensions to reconstruct video tensor
-                    hidden_states = hidden_states.permute(0, 7, 1, 4, 2, 5, 3, 6)
-                    noise_pred = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
-
-                # Run unconditional prediction for classifier-free guidance
-                if self.do_classifier_free_guidance:  # Note: CFG is False for WAN Lightning
-                    with current_model.cache_context("uncond"):
-                        # QAIC inference for unconditional prediction
-                        start_transformer_step_time = time.perf_counter()
-                        outputs = self.transformer.qpc_session.run(inputs_aic2)
-                        end_transformer_step_time = time.perf_counter()
-                        transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-
-                        # Process unconditional output
-                        hidden_states = torch.tensor(outputs["output"])
-
-                        # Reshape unconditional output
-                        hidden_states = hidden_states.reshape(
-                            batch_size, post_patch_num_frames, post_patch_height, post_patch_width, p_t, p_h, p_w, -1
-                        )
-
-                        hidden_states = hidden_states.permute(0, 7, 1, 4, 2, 5, 3, 6)
-                        noise_uncond = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
-
-                        # Apply classifier-free guidance
-                        noise_pred = noise_uncond + current_guidance_scale * (noise_pred - noise_uncond)
-
-                # Update latents using scheduler (x_t -> x_t-1)
-                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
-
-                # Execute callback if provided
-                if callback_on_step_end is not None:
-                    callback_kwargs = {}
-                    for k in callback_on_step_end_tensor_inputs:
-                        callback_kwargs[k] = locals()[k]
-                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
-
-                    latents = callback_outputs.pop("latents", latents)
-                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
-
-                # Update progress bar
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                    progress_bar.update()
+        self._prepare_transformer_sessions(batch_size, cl)
+        latents, transformer_perf = self._denoise_impl(
+            latents=latents,
+            timesteps=timesteps,
+            batch_size=batch_size,
+            guidance_scale=guidance_scale,
+            guidance_scale_2=self._guidance_scale_2,
+            boundary_timestep=boundary_timestep,
+            transformer_dtype=transformer_dtype,
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            mask=mask,
+            num_inference_steps=num_inference_steps,
+            num_warmup_steps=num_warmup_steps,
+            callback_on_step_end=callback_on_step_end,
+            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
+        )
 
         self._current_timestep = None
 
         # Step 9: Decode latents to video
+        vae_decoder_perf = 0.0
         if not output_type == "latent":
             # Prepare latents for VAE decoding
             latents = latents.to(self.vae_decoder.model.dtype)
