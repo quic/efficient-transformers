@@ -1,6 +1,6 @@
 # Validation System Architecture
 
-## 📊 Validation Flow Diagram
+## Validation Flow Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
