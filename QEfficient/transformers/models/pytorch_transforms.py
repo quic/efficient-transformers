@@ -179,6 +179,7 @@ try:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2RMSNorm as Qwen2_5RMSNorm
 except ImportError:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLRMSNorm as Qwen2_5RMSNorm
+from transformers.models.bert.modeling_bert import BertModel
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
     Qwen3DecoderLayer,
@@ -218,6 +219,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
 )
+from transformers.models.roberta.modeling_roberta import RobertaModel
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -227,6 +229,7 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 from transformers.models.t5.modeling_t5 import (
     T5Attention,
     T5LayerNorm,
+    T5Stack,
 )
 from transformers.models.wav2vec2.modeling_wav2vec2 import (
     Wav2Vec2Encoder,
@@ -241,10 +244,16 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperModel,
     WhisperPositionalEmbedding,
 )
+from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaModel
 
 from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
+from QEfficient.transformers.models.bert.modeling_bert import (
+    QEffBertModel,
+    QEffRobertaModel,
+    QEffXLMRobertaModel,
+)
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QEffCodeGenBlock,
@@ -492,6 +501,7 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
 from QEfficient.transformers.models.t5.modeling_t5 import (
     QEffT5Attention,
     QEffT5LayerNorm,
+    QEffT5Stack,
 )
 from QEfficient.transformers.models.wav2vec2.modeling_wav2vec2 import (
     QEffWav2Vec2Encoder,
@@ -538,6 +548,11 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
+        # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
+        # which breaks ONNX tracing) with an ONNX-safe _prepare_4d_attention_mask version.
+        BertModel: QEffBertModel,
+        RobertaModel: QEffRobertaModel,
+        XLMRobertaModel: QEffXLMRobertaModel,
     }
 
 
@@ -962,6 +977,7 @@ class T5ModelTransform(ModuleMappingTransform):
     _module_mapping = {
         T5Attention: QEffT5Attention,
         T5LayerNorm: QEffT5LayerNorm,
+        T5Stack: QEffT5Stack,
     }
 
 

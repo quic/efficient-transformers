@@ -270,8 +270,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         if getattr(self.model.config, "is_decoder", False) or getattr(self.model.config, "is_encoder_decoder", False):
             self.model.base_model.config.use_cache = True
         else:
-            if hasattr(self.model.base_model.config, "use_cache"):
-                delattr(self.model.base_model.config, "use_cache")
+            object.__setattr__(self.model.base_model.config, "use_cache", None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
