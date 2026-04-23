@@ -228,6 +228,10 @@ from transformers.models.t5.modeling_t5 import (
     T5Attention,
     T5LayerNorm,
 )
+from transformers.models.wav2vec2.modeling_wav2vec2 import (
+    Wav2Vec2Encoder,
+    Wav2Vec2EncoderStableLayerNorm,
+)
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
     WhisperDecoder,
@@ -236,10 +240,6 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
-)
-from transformers.models.wav2vec2.modeling_wav2vec2 import (
-    Wav2Vec2Encoder,
-    Wav2Vec2EncoderStableLayerNorm,
 )
 
 from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
@@ -493,6 +493,10 @@ from QEfficient.transformers.models.t5.modeling_t5 import (
     QEffT5Attention,
     QEffT5LayerNorm,
 )
+from QEfficient.transformers.models.wav2vec2.modeling_wav2vec2 import (
+    QEffWav2Vec2Encoder,
+    QEffWav2Vec2EncoderStableLayerNorm,
+)
 from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperAttention,
     QEffWhisperDecoder,
@@ -501,10 +505,6 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperForConditionalGeneration,
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
-)
-from QEfficient.transformers.models.wav2vec2.modeling_wav2vec2 import (
-    QEffWav2Vec2Encoder,
-    QEffWav2Vec2EncoderStableLayerNorm,
 )
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward

@@ -43,13 +43,26 @@ class QEffGemma2RotaryEmbedding(Gemma2RotaryEmbedding):
     """
     Copied from Gemma2RotaryEmbedding: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma2/modeling_gemma2.py
     The only differences are:
-    - No override needed: the upstream v5.5 Gemma2RotaryEmbedding.forward already computes
-      cos/sin dynamically via inv_freq @ position_ids, returning [batch, seq_len, head_dim].
-      inv_freq is a static buffer registered in __init__, making it ONNX-traceable as-is.
+    - Add static sin/cos computations.
     """
 
     def __init__(self, config: Gemma2Config, device=None):
         super().__init__(config=config)
+
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
+
+        freqs = torch.outer(t, self.inv_freq)
+
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin):
@@ -108,13 +121,14 @@ class QEffGemma2Attention(Gemma2Attention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]],
-        attention_mask: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -188,7 +202,8 @@ class QEffGemma2DecoderLayer(Gemma2DecoderLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -214,7 +229,6 @@ class QEffGemma2DecoderLayer(Gemma2DecoderLayer):
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
-            position_embeddings=position_embeddings,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_value,
@@ -223,6 +237,8 @@ class QEffGemma2DecoderLayer(Gemma2DecoderLayer):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
+            sin_cached=sin_cached,
+            cos_cached=cos_cached,
             **kwargs,
         )
         hidden_states = self.post_attention_layernorm(hidden_states)
@@ -255,6 +271,8 @@ class QEffGemma2Model(Gemma2Model):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffGemma2RotaryEmbedding(config=self.config)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
 
     def forward(
         self,
@@ -326,7 +344,6 @@ class QEffGemma2Model(Gemma2Model):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            position_embeddings = self.rotary_emb(hidden_states, position_ids)
             layer_outputs = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,

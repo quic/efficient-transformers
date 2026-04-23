@@ -61,9 +61,7 @@ class QEffWav2Vec2Encoder(Wav2Vec2Encoder):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            layer_outputs = layer(
-                hidden_states, attention_mask=attention_mask, output_attentions=output_attentions
-            )
+            layer_outputs = layer(hidden_states, attention_mask=attention_mask, output_attentions=output_attentions)
             hidden_states = layer_outputs[0]
 
             if output_attentions:
@@ -110,9 +108,7 @@ class QEffWav2Vec2EncoderStableLayerNorm(Wav2Vec2EncoderStableLayerNorm):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            layer_outputs = layer(
-                hidden_states, attention_mask=attention_mask, output_attentions=output_attentions
-            )
+            layer_outputs = layer(hidden_states, attention_mask=attention_mask, output_attentions=output_attentions)
             hidden_states = layer_outputs[0]
 
             if output_attentions:
