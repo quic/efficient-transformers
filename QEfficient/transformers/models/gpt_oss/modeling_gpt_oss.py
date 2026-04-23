@@ -67,12 +67,11 @@ def _ctx_scatter_gather_gptoss_expert_blocked(
     alpha: float,
     T: int,
 ) -> torch.Tensor:
-    """Packed-prefix expert helper for GPT-OSS NSP-blocked dispatch."""
     batch_size, hidden_size = T2Ei.shape[0], x.shape[1]
     scatter_idx = (torch.cumsum(T2Ei.long(), dim=1) - 1).to(torch.int32)
     invalid_mask = ~T2Ei
-    INT32_MAX = torch.tensor(torch.iinfo(torch.int32).max, dtype=torch.int32, device=x.device)
-    scatter_safe_idx = torch.where(invalid_mask, INT32_MAX, scatter_idx)
+    int32_max = torch.tensor(torch.iinfo(torch.int32).max, dtype=torch.int32, device=x.device)
+    scatter_safe_idx = torch.where(invalid_mask, int32_max, scatter_idx)
 
     x_prime = torch.zeros(batch_size, T, hidden_size, dtype=x.dtype, device=x.device)
     x_prime = CtxScatterFunc3D.apply(x_prime, scatter_safe_idx, x.unsqueeze(0).expand(batch_size, -1, -1))
@@ -91,7 +90,7 @@ def _ctx_scatter_gather_gptoss_expert_blocked(
     down_prime = (intermediate @ W_d) + b_d.unsqueeze(1)
     down_prime = torch.where(valid_output_rows.unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
 
-    gather_idx = torch.where(invalid_mask, INT32_MAX, scatter_idx)
+    gather_idx = torch.where(invalid_mask, int32_max, scatter_idx)
     delta_out = CtxGatherFunc3D.apply(down_prime, gather_idx)
     delta_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(delta_out), delta_out)
     return delta_out
@@ -101,36 +100,41 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
     def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
-        E = self.experts.num_experts
-        if E % num_nsp != 0:
-            raise ValueError(f"num_experts ({E}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})")
-        local_experts = E // num_nsp
-        I = self.experts.expert_dim  # noqa: E741
-        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
-        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
-        W_d = self.experts.down_proj.view(local_experts, num_nsp, I, H).transpose(0, 1).contiguous()
-        b_g = self.experts.gate_proj_bias.view(local_experts, num_nsp, I).transpose(0, 1).contiguous()
-        b_u = self.experts.up_proj_bias.view(local_experts, num_nsp, I).transpose(0, 1).contiguous()
+        num_experts = self.experts.num_experts
+        if num_experts % num_nsp != 0:
+            raise ValueError(f"num_experts ({num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})")
+
+        local_experts = num_experts // num_nsp
+        expert_dim = self.experts.expert_dim
+        routing_weights_by_expert = (
+            routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        )
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj.view(local_experts, num_nsp, expert_dim, H).transpose(0, 1).contiguous()
+        b_g = self.experts.gate_proj_bias.view(local_experts, num_nsp, expert_dim).transpose(0, 1).contiguous()
+        b_u = self.experts.up_proj_bias.view(local_experts, num_nsp, expert_dim).transpose(0, 1).contiguous()
         b_d = self.experts.down_proj_bias.view(local_experts, num_nsp, H).transpose(0, 1).contiguous()
+
         expert_out_partial = x.new_zeros((num_nsp, T, H))
-        for slot in range(local_experts):
-            routing_weight = rw[:, slot, :].unsqueeze(-1)
+        for local_slot in range(local_experts):
+            routing_weight = routing_weights_by_expert[:, local_slot, :].unsqueeze(-1)
             T2Ei = routing_weight.squeeze(-1) > 0
             delta = _ctx_scatter_gather_gptoss_expert_blocked(
                 x=x,
                 T2Ei=T2Ei,
-                W_g=W_g[:, slot],
-                W_u=W_u[:, slot],
-                W_d=W_d[:, slot],
-                b_g=b_g[:, slot],
-                b_u=b_u[:, slot],
-                b_d=b_d[:, slot],
+                W_g=W_g[:, local_slot],
+                W_u=W_u[:, local_slot],
+                W_d=W_d[:, local_slot],
+                b_g=b_g[:, local_slot],
+                b_u=b_u[:, local_slot],
+                b_d=b_d[:, local_slot],
                 limit=self.experts.limit,
                 alpha=self.experts.alpha,
                 T=T,
             )
             expert_out_partial = expert_out_partial + (delta * routing_weight)
+
         return expert_out_partial.sum(dim=0)
 
     def forward(self, hidden: torch.Tensor):
