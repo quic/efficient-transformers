@@ -14,7 +14,7 @@ ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
-def UnpackUInt8ToInt4Script(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
+def CastToInt4Script(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
     """
     Unpack packed uint8 weights into uint4 values and cast output to INT4.
     Supports N-D input: all leading dimensions are preserved; only the last
@@ -66,14 +66,14 @@ def UnpackUInt8ToInt4Script(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8
     return ops.Cast(reshaped, to=int(TensorProto.INT4))
 
 
-class UnpackUInt8ToInt4(torch.autograd.Function):
+class CastToInt4(torch.autograd.Function):
     """
     Custom op: unpacks packed uint8 → uint8 (values 0-15) in PyTorch.
     In ONNX the custom op subgraph includes a Cast → INT4 as its last step.
     Supports N-D input: all leading dimensions are preserved.
 
     PyTorch forward  : packed uint8 (..., in//2) → uint8 (..., in), values [0, 15]
-    ONNX symbolic    : emits UnpackUInt8ToInt4Script node (com.qti.aisw.onnx)
+    ONNX symbolic    : emits CastToInt4Script node (com.qti.aisw.onnx)
                        The subgraph ends with Cast → INT4.
     """
 
@@ -95,7 +95,7 @@ class UnpackUInt8ToInt4(torch.autograd.Function):
 
     @staticmethod
     def symbolic(g: torch.Graph, weight_packed: torch.Value) -> torch.Value:
-        output = g.onnxscript_op(UnpackUInt8ToInt4Script, weight_packed)
+        output = g.onnxscript_op(CastToInt4Script, weight_packed)
         return output
 
 
@@ -142,6 +142,7 @@ class DequantizeLinearFunc(torch.autograd.Function):
             "DequantizeLinear",
             weight_unpacked,
             scale,
+            zeros,
             axis_i=2,
             block_size_i=block_size,
         )
