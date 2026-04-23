@@ -13,6 +13,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
+# parameters to be configured
+
 prompt = "Once upon a time,"
 num_kv_heads_repeat = 1  # When using KIMI_BLOCKING="kv", make sure num_kv_heads_repeat is set to 1. Use only for KIMI_BLOCKING="h" when using MLA and this should be equal to TS in that case.
 num_hidden_layers = 2

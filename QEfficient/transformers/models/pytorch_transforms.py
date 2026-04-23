@@ -249,7 +249,7 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
 from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
     QEffDisentangledSelfAttention,
 )
-from QEfficient.transformers.models.deepseek_v3.modeling_deepseek_qeff import (
+from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3Attention,
     QEffDeepseekV3CustomRMSNormAIC,
     QEffDeepseekV3DecoderLayer,
