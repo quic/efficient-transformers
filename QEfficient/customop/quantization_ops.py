@@ -14,15 +14,15 @@ ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
-def CastToInt4Script(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
+def CastToUInt4(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
     """
-    Unpack packed uint8 weights into uint4 values and cast output to INT4.
+    Unpack packed uint8 weights into uint4 values and cast output to UINT4.
     Supports N-D input: all leading dimensions are preserved; only the last
     dimension (in_features // 2) is doubled to (in_features).
 
     Input:  (..., in_features // 2) UINT8
             Each byte holds two nibbles: byte = (w_y << 4) | (w_x & 0x0F)
-    Output: (..., in_features) INT4, values in [0, 15]
+    Output: (..., in_features) UINT4, values in [0, 15]
 
     Operations:
       w_x          = weight_packed % 16          (lower nibble)
@@ -32,7 +32,7 @@ def CastToInt4Script(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
       leading_dims = shape[:-1]
       new_shape    = [...leading_dims, last_dim * 2]
       reshaped     = reshape(stacked, new_shape)
-      output       = Cast(reshaped, to=INT4)
+      output       = Cast(reshaped, to=UINT4)
     """
     sixteen = ops.CastLike(ops.Constant(value_ints=[16]), weight_packed)
 
@@ -62,19 +62,19 @@ def CastToInt4Script(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
     new_shape = ops.Concat(leading_dims, last_dim_doubled, axis=0)
     reshaped = ops.Reshape(stacked, new_shape)
 
-    # Cast to INT4 — data_type value is version-dependent (21 in ONNX 1.18, 23 in newer)
-    return ops.Cast(reshaped, to=int(TensorProto.INT4))
+    # Cast to UINT4 — data_type value is version-dependent (21 in ONNX 1.18, 23 in newer)
+    return ops.Cast(reshaped, to=int(TensorProto.UINT4))
 
 
-class CastToInt4(torch.autograd.Function):
+class CastToUInt4Func(torch.autograd.Function):
     """
     Custom op: unpacks packed uint8 → uint8 (values 0-15) in PyTorch.
-    In ONNX the custom op subgraph includes a Cast → INT4 as its last step.
+    In ONNX the custom op subgraph includes a Cast → UINT4 as its last step.
     Supports N-D input: all leading dimensions are preserved.
 
     PyTorch forward  : packed uint8 (..., in//2) → uint8 (..., in), values [0, 15]
-    ONNX symbolic    : emits CastToInt4Script node (com.qti.aisw.onnx)
-                       The subgraph ends with Cast → INT4.
+    ONNX symbolic    : emits CastToUInt4 node (com.qti.aisw.onnx)
+                       The subgraph ends with Cast → UINT4.
     """
 
     @staticmethod
@@ -87,7 +87,7 @@ class CastToInt4(torch.autograd.Function):
             [w_x, w_y], dim=-1
         ).reshape(
             new_shape
-        )  # Can't add a cast operation to int4 here, as its not supported in pytorch; The ONNX export will handle the cast to INT4 in the symbolic method.
+        )  # Can't add a cast operation to uint4 here, as its not supported in pytorch; The ONNX export will handle the cast to IINT4 in the symbolic method.
 
     @staticmethod
     def setup_context(ctx, inputs, outputs):
@@ -95,7 +95,7 @@ class CastToInt4(torch.autograd.Function):
 
     @staticmethod
     def symbolic(g: torch.Graph, weight_packed: torch.Value) -> torch.Value:
-        output = g.onnxscript_op(CastToInt4Script, weight_packed)
+        output = g.onnxscript_op(CastToUInt4, weight_packed)
         return output
 
 
