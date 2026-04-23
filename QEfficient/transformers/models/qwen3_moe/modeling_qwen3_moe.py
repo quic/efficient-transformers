@@ -119,7 +119,23 @@ def eager_attention_forward(
 
 
 HMX_BLOCK = 32
-EXPERT_BLOCKING_NUM_NSP = 4
+EXPERT_BLOCKING_NUM_NSP = 2
+
+
+def _reduce_nsp_tree(values: torch.Tensor, num_lanes: int) -> torch.Tensor:
+    """Pairwise tree reduction across dim-0 (NSP lanes).
+    Keeps each add as a small [T, H] op that stays in VTCM,
+    instead of one large ReduceSum over [N, T, H] via DDR."""
+    current = values
+    width = num_lanes
+    while width > 1:
+        pair_count = width // 2
+        reduced = current[0 : 2 * pair_count : 2] + current[1 : 2 * pair_count : 2]
+        if width % 2 == 1:
+            reduced = torch.cat((reduced, current[width - 1 : width]), dim=0)
+        current = reduced
+        width = pair_count + (width % 2)
+    return current[0]
 
 
 def _scatter_gather_qwen3_expert_where_before_reorder(
@@ -315,6 +331,55 @@ def _ctx_scatter_gather_expert_forward_where_before_reorder_blocked(
     return delta_out
 
 
+def _gather_expert_forward_blocked(
+    x: torch.Tensor,  # [T, H]
+    T2Ei: torch.Tensor,  # [N, T] bool
+    W_g: torch.Tensor,  # [N, H, I]
+    W_u: torch.Tensor,  # [N, H, I]
+    W_d: torch.Tensor,  # [N, I, H]
+    act_fn,
+    T: int,
+) -> torch.Tensor:
+    """Gather-based input packing: no zero buffer needed.
+    Uses cumsum to build scatter_idx, inverts to gather_idx,
+    then gathers active tokens directly from x."""
+    batch_size, hidden_size = T2Ei.shape[0], x.shape[1]
+
+    scatter_idx = (torch.cumsum(T2Ei.long(), dim=1) - 1).to(torch.int32)
+    invalid_mask = ~T2Ei
+    INT32_MAX = torch.tensor(torch.iinfo(torch.int32).max, dtype=torch.int32, device=x.device)
+
+    # Invert scatter_idx -> gather_idx via scatter_
+    src_positions = torch.arange(T, dtype=torch.int64, device=x.device).unsqueeze(0).expand(batch_size, -1)
+    safe_dest = torch.where(T2Ei, scatter_idx.long(), torch.full_like(scatter_idx, T - 1, dtype=torch.int64))
+    safe_src = torch.where(T2Ei, src_positions, torch.zeros_like(src_positions))
+    gather_idx = torch.zeros(batch_size, T, dtype=torch.int64, device=x.device)
+    gather_idx.scatter_(1, safe_dest, safe_src)
+
+    # Gather active tokens into prefix (no zero buffer)
+    x_exp = x.unsqueeze(0).expand(batch_size, -1, -1)
+    gather_exp = gather_idx.unsqueeze(-1).expand(-1, -1, hidden_size)
+    x_prime = torch.gather(x_exp, 1, gather_exp)
+
+    # Expert MLP
+    gate_prime = x_prime @ W_g
+    up_prime = x_prime @ W_u
+    down_prime = (up_prime * act_fn(gate_prime)) @ W_d
+
+    # Mask invalid output rows
+    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    row_range = torch.arange(T, device=x.device, dtype=torch.int32).unsqueeze(0)
+    valid_output_rows = row_range < valid_rows
+    down_prime = torch.where(valid_output_rows.unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
+
+    # Unpack back to token order using CtxGather3D
+    scatter_safe_idx = torch.where(invalid_mask, INT32_MAX, scatter_idx)
+    delta_out = CtxGatherFunc3D.apply(down_prime, scatter_safe_idx)
+    delta_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(delta_out), delta_out)
+
+    return delta_out
+
+
 # def _ctx_scatter_gather_expert_forward_where_before_reorder(
 #     x: torch.Tensor,  # [T, H]
 #     T2Ei: torch.Tensor,  # [T] bool
@@ -472,6 +537,96 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             expert_out_partial = expert_out_partial + (delta * routing_weight)
 
         return expert_out_partial.sum(dim=0)
+
+    def _forward_expert_blocked_tree_reduce(
+        self,
+        x: torch.Tensor,  # [T, H]
+        routing_weights: torch.Tensor,  # [T, E]
+    ) -> torch.Tensor:
+        """Expert-blocked dispatch with packed prefix + tree reduction.
+        Uses EXPERT_BLOCKING_NUM_NSP lanes, each handling local_experts sequentially.
+        Tree reduction replaces flat sum(dim=0) to avoid aicbatchedreduceadd DDR."""
+        T, H = x.shape
+        num_nsp = EXPERT_BLOCKING_NUM_NSP
+        if self.num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
+            )
+
+        local_experts = self.num_experts // num_nsp
+
+        routing_weights_by_expert = (
+            routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        )
+        gate_proj_w = self.gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        up_proj_w = self.up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        down_proj_w = self.down_proj_w.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+
+        expert_out = x.new_zeros((T, H))
+        # x_prime_template = torch.zeros(num_nsp, T, H, dtype=x.dtype, device=x.device)
+
+        for local_slot in range(local_experts):
+            routing_weight = routing_weights_by_expert[:, local_slot, :].unsqueeze(-1)  # [N, T, 1]
+            T2Ei = routing_weight.squeeze(-1) > 0
+
+            delta = _ctx_scatter_gather_expert_forward_where_before_reorder_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=gate_proj_w[:, local_slot, :, :],
+                W_u=up_proj_w[:, local_slot, :, :],
+                W_d=down_proj_w[:, local_slot, :, :],
+                act_fn=self.experts[0].act_fn,
+                T=T,
+            )
+
+            weighted_delta = delta * routing_weight
+            expert_out = expert_out + _reduce_nsp_tree(weighted_delta, num_nsp)
+
+        return expert_out
+
+    def _forward_expert_blocked_gather_tree_reduce(
+        self,
+        x: torch.Tensor,  # [T, H]
+        routing_weights: torch.Tensor,  # [T, E]
+    ) -> torch.Tensor:
+        """Expert-blocked dispatch with gather-based input packing + tree reduction.
+        Eliminates the zero-buffer DDR clone that scatter-based packing requires."""
+        T, H = x.shape
+        num_nsp = EXPERT_BLOCKING_NUM_NSP
+        if self.num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
+            )
+
+        local_experts = self.num_experts // num_nsp
+
+        routing_weights_by_expert = (
+            routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        )
+        gate_proj_w = self.gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        up_proj_w = self.up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        down_proj_w = self.down_proj_w.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+
+        expert_out = x.new_zeros((T, H))
+
+        for local_slot in range(local_experts):
+            routing_weight = routing_weights_by_expert[:, local_slot, :].unsqueeze(-1)  # [N, T, 1]
+            T2Ei = routing_weight.squeeze(-1) > 0
+
+            delta = _gather_expert_forward_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=gate_proj_w[:, local_slot, :, :],
+                W_u=up_proj_w[:, local_slot, :, :],
+                W_d=down_proj_w[:, local_slot, :, :],
+                act_fn=self.experts[0].act_fn,
+                T=T,
+            )
+
+            weighted_delta = delta * routing_weight
+            expert_out = expert_out + _reduce_nsp_tree(weighted_delta, num_nsp)
+
+        return expert_out
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # orig_exp, orig_rout = self.orig_forward(hidden_states)
