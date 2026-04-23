@@ -9,30 +9,29 @@ This configuration file defines the setup for fine-tuning a Hugging Face causal 
 
 Model-related parameters for loading and fine-tuning.
 
-*   **model\_type**: `default = hf` → Type of model (Use `hf` to load the model from huggingface. If the user has some custom model then user should inherit from BaseModel class and register the class under a particular key and use the key here).
-*   **auto\_class\_name**: `default = AutoModelForCausalLM` → AutoClass used to load the model (Only if `model_type : hf`).
-*   **model\_name**: `default = HuggingFaceTB/SmolLM-135M` → Pretrained model to fine-tune (Only if `model_type : hf`).
-*   **load\_in\_4bit**: `default = false` → If `true`, loads model in 4-bit quantization for memory efficiency.
-*   **use_cache**: `default = false`: Whether to use the **past key/values cache** in the model for faster decoding during generation.  
-    *Enabling this can significantly speed up autoregressive decoding by reusing previous attention computations.*
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `model_type` | `hf` | Type of model. Use `hf` to load from Hugging Face. For a custom model, inherit from `BaseModel`, register it under a key, and use that key here. |
+| `auto_class_name` | `AutoModelForCausalLM` | Auto class used to load the model. |
+| `model_name` | `HuggingFaceTB/SmolLM-135M` | Pretrained model to fine-tune. |
+| `load_in_4bit` | `false` | If `true`, loads model in 4-bit quantization for memory efficiency. |
+| `use_cache` | `false` | Uses the past key/values cache for faster decoding during generation. |
+| `attn_implementation` | `"sdpa"` | Attention implementation. Common values: `sdpa`, `eager`. |
+| `device_map` | `None` | Specifies how to distribute the model across devices. |
+| `use_peft` | `true` | Enables PEFT for parameter-efficient fine-tuning. |
+| `peft_config` | - | Defines LoRA parameters when `use_peft` is true. |
 
-*   **attn_implementation**: `default = "sdpa"`: The attention implementation to use. Common options:
-    *   `"sdpa"` → Scaled Dot-Product Attention (optimized for speed and memory).
-    *   `"eager"` → Standard eager-mode attention (simpler, but slower).
+PEFT sub-parameters:
 
-*   **device_map**: `default= None`: Specifies how to distribute the model across devices.
-    *   `"auto"` → Automatically spreads layers across available GPUs/CPUs for memory efficiency.
-    *   `None` → No distribution; model stays on the default device.
-
-*   **use\_peft**:`default = true` → Enables PEFT for parameter-efficient fine-tuning.
-*   **peft\_config**: Defines LoRA parameters when `use_peft` is true`:
-    *   **lora_r**: `default = 8` Rank for LoRA adapters.
-    *   **lora_alpha**: `default = 16` Scaling factor for LoRA updates.
-    *   **lora_dropout**: `default = 0.1` Dropout applied to LoRA layers.
-    *   **target_modules**: `dafault = ["q_proj", "v_proj"]` Modules to apply LoRA (e.g., `q_proj`, `v_proj`,`o_proj`,`k_proj`,`up_proj`,`down_proj`,`gate_proj`).
-    *   **bias**: `default = None` Bias handling (`none`, `all`, `lora_only`).
-    *   **task_type**: `default = CAUSAL_LM` → Task type (e.g., `CAUSAL_LM`, `SEQ_2_SEQ_LM`).
-    *   **peft_type**: `default = LORA` → Fine-tuning method (e.g., `LORA`, `IA3`).
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `lora_r` | `8` | Rank for LoRA adapters. |
+| `lora_alpha` | `16` | Scaling factor for LoRA updates. |
+| `lora_dropout` | `0.1` | Dropout applied to LoRA layers. |
+| `target_modules` | `["q_proj", "v_proj"]` | Modules to apply LoRA to. |
+| `bias` | `None` | Bias handling (`none`, `all`, `lora_only`). |
+| `task_type` | `CAUSAL_LM` | Task type, for example `CAUSAL_LM` or `SEQ_2_SEQ_LM`. |
+| `peft_type` | `LORA` | Fine-tuning method, for example `LORA` or `IA3`. |
 
 ***
 
@@ -41,40 +40,40 @@ Model-related parameters for loading and fine-tuning.
 
 This section defines parameters for dataset handling during fine-tuning with Hugging Face models. It covers dataset type, splits, prompt formatting, and DataLoader settings.
 
-*   **tokenizer\_name**: `default = "HuggingFaceTB/SmolLM-135M"` → Matches model name.
-*   **dataset\_type**: `default = "seq_completion"` → Used for sequence continuation tasks, where the language model learns to generate the correct output (completion) step by step, given an input (prompt).
-*   **dataset\_name**: `default = "knkarthick/samsum"` → Dataset name for training.
-*   **json_file_path**: `default = None`→ Path to a custom JSON file containing the dataset.
-If provided, this takes precedence over dataset_name.
-*   **train\_split/test\_split**: `default = train/test` → Names of train and test splits to be used in case of dataset being loaded from Huggingface using dataset_name argument.
-*   **split\_ratio**: `default = 0.8` → For spliting the train/test dataset, only if train split is provided.
-*   **prompt\_func**: Path to python function to format prompts. Use when you need complex preprocessing or conditional logic to build the final prompt string from a dataset row (e.g alpaca dataset).
-*   **prompt\_template**: Template for formatting prompts from dataset rows.Prompt_template should contain the column names which are available in the dataset.
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `tokenizer_name` | `HuggingFaceTB/SmolLM-135M` | Matches model name. |
+| `dataset_type` | `seq_completion` | Used for sequence continuation tasks. |
+| `dataset_name` | `knkarthick/samsum` | Dataset name for training. |
+| `json_file_path` | `None` | Path to a custom JSON file. Takes precedence over `dataset_name`. |
+| `train_split/test_split` | `train/test` | Train and test split names when loading from Hugging Face. |
+| `split_ratio` | `0.8` | Used for splitting the train/test dataset when only train split is provided. |
+| `prompt_func` | - | Python function to format prompts from a dataset row. |
+| `prompt_template` | - | Template for formatting prompts from dataset rows. |
+| `completion_func` | - | Python function to format completions from a dataset row. |
+| `completion_template` | - | String pattern for the target completion. |
+| `dataset_subset` | `default` | Selects a specific dataset configuration when multiple variants exist. |
+| `max_seq_length` | `512` | Maximum tokenized sequence length. |
+| `input_columns` | `["text"]` | Column names containing input text. |
+| `target_column` | `None` | Column containing target labels. |
+| `train_batch_size` | `1` | Per-device batch size during training. |
+| `eval_batch_size` | `1` | Per-device batch size during evaluation. |
+| `collate_fn` | `dynamic_padding` | Collation function used to build batches. |
+| `dataset_disc_style` | `None` | Style remix category used during preprocessing. |
+| `group_by_length` | `true` | Groups samples of similar lengths for efficient batching. |
+| `length_column_name` | `input_ids` | Column name used to determine sequence length. |
+| `num_workers` | `4` | Number of subprocesses used for data loading. |
+| `dataloader_pin_memory` | `true` | Pins memory for faster GPU transfer. |
+| `dataloader_drop_last` | `false` | Drops the last incomplete batch. |
+| `dataset_num_samples` | `-1` | Number of samples to use. If `-1`, all samples are used. |
+| `dataloader_prefetch_factor` | `1` | Number of batches loaded in advance by the DataLoader. |
+| `dataloader_persistent_workers` | `true` | Keeps workers alive between epochs. |
+| `dataloader_num_workers` | `1` | Number of DataLoader workers. |
 
-     **Note** :If both prompt_template and prompt_func are provided, then prompt_template will take precedence over prompt_func.
-*  **completion\_func**: Path to python function to format completions. Use when you need complex preprocessing or conditional logic to build the final completion string from a dataset row.
-*   **completion\_template**: string pattern that tells the fine-tuning pipeline which part of the dataset should be treated as the target output (completion) for the model to learn.
+Notes:
 
-     **Note** :If both completion_template and completion_func are provided, then completion_template will take precedence over completion_func.
-*   **dataset_subset**: `default = "default"` → dataset_subset is used to pick a specific configuration of a dataset when the dataset provides multiple variants. The default is "default" but you can specify something like "en", "movies", "cleaned", etc., depending on the dataset.
-*   **max_seq_length**: `default = 512` → Maximum sequence length for tokenization. Longer inputs are truncated; shorter inputs may be padded depending on the collation.
-*   **input_columns**: `default = ["text"]` → Column names that contain input text to be tokenized.
-*   **target_column**: `default=None` → Column containing target labels (classification/regression). Set to `None` for generation-only workloads.
-*   **train_batch_size**: `default = 1` → Per-device batch size during training.
-*   **eval_batch_size**: `default = 1` → Per-device batch size during evaluation.
-*   **collate_fn**: `default = "dynamic_padding"` → Collation function used to build batches (e.g., dynamic padding to match the longest sequence in the batch).
-*   **dataset_disc_style**: `default = None` →  Selects the style remix category to apply to the dataset during preprocessing; when None, no style remixing is applied and the original dataset style is preserved.
-
-*   **group_by_length**: `default = true` → Whether to group samples of similar lengths together for efficient batching.
-*   **length_column_name**: `default = "input_ids"` → Column name used to determine sequence length for grouping (commonly the token IDs field).
-*   **num_workers**: `default = 4` → Number of subprocesses to use for data loading.
-*   **dataloader_pin_memory**: `default = true` → Whether to pin memory for faster GPU transfer.
-*   **dataloader_drop_last**: `default = false` → Whether to drop the last incomplete batch.
-*   **dataset_num_samples**: `default = -1` → Number of samples to use from the dataset. If -1, all samples are used.
-*   **dataloader_prefetch_factor**: `default = 1` → Number of batches loaded in advance by the DataLoader to overlap I/O with computations.
-
-*   **dataloader_persistent_workers**: `default = true` → Whether to keep workers alive between epochs.
-*   **dataloader_num_workers**: `default = 1` → Number of workers used by the **DataLoader** to load batches in parallel.
+- If both `prompt_template` and `prompt_func` are provided, `prompt_template` takes precedence.
+- If both `completion_template` and `completion_func` are provided, `completion_template` takes precedence.
 
 
 ***
@@ -165,59 +164,50 @@ dataset:
 
 This section defines core parameters for fine-tuning and evaluation.
 
-*   **type**: `default = sft` → Specifies training type; `sft` will use trl's SFTTrainer infrastructure to perform PEFT based SFT training. `base' will use transformers' Trainer infrastructure. If user has written and registered some custom trainer then the same can be called by mentioning the registration key name here.
-*   **output\_dir**: `default = "./training_results"` → Directory where model checkpoints and logs are saved.
-*   **overwrite\_output\_dir**: `default = false` → Whether to overwrite the output directory if it already exists.
-*   **do\_eval**: `default = true` → Enables evaluation during training.
-*   **eval\_strategy**: `default = epoch` → When to run evaluation (e.g., per epoch or steps. In case of `steps` eval_strategy, include `eval_steps` to specify number of steps at which evaluation to be performed).
-*   **gradient\_accumulation\_steps**: `default = 1` → Accumulate gradients over multiple steps to simulate larger batch size.
-*   **dtype**: `default = fp16` → Mixed precision for faster training and reduced memory usage. FP16 dtype is recommended while training on QAIC backend.
-*   **seed**: `default = 42` → Random seed for reproducibility.
-*   **device**: `default = "qaic"` → The device to use for training (e.g., `"cuda"`, `"cpu"`, `"qaic"`).
-*   **per\_device\_train\_batch\_size**: `default = 1` → Batch size per device during training.
-*   **per\_device\_eval\_batch\_size**: `default = 1` → Batch size per device during evaluation.
-*   **num\_train\_epochs**: `default = 1` → Total number of training epochs.
-*   **max\_steps**: `default = -1` → If > 0, sets total number of training steps (overrides `num_train_epochs`).
-*   **log\_level**: `default = "info"` → Logging verbosity (`"debug"`, `"info"`, `"warning"`, `"error"`).
-*   **log\_on\_each\_node**: `default = true` → Whether to log on each node in distributed setups.
-*   **logging\_strategy**: `default = "steps"` → Logging strategy (`"no"`, `"steps"`, `"epoch"`).
-*   **logging\_steps**: `default = 10` → Steps between logging events.
-*   **save\_strategy**: `default = "epoch"` → Checkpoint save strategy (`"no"`, `"steps"`, `"epoch"`).
-*   **save\_steps**: `default = 100` → Steps between checkpoints (if `save_strategy="steps"`).
-*   **save\_total\_limit**: `default = 5` → Maximum number of checkpoints to keep (older ones are deleted).
-*   **metric\_for\_best\_model**: `default = "eval_loss"` → Metric used to determine the best model.
-*   **include\_num\_input\_tokens\_seen**: `default = true` → Log the number of input tokens processed.
-*   **average\_tokens\_across\_devices**: `default = true` → Average token counts across devices in distributed training.
-*   **fsdp\_config**: `default = None` → FSDP configuration dictionary.
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `type` | `sft` | Training type. `sft` uses TRL's `SFTTrainer`. `base` uses `transformers.Trainer`. |
+| `output_dir` | `./training_results` | Directory where model checkpoints and logs are saved. |
+| `overwrite_output_dir` | `false` | Whether to overwrite the output directory if it already exists. |
+| `do_eval` | `true` | Enables evaluation during training. |
+| `eval_strategy` | `epoch` | When to run evaluation. |
+| `gradient_accumulation_steps` | `1` | Accumulates gradients over multiple steps. |
+| `dtype` | `fp16` | Mixed precision setting. |
+| `seed` | `42` | Random seed for reproducibility. |
+| `device` | `qaic` | Device to use for training. |
+| `per_device_train_batch_size` | `1` | Batch size per device during training. |
+| `per_device_eval_batch_size` | `1` | Batch size per device during evaluation. |
+| `num_train_epochs` | `1` | Total number of training epochs. |
+| `max_steps` | `-1` | If > 0, sets total number of training steps. |
+| `log_level` | `info` | Logging verbosity. |
+| `log_on_each_node` | `true` | Whether to log on each node in distributed setups. |
+| `logging_strategy` | `steps` | Logging strategy. |
+| `logging_steps` | `10` | Steps between logging events. |
+| `save_strategy` | `epoch` | Checkpoint save strategy. |
+| `save_steps` | `100` | Steps between checkpoints when `save_strategy="steps"`. |
+| `save_total_limit` | `5` | Maximum number of checkpoints to keep. |
+| `metric_for_best_model` | `eval_loss` | Metric used to determine the best model. |
+| `include_num_input_tokens_seen` | `true` | Logs the number of input tokens processed. |
+| `average_tokens_across_devices` | `true` | Averages token counts across devices in distributed training. |
+| `fsdp_config` | `None` | FSDP configuration dictionary. |
+| `deepspeed_config` | `None` | DeepSpeed configuration dictionary. |
+| `accelerator_config` | `None` | Accelerate configuration dictionary. |
+| `use_cpu` | `false` | Whether to explicitly run training on CPU. |
+| `restore_callback_states_from_checkpoint` | - | Whether to restore callback states from checkpoint. |
+| `gradient_checkpointing` | - | Saves memory by recomputing activations during backward pass. |
+| `gradient_checkpointing_kwargs.preserve_rng_state` | `true` | Preserves RNG state during checkpointing. |
+| `gradient_checkpointing_kwargs.use_reentrant` | `false` | Uses reentrant gradient checkpointing. |
+| `ddp_config.ddp_backend` | `qccl` | Backend for distributed communication. |
+| `ddp_config.ddp_find_unused_parameters` | `false` | Detects unused parameters during backward pass. |
+| `ddp_config.ddp_bucket_cap_mb` | `25` | Size of gradient buckets for communication. |
+| `ddp_config.ddp_broadcast_buffers` | `true` | Broadcasts model buffers across ranks. |
+| `ddp_config.ddp_timeout` | `1800` | Timeout in seconds for DDP operations. |
+| `torch_compile` | `false` | Wraps the model with `torch.compile()`. |
+| `report_to` | `tensorboard` | Logging frameworks to use. |
+| `resume_from_checkpoint` | - | Path to a checkpoint to resume training from. |
+| `disable_tqdm` | `false` | Disables the progress bar. |
 
-*   **deepspeed\_config**: `default = None` → DeepSpeed configuration dictionary.
-
-*   **accelerator\_config**: `default = None` → Accelerate configuration dictionary.
-
-*   **ddp\_config**: DDP configuration dictionary.
-
-*   **use\_cpu**: `default = false` → Whether to explicitly run training on CPU.
-*   **restore\_callback\_states\_from\_checkpoint**: → Whether to restore callback states from checkpoint.
-
-*   **gradient\_checkpointing**: Saves memory by recomputing activations during backward pass (slower but memory-efficient).
-*  **gradient_checkpointing_kwargs** :
-
-   *  **preserve_rng_state**: `default = true` → Controls whether to preserve the RNG (Random Number Generator) state during checkpointing. Preserving RNG state ensures reproducibility of stochastic operations (e.g., dropout) when recomputing activations during backward passes.
-   *  **use_reentrant**: `default = false`  → Determines whether to use reentrant gradient checkpointing. Reentrant checkpointing uses PyTorch's built-in mechanism for recomputation, which can reduce memory usage but may have limitations with certain custom autograd functions.
-*  **ddp\_config**: Arguments for Distributed Data Parallel (DDP) training.
-     *   **ddp\_backend**: `default = "qccl"` → Backend for distributed communication. Common options: `"nccl"` for GPU, `"gloo"` for CPU, `"qccl"` for QAIC.
-     *   **ddp\_find\_unused\_parameters**: `default = false` → Whether to detect unused parameters during backward pass.
-     *   **ddp\_bucket\_cap\_mb**: `default = 25` → Size (in MB) of gradient buckets for communication. Larger buckets reduce communication overhead but increase memory usage.
-     *   **ddp\_broadcast\_buffers**: `default = true` → Whether to broadcast model buffers (e.g., BatchNorm stats) across all ranks. Use `null` or `false` to skip for speed if safe.
-     *   **ddp\_timeout**: `default = 1800` → Timeout (in seconds) for DDP operations. Increase for large models or slow networks.
- 
-*   **torch\_compile**: `default = false` → Wraps your model with torch.compile() (PyTorch 2.0+) to fuse ops, reduce Python overhead, and generate optimized kernels—often yielding speed-ups without code changes.
-*   **report_to**: `default = tensorboard` → Logging frameworks to use (e.g., `["tensorboard", "wandb","trackio"]`).
-
-*   **Optional distributed configs**: FSDP, DeepSpeed, or DDP for multi-QAIC or large-scale training.
-*    **resume_from_checkpoint**: Path to a checkpoint to resume training from.
-*    **disable_tqdm**: `default = false` → set to `true` to disable progress bar (if running in Notebook).
-*   **output_dir**: `default = "./training_results"` → Directory where training outputs (checkpoints, logs) will be saved.
+Optional distributed configs: FSDP, DeepSpeed, or DDP for multi-QAIC or large-scale training.
 
 📁 **Output Directory Structure**
 
@@ -235,33 +225,35 @@ This section defines core parameters for fine-tuning and evaluation.
 
 ## 4. Optimizer & Scheduler
 
-*   **optimizer**: `adamw`  → Optimizer for weight-decoupled regularization; options: `adamw`, `adam`, `sgd`.
-    *   **lr**: Initial learning rate (e.g., `5e-5` for fine-tuning).
-    *   **weight\_decay**: Regularization strength (commonly `0.01`).
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `optimizer` | `adamw` | Optimizer for weight-decoupled regularization. |
+| `optimizer.lr` | - | Initial learning rate, for example `5e-5`. |
+| `optimizer.weight_decay` | `0.01` | Regularization strength. |
+| `scheduler` | `cosine` | Learning rate decay strategy. |
+| `scheduler.warmup_steps` | - | Number of warmup steps or a ratio of total steps. |
 
-*   **scheduler**: `cosine`  → Learning rate decay strategy; options: `linear`, `cosine`, `cosine_with_restarts`, `polynomial`, `constant`, `constant_with_warmup`, `inverse_sqrt`.
-    *   **warmup\_steps**: Number of steps or ratio (e.g., `100` steps or `0.05` for 5% of total steps). Warmup is a technique where the learning rate starts small and gradually increases to the target value during the initial phase of training to stabilize optimization. Stabilizes early training and improves convergence.
-
-**Huggingface document for the reference and visualization of LRs**:
+Hugging Face reference for learning-rate schedules:
 https://huggingface.co/docs/transformers/v5.0.0rc1/en/main_classes/optimizer_schedules#transformers.SchedulerType
  
 ***
 
 ## 5. Callbacks
 
-Callbacks allow custom actions during training, such as logging, early stopping, or hardware profiling. Once these callbacks are registered, the trainer class will call these callbacks based on the state of the training. If a callback has "on_epoch_end" method defined then this method will be executed at the end of each epoch.
+Callbacks allow custom actions during training, such as logging, early stopping, or hardware profiling. Once these callbacks are registered, the trainer class calls them based on training state. If a callback defines `on_epoch_end`, it runs at the end of each epoch.
 
-*   **early\_stopping**:  
-    Stops training if there is no improvement in a monitored metric for a defined patience period.
-    *   **early\_stopping\_patience**: `3` → The number of consecutive evaluation steps or epochs without significant improvement after which training will stop early.
-    *   **early\_stopping\_threshold**: `0.01` → The minimum change in the monitored metric required to qualify as an improvement.
-*   **enhanced_progressbar**: A more informative progress bar that shows additional metrics like loss, accuracy, etc. It also provides better visualization of training progress. 
-*   **default_flow**: Handles the default behavior for logging, saving and evaluation. 
-*   **Printer**: Display progress and print the logs (`Printer` is used if you deactivate tqdm through the TrainingArguments, otherwise it’s `enhanced_progressbar`).   
-*   **JSONLoggerCallback**: Logs training metrics to a JSON file. This is useful for tracking training progress and results. 
-*   **tensorboard**: Enables logging of metrics and losses to TensorBoard for visualization.
-*   **QAICProfilerCallback**: Profiles QAIC devices over a specified training step range to monitor performance and resource usage.
-*   **QAICOpByOpVerifierCallback**: Verifies QAIC operations step-by-step during a specified training range for correctness and debugging.
+| Callback | Description |
+| --- | --- |
+| `early_stopping` | Stops training if there is no improvement in a monitored metric for a defined patience period. |
+| `early_stopping_patience` | Number of consecutive evaluation steps or epochs without significant improvement before stopping. |
+| `early_stopping_threshold` | Minimum change in the monitored metric required to qualify as improvement. |
+| `enhanced_progressbar` | More informative progress bar with additional metrics. |
+| `default_flow` | Handles the default behavior for logging, saving, and evaluation. |
+| `Printer` | Displays progress and logs. Used when tqdm is disabled. |
+| `JSONLoggerCallback` | Logs training metrics to a JSON file. |
+| `tensorboard` | Enables logging of metrics and losses to TensorBoard. |
+| `QAICProfilerCallback` | Profiles QAIC devices over a specified training step range. |
+| `QAICOpByOpVerifierCallback` | Verifies QAIC operations step-by-step for correctness and debugging. |
 
 **References to some commonly used Hugging Face callbacks**:
 https://huggingface.co/docs/transformers/en/main_classes/callback
