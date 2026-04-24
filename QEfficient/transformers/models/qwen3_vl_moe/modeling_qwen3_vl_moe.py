@@ -643,13 +643,7 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         act = getattr(self.experts, "act_fn", F.silu)
 
         gate_out = self.gate(x)
-        if isinstance(gate_out, tuple):
-            router_logits, top_w, top_i = gate_out
-        else:
-            router_logits = gate_out
-            prob = F.softmax(router_logits, dim=-1, dtype=hidden_states.dtype)
-            top_k = getattr(self, "top_k", self.gate.top_k)
-            top_w, top_i = torch.topk(prob, top_k, dim=-1)
+        router_logits, top_w, top_i = gate_out
         top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(hidden_states.dtype)
         num_experts = getattr(self, "num_experts", self.gate.num_experts)
@@ -835,13 +829,7 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         x = hidden_states.view(T, H)
 
         gate_out = self.gate(x)
-        if isinstance(gate_out, tuple):
-            router_logits, top_w, top_i = gate_out
-        else:
-            router_logits = gate_out
-            prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
-            top_k = getattr(self, "top_k", self.gate.top_k)
-            top_w, top_i = torch.topk(prob, top_k, dim=-1)
+        router_logits, top_w, top_i = gate_out
         top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(x.dtype)
         idx = top_i.reshape(-1)
