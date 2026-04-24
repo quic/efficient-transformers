@@ -22,6 +22,7 @@ from diffusers import FluxPipeline
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
 from tqdm import tqdm
 
+from QEfficient.diffusers.first_block_cache.flux import enable_flux_first_block_cache
 from QEfficient.diffusers.pipelines.pipeline_module import (
     QEffFluxTransformerModel,
     QEffTextEncoder,
@@ -80,7 +81,14 @@ class QEffFluxPipeline:
 
     _hf_auto_class = FluxPipeline
 
-    def __init__(self, model, *args, **kwargs):
+    def __init__(
+        self,
+        model,
+        enable_first_block_cache: bool = False,
+        first_block_cache_downsample_factor: int = 4,
+        *args,
+        **kwargs,
+    ):
         """
         Initialize the QEfficient Flux pipeline.
 
@@ -91,14 +99,24 @@ class QEffFluxPipeline:
 
         Args:
             model: Pre-loaded FluxPipeline model
+            enable_first_block_cache (bool): Enable retained-state first-block-cache path.
+            first_block_cache_downsample_factor (int): Downsample factor for the first-block
+                residual cache key. Used only when first-block-cache is enabled.
             **kwargs: Additional arguments including height and width
         """
 
         # Wrap model components with QEfficient optimized versions
         self.model = model
+        self.enable_first_block_cache = enable_first_block_cache
+        self.first_block_cache_downsample_factor = first_block_cache_downsample_factor
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
         self.transformer = QEffFluxTransformerModel(model.transformer)
+        if self.enable_first_block_cache:
+            enable_flux_first_block_cache(
+                self.transformer,
+                downsample_factor=self.first_block_cache_downsample_factor,
+            )
         self.vae_decode = QEffVAE(model.vae, "decoder")
 
         # Store all modules in a dictionary for easy iteration during export/compile
@@ -130,6 +148,8 @@ class QEffFluxPipeline:
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
+        enable_first_block_cache: bool = False,
+        first_block_cache_downsample_factor: int = 4,
         **kwargs,
     ):
         """
@@ -142,6 +162,9 @@ class QEffFluxPipeline:
         Args:
             pretrained_model_name_or_path (str or os.PathLike): Either a HuggingFace model identifier
                 (e.g., "black-forest-labs/FLUX.1-schnell") or a local path to a saved model directory.
+            enable_first_block_cache (bool, optional): Enables retained-state first-block-cache path.
+            first_block_cache_downsample_factor (int, optional): Downsample factor for the first-block
+                residual cache key when cache is enabled.
             **kwargs: Additional keyword arguments passed to FluxPipeline.from_pretrained().
 
         Returns:
@@ -176,6 +199,8 @@ class QEffFluxPipeline:
 
         return cls(
             model=model,
+            enable_first_block_cache=enable_first_block_cache,
+            first_block_cache_downsample_factor=first_block_cache_downsample_factor,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
@@ -574,6 +599,7 @@ class QEffFluxPipeline:
         custom_config_path: Optional[str] = None,
         parallel_compile: bool = False,
         use_onnx_subfunctions: bool = False,
+        cache_threshold: Optional[float] = None,
     ):
         """
         Generate images from text prompts using the QEfficient-optimized Flux pipeline on QAIC hardware.
@@ -609,6 +635,8 @@ class QEffFluxPipeline:
             custom_config_path (str, optional): Path to custom JSON configuration file for compilation settings.
             parallel_compile (bool, optional): Whether to compile modules in parallel. Default: False.
             use_onnx_subfunctions (bool, optional): Whether to export transformer blocks as ONNX subfunctions. Default: False.
+            cache_threshold (float, optional): First-block-cache threshold.
+                Used only when `enable_first_block_cache=True`.
 
         Returns:
             QEffPipelineOutput: A dataclass containing:
@@ -664,6 +692,11 @@ class QEffFluxPipeline:
 
         self._guidance_scale = guidance_scale
         self._interrupt = False
+        if not self.enable_first_block_cache and cache_threshold is not None:
+            logger.warning(
+                "Ignoring cache_threshold because first-block-cache is disabled. "
+                "Set `enable_first_block_cache=True` to enable it."
+            )
 
         # Step 2: Determine batch size from inputs
         if prompt is not None and isinstance(prompt, str):
@@ -733,6 +766,16 @@ class QEffFluxPipeline:
             "output": np.random.rand(batch_size, cl, self.transformer.model.config.in_channels).astype(np.float32),
         }
         self.transformer.qpc_session.set_buffers(output_buffer)
+        if self.enable_first_block_cache:
+            self.transformer.qpc_session.skip_buffers(
+                [
+                    tensor_name
+                    for tensor_name in (
+                        self.transformer.qpc_session.input_names + self.transformer.qpc_session.output_names
+                    )
+                    if tensor_name.startswith("prev_") or tensor_name.endswith("_RetainedState")
+                ]
+            )
 
         transformer_perf = []
         self.scheduler.set_begin_index(0)
@@ -781,11 +824,15 @@ class QEffFluxPipeline:
                     "adaln_single_emb": adaln_single_emb.detach().numpy(),
                     "adaln_out": adaln_out.detach().numpy(),
                 }
+                if self.enable_first_block_cache:
+                    stage_cache_threshold = 0.0 if cache_threshold is None else cache_threshold
+                    inputs_aic["cache_threshold"] = np.array(stage_cache_threshold, dtype=np.float32)
 
                 # Run transformer inference and measure time
                 start_transformer_step_time = time.perf_counter()
                 outputs = self.transformer.qpc_session.run(inputs_aic)
                 end_transformer_step_time = time.perf_counter()
+                print("Time taken", end_transformer_step_time - start_transformer_step_time)
                 transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
 
                 noise_pred = torch.from_numpy(outputs["output"])
