@@ -9,7 +9,9 @@ WAN 2.2 is a text-to-video diffusion model that uses dual-stage processing for h
 ## Files
 
 - **`wan_lightning.py`** - Complete example with Lightning LoRA for fast video generation
+- **`wan_first_block_cache.py`** - Non-unified WAN with patch-based first-block-cache enabled
 - **`wan_config.json`** - Contains default compilation config for transformer, vae modules.
+- **`wan_non_unified_config.json`** - Non-unified module config (`transformer_high`, `transformer_low`, `vae_decoder`)
 
 ## Quick Start
 
