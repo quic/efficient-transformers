@@ -18,6 +18,7 @@ TODO: 1. Update umt5 to Qaic; present running on cpu
 
 import os
 import time
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -26,6 +27,10 @@ import torch
 from diffusers import WanPipeline
 from tqdm import tqdm
 
+from QEfficient.diffusers.first_block_cache.wan import (
+    enable_wan_first_block_cache,
+    run_wan_non_unified_first_block_cache_denoise,
+)
 from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper
 from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanTransformer, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
@@ -86,7 +91,14 @@ class QEffWanPipeline:
 
     _hf_auto_class = WanPipeline
 
-    def __init__(self, model, use_unified: bool = True, **kwargs):
+    def __init__(
+        self,
+        model,
+        use_unified: bool = True,
+        enable_first_block_cache: bool = False,
+        first_block_cache_downsample_factor: int = 4,
+        **kwargs,
+    ):
         """
         Initialize the QEfficient WAN pipeline.
 
@@ -100,13 +112,22 @@ class QEffWanPipeline:
             use_unified (bool): If True, use a unified transformer module that internally
                 selects high/low stage by `tsp`. If False, keep high/low transformers as
                 separate compiled modules and dispatch explicitly at runtime.
+            enable_first_block_cache (bool): Enable retained-state first-block-cache path.
+                Supported only for non-unified mode.
+            first_block_cache_downsample_factor (int): Downsample factor for the first-block
+                residual cache key. Used only when first-block-cache is enabled.
             **kwargs: Additional keyword arguments including configuration parameters
         """
         # Store original model and configuration
         self.model = model
         self.use_unified = use_unified
+        self.enable_first_block_cache = enable_first_block_cache
+        self.first_block_cache_downsample_factor = first_block_cache_downsample_factor
         self.kwargs = kwargs
         self.custom_config = None
+
+        if self.enable_first_block_cache and self.use_unified:
+            raise ValueError("First-block-cache is currently supported only for non-unified WAN (`use_unified=False`).")
 
         # Text encoder (TODO: Replace with QEfficient UMT5 optimization)
         self.text_encoder = model.text_encoder
@@ -123,11 +144,24 @@ class QEffWanPipeline:
             self.unified_wrapper = None
             self.transformer_high = QEffWanTransformer(model.transformer, module_name="transformer_high")
             self.transformer_low = QEffWanTransformer(model.transformer_2, module_name="transformer_low")
+            if self.enable_first_block_cache:
+                enable_wan_first_block_cache(
+                    self.transformer_high,
+                    downsample_factor=self.first_block_cache_downsample_factor,
+                )
+                enable_wan_first_block_cache(
+                    self.transformer_low,
+                    downsample_factor=self.first_block_cache_downsample_factor,
+                )
             self.modules = {
                 "transformer_high": self.transformer_high,
                 "transformer_low": self.transformer_low,
             }
-            self._denoise_impl = self._run_denoise_loop_non_unified
+            self._denoise_impl = (
+                partial(run_wan_non_unified_first_block_cache_denoise, self)
+                if self.enable_first_block_cache
+                else self._run_denoise_loop_non_unified
+            )
             # Keep a lightweight compatibility handle for existing scripts that access
             # `pipeline.transformer.model.transformer_high/low` to attach LoRA adapters.
             self.transformer = SimpleNamespace(
@@ -170,6 +204,8 @@ class QEffWanPipeline:
         cls,
         pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
         use_unified: bool = True,
+        enable_first_block_cache: bool = False,
+        first_block_cache_downsample_factor: int = 4,
         **kwargs,
     ):
         """
@@ -186,6 +222,10 @@ class QEffWanPipeline:
             use_unified (bool, optional): Selects WAN execution architecture.
                 - True: unified high/low transformer module
                 - False: separate high and low transformer modules
+            enable_first_block_cache (bool, optional): Enables retained-state first-block-cache
+                for non-unified mode.
+            first_block_cache_downsample_factor (int, optional): Downsample factor for first-block
+                cache key when cache is enabled.
             **kwargs: Additional keyword arguments passed to WanPipeline.from_pretrained().
 
         Returns:
@@ -220,6 +260,8 @@ class QEffWanPipeline:
         return cls(
             model=model,
             use_unified=use_unified,
+            enable_first_block_cache=enable_first_block_cache,
+            first_block_cache_downsample_factor=first_block_cache_downsample_factor,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
@@ -423,6 +465,14 @@ class QEffWanPipeline:
             ).astype(np.int32),
         }
         module_obj.qpc_session.set_buffers(output_buffer)
+        if getattr(module_obj, "_qeff_first_block_cache_enabled", False):
+            module_obj.qpc_session.skip_buffers(
+                [
+                    tensor_name
+                    for tensor_name in (module_obj.qpc_session.input_names + module_obj.qpc_session.output_names)
+                    if tensor_name.startswith("prev_") or tensor_name.endswith("_RetainedState")
+                ]
+            )
 
     def _prepare_transformer_sessions(self, batch_size: int, cl: int) -> None:
         if self.use_unified:
@@ -465,6 +515,8 @@ class QEffWanPipeline:
         num_warmup_steps: int,
         callback_on_step_end: Optional[Callable],
         callback_on_step_end_tensor_inputs: List[str],
+        cache_threshold_high: Optional[float] = None,
+        cache_threshold_low: Optional[float] = None,
     ):
         transformer_perf = []
         with self.model.progress_bar(total=num_inference_steps) as progress_bar:
@@ -596,6 +648,8 @@ class QEffWanPipeline:
         num_warmup_steps: int,
         callback_on_step_end: Optional[Callable],
         callback_on_step_end_tensor_inputs: List[str],
+        cache_threshold_high: Optional[float] = None,
+        cache_threshold_low: Optional[float] = None,
     ):
         transformer_perf = []
         with self.model.progress_bar(total=num_inference_steps) as progress_bar:
@@ -731,6 +785,8 @@ class QEffWanPipeline:
         max_sequence_length: int = 512,
         custom_config_path: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        cache_threshold_high: Optional[float] = None,
+        cache_threshold_low: Optional[float] = None,
         parallel_compile: bool = True,
     ):
         """
@@ -773,6 +829,10 @@ class QEffWanPipeline:
             custom_config_path (str, optional): Path to custom JSON configuration file for compilation.
             use_onnx_subfunctions (bool, optional): Whether to export transformer blocks as ONNX subfunctions.
                 Default: False.
+            cache_threshold_high (float, optional): First-block-cache threshold for high-noise stage.
+                Used only when `enable_first_block_cache=True`.
+            cache_threshold_low (float, optional): First-block-cache threshold for low-noise stage.
+                Used only when `enable_first_block_cache=True`.
             parallel_compile (bool, optional): Whether to compile modules in parallel. Default: True.
 
         Returns:
@@ -836,6 +896,12 @@ class QEffWanPipeline:
 
         if self.model.config.boundary_ratio is not None and guidance_scale_2 is None:
             guidance_scale_2 = guidance_scale
+
+        if not self.enable_first_block_cache and (cache_threshold_high is not None or cache_threshold_low is not None):
+            logger.warning(
+                "Ignoring cache thresholds because first-block-cache is disabled. "
+                "Set `enable_first_block_cache=True` and `use_unified=False` to enable it."
+            )
 
         # Initialize pipeline state
         self._guidance_scale = guidance_scale
@@ -928,6 +994,8 @@ class QEffWanPipeline:
             num_warmup_steps=num_warmup_steps,
             callback_on_step_end=callback_on_step_end,
             callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
+            cache_threshold_high=cache_threshold_high,
+            cache_threshold_low=cache_threshold_low,
         )
 
         self._current_timestep = None

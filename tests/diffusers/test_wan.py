@@ -64,6 +64,8 @@ def wan_pipeline_call_with_mad_validation(
     custom_config_path: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
     parallel_compile: bool = True,
+    cache_threshold_high: Optional[float] = None,
+    cache_threshold_low: Optional[float] = None,
     mad_tolerances: Dict[str, float] = None,
 ):
     """
@@ -214,6 +216,27 @@ def wan_pipeline_call_with_mad_validation(
             )
         pipeline.transformer_high.qpc_session.set_buffers(output_buffer)
         pipeline.transformer_low.qpc_session.set_buffers(output_buffer)
+        if getattr(pipeline, "enable_first_block_cache", False):
+            pipeline.transformer_high.qpc_session.skip_buffers(
+                [
+                    tensor_name
+                    for tensor_name in (
+                        pipeline.transformer_high.qpc_session.input_names
+                        + pipeline.transformer_high.qpc_session.output_names
+                    )
+                    if tensor_name.startswith("prev_") or tensor_name.endswith("_RetainedState")
+                ]
+            )
+            pipeline.transformer_low.qpc_session.skip_buffers(
+                [
+                    tensor_name
+                    for tensor_name in (
+                        pipeline.transformer_low.qpc_session.input_names
+                        + pipeline.transformer_low.qpc_session.output_names
+                    )
+                    if tensor_name.startswith("prev_") or tensor_name.endswith("_RetainedState")
+                ]
+            )
     transformer_perf = []
 
     # Step 8: Denoising loop with transformer MAD validation
@@ -223,6 +246,7 @@ def wan_pipeline_call_with_mad_validation(
         boundary_timestep = None
 
     num_warmup_steps = len(timesteps) - num_inference_steps * pipeline.scheduler.order
+    low_stage_counter = 0
 
     with pipeline.model.progress_bar(total=num_inference_steps) as progress_bar:
         for i, t in enumerate(timesteps):
@@ -254,6 +278,7 @@ def wan_pipeline_call_with_mad_validation(
                     current_model = pipeline.transformer_low.model
                     current_qpc_session = pipeline.transformer_low.qpc_session
                     model_type = None
+                    low_stage_counter += 1
 
             latent_model_input = latents.to(transformer_dtype)
             if pipeline.model.config.expand_timesteps:
@@ -292,6 +317,13 @@ def wan_pipeline_call_with_mad_validation(
             }
             if model_type is not None:
                 inputs_aic["tsp"] = model_type.detach().numpy()
+            if getattr(pipeline, "enable_first_block_cache", False):
+                if boundary_timestep is None or t >= boundary_timestep:
+                    stage_cache_threshold = 0.0 if cache_threshold_high is None else cache_threshold_high
+                else:
+                    low_threshold = 0.0 if cache_threshold_low is None else cache_threshold_low
+                    stage_cache_threshold = 0.0 if low_stage_counter < 3 else low_threshold
+                inputs_aic["cache_threshold"] = np.array(stage_cache_threshold, dtype=np.float32)
 
             # PyTorch reference inference (standard WAN transformer has different signature)
             noise_pred_torch = pytorch_current_model(
@@ -394,7 +426,7 @@ def wan_pipeline_call_with_mad_validation(
     )
 
 
-def _build_wan_pipeline(use_unified: bool = True):
+def _build_wan_pipeline(use_unified: bool = True, enable_first_block_cache: bool = False):
     """Build the WAN pipeline with random weights/ dummy config."""
     torch.manual_seed(TEST_SEED)
     np.random.seed(TEST_SEED)
@@ -447,7 +479,11 @@ def _build_wan_pipeline(use_unified: bool = True):
     text_encoder.eval()
 
     pytorch_pipeline_copy = copy.deepcopy(pytorch_pipeline)
-    pipeline = QEffWanPipeline(pytorch_pipeline_copy, use_unified=use_unified)
+    pipeline = QEffWanPipeline(
+        pytorch_pipeline_copy,
+        use_unified=use_unified,
+        enable_first_block_cache=enable_first_block_cache,
+    )
 
     return pipeline, pytorch_pipeline
 
@@ -460,6 +496,11 @@ def wan_pipeline():
 @pytest.fixture(scope="session")
 def wan_pipeline_non_unified():
     return _build_wan_pipeline(use_unified=False)
+
+
+@pytest.fixture(scope="session")
+def wan_pipeline_non_unified_first_block_cache():
+    return _build_wan_pipeline(use_unified=False, enable_first_block_cache=True)
 
 
 @pytest.mark.diffusion_models
@@ -486,11 +527,28 @@ def test_wan_pipeline_non_unified(wan_pipeline_non_unified):
     )
 
 
+@pytest.mark.diffusion_models
+@pytest.mark.on_qaic
+@pytest.mark.wan
+def test_wan_pipeline_non_unified_first_block_cache(wan_pipeline_non_unified_first_block_cache):
+    _run_wan_pipeline_test_case(
+        wan_pipeline_non_unified_first_block_cache,
+        NON_UNIFIED_TEST_CONFIG,
+        NON_UNIFIED_CONFIG_PATH,
+        "WAN PIPELINE NON-UNIFIED FIRST-BLOCK-CACHE TEST",
+        pipeline_call_overrides={
+            "cache_threshold_high": 0.0,
+            "cache_threshold_low": 0.0,
+        },
+    )
+
+
 def _run_wan_pipeline_test_case(
     wan_pipeline_data,
     config,
     compile_config_path: str,
     test_label: str,
+    pipeline_call_overrides: Optional[Dict[str, Any]] = None,
 ):
     """
     Comprehensive WAN pipeline test case runner that focuses on transformer validation:
@@ -521,6 +579,7 @@ def _run_wan_pipeline_test_case(
     start_time = time.time()
 
     try:
+        pipeline_call_overrides = pipeline_call_overrides or {}
         # Run the pipeline with integrated MAD validation
         result = wan_pipeline_call_with_mad_validation(
             pipeline,
@@ -539,6 +598,7 @@ def _run_wan_pipeline_test_case(
             use_onnx_subfunctions=config["pipeline_params"]["use_onnx_subfunctions"],
             parallel_compile=True,
             return_dict=True,
+            **pipeline_call_overrides,
         )
 
         execution_time = time.time() - start_time
