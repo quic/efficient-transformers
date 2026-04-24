@@ -125,7 +125,17 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
-| **FluxPipeline**  | FLUX.1     | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/stabilityai/stable-diffusion-2-1) |          |
+| **FluxPipeline**  | FLUX.1     | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-schnell) |          |
+
+Supported modes:
+
+- Baseline FLUX pipeline.
+- FLUX first-block-cache mode (`enable_first_block_cache=True`) with call-time `cache_threshold`.
+
+Reference examples:
+
+- [flux_1_schnell.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/flux/flux_1_schnell.py)
+- [flux_1_schnell_first_block_cache.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/flux/flux_1_schnell_first_block_cache.py)
 
 ### Video Generation Models
 #### Text to Video Generation Models
@@ -134,6 +144,19 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
 | **WanPipeline**  | Wan2.2     | [Wan-AI/Wan2.2-T2V-A14B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers) |         |
+
+Supported modes:
+
+- Unified WAN (`use_unified=True`): single transformer module.
+- Non-unified WAN (`use_unified=False`): separate high/low transformer modules.
+- Non-unified first-block-cache (`use_unified=False`, `enable_first_block_cache=True`) with
+  `cache_threshold_high` and `cache_threshold_low`.
+
+Reference examples:
+
+- [wan_lightning.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_lightning.py)
+- [wan_lightning_custom.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_lightning_custom.py)
+- [wan_first_block_cache.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_first_block_cache.py)
 
 #### Image to Video Generation Models
 **QEff Auto Class:** `QEffWanImageToVideoPipeline`
