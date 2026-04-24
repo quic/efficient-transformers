@@ -2,7 +2,15 @@ import json
 import os
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import datetime
+
+try:
+    from datetime import UTC
+except ImportError:
+    from datetime import timezone
+
+    UTC = timezone.ut
+
 from pathlib import Path
 
 import numpy as np

@@ -1,7 +1,6 @@
 {
   "causal_pipeline_configs": [
     {
-      "output_dir": "./nightly_pipeline_outputs",
       "export_params": {},
       "compile_params": {
         "prefill_seq_len": 32,
