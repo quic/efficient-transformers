@@ -29,12 +29,24 @@ from QEfficient.base import (
     QEFFCommonLoader,
 )
 from QEfficient.compile.compile_helper import compile
-from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
-from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
-from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
+
+try:
+    from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
+    from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
+    from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
+
+    _diffusers_available = True
+except (ImportError, RuntimeError):
+    _diffusers_available = False
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.peft import QEffAutoPeftModelForCausalLM
+
+try:
+    from QEfficient.peft import QEffAutoPeftModelForCausalLM
+
+    _peft_available = True
+except (ImportError, RuntimeError):
+    _peft_available = False
 from QEfficient.transformers.transform import transform
 from QEfficient.utils import custom_format_warning
 from QEfficient.utils.logging_utils import logger
@@ -53,15 +65,17 @@ __all__ = [
     "QEFFAutoModel",
     "QEFFAutoModelForCausalLM",
     "QEFFAutoModelForCTC",
-    "QEffAutoPeftModelForCausalLM",
     "QEFFAutoModelForImageTextToText",
     "QEFFAutoModelForSequenceClassification",
     "QEFFAutoModelForSpeechSeq2Seq",
     "QEFFCommonLoader",
-    "QEffFluxPipeline",
-    "QEffWanPipeline",
-    "QEffWanImageToVideoPipeline",
 ]
+
+if _peft_available:
+    __all__ += ["QEffAutoPeftModelForCausalLM"]
+
+if _diffusers_available:
+    __all__ += ["QEffFluxPipeline", "QEffWanPipeline", "QEffWanImageToVideoPipeline"]
 
 
 # Conditionally import QAIC-related modules if the SDK is installed

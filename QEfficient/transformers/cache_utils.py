@@ -10,7 +10,22 @@ from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache, HybridCache, HybridChunkedCache
+from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
+
+try:
+    from transformers.cache_utils import HybridCache, HybridChunkedCache
+
+    _hybrid_cache_available = True
+except ImportError:
+    # transformers >= 5.0 removed HybridCache/HybridChunkedCache — provide stubs so
+    # the module still loads; gpt_oss (the only user) will raise at runtime if invoked.
+    class HybridCache(Cache):  # type: ignore[misc]
+        pass
+
+    class HybridChunkedCache(Cache):  # type: ignore[misc]
+        pass
+
+    _hybrid_cache_available = False
 
 from QEfficient.customop import (
     CtxGatherFunc,

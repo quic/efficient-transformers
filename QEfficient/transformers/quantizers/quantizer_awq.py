@@ -7,7 +7,7 @@
 
 import torch
 from transformers.quantizers.quantizer_awq import AwqQuantizer
-from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
+from transformers.utils.quantization_config import AwqBackend, AwqConfig, AwqFormat
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.quantizer_utils import (
@@ -24,17 +24,15 @@ class QEffAwqConfig(AwqConfig):
         Safety checker that arguments are correct
         """
 
-        if self.backend not in [AwqBackendPackingMethod.AUTOAWQ]:
+        if self.backend not in [AwqBackend.LEGACY_AWQ]:
             raise ValueError(
-                f"Only quantization backend {AwqBackendPackingMethod.AUTOAWQ} is supported - not recognized backend {self.backend}"
+                f"Only quantization backend {AwqBackend.LEGACY_AWQ} is supported - not recognized backend {self.backend}"
             )
 
         if isinstance(self.version, str):
-            self.version = AWQLinearVersion.from_str(self.version)
-        if self.version not in [AWQLinearVersion.GEMM]:
-            raise ValueError(
-                f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}"
-            )
+            self.version = AwqFormat(self.version)
+        if self.version not in [AwqFormat.GEMM]:
+            raise ValueError(f"Only {AwqFormat.GEMM} version in supported - not recognized version {self.version}")
 
         do_fuse = getattr(self, "do_fuse", None)
         fuse_max_seq_len = getattr(self, "fuse_max_seq_len", None)

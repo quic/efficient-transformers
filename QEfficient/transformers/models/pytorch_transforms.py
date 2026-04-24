@@ -175,7 +175,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLVisionAttention,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2RMSNorm as Qwen2_5RMSNorm,
+    Qwen2_5_VLRMSNorm as Qwen2_5RMSNorm,
 )
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
@@ -216,6 +216,29 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
 )
+
+try:
+    from transformers.models.qwen3_5.modeling_qwen3_5 import (
+        Qwen3_5Attention,
+        Qwen3_5DecoderLayer,
+        Qwen3_5ForCausalLM,
+        Qwen3_5GatedDeltaNet,
+        Qwen3_5RMSNorm,
+        Qwen3_5TextModel,
+    )
+
+    from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
+        QEffQwen3_5Attention,
+        QEffQwen3_5DecoderLayer,
+        QEffQwen3_5ForCausalLM,
+        QEffQwen3_5GatedDeltaNet,
+        QEffQwen3_5TextModel,
+    )
+
+    _QWEN3_5_AVAILABLE = True
+except ImportError:
+    # qwen3_5 requires transformers >= 5.5.4
+    _QWEN3_5_AVAILABLE = False
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -723,6 +746,19 @@ class KVCacheTransform(ModuleMappingTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
+
+
+if _QWEN3_5_AVAILABLE:
+    CustomOpsTransform._module_mapping[Qwen3_5RMSNorm] = GemmaCustomRMSNormAIC
+    KVCacheTransform._module_mapping.update(
+        {
+            Qwen3_5ForCausalLM: QEffQwen3_5ForCausalLM,
+            Qwen3_5TextModel: QEffQwen3_5TextModel,
+            Qwen3_5DecoderLayer: QEffQwen3_5DecoderLayer,
+            Qwen3_5Attention: QEffQwen3_5Attention,
+            Qwen3_5GatedDeltaNet: QEffQwen3_5GatedDeltaNet,
+        }
+    )
 
 
 class PrefillOnlyTransform(ModuleMappingTransform):
