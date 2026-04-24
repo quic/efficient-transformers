@@ -25,7 +25,7 @@ dependencies = [
     "hf_transfer==0.1.9",
     "peft==0.18.1",
     "datasets==2.20.0",
-    "fsspec==2023.6.0",
+    "fsspec==2023.10.0",
     "sentencepiece==0.2.0",
     "onnx==1.18.0",
     "onnxruntime==1.22",
