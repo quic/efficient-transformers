@@ -76,7 +76,7 @@
       "img_size": 896,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
       "text_prompt": "Can you describe the image in detail.",
-      "num_layers": 6,
+      "num_layers": 2,
       "img_url_list": [
           "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
           "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
@@ -88,10 +88,15 @@
       "full_batch_size": 2,
       "additional_params": {
         "text_config": {
-        "_sliding_window_pattern": 2,
+        "sliding_window_pattern": 2,
+        "head_dim": 256,
         "hidden_size": 2560,
         "intermediate_size": 10240,
         "num_hidden_layers": 2,
+        "layer_types": [
+          "sliding_attention",
+          "full_attention"
+        ],
         "rope_scaling": {
           "factor": 8.0,
           "rope_type": "linear"
@@ -591,7 +596,7 @@
       "img_size": 896,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
       "text_prompt": "Can you describe the image in detail.",
-      "num_layers": 6,
+      "num_layers": 2,
       "additional_params": {
         
       }

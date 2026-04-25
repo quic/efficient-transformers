@@ -75,6 +75,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
         config = set_num_layers_vlm(config, n_layer=n_layer)
+        if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
+            config.text_config._sliding_window_pattern = 2
+            config.text_config.layer_types = ["sliding_attention", "full_attention"]
         if hasattr(config, "model_type") and config.model_type in [
             "qwen3_vl",
             "qwen3_vl_moe",
