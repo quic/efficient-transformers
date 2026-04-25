@@ -7,6 +7,8 @@
         "ctx_len": 128,
         "num_cores": 16,
         "num_devices": 4,
+        "mxfp6_matmul": true,
+        "mxint8_kv_cache": true,
         "aic_hw_version": "ai100"
       },
       "generation_params": {

@@ -40,9 +40,7 @@
     "mistralai/Codestral-22B-v0.1",
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
     "mistralai/Mixtral-8x7B-v0.1",
-    "mosaicml/mpt-7b",
     "microsoft/Phi-3-mini-4k-instruct",
-    "DeepSeek-R1-Distill-Qwen-32B",
     "Qwen/Qwen2-1.5B-Instruct"
     ]
 }
