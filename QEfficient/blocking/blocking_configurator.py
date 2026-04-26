@@ -23,6 +23,7 @@ from QEfficient.utils.constants import VTCM_SIZE_THRESHOLD
 FP16_BYTES = 2
 DEFAULT_NUM_HEADS = 64
 
+
 def _infer_head_dim(model_config: Any, num_heads: int) -> int:
     head_dim = get_attr_or_key(model_config, ("attention_head_dim", "head_dim", "head_dim_per_head"))
     if head_dim is not None:
@@ -166,8 +167,11 @@ def get_num_kv_blocks_for_mla(q_len, num_heads, ctx_len):
     kv = max_kv_block_size(q_len, budget_bytes, num_heads)
     b1 = matmul1_bytes(q_len, kv, num_heads)
     b2 = matmul2_bytes(q_len, kv, num_heads)
+
     assert b1 < budget_bytes, "matmul1 is not under the budget"
     assert b2 < budget_bytes, "matmul2 is not under the budget"
+
+    kv_block_size = ctx_len
     kv_block_size_list = block_candidates_generator(ctx_len)
     for i in range(len(kv_block_size_list) - 1):
         if kv_block_size_list[i] < kv < kv_block_size_list[i + 1]:
@@ -285,8 +289,10 @@ def build_transformer_blocking_config(
         int(data_bytes),
         blocking_mode=blocking_mode,
     )
+
     if "DeepseekV3ForCausalLM" in (getattr(model_config, "architectures", None) or []):
-        attention_cfg["num_kv_blocks"] = get_num_kv_blocks_for_mla(seq_len, num_heads, ctx_len)
+        if "kv" in blocking_mode:
+            attention_cfg["num_kv_blocks"] = get_num_kv_blocks_for_mla(seq_len, num_heads, ctx_len)
 
     resolved_mode = _normalize_attention_mode(blocking_mode or "hqkv")
     effective_mode = _resolve_effective_blocking_mode(attention_cfg, resolved_mode)

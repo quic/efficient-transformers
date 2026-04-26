@@ -53,7 +53,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PrefillOnlyChunkedTransform,
     PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyTransform,
-    ReplicateKVHeadTransform,
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyExternalModuleMapperTransform,
     RevertPrefillOnlyTransform,
@@ -2884,11 +2883,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
-        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
-            self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
-            if replicate_kv_transformed:
-                self.hash_params["config"] = model.config.to_diff_dict()
-
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
@@ -3220,7 +3214,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if enable_mla:
                 for lay in self.model.model.layers:
                     if lay is not None:
-                        num_heads = lay.self_attn.kv_a_proj_with_mqa.weight.shape[0] // 576
+                        num_heads = lay.self_attn.kv_a_proj_with_mqa.weight.shape[0] // (
+                            self.model.config.kv_lora_rank + self.model.config.qk_rope_head_dim
+                        )
 
                 example_inputs = {k: v for k, v in example_inputs.items() if "past" not in k}
                 dynamic_axes = {k: v for k, v in dynamic_axes.items() if "past" not in k}

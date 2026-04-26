@@ -118,16 +118,6 @@ class DeepseekV3RotaryEmbedding(nn.Module):
             self.sin_cached[:seq_len].to(dtype=x.dtype),
         )
 
-    # def forward(self, x, position_ids):
-    #     seq_len = torch.max(position_ids) + 1
-    #     if self.max_seq_len_cached is None or seq_len > self.max_seq_len_cached:
-    #         self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-    #     # Use position_ids to slice the precomputed caches
-    #     cos = self.cos_cached[position_ids]
-    #     sin = self.sin_cached[position_ids]
-    #     return cos.to(x.dtype), sin.to(x.dtype)
-
 
 class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
     def __init__(
@@ -426,7 +416,6 @@ class QEffDeepseekV3Attention(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
-        print("using orig forward")
 
         # ---- KV compression ----
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
@@ -529,7 +518,8 @@ class QEffDeepseekV3Attention(nn.Module):
         mla_absorption: Optional[Dict[str, bool]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        if os.environ.get("KIMI_BLOCKING", "0") == "h":
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        if getattr(blocking_config, "mode", None) == "h":
             return self.fused_forward_h_blocking(
                 hidden_states,
                 position_embeddings,
@@ -544,7 +534,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 mla_absorption,
                 **kwargs,
             )
-        elif os.environ.get("KIMI_BLOCKING", "0") == "kv":
+        elif getattr(blocking_config, "mode", None) == "kv":
             return self.fused_forward_kv_blocking(
                 hidden_states,
                 position_embeddings,
@@ -654,6 +644,7 @@ class QEffDeepseekV3Attention(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
+
         if self.q_lora_rank is None:
             q = self.q_proj(hidden_states)
         else:
@@ -720,7 +711,8 @@ class QEffDeepseekV3Attention(nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        if os.environ.get("KIMI_BLOCKING", "0") == "h":
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        if getattr(blocking_config, "mode", None) == "h":
             return self.forward_full_kv_h_blocking(
                 hidden_states,
                 position_embeddings,
@@ -836,7 +828,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             current_hidden_states = expert_output * expert_mask[:, expert_idx].unsqueeze(-1)
             final_hidden_states += current_hidden_states
 
-        print("\n\ninside prefill only moe\n")
         return final_hidden_states.type(hidden_states.dtype)
 
     def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):

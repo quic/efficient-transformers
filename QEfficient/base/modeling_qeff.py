@@ -30,6 +30,7 @@ from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
     constants,
@@ -451,11 +452,22 @@ class QEFFBaseModel(ABC):
 
         qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
 
-        if getattr(self.model, "config", None) or getattr(self.model.model, "config", None):
+        model_config = getattr(self.model, "config", None) or getattr(self.model.model, "config", None)
+
+        if model_config:
+            if "DeepseekV3ForCausalLM" in (getattr(model_config, "architectures", None) or []):
+                if qaic_config:
+                    if qaic_config.get("blocking_mode", None) == "h":
+                        qaic_config["head_block_size"] = qaic_config.get("head_block_size", num_devices)
+                    num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", 1)
+                    self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
+                        self.model, num_kv_heads_repeat
+                    )
+                    if replicate_kv_transformed:
+                        self.hash_params["config"] = self.model.config.to_diff_dict()
+
             blocking_config = build_transformer_blocking_config_for_transform(
-                getattr(self.model, "config", None)
-                if getattr(self.model, "config", None)
-                else getattr(self.model.model, "config", None),
+                model_config,
                 ctx_len=ctx_len,
                 seq_len=seq_len,
                 bs=bs,

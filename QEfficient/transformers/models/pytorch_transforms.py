@@ -814,22 +814,20 @@ class ReplicateKVHeadTransform:
         raise AttributeError("No suitable text model found in the provided model.")
 
     @classmethod
-    def apply(cls, model: nn.Module, **kwargs) -> nn.Module:
+    def apply(cls, model: nn.Module, num_kv_heads_repeat: int = 1) -> nn.Module:
         """
         Replicates KV heads in attention modules based on provided multiplier.
 
         Args:
             model: The model to apply the transform to.
-            kwargs: Additional arguments for the transformation. Includes:
-                - num_kv_heads_repeat: The number of times to repeat the KV heads.
+            num_kv_heads_repeat: The number of times to repeat the KV heads.
         """
-        n_repeat = kwargs.pop("num_kv_heads_repeat", 1)
         transformed = False
-        if n_repeat is not None and n_repeat > 1:
+        if num_kv_heads_repeat is not None and num_kv_heads_repeat > 1:
             text_model = cls._get_text_model(model)
 
             orig_kv_heads = 1  # for mla #text_model.config.num_key_value_heads
-            new_kv_heads = n_repeat * orig_kv_heads
+            new_kv_heads = num_kv_heads_repeat * orig_kv_heads
             text_model.config.orig_kv_heads = orig_kv_heads
             text_model.config.num_key_value_heads = new_kv_heads
 
@@ -844,7 +842,7 @@ class ReplicateKVHeadTransform:
                 head_dim = attn.kv_lora_rank + attn.qk_rope_head_dim
 
                 cls._duplicate_weights_for_linear_layer(
-                    attn.kv_a_proj_with_mqa, orig_kv_heads, n_repeat, head_dim, hidden_size
+                    attn.kv_a_proj_with_mqa, orig_kv_heads, num_kv_heads_repeat, head_dim, hidden_size
                 )
         return model, transformed
 
@@ -1043,9 +1041,9 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward_full_kv": QEffDeepseekV3Attention.forward_full_kv,
             "forward_full_kv_h_blocking": QEffDeepseekV3Attention.forward_full_kv_h_blocking,
             "fused_forward": QEffDeepseekV3Attention.fused_forward,
+            "fused_forward_h_blocking": QEffDeepseekV3Attention.fused_forward_h_blocking,
             "fused_forward_kv_blocking": QEffDeepseekV3Attention.fused_forward_kv_blocking,
             "fused_forward_orig": QEffDeepseekV3Attention.fused_forward_orig,
-            "fused_forward_h_blocking": QEffDeepseekV3Attention.fused_forward_h_blocking,
             "__qeff_init__": QEffDeepseekV3Attention.__qeff_init__,
         },
         "DeepseekV3RMSNorm": {
