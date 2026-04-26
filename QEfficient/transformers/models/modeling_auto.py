@@ -2767,10 +2767,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     def mla(
         self,
-        enable_mla: Optional[bool] = False,
-        mla_absorption_config: Optional[Dict[str, bool]] = False,
+        mla_absorption_config: Optional[Dict[str, bool]] = None,
     ):
-        setattr(self.model.model, "enable_mla", enable_mla)
         setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
 
     def prefill(
@@ -3093,9 +3091,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         enable_chunking = kwargs.get("enable_chunking", False)
 
         # TODO: HACK handle better
-        if enable_mla := kwargs.get("enable_mla", False):
-            self.hash_params["enable_mla"] = enable_mla
-            setattr(self.model.model, "enable_mla", enable_mla)
         if mla_absorption_config := kwargs.get("mla_absorption_config", None):
             self.hash_params["mla_absorption_config"] = mla_absorption_config
             setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
@@ -3211,7 +3206,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
-            if enable_mla:
+            if mla_absorption_config is not None:
+                cache_compressed = mla_absorption_config.get("cache_compressed", False)
+            else:
+                cache_compressed = False
+            if cache_compressed:
                 for lay in self.model.model.layers:
                     if lay is not None:
                         num_heads = lay.self_attn.kv_a_proj_with_mqa.weight.shape[0] // (
@@ -3423,8 +3422,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        enable_mla: Optional[bool] = False,
-        mla_absorption_config: Optional[Dict[str, bool]] = False,
+        mla_absorption_config: Optional[Dict[str, bool]] = None,
         **compiler_options,
     ) -> str:
         """
@@ -3506,8 +3504,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        if mla_absorption_config and not enable_mla:
-            logger.warning("mla_absorption_config will be ignored as enable_mla is set to False")
+        if mla_absorption_config is not None:
+            cache_compressed = mla_absorption_config.get("cache_compressed", False)
+        else:
+            cache_compressed = False
+        if mla_absorption_config is not None and not cache_compressed:
+            logger.warning("mla_absorption_config will be ignored as cache_compressed is set to False")
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
                 "`kv_cache_batch_size` or `full_batch_size` is being passed"
@@ -3636,7 +3638,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
         # --- Compilation ---
         custom_io = {}
-        if not enable_mla:
+        if not cache_compressed:
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
                     for kv in ["key", "value"]:
@@ -3665,7 +3667,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
-            enable_mla=enable_mla,
             mla_absorption_config=mla_absorption_config,
             **compiler_options,
         )

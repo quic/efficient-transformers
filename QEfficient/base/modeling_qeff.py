@@ -287,7 +287,6 @@ class QEFFBaseModel(ABC):
         """
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
-        export_kwargs.pop("enable_mla", None)
         export_kwargs.pop("mla_absorption_config", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
@@ -393,8 +392,7 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
-        enable_mla: Optional[bool] = False,
-        mla_absorption_config: Optional[bool] = False,
+        mla_absorption_config: Optional[Dict[str, bool]] = None,
         qaic_config: Optional[dict] = None,
         **compiler_options,
     ):
@@ -402,7 +400,6 @@ class QEFFBaseModel(ABC):
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
-            "enable_mla": enable_mla,
             "mla_absorption_config": mla_absorption_config,
         }
 
@@ -501,8 +498,7 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        enable_mla: Optional[bool] = False,
-        mla_absorption_config: Optional[Dict[str, bool]] = False,
+        mla_absorption_config: Optional[Dict[str, bool]] = None,
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         **compiler_options,
@@ -543,7 +539,6 @@ class QEFFBaseModel(ABC):
                 offload_pt_weights,
                 use_onnx_subfunctions,
                 retain_full_kv,
-                enable_mla,
                 mla_absorption_config,
                 num_devices=mdp_ts_num_devices,
                 qaic_config=qaic_config,

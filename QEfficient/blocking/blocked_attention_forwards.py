@@ -889,9 +889,12 @@ def blocked_kv_mla_attention_forward(
             start_index=start_index,
         )
 
-        enable_absorption = mla_absorption.get("enable", False)
+        if mla_absorption is not None:
+            absorption = mla_absorption.get("absorption", False)
+        else:
+            absorption = False
 
-        if enable_absorption:
+        if absorption:
             krope_nope = torch.cat((compressed_kv_block, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             # [1, 64, q_len, 576] X [1, 1, 576, kv_block_size] -> [1, 64, q_len, kv_block_size]
@@ -963,10 +966,10 @@ def blocked_h_mla_attention_forward(
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=q_pe.device)
 
     if mla_absorption is not None:
-        enable_absorption = mla_absorption.get("enable", False)
-        absorb_online = mla_absorption.get("online", False)
+        absorption = mla_absorption.get("absorption", False)
+        online = mla_absorption.get("online", False)
     else:
-        enable_absorption = False
+        absorption = False
 
     h_output_blocks = []
     h_attn_blocks = []
@@ -975,8 +978,8 @@ def blocked_h_mla_attention_forward(
         h_start = head_block_idx * head_block_size
         h_end = min(h_start + head_block_size, num_heads)
 
-        if enable_absorption:
-            if absorb_online:
+        if absorption:
+            if online:
                 qup_kupT = torch.matmul(per_head_q_up[:, h_start:h_end, :, :], per_head_k_up[:, h_start:h_end, :, :])
                 dq_qup_kupT = torch.matmul(q_a_proj_out, qup_kupT)
             else:

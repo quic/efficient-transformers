@@ -15,8 +15,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 prompt = "Once upon a time,"
 num_hidden_layers = 2
 TS = 4
-enable_mla = True
-mla_absorption_config = {"enable": False, "online": False}
+mla_absorption_config = {"cache_compressed": False, "absorption": False, "online": False}
 # qaic_config = None #for orig_forward
 # qaic_config = {"num_kv_heads_repeat": TS}  #with  head replication for orig_forward
 # qaic_config = {"enable_blocking": True, "blocking_mode": "h", "num_kv_heads_repeat": TS} # for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
@@ -47,7 +46,7 @@ padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
 qeff_model = QEFFAutoModelForCausalLM(model)
 qeff_model.transform(ctx_len=CTX_LEN, seq_len=PREFILL_SEQ_LEN, bs=1, num_devices=TS, qaic_config=qaic_config)
-qeff_model.mla(enable_mla=enable_mla, mla_absorption_config=mla_absorption_config)
+qeff_model.mla(mla_absorption_config=mla_absorption_config)
 
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
 inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -82,8 +81,8 @@ for i in range(model.config.num_hidden_layers):
     x = (ckv, k_pe)
     compressed_kvs.append(x)
 
-
-if enable_mla:
+cache_compressed = mla_absorption_config.get("cache_compressed", False)
+if cache_compressed:
     inputs["compressed_kvs"] = compressed_kvs
 else:
     inputs["past_key_values"] = past_key_values
@@ -101,7 +100,7 @@ for _ in range(1, generation_len):
         "input_ids": next_token_id,
         "position_ids": position_ids,
     }
-    if enable_mla:
+    if cache_compressed:
         decode_inputs["compressed_kvs"] = qeff_out["past_key_values"]
     else:
         decode_inputs["past_key_values"] = qeff_out["past_key_values"]

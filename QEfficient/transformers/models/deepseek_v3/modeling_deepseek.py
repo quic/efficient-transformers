@@ -359,13 +359,13 @@ class QEffDeepseekV3Attention(nn.Module):
             compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
         if mla_absorption is not None:
-            enable_absorption = mla_absorption.get("enable", False)
-            absorb_online = mla_absorption.get("online", False)
+            absorption = mla_absorption.get("absorption", False)
+            online = mla_absorption.get("online", False)
         else:
-            enable_absorption = False
+            absorption = False
 
-        if enable_absorption:
-            if absorb_online:
+        if absorption:
+            if online:
                 qup_kupT = torch.matmul(self.per_head_q_up, self.per_head_k_up)
                 dq_qup_kupT = torch.matmul(q_a_proj_out, qup_kupT)
             else:
@@ -438,10 +438,10 @@ class QEffDeepseekV3Attention(nn.Module):
 
         # ---- MLA absorption flags ----
         if mla_absorption is not None:
-            enable_absorption = mla_absorption.get("enable", False)
-            absorb_online = mla_absorption.get("online", False)
+            absorption = mla_absorption.get("absorption", False)
+            online = mla_absorption.get("online", False)
         else:
-            enable_absorption = False
+            absorption = False
 
         head_block_size = kva.shape[1]
         p = self.num_heads // head_block_size
@@ -465,8 +465,8 @@ class QEffDeepseekV3Attention(nn.Module):
         v_up_per_head = self.v_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.v_head_dim).permute(1, 0, 2)
         value_states = torch.matmul(kva_expanded, v_up_per_head)
 
-        if enable_absorption:
-            if absorb_online:
+        if absorption:
+            if online:
                 out = torch.matmul(self.per_head_q_up, self.per_head_k_up)
                 q_nope_compressed = torch.matmul(q_a_proj_out.unsqueeze(1), out)
             else:
@@ -898,13 +898,16 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        enable_mla: Optional[bool] = False,
-        mla_absorption: Optional[bool] = False,
+        mla_absorption: Optional[Dict[str, bool]] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         orig_hidden_states = self.input_layernorm(hidden_states)
-        if enable_mla:
+        if mla_absorption is not None:
+            cache_compressed = mla_absorption.get("cache_compressed", False)
+        else:
+            cache_compressed = False
+        if cache_compressed:
             hidden_states, self_attn_weights, present_compressed_kvs = self.self_attn.fused_forward(
                 hidden_states=orig_hidden_states,
                 attention_mask=attention_mask,
@@ -943,7 +946,7 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
         if output_attentions:
             outputs += (self_attn_weights,)
         if use_cache:
-            if enable_mla:
+            if cache_compressed:
                 outputs += (present_compressed_kvs,)
             else:
                 outputs += (present_key_value,)
@@ -1006,9 +1009,14 @@ class QEffDeepseekV3Model(nn.Module):
 
         if use_cache and not isinstance(past_key_values, Cache) and past_key_values is not None:
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-        enable_mla = getattr(self, "enable_mla", False)
 
-        if enable_mla:
+        mla_absorption = getattr(self, "mla_absorption_config", None)
+        if mla_absorption is not None:
+            cache_compressed = mla_absorption.get("cache_compressed", False)
+        else:
+            cache_compressed = False
+
+        if cache_compressed:
             compressed_kvs = QEffDynamicCompressedKVRopeCache.from_legacy_cache(compressed_kvs)
             target_len = compressed_kvs.layers[0].ckv.shape[-2]
         else:
@@ -1046,8 +1054,7 @@ class QEffDeepseekV3Model(nn.Module):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
-                enable_mla=getattr(self, "enable_mla", False),
-                mla_absorption=getattr(self, "mla_absorption_config", None),
+                mla_absorption=mla_absorption,
                 **kwargs,
             )
 

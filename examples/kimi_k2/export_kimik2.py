@@ -14,12 +14,15 @@ from QEfficient import QEFFAutoModelForCausalLM
 prompt = "Once upon a time,"
 num_hidden_layers = 2
 TS = 4
-enable_mla = True
-mla_absorption_config = {"enable": False, "online": False}
+mla_absorption_config = {"cache_compressed": True, "absorption": False, "online": False}
 # qaic_config = None #for orig_forward
 # qaic_config = {"num_kv_heads_repeat": TS}  #with head replication for orig_forward
-# qaic_config = {"enable_blocking": True, "blocking_mode": "h", "num_kv_heads_repeat": TS} # for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
-qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
+qaic_config = {
+    "enable_blocking": True,
+    "blocking_mode": "h",
+    "num_kv_heads_repeat": TS,
+}  # for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
+# qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
 
 # model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
 model_path = (
@@ -38,7 +41,6 @@ ctx_len = 16 * 1024
 qpc_path = qeff_model.compile(
     prefill_seq_len=prefill_seq_len,
     ctx_len=ctx_len,
-    enable_mla=enable_mla,
     mla_absorption_config=mla_absorption_config,
     mxfp6_matmul=True,
     mxint8_kv_cache=False,
