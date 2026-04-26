@@ -37,19 +37,40 @@ def test_generate_causal_lm(model_name, model_artifacts, get_model_config):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    onnx_path = qeff_model.compile(onnx_path=onnx_path, **compile_params)
+    _ = qeff_model.compile(onnx_path=onnx_path, **compile_params)
 
     print(f"\nGenerating for model: {model_name}")
     exec_info = qeff_model.generate(tokenizer=tokenizer, **generation_params)
 
     print(f"\nGeneration complete for model: {model_name}")
 
+    def get_onnx_and_qpc_size(dir):
+        total_size = 0
+        for root, dirs, files in os.walk(dir):
+            for name in files:
+                file_path = os.path.join(root, name)
+                if not os.path.islink(file_path):  # avoid counting symlinks
+                    total_size += os.path.getsize(file_path)
+        print(f"Total size of {dir}: {total_size} bytes")
+        return total_size
+
+    def human_readable(size):
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if size < 1024:
+                return f"{size:.2f} {unit}"
+            size /= 1024
+
+    onnx_and_qpc_dir = os.path.dirname(onnx_path)
+    size = get_onnx_and_qpc_size(onnx_and_qpc_dir)
+    size = human_readable(size)
     # Store all metrics and execution info
     model_artifacts[model_name].update(
         {
             "batch_size": exec_info.batch_size,
             "generated_texts": exec_info.generated_texts,
-            "generated_ids": exec_info.generated_ids[:20],  # Converted to list by conftest serializer
+            "generated_ids": exec_info.generated_ids[0][0][:20],  # Converted to list by conftest serializer
+            "onnx_and_qpc_dir": onnx_and_qpc_dir,
+            "size": size,
             "perf_metrics": {
                 "prefill_time": exec_info.perf_metrics.prefill_time,
                 "decode_perf": exec_info.perf_metrics.decode_perf,
