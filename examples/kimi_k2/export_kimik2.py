@@ -40,7 +40,6 @@ ctx_len = 16 * 1024
 qpc_path = qeff_model.compile(
     prefill_seq_len=prefill_seq_len,
     ctx_len=ctx_len,
-    mla_absorption=mla_absorption,
     mxfp6_matmul=True,
     mxint8_kv_cache=False,
     num_devices=TS,
