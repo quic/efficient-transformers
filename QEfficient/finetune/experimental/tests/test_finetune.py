@@ -317,6 +317,68 @@ def test_trainer_receives_expected_arguments(mocker, mock_config_manager, model_
     assert pipe.trainer is trainer_obj
 
 
+def test_create_trainer_clamps_dataset_subset_sizes(mocker, mock_config_manager):
+    """Requested samples should be clamped to the available dataset sizes before selection."""
+
+    pipeline = FineTuningPipeline.__new__(FineTuningPipeline)
+    pipeline.config_manager = mock_config_manager
+
+    train_select_calls = []
+    eval_select_calls = []
+
+    train_dataset = mocker.MagicMock(name="train_dataset")
+    train_dataset.__len__.return_value = 3
+    train_dataset.select.side_effect = lambda indices: train_select_calls.append(list(indices)) or train_dataset
+
+    eval_dataset = mocker.MagicMock(name="eval_dataset")
+    eval_dataset.__len__.return_value = 1
+    eval_dataset.select.side_effect = lambda indices: eval_select_calls.append(list(indices)) or eval_dataset
+
+    train_wrapper = mocker.MagicMock(name="train_wrapper")
+    train_wrapper.dataset = train_dataset
+
+    eval_wrapper = mocker.MagicMock(name="eval_wrapper")
+    eval_wrapper.dataset = eval_dataset
+
+    class DummyArgs:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class DummyTrainer:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def remove_callback(self, callback_cls):
+            return None
+
+        def add_callback(self, callback):
+            return None
+
+    mocker.patch(
+        f"{MODULE}.ComponentFactory.create_trainer_config",
+        autospec=True,
+        return_value=(DummyTrainer, DummyArgs, {}),
+    )
+
+    mock_config_manager.get_model_config.return_value = {"use_peft": False}
+    mock_config_manager.get_dataset_config.return_value = {"split_ratio": 0.8, "dataset_num_samples": 10}
+
+    trainer = pipeline._create_trainer(
+        model=mocker.MagicMock(),
+        tokenizer=mocker.MagicMock(),
+        train_dataset=train_wrapper,
+        eval_dataset=eval_wrapper,
+        optimizer_cls_and_kwargs=(None, {}),
+        callbacks=[],
+        training_config={"type": "sft"},
+    )
+
+    assert train_select_calls == [list(range(3))]
+    assert eval_select_calls == [list(range(1))]
+    assert trainer.kwargs["train_dataset"] is train_dataset
+    assert trainer.kwargs["eval_dataset"] is eval_dataset
+
+
 def test_create_datasets_failure_stops_pipeline(mocker, mock_config_manager):
     """
     If _create_datasets raises, pipeline should not proceed to model/optimizer/trainer.
