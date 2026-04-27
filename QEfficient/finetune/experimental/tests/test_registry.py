@@ -7,7 +7,8 @@
 
 import pytest
 
-from QEfficient.finetune.experimental.core.component_registry import ComponentRegistry, get_object, registry
+from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, ComponentRegistry, get_object, registry
+from QEfficient.finetune.experimental.core.config_manager import PeftConfig
 
 
 class TestComponentRegistry:
@@ -165,3 +166,27 @@ class TestGlobalRegistry:
     def test_global_registry_instance(self):
         """Test that global registry instance exists and is of correct type."""
         assert isinstance(registry, ComponentRegistry)
+
+    def test_create_trainer_config_skips_type_defaults_without_dependency(self, mocker):
+        """Trainer type metadata should not be injected when no runtime dependency is provided."""
+
+        local_registry = ComponentRegistry()
+        mocker.patch("QEfficient.finetune.experimental.core.component_registry.registry", local_registry)
+
+        class MockArgs:
+            pass
+
+        class MockTrainer:
+            pass
+
+        local_registry.trainer_module(
+            "test_trainer",
+            args_cls=MockArgs,
+            required_kwargs={"peft_config": PeftConfig, "max_steps": 10},
+        )(MockTrainer)
+
+        trainer_cls, args_cls, additional_kwargs = ComponentFactory.create_trainer_config("test_trainer")
+
+        assert trainer_cls == MockTrainer
+        assert args_cls == MockArgs
+        assert additional_kwargs == {"max_steps": 10}
