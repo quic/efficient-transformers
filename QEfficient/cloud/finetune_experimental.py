@@ -259,7 +259,7 @@ class FineTuningPipeline:
         dependencies = {}
         if peft_config is not None:
             dependencies["peft_config"] = peft_config
-            if self.rank == 0:
+            if getattr(self, "rank", 0) == 0:
                 model_configuration = get_peft_model(model, peft_config)
                 trainable_params, all_param = model_configuration.get_nb_trainable_parameters()
                 pct = (trainable_params / all_param) * 100
@@ -303,7 +303,7 @@ class FineTuningPipeline:
             eval_dataset = eval_dataset.select(subset_eval_indices)
             train_dataset = train_dataset.select(subset_train_indices)
         # Logging the number of training and evaluation samples
-        if self.rank == 0:
+        if getattr(self, "rank", 0) == 0:
             train_logger.write(f"TRAINING INFO: Length of Training Dataset is {len(train_dataset)}")
             train_logger.write(f"TRAINING INFO: Length of Evaluation Dataset is {len(eval_dataset)}")
         trainer = trainer_cls(

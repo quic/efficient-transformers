@@ -7,7 +7,12 @@
 
 import pytest
 
-from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, ComponentRegistry, get_object, registry
+from QEfficient.finetune.experimental.core.component_registry import (
+    ComponentFactory,
+    ComponentRegistry,
+    get_object,
+    registry,
+)
 from QEfficient.finetune.experimental.core.config_manager import PeftConfig
 
 
