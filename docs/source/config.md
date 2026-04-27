@@ -168,6 +168,7 @@ This section defines core parameters for fine-tuning and evaluation.
 | --- | --- | --- |
 | `type` | `sft` | Training type. `sft` uses TRL's `SFTTrainer`. `base` uses `transformers.Trainer`. |
 | `output_dir` | `./training_results` | Directory where model checkpoints and logs are saved. |
+| `log_file_name`| None | The log_file output name. If it is None, the training log file will be saved as training_logs_<{datetime.now():%Y%m%d_%H%M%S}>.txt format.
 | `overwrite_output_dir` | `false` | Whether to overwrite the output directory if it already exists. |
 | `do_eval` | `true` | Enables evaluation during training. |
 | `eval_strategy` | `epoch` | When to run evaluation. |
@@ -219,6 +220,8 @@ Optional distributed configs: FSDP, DeepSpeed, or DDP for multi-QAIC or large-sc
     │   └── events.out.tfevents.* 
     │
     ├── logs/                     # Logs from other backends
+    ├── <log_file_name>.txt       # Training log file    
+
 
 
 ***
@@ -247,6 +250,7 @@ Callbacks allow custom actions during training, such as logging, early stopping,
 | `early_stopping` | Stops training if there is no improvement in a monitored metric for a defined patience period. |
 | `early_stopping_patience` | Number of consecutive evaluation steps or epochs without significant improvement before stopping. |
 | `early_stopping_threshold` | Minimum change in the monitored metric required to qualify as improvement. |
+| `train_logger` | Logs per epoch time, training metric (perplexity),training loss, evaluation metrics and loss etc.|
 | `enhanced_progressbar` | More informative progress bar with additional metrics. |
 | `default_flow` | Handles the default behavior for logging, saving, and evaluation. |
 | `Printer` | Displays progress and logs. Used when tqdm is disabled. |
