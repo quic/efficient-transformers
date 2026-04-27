@@ -41,6 +41,4 @@ def test_compiler_invalid_flag(tmp_path):
     onnx.save(onnx_model, valid_file)
 
     with pytest.raises(RuntimeError):
-        QEFFBaseModel._compile(
-            qeff_obj, valid_file, tmp_path, convert_tofp16=True, aic_binary_dir=tmp_path
-        )
+        QEFFBaseModel._compile(qeff_obj, valid_file, tmp_path, convert_tofp16=True, aic_binary_dir=tmp_path)
