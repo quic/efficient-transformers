@@ -42,5 +42,5 @@ def test_compiler_invalid_flag(tmp_path):
 
     with pytest.raises(RuntimeError):
         QEFFBaseModel._compile(
-            qeff_obj, valid_file, tmp_path, convert_tofp16=True, compile_only=True, aic_binary_dir=tmp_path
+            qeff_obj, valid_file, tmp_path, convert_tofp16=True, aic_binary_dir=tmp_path
         )

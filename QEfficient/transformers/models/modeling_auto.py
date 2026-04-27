@@ -463,7 +463,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
@@ -813,7 +812,6 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
@@ -944,7 +942,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     def compile(
         self,
         compile_dir,
-        compile_only,
         specializations,
         convert_to_fp16,
         mxfp6_matmul,
@@ -961,8 +958,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         ----------
         compile_dir : str
             Directory to save the generated QPC package.
-        compile_only : bool
-            If True, only compilation occurs without running inference.
         specializations : List[Dict[str, Union[int, str]]]
             List of dictionaries, each specifying a compilation specialization.
         convert_to_fp16 : bool
@@ -987,7 +982,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         """
         return self._compile(
             compile_dir=compile_dir,
-            compile_only=compile_only,
             specializations=specializations,
             convert_to_fp16=convert_to_fp16,
             mxfp6_matmul=mxfp6_matmul,
@@ -1130,7 +1124,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     def compile(
         self,
         compile_dir,
-        compile_only,
         specializations,
         convert_to_fp16,
         mxfp6_matmul,
@@ -1147,8 +1140,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         ----------
         compile_dir : str
             Directory to save the generated QPC package.
-        compile_only : bool
-            If True, only compilation occurs without running inference.
         specializations : List[Dict[str, Union[int, str]]]
             List of dictionaries, each specifying a compilation specialization.
         convert_to_fp16 : bool
@@ -1173,7 +1164,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         """
         return self._compile(
             compile_dir=compile_dir,
-            compile_only=compile_only,
             specializations=specializations,
             convert_to_fp16=convert_to_fp16,
             mxfp6_matmul=mxfp6_matmul,
@@ -1592,7 +1582,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not skip_vision:
             vision_qpc_path = self.vision_model._compile(
                 compile_dir=compile_dir,
-                compile_only=True,
                 specializations=specializations["vision"],
                 specialization_module_name="Vision",
                 convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -1641,7 +1630,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
             lang_qpc_path = self.lang_model._compile(
                 compile_dir=compile_dir,
-                compile_only=True,
                 retained_state=True,
                 specializations=specializations,
                 convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -2281,7 +2269,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             retained_state=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -3570,7 +3557,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         qpc_path = self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             retained_state=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -3935,7 +3921,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             retained_state=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -4262,7 +4247,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
