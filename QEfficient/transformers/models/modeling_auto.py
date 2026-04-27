@@ -3199,7 +3199,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
-            mla_absorption = kwargs.get("mla_absorption", None)
+            mla_absorption = self.model.qaic_config.get("mla_absorption", None)
             if mla_absorption is not None:
                 cache_compressed = mla_absorption.get("cache_compressed", False)
             else:
