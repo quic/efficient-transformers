@@ -858,7 +858,7 @@ def blocked_kv_mla_attention_forward(
     skip_kv = True
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device)
 
-    ctx_len = compressed_kvs.layers[0].ckv.shape[2]
+    ctx_len = compressed_kvs.layers[layer_idx].ckv.shape[2]
     kv_block_size = -(-ctx_len // num_kv_blocks)
 
     position_ids = cache_kwargs.get("position_ids")

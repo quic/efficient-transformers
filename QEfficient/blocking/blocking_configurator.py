@@ -18,10 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
 from QEfficient.utils import get_attr_or_key, require_value
-from QEfficient.utils.constants import VTCM_SIZE_THRESHOLD
-
-FP16_BYTES = 2
-DEFAULT_NUM_HEADS = 64
+from QEfficient.utils.constants import DEFAULT_NUM_HEADS, FP16_BYTES, KV_LORA_RANK, ROPE_DIM, VTCM_SIZE_THRESHOLD
 
 
 def _infer_head_dim(model_config: Any, num_heads: int) -> int:
@@ -96,14 +93,14 @@ def block_candidates_generator(max_length: int) -> List[int]:
 def matmul1_bytes(q_len: int, kv_block_size: int, num_heads: int = DEFAULT_NUM_HEADS) -> int:
     """Bytes for [1,num_heads,q,kv] x [1,1,kv,512] -> [1,num_heads,q,512] in fp16."""
     elems_a = num_heads * q_len * kv_block_size
-    elems_b = kv_block_size * 512
-    elems_out = num_heads * q_len * 512
+    elems_b = kv_block_size * KV_LORA_RANK
+    elems_out = num_heads * q_len * KV_LORA_RANK
     return FP16_BYTES * (elems_a + elems_b + elems_out)
 
 
 def matmul2_bytes(q_len: int, kv_block_size: int, num_heads: int = DEFAULT_NUM_HEADS) -> int:
     """Bytes for [1,num_heads,q,576] x [1,1,576,kv] -> [1,num_heads,q,kv] in fp16."""
-    elems_a = num_heads * q_len * 576
+    elems_a = num_heads * q_len * (KV_LORA_RANK + ROPE_DIM)
     elems_b = 576 * kv_block_size
     elems_out = num_heads * q_len * kv_block_size
     return FP16_BYTES * (elems_a + elems_b + elems_out)
@@ -134,9 +131,9 @@ def max_kv_block_size(
     #   B_elems = kv*512
     #   C_elems = num_heads*q_len*512
     # Enforce A_elems + B_elems + C_elems <= max_elems
-    c1_elems = num_heads * q_len * 512
+    c1_elems = num_heads * q_len * KV_LORA_RANK
     rem1 = max_elems - c1_elems
-    den1 = num_heads * q_len + 512  # kv coefficient from A_elems + B_elems
+    den1 = num_heads * q_len + KV_LORA_RANK  # kv coefficient from A_elems + B_elems
     k1 = rem1 // den1 if rem1 >= 0 else -1
 
     # Matmul2 elements:

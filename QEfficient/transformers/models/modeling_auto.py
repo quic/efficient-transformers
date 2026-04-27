@@ -2765,12 +2765,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     _onnx_transforms = []
 
-    def mla(
-        self,
-        mla_absorption_config: Optional[Dict[str, bool]] = None,
-    ):
-        setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
-
     def prefill(
         self,
         enable: Optional[bool] = True,
@@ -2878,6 +2872,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.ccl_enabled = False
         if qaic_config:
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+            if mla_absorption := qaic_config.get("mla_absorption", None):
+                self.hash_params["mla_absorption"] = mla_absorption
+                # setattr(self.model.model, "mla_absorption", mla_absorption)
+                setattr(self.model, "mla_absorption", mla_absorption)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
@@ -3090,11 +3088,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
         enable_chunking = kwargs.get("enable_chunking", False)
 
-        # TODO: HACK handle better
-        if mla_absorption_config := kwargs.get("mla_absorption_config", None):
-            self.hash_params["mla_absorption_config"] = mla_absorption_config
-            setattr(self.model.model, "mla_absorption_config", mla_absorption_config)
-
         if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
             if prefill_only:
                 self.prefill(enable=True)
@@ -3206,45 +3199,39 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
-            if mla_absorption_config is not None:
-                cache_compressed = mla_absorption_config.get("cache_compressed", False)
+            mla_absorption = kwargs.get("mla_absorption", None)
+            if mla_absorption is not None:
+                cache_compressed = mla_absorption.get("cache_compressed", False)
             else:
                 cache_compressed = False
+            pkv_cache = self.model.get_dummy_pkv_cache(
+                self.model.config, fbs if self.continuous_batching else bs, seq_len
+            )
             if cache_compressed:
-                for lay in self.model.model.layers:
-                    if lay is not None:
-                        num_heads = lay.self_attn.kv_a_proj_with_mqa.weight.shape[0] // (
-                            self.model.config.kv_lora_rank + self.model.config.qk_rope_head_dim
-                        )
-
                 example_inputs = {k: v for k, v in example_inputs.items() if "past" not in k}
                 dynamic_axes = {k: v for k, v in dynamic_axes.items() if "past" not in k}
                 output_names = [v for v in output_names if "past" not in v]
                 example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
                 for i in range(self.num_layers):
-                    ckv = torch.zeros((bs, num_heads, seq_len, self.model.config.kv_lora_rank), dtype=torch.float32)
-                    k_pe = torch.zeros(
-                        (bs, num_heads, seq_len, self.model.config.qk_rope_head_dim), dtype=torch.float32
+                    example_inputs["compressed_kvs"][i].append(
+                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
                     )
-                    example_inputs["compressed_kvs"][i].append(ckv)
-                    example_inputs["compressed_kvs"][i].append(k_pe)
+                    example_inputs["compressed_kvs"][i].append(
+                        torch.zeros(pkv_cache[0][1].shape, dtype=self.model.config.torch_dtype)
+                    )
                     dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}
                     dynamic_axes[f"k_pe.{i}"] = {0: "batch_size", 2: "ctx_len"}
                     output_names.append(f"compressed_kv.{i}_RetainedState")
                     output_names.append(f"k_pe.{i}_RetainedState")
-
             else:
-                cache_shape_k = (
-                    1,
-                    self.model.config.num_attention_heads,
-                    seq_len,
-                    self.model.config.qk_nope_head_dim + self.model.config.qk_rope_head_dim,
-                )
-                cache_shape_v = (1, self.model.config.num_attention_heads, seq_len, self.model.config.v_head_dim)
                 example_inputs["past_key_values"] = [[] for _ in range(self.num_layers)]
                 for i in range(self.num_layers):
-                    example_inputs["past_key_values"][i].append(torch.zeros(cache_shape_k, dtype=torch.float32))
-                    example_inputs["past_key_values"][i].append(torch.zeros(cache_shape_v, dtype=torch.float32))
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                    )
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(pkv_cache[0][1].shape, dtype=self.model.config.torch_dtype)
+                    )
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -3422,7 +3409,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        mla_absorption_config: Optional[Dict[str, bool]] = None,
+        mla_absorption: Optional[Dict[str, bool]] = None,
         **compiler_options,
     ) -> str:
         """
@@ -3467,6 +3454,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        mla_absorption: Dict[str, bool], optional
+            Configuration dictionary for multi-head latent Attention (MLA) absorption behavior.
+            - "cache_compressed" (bool): If True, compresses kvs are cached to save memory.
+            - "absorption" (bool): If True, enables absorption of attention matrices for efficiency.
+            - "online" (bool): If True, applies MLA absorption on device during inference
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -3504,12 +3496,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        if mla_absorption_config is not None:
-            cache_compressed = mla_absorption_config.get("cache_compressed", False)
+        if mla_absorption is not None:
+            cache_compressed = mla_absorption.get("cache_compressed", False)
         else:
             cache_compressed = False
-        if mla_absorption_config is not None and not cache_compressed:
-            logger.warning("mla_absorption_config will be ignored as cache_compressed is set to False")
+        if mla_absorption is not None and not cache_compressed:
+            logger.warning("mla_absorption will be ignored as cache_compressed is set to False")
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
                 "`kv_cache_batch_size` or `full_batch_size` is being passed"
@@ -3667,7 +3659,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
-            mla_absorption_config=mla_absorption_config,
+            mla_absorption=mla_absorption,
             **compiler_options,
         )
 

@@ -15,20 +15,23 @@ from QEfficient import QEFFAutoModelForCausalLM
 prompt = "Once upon a time,"
 num_hidden_layers = 2
 TS = 4
-mla_absorption_config = {"cache_compressed": False, "absorption": False, "online": False}
-# qaic_config = None #for orig_forward
-# qaic_config = {"num_kv_heads_repeat": TS}  #with  head replication for orig_forward
-# qaic_config = {"enable_blocking": True, "blocking_mode": "h", "num_kv_heads_repeat": TS} # for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
-qaic_config = {"enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
+mla_absorption = {"cache_compressed": False, "absorption": False, "online": False}
+# qaic_config = {"mla_absorption": mla_absorption} # for No Blocking
+# qaic_config = {"mla_absorption": mla_absorption, "num_kv_heads_repeat": TS}  # No blocking with kv head replication
+# qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
+qaic_config = {
+    "mla_absorption": mla_absorption,
+    "enable_blocking": True,
+    "blocking_mode": "h",
+    "num_kv_heads_repeat": TS,
+}
+# for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
 
-# model_path = "/home/ochougul/.cache/huggingface/hub/models--moonshotai--Kimi-K2-Thinking/snapshots/a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55/"
-model_path = (
-    "/home/huggingface_hub/models--moonshotai--Kimi-K2-Thinking/snapshots/612681931a8c906ddb349f8ad0f582cb552189cd"
-)
+model_name = "moonshotai/Kimi-K2-Thinking"
 model = AutoModelForCausalLM.from_pretrained(
-    model_path, torch_dtype=torch.float32, num_hidden_layers=num_hidden_layers, trust_remote_code=True
+    model_name, torch_dtype=torch.float32, num_hidden_layers=num_hidden_layers, trust_remote_code=True
 )
-tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2-Thinking", trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
 PREFILL_SEQ_LEN = 32
 CTX_LEN = 8192
@@ -44,9 +47,8 @@ padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 #    out = model(**inputs)
 #    predictions = torch.argmax(out.logits, dim=-1)
 
-qeff_model = QEFFAutoModelForCausalLM(model)
+qeff_model = QEFFAutoModelForCausalLM(model, qaic_config=qaic_config)
 qeff_model.transform(ctx_len=CTX_LEN, seq_len=PREFILL_SEQ_LEN, bs=1, num_devices=TS, qaic_config=qaic_config)
-qeff_model.mla(mla_absorption_config=mla_absorption_config)
 
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
 inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -81,7 +83,7 @@ for i in range(model.config.num_hidden_layers):
     x = (ckv, k_pe)
     compressed_kvs.append(x)
 
-cache_compressed = mla_absorption_config.get("cache_compressed", False)
+cache_compressed = mla_absorption.get("cache_compressed", False)
 if cache_compressed:
     inputs["compressed_kvs"] = compressed_kvs
 else:

@@ -23,7 +23,7 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
 
 
 def rotate_half(x):
@@ -239,7 +239,7 @@ class QEffDeepseekV3Attention(nn.Module):
         per_head_k_up = (
             self.k_up.squeeze(0).view(-1, self.num_heads, self.qk_nope_head_dim).transpose(0, 1).transpose(1, 2)
         )
-        per_head_v_up = self.v_up.squeeze(0).view(-1, self.num_heads, self.qk_nope_head_dim).transpose(0, 1)
+        per_head_v_up = self.v_up.squeeze(0).view(-1, self.num_heads, self.v_head_dim).transpose(0, 1)
         self.per_head_v_up = torch.nn.Parameter(per_head_v_up.unsqueeze(0).detach().clone())
         self.per_head_q_up = torch.nn.Parameter(per_head_q_up.unsqueeze(0).detach().clone())
         self.per_head_k_up = torch.nn.Parameter(per_head_k_up.unsqueeze(0).detach().clone())
@@ -972,7 +972,7 @@ class QEffDeepseekV3Model(nn.Module):
         }
         self.rotary_emb = DeepseekV3YarnRotaryEmbedding(
             self.config.qk_rope_head_dim,
-            max_position_embeddings=32 * 1024,
+            max_position_embeddings=MAX_POSITION_EMBEDDINGS,
             scaling_factor=scaling_factor,
             base=self.config.rope_theta,
             **kwargs,
@@ -992,6 +992,7 @@ class QEffDeepseekV3Model(nn.Module):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        mla_absorption: Optional[Dict[str, bool]] = None,
         **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1010,7 +1011,6 @@ class QEffDeepseekV3Model(nn.Module):
         if use_cache and not isinstance(past_key_values, Cache) and past_key_values is not None:
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
-        mla_absorption = getattr(self, "mla_absorption_config", None)
         if mla_absorption is not None:
             cache_compressed = mla_absorption.get("cache_compressed", False)
         else:
@@ -1116,6 +1116,7 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        mla_absorption = getattr(self, "mla_absorption", None)
 
         outputs = self.model(
             input_ids=input_ids,
@@ -1130,6 +1131,7 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            mla_absorption=mla_absorption,
             **kwargs,
         )
 
@@ -1158,3 +1160,34 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        mla_absorption = getattr(self, "mla_absorption", None)
+        if mla_absorption is not None:
+            cache_compressed = mla_absorption.get("cache_compressed", False)
+        else:
+            cache_compressed = False
+
+        dummy_cache = [[] for _ in range(config.num_hidden_layers)]
+        if cache_compressed:
+            for layer in self.model.layers:
+                if layer is not None:
+                    num_heads = layer.self_attn.kv_a_proj_with_mqa.weight.shape[0] // (
+                        self.model.config.kv_lora_rank + config.qk_rope_head_dim
+                    )
+            cache_shape_1 = (batch_size, num_heads, seq_len, config.kv_lora_rank)
+            cache_shape_2 = (batch_size, num_heads, seq_len, config.qk_rope_head_dim)
+        else:
+            cache_shape_1 = (
+                batch_size,
+                config.num_attention_heads,
+                seq_len,
+                config.qk_nope_head_dim + config.qk_rope_head_dim,
+            )
+            cache_shape_2 = (batch_size, config.num_attention_heads, seq_len, config.v_head_dim)
+
+        for i in range(config.num_hidden_layers):
+            dummy_cache[i].append(torch.zeros(cache_shape_1, dtype=config.torch_dtype))
+            dummy_cache[i].append(torch.zeros(cache_shape_2, dtype=config.torch_dtype))
+
+        return dummy_cache
