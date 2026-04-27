@@ -3489,7 +3489,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        if mla_absorption is not None:
+        if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
+            mla_absorption = self.model.qaic_config["mla_absorption"]
             cache_compressed = mla_absorption.get("cache_compressed", False)
         else:
             cache_compressed = False
