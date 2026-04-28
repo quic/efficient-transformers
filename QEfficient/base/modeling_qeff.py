@@ -416,9 +416,6 @@ class QEFFBaseModel(ABC):
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp
-        import pdb
-
-        pdb.set_trace()
         return layer_onnx_path_tmp
 
     def get_onnx_path(
