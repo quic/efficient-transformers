@@ -218,7 +218,7 @@ def main():
 
     if LAYERWISE_MODE == "multiple_qpc":
         QEfficient.utils.compile_layerwise(str(export_root))
-        QEfficient.utils.inference_pipelines(str(export_root))
+        QEfficient.utils.inference_pipeline(str(export_root))
     else:
         QEfficient.utils.layerwise_pipeline(str(export_root))
 

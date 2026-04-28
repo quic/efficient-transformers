@@ -101,7 +101,7 @@ def inference_pipeline(
     prompt_ids = tokenizer(prompt, return_tensors="np", add_special_tokens=True)["input_ids"][0].tolist()
     all_ids = list(prompt_ids)
 
-    qpc_paths = discover_qpc_paths(Path(base_path))
+    qpc_paths = discover_qpc_paths(Path(base_path + "/onnx_layerwise_tmp"))
     print(f"[LOAD] Found {len(qpc_paths)} layer sessions")
 
     sessions: List[Dict[str, object]] = []
