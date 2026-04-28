@@ -1073,7 +1073,7 @@ class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransfo
     _match_string_replace_method = {
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
+            "moe": QEffDeepseekV3MoE.moe_waa_unpack,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
     }

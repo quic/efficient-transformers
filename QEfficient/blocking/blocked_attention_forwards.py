@@ -841,7 +841,9 @@ def blocked_kv_mla_attention_forward(
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     # Initialize result tensor
     batch_size, num_heads, seq_len, _ = query.shape
-    output = torch.zeros(batch_size, num_heads, seq_len, module.config.kv_lora_rank, device=query.device, dtype=query.dtype)
+    output = torch.zeros(
+        batch_size, num_heads, seq_len, module.config.kv_lora_rank, device=query.device, dtype=query.dtype
+    )
 
     if hasattr(module, "config"):
         mask_dtype = module.config.torch_dtype
@@ -897,17 +899,23 @@ def blocked_kv_mla_attention_forward(
 
         k_heads, q_heads = compressed_kv_block.shape[1], query.shape[1]
         num_heads_to_repeat = q_heads - k_heads
-        repeated_ckv_block = compressed_kv_block[:, 0,:,:].expand(batch_size, num_heads_to_repeat, -1, module.kv_lora_rank)
+        repeated_ckv_block = compressed_kv_block[:, 0, :, :].expand(
+            batch_size, num_heads_to_repeat, -1, module.kv_lora_rank
+        )
         compressed_kv_block = torch.cat((compressed_kv_block, repeated_ckv_block), dim=1)
 
-        repeated_k_pe_block = k_pe_block[:, 0,:,:].expand(batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim)
+        repeated_k_pe_block = k_pe_block[:, 0, :, :].expand(
+            batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim
+        )
         k_pe_block = torch.cat((k_pe_block, repeated_k_pe_block), dim=1)
 
         if absorption:
             krope_nope = torch.cat((compressed_kv_block, k_pe_block), dim=-1)
             k_heads, q_heads = krope_nope.shape[1], query.shape[1]
             num_heads_to_repeat = q_heads - k_heads
-            repeated_k = krope_nope[:, 0,:,:].expand(batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim + module.kv_lora_rank)
+            repeated_k = krope_nope[:, 0, :, :].expand(
+                batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim + module.kv_lora_rank
+            )
             krope_nope = torch.cat((krope_nope, repeated_k), dim=1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             # [1, 64, q_len, 576] X [1, 1, 576, kv_block_size] -> [1, 64, q_len, kv_block_size]
@@ -924,13 +932,17 @@ def blocked_kv_mla_attention_forward(
         else:
             k_heads, q_heads = compressed_kv_block.shape[1], query.shape[1]
             num_heads_to_repeat = q_heads - k_heads
-            repeated_ckv_block = compressed_kv_block[:, 0,:,:].expand(batch_size, num_heads_to_repeat, -1, module.kv_lora_rank)
+            repeated_ckv_block = compressed_kv_block[:, 0, :, :].expand(
+                batch_size, num_heads_to_repeat, -1, module.kv_lora_rank
+            )
             compressed_kv_block = torch.cat((compressed_kv_block, repeated_ckv_block), dim=1)
             knope = torch.matmul(compressed_kv_block, per_head_k_up_normal)
-            
-            repeated_k_pe_block = k_pe_block[:, 0,:,:].expand(batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim)
+
+            repeated_k_pe_block = k_pe_block[:, 0, :, :].expand(
+                batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim
+            )
             k_pe_block = torch.cat((k_pe_block, repeated_k_pe_block), dim=1)
-            
+
             krope_nope = torch.cat((knope, k_pe_block.expand(-1, num_heads, -1, -1)), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
@@ -943,7 +955,6 @@ def blocked_kv_mla_attention_forward(
                 skip_kv,
                 skip_future,
             )
-
 
     attn_output = torch.matmul(output, per_head_v_up)
     attn_output = attn_output.transpose(1, 2).contiguous()
@@ -995,6 +1006,7 @@ def blocked_h_mla_attention_forward(
 
     h_output_blocks = []
     h_attn_blocks = []
+
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
         h_start = head_block_idx * head_block_size

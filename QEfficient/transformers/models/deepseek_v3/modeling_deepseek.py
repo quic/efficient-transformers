@@ -20,6 +20,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     generic_blocked_mla_attention_interface,
 )
+from QEfficient.customop.ctx_scatter_gather import CtxGatherFunc3D, CtxScatterFunc3D
 from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
 from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
@@ -742,6 +743,42 @@ class QEffDeepseekV3Attention(nn.Module):
             )
 
 
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+
+
+def _ctx_scatter_gather_expert_blocked(
+    x: torch.Tensor,
+    T2Ei: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    act_fn,
+    T: int,
+) -> torch.Tensor:
+    """Packed-prefix expert helper for NSP-blocked dispatch."""
+    batch_size, hidden_size = T2Ei.shape[0], x.shape[1]
+    scatter_idx = (torch.cumsum(T2Ei.long(), dim=1) - 1).to(torch.int32)
+    invalid_mask = ~T2Ei
+    INT32_MAX = torch.tensor(torch.iinfo(torch.int32).max, dtype=torch.int32, device=x.device)
+    scatter_safe_idx = torch.where(invalid_mask, INT32_MAX, scatter_idx)
+
+    x_prime = torch.zeros(batch_size, T, hidden_size, dtype=x.dtype, device=x.device)
+    x_prime = CtxScatterFunc3D.apply(x_prime, scatter_safe_idx, x.unsqueeze(0).expand(batch_size, -1, -1))
+
+    gate_prime = x_prime @ W_g
+    up_prime = x_prime @ W_u
+    down_prime = (up_prime * act_fn(gate_prime)) @ W_d
+
+    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    row_range = torch.arange(T, device=x.device, dtype=torch.int32).unsqueeze(0)
+    down_prime = torch.where((row_range < valid_rows).unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
+
+    gather_idx = torch.where(invalid_mask, INT32_MAX, scatter_idx)
+    delta_out = CtxGatherFunc3D.apply(down_prime, gather_idx)
+    delta_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(delta_out), delta_out)
+    return delta_out
+
+
 class QEffDeepseekMoEGate(nn.Module):
     def forward(self, hidden_states):
         bsz, seq_len, h = hidden_states.shape
@@ -1106,6 +1143,47 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
     #            setattr(exp, "up_proj", up_proj)
     #            setattr(exp, "down_proj", down_proj)
 
+    def __qeff_init__(self):
+        self.gate_proj_w = []
+        self.up_proj_w = []
+        self.down_proj_w = []
+        with torch.no_grad():
+            for e in range(self.num_experts):
+                self.gate_proj_w.append(self.experts[e].gate_proj.weight.T)
+                self.up_proj_w.append(self.experts[e].up_proj.weight.T)
+                self.down_proj_w.append(self.experts[e].down_proj.weight.T)
+            self.gate_proj_w = torch.stack(self.gate_proj_w)  # [E, H, I]
+            self.up_proj_w = torch.stack(self.up_proj_w)  # [E, H, I]
+            self.down_proj_w = torch.stack(self.down_proj_w)  # [E, I, H]
+
+    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
+        T, H = x.shape
+        num_nsp = EXPERT_BLOCKING_NUM_NSP
+        if self.num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
+            )
+        local_experts = self.num_experts // num_nsp
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self.gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.down_proj_w.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        expert_out_partial = x.new_zeros((num_nsp, T, H))
+        for slot in range(local_experts):
+            routing_weight = rw[:, slot, :].unsqueeze(-1)
+            T2Ei = routing_weight.squeeze(-1) > 0
+            delta = _ctx_scatter_gather_expert_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=W_g[:, slot],
+                W_u=W_u[:, slot],
+                W_d=W_d[:, slot],
+                act_fn=self.experts[0].act_fn,
+                T=T,
+            )
+            expert_out_partial = expert_out_partial + (delta * routing_weight)
+        return expert_out_partial.sum(dim=0)
+
     def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
         for expert_idx in range(num_experts):
@@ -1146,31 +1224,84 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         # and all expert are "local" meaning we shard but we don't gather
         return final_hidden_states.type(hidden_states.dtype)
 
-    def forward(self, hidden_states):
-        """
-        Forward pass of MoE block.
-        """
-        residuals = hidden_states
-        orig_shape = hidden_states.shape
-        topk_indices, topk_weights, _, _ = self.gate(hidden_states)
-        # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
+    def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, H = hidden_states.shape
+        T = B * S
+        x = hidden_states.view(T, H)
+        router_logits = self.gate(x)  # [T, E]
+        prob = F.softmax(router_logits, -1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, -1)
+        if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
+            top_w /= top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(hidden_states.dtype)
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, top_i, top_w)
+        routing_weights = masked_logits
+        expert_out = x.new_zeros((T, H))
+        for e in range(self.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
+            W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T
+            W_d = self.experts[e].down_proj.weight.T
+            gate = x @ W_g
+            up = x @ W_u
+            down = (up * self.experts[e].act_fn(gate)) @ W_d
+            expert_out += down * routing_weight
+        return expert_out.view(B, S, H), router_logits
 
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        mask = torch.zeros(hidden_states.shape[0], self.config.n_routed_experts)
-        mask.scatter_(1, topk_indices, topk_weights)
-        if os.environ.get("NUM_FFN_BLOCKS", None) is not None and os.environ.get("FFN_W_BLOCK_SIZE", None) is not None:
-            hidden_states = self.moe_blocked_weights_forward(
-                hidden_states, topk_weights, mask, self.config.n_routed_experts
-            ).view(*orig_shape)
-        elif os.environ.get("NUM_FFN_BLOCKS", None) is not None:
-            hidden_states = self.moe_blocked_forward(
-                hidden_states, topk_weights, mask, self.config.n_routed_experts
-            ).view(*orig_shape)
-        else:
-            hidden_states = self.moe(hidden_states, topk_weights, mask, self.config.n_routed_experts).view(*orig_shape)
+    #   def forward(self, hidden_states):
+    #        """
+    #        Forward pass of MoE block.
+    #        """
+    #        residuals = hidden_states
+    #        orig_shape = hidden_states.shape
+    #        topk_indices, topk_weights, _, _ = self.gate(hidden_states)
+    #        # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
+    #
+    #        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+    #        mask = torch.zeros(hidden_states.shape[0], self.config.n_routed_experts)
+    #        mask.scatter_(1, topk_indices, topk_weights)
+    #
+    #        if os.environ.get("NUM_FFN_BLOCKS", None) is not None and os.environ.get("FFN_W_BLOCK_SIZE", None) is not None:
+    #            hidden_states = self.moe_blocked_weights_forward(
+    #                hidden_states, topk_weights, mask, self.config.n_routed_experts
+    #            ).view(*orig_shape)
+    #        elif os.environ.get("NUM_FFN_BLOCKS", None) is not None:
+    #            hidden_states = self.moe_blocked_forward(
+    #                hidden_states, topk_weights, mask, self.config.n_routed_experts
+    #            ).view(*orig_shape)
+    #        else:
+    #            hidden_states = self.moe(hidden_states, topk_weights, mask, self.config.n_routed_experts).view(*orig_shape)
+    #
+    #        hidden_states = hidden_states + self.shared_experts(residuals)
+    #        return hidden_states
 
-        hidden_states = hidden_states + self.shared_experts(residuals)
-        return hidden_states
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, H = hidden_states.shape
+        T = B * S
+        x = hidden_states.view(T, H)
+        router_logits = self.gate(x)
+        prob = F.softmax(router_logits, -1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, -1)
+        if self.norm_topk_prob:
+            top_w /= top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(hidden_states.dtype)
+        routing_weights = torch.zeros_like(router_logits)
+        routing_weights.scatter_(1, top_i, top_w)
+
+        if self.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
+            expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
+            return expert_out.view(B, S, H), router_logits
+
+        expert_out = x.new_zeros((T, H))
+        for e in range(self.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
+            W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T
+            W_d = self.experts[e].down_proj.weight.T
+            gate = x @ W_g
+            up = x @ W_u
+            down = (up * self.experts[e].act_fn(gate)) @ W_d
+            expert_out += down * routing_weight
+        return expert_out.view(B, S, H), router_logits
 
 
 class QEffDeepseekV3DecoderLayer(nn.Module):
