@@ -85,12 +85,20 @@ def create_master_config(
 
 
 def test_default_config():
+    """
+    Verify that ConfigManager can be instantiated with no arguments,
+    falling back entirely to dataclass defaults.
+    """
     config_manager = ConfigManager()
     assert config_manager is not None
     assert config_manager.config is not None
 
 
 def test_config_values(config_path):
+    """
+    Verify that values loaded from a YAML config file are correctly
+    reflected in the resulting MasterConfig object.
+    """
     config_manager = ConfigManager(config_path=config_path)
     assert config_manager.config is not None
     assert config_manager.config.model["model_name"] == "HuggingFaceTB/SmolLM-135M"
@@ -103,12 +111,69 @@ def test_config_values(config_path):
     assert not config_manager.config.training["gradient_checkpointing_kwargs"]["use_reentrant"]
 
 
+def test_config_file_with_cli_overrides(config_path):
+    """
+    Verify that CLI overrides are applied on top of YAML values.
+    Fields not mentioned on the CLI must retain their YAML-sourced values
+    (dataset_name and model_name are asserted unchanged to confirm this).
+    """
+    config_manager = ConfigManager(
+        cli_args=[
+            str(config_path),
+            "--log_file_name=results",
+            "--dataset_num_samples=100",
+        ]
+    )
+
+    assert config_manager.config.training["log_file_name"] == "results"
+    assert config_manager.config.dataset["dataset_num_samples"] == 100
+    assert config_manager.config.dataset["dataset_name"] == "knkarthick/samsum"
+    assert config_manager.config.model["model_name"] == "HuggingFaceTB/SmolLM-135M"
+
+
+def test_config_file_with_unknown_cli_args(config_path):
+    """
+    Verify that unrecognised CLI flags are not silently dropped.
+    They must be collected into extra_params['cli_remaining_args'] so
+    callers can inspect or forward them.
+    """
+    config_manager = ConfigManager(
+        cli_args=[
+            str(config_path),
+            "--log_file_name=results",
+            "--dataset_num_samples=100",
+            "--unknown_flag=value",
+        ]
+    )
+
+    assert config_manager.config.training["log_file_name"] == "results"
+    assert config_manager.config.dataset["dataset_num_samples"] == 100
+    assert config_manager.config.extra_params["cli_remaining_args"] == ["--unknown_flag=value"]
+
+
+def test_cli_only_overrides_default_config():
+    """
+    Verify that CLI args alone (no YAML is provided) override dataclass defaults.
+    """
+    config_manager = ConfigManager(cli_args=["--output_dir=./cli_results", "--num_train_epochs=3"])
+
+    assert config_manager.config.training["output_dir"] == "./cli_results"
+    assert config_manager.config.training["num_train_epochs"] == 3
+
+
 def test_config_missing_file():
+    """
+    Verify that passing a non-existent YAML path raises FileNotFoundError.
+    """
     with pytest.raises(FileNotFoundError):
         ConfigManager(config_path="non_existent_file.yaml")
 
 
 def test_config_created_from_obj():
+    """
+    Verify that ConfigManager accepts a pre-built MasterConfig object
+    and exposes all top-level config sections without modification.
+    """
     master_config = create_master_config(output_dir="./test_output")
     config_manager = ConfigManager(master_config)
     config = config_manager.config
@@ -121,6 +186,11 @@ def test_config_created_from_obj():
 
 
 def test_config(config_path):
+    """
+    Integration test: load a YAML config and verify that all required
+    top-level sections are present and that each getter returns a
+    non-empty dict with the expected keys.
+    """
     config_manager = ConfigManager(config_path=config_path)
     assert isinstance(config_manager, ConfigManager)
 

@@ -12,10 +12,9 @@ Provides centralized configuration loading, validation, and management.
 import json
 import logging
 import os
-import sys
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Set, Union
 
 import yaml
 from transformers.hf_argparser import HfArgumentParser
@@ -336,7 +335,7 @@ class TrainingConfig:
     )
     overwrite_output_dir: bool = field(
         default=False,
-        metadata={"help": "Whether to overwrite the output directory."},
+        metadata={"help": "whether it is allowed to reuse and overwrite an existing output_dir."},
     )
     seed: int = field(
         default=42,
@@ -512,7 +511,12 @@ class MasterConfig:
 class ConfigManager:
     """Manages configuration loading, validation, and updates."""
 
-    def __init__(self, config: Optional[MasterConfig] = None, config_path: Optional[str] = None):
+    def __init__(
+        self,
+        config: Optional[MasterConfig] = None,
+        config_path: Optional[str] = None,
+        cli_args: Optional[List[str]] = None,
+    ):
         """
         Initialize ConfigManager with either:
         - Path to config file (str or Path)
@@ -525,60 +529,15 @@ class ConfigManager:
 
         if config_path and not config:
             logger.log_rank_zero("Loading configuration from config_path...")
-            config_path = os.path.abspath(config_path)
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(f"Config file not found: {config_path}")
-            if not (config_path.endswith(".yaml") or config_path.endswith(".yml")):
-                raise ValueError(f"Expected a .yaml/.yml file, got: {config_path}")
-            try:
-                self.load_config(config_path)
-            except Exception as e:
-                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+            self._load_config_file(config_path)
+            if cli_args:
+                self._apply_cli_overrides(cli_args)
 
         elif config and not config_path:
             logger.log_rank_zero("Loading configuration from config object...")
 
-        elif len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-            logger.log_rank_zero("Loading configuration from config_path from CLI...")
-            config_path = os.path.abspath(sys.argv[1])
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(f"Config file not found: {config_path}")
-            try:
-                self.load_config(config_path)
-            except Exception as e:
-                raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
-
-        elif len(sys.argv) > 2:
-            logger.log_rank_zero("Loading configuration flags from CLI...")
-            parser = HfArgumentParser(
-                (
-                    TrainingConfig,
-                    ModelConfig,
-                    DatasetConfig,
-                    OptimizerConfig,
-                    SchedulerConfig,
-                    CallbackConfig,
-                    PeftConfig,
-                    DdpConfig,
-                    GradientCheckpointingKwargs,
-                )
-            )
-            train_args, model_args, data_args, opt_args, schd_args, call_args, peft_args, ddp_args, gck_args, extra = (
-                parser.parse_args_into_dataclasses(return_remaining_strings=True)
-            )
-            train_args.ddp_config = ddp_args
-            train_args.gradient_checkpointing_kwargs = gck_args
-            model_args.peft_config = peft_args
-            self.config = MasterConfig(
-                model=model_args,
-                dataset=data_args,
-                training=train_args,
-                callbacks=call_args,
-                optimizers=opt_args,
-                scheduler=schd_args,
-                extra_params=extra,
-            )
-
+        elif cli_args is not None:
+            self._load_from_cli_args(cli_args)
         else:
             logger.log_rank_zero("Using default configuration...")
         self.config = asdict(self.config)
@@ -588,6 +547,111 @@ class ConfigManager:
             self.validate_config()
         except Exception as e:
             logger.log_rank_zero(f"Config validation failed with error: {e}")
+
+    def _build_cli_parser(self) -> HfArgumentParser:
+        return HfArgumentParser(
+            (
+                TrainingConfig,
+                ModelConfig,
+                DatasetConfig,
+                OptimizerConfig,
+                SchedulerConfig,
+                CallbackConfig,
+                PeftConfig,
+                DdpConfig,
+                GradientCheckpointingKwargs,
+            )
+        )
+
+    @staticmethod
+    def _looks_like_config_path(arg: str) -> bool:
+        return bool(arg) and arg.endswith((".yaml", ".yml", ".json"))
+
+    @staticmethod
+    def _provided_cli_keys(cli_args: List[str]) -> Set[str]:
+        keys: Set[str] = set()
+        for token in cli_args:
+            if not token.startswith("--"):
+                continue
+            key = token[2:]
+            if not key:
+                continue
+            keys.add(key.split("=", 1)[0].replace("-", "_"))
+        return keys
+
+    def _load_config_file(self, config_path: Union[str, Path]) -> None:
+        config_path = os.path.abspath(str(config_path))
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+        if not self._looks_like_config_path(config_path):
+            raise ValueError(f"Expected a .yaml/.yml/.json file, got: {config_path}")
+        try:
+            self.load_config(config_path)
+        except Exception as e:
+            raise ValueError(f"Failed to parse YAML config '{config_path}': {e}")
+
+    def _load_from_cli_args(self, cli_args: List[str]) -> None:
+        if not cli_args:
+            logger.log_rank_zero("Using default configuration...")
+            return
+
+        if self._looks_like_config_path(cli_args[0]):
+            logger.log_rank_zero("Loading configuration from config_path from CLI...")
+            self._load_config_file(cli_args[0])
+            if len(cli_args) > 1:
+                self._apply_cli_overrides(cli_args[1:])
+            return
+
+        logger.log_rank_zero("Loading configuration flags from CLI...")
+        self._apply_cli_overrides(cli_args)
+
+    def _apply_cli_overrides(self, cli_args: List[str]) -> None:
+        parser = self._build_cli_parser()
+        train_args, model_args, data_args, opt_args, schd_args, call_args, peft_args, ddp_args, gck_args, extra = (
+            parser.parse_args_into_dataclasses(args=cli_args, return_remaining_strings=True, look_for_args_file=False)
+        )
+
+        provided_keys = self._provided_cli_keys(cli_args)
+        updates: Dict[str, Any] = {}
+
+        def add_section(section_name: str, dataclass_obj: Any, excluded: Optional[Set[str]] = None) -> None:
+            excluded = excluded or set()
+            section_updates: Dict[str, Any] = {}
+            for f in fields(dataclass_obj):
+                if f.name in excluded:
+                    continue
+                if f.name in provided_keys:
+                    section_updates[f.name] = getattr(dataclass_obj, f.name)
+            if section_updates:
+                updates[section_name] = section_updates
+
+        add_section("training", train_args, excluded={"ddp_config", "gradient_checkpointing_kwargs"})
+        add_section("model", model_args, excluded={"peft_config"})
+        add_section("dataset", data_args)
+        add_section("optimizers", opt_args)
+        add_section("scheduler", schd_args)
+        add_section("callbacks", call_args)
+
+        peft_updates = {f.name: getattr(peft_args, f.name) for f in fields(peft_args) if f.name in provided_keys}
+        if peft_updates:
+            updates.setdefault("model", {})
+            updates["model"]["peft_config"] = peft_updates
+
+        ddp_updates = {f.name: getattr(ddp_args, f.name) for f in fields(ddp_args) if f.name in provided_keys}
+        if ddp_updates:
+            updates.setdefault("training", {})
+            updates["training"]["ddp_config"] = ddp_updates
+
+        gck_updates = {f.name: getattr(gck_args, f.name) for f in fields(gck_args) if f.name in provided_keys}
+        if gck_updates:
+            updates.setdefault("training", {})
+            updates["training"]["gradient_checkpointing_kwargs"] = gck_updates
+
+        if updates:
+            self.update_config(updates)
+
+        if extra:
+            self._ensure_extra_params(self.config)["cli_remaining_args"] = extra
 
     def load_config(self, config_path: Union[str, Path]) -> None:
         """Load configuration from file."""

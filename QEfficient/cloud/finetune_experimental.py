@@ -11,6 +11,7 @@ Main entry point for fine-tuning LLMs using the experimental finetune framework.
 
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -334,12 +335,9 @@ def main():
 
     Parses command-line arguments or config file and runs the fine-tuning pipeline.
     """
-    # ConfigManager now handles argument parsing internally via its __init__
-    # It will automatically detect and parse:
-    # - Command-line args (if len(sys.argv) > 1)
-    # - Config file path (if sys.argv[1] ends with .yaml)
-    # - Or use defaults if no args provided
-    config_manager = ConfigManager()
+    # Pass the CLI tail explicitly so ConfigManager can merge config files
+    # with any additional CLI overrides.
+    config_manager = ConfigManager(cli_args=sys.argv[1:])
 
     # Create and run pipeline - pass ConfigManager directly to avoid redundant wrapping
     pipeline = FineTuningPipeline(config_manager)
