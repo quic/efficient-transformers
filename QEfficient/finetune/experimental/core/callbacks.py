@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -41,8 +42,15 @@ registry.callback("tensorboard")(TensorBoardCallback)
 
 logger = Logger(__name__)
 
+
+def _default_cli_args() -> list[str]:
+    if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in os.path.basename(sys.argv[0]).lower():
+        return []
+    return sys.argv[1:]
+
+
 # Setting the path for dumping the log file
-config = ConfigManager().config.training
+config = ConfigManager(cli_args=_default_cli_args()).config.training
 
 output_dir = Path(config["output_dir"])
 log_file_name = config.get("log_file_name")
@@ -121,7 +129,9 @@ class TrainingLogger(TrainerCallback):
             if state.is_world_process_zero:
                 self.write(f"EVALUATION INFO: Best eval loss on epoch {epoch} is {eval_loss:.4f}")
         if state.is_world_process_zero:
-            self.write(f"EVALUATION INFO: Epoch {epoch}: Eval Loss: {eval_loss:.4f} || Eval metric: {eval_metric:.4f}")
+            loss_str = f"{eval_loss:.4f}" if eval_loss is not None else "N/A"
+            metric_str = f"{eval_metric:.4f}" if eval_metric is not None else "N/A"
+            self.write(f"EVALUATION INFO: Epoch {epoch}: Eval Loss: {loss_str} || Eval metric: {metric_str}")
 
     # ----------------------------------------------------
     # EPOCH END — TRAIN LOSS + METRIC + TIME
@@ -145,10 +155,12 @@ class TrainingLogger(TrainerCallback):
         if train_loss is not None:
             train_metric = math.exp(train_loss)
         if state.is_world_process_zero:
+            loss_str = f"{train_loss:.4f}" if train_loss is not None else "N/A"
+            metric_str = f"{train_metric:.4f}" if train_metric is not None else "N/A"
             self.write(
                 f"TRAINING INFO: Epoch {epoch}: "
-                f" Train epoch loss: {train_loss:.4f} || "
-                f" Train metric: {train_metric} || "
+                f" Train epoch loss: {loss_str} || "
+                f" Train metric: {metric_str} || "
                 f" Epoch time {epoch_time:.2f} sec"
             )
         state.log_history.append({"train/epoch_time_sec": epoch_time, "epoch": state.epoch})

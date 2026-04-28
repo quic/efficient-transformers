@@ -161,6 +161,15 @@ QAIC_VISIBLE_DEVICES=0 python -m QEfficient.cloud.finetune_experimental \
   --prompt_func QEfficient.finetune.experimental.preprocessing.alpaca_func:create_alpaca_prompt
 ```
 
+#### Single Device via combination of YAML and CLI Args
+When a field is present in both the YAML and CLI args, the CLI value
+  takes precedence. CLI > YAML > class defaults
+```bash
+QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py \
+  QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml \
+  --log_file_name='results' --dataset_num_samples=100
+```
+
 #### Distributed Data Parallelism via TorchRun
 
 If the tokenizer was used before forking processes for DDP, disable tokenizer parallelism to avoid deadlocks:
