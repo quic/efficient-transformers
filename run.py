@@ -25,7 +25,7 @@ qaic_config = {"mla_absorption": mla_absorption, "num_kv_heads_repeat": TS}  # N
 
 EXPORT_START = 1
 EXPORT_END = 3
-LAYERWISE_MODE = "single_qpc"
+LAYERWISE_MODE = "multiple_qpc"
 
 
 def _ensure_pretrained_window_attrs():
@@ -217,7 +217,7 @@ def main():
     export_root = _resolve_export_root(first_onnx_path)
 
     if LAYERWISE_MODE == "multiple_qpc":
-        QEfficient.utils.compile_layerwise(str(export_root))
+        # QEfficient.utils.compile_layerwise(str(export_root))
         QEfficient.utils.inference_pipeline(str(export_root))
     else:
         QEfficient.utils.layerwise_pipeline(str(export_root))
