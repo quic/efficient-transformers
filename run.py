@@ -217,7 +217,7 @@ def main():
     export_root = _resolve_export_root(first_onnx_path)
 
     if LAYERWISE_MODE == "multiple_qpc":
-        # QEfficient.utils.compile_layerwise(str(export_root))
+        QEfficient.utils.compile_layerwise(str(export_root))
         QEfficient.utils.inference_pipeline(str(export_root))
     else:
         QEfficient.utils.layerwise_pipeline(str(export_root))
