@@ -3100,14 +3100,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
-                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                    prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
-                )
-                kv_cache_shape[2] = (
-                    seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                    if enable_chunking
-                    else seq_len
-                )
+                if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
+                    seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
+                        prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
+                    )
+                    kv_cache_shape[2] = (
+                        seq_len
+                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
+                        if enable_chunking
+                        else seq_len
+                    )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
                 self.hash_params.pop("prefill_only", None)
