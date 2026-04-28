@@ -70,6 +70,7 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
     Mxfp4GptOssExpertDequantizeTransform,
+    PackQuantizedInt4ToMatMulNBitsTransform,
 )
 from QEfficient.utils import (
     constants,
@@ -2757,6 +2758,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         GPTQToMatmulNbitsTransform,
         FP8DeQuantLinearToLinearTransform,
         Mxfp4GptOssExpertDequantizeTransform,
+        PackQuantizedInt4ToMatMulNBitsTransform,
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,

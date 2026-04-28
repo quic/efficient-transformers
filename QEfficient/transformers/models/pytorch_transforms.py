@@ -250,6 +250,7 @@ from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
     QEffDisentangledSelfAttention,
 )
 from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
+    QEffDeepseekMoEGate,
     QEffDeepseekV3Attention,
     QEffDeepseekV3CustomRMSNormAIC,
     QEffDeepseekV3DecoderLayer,
@@ -1034,8 +1035,11 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
+            "moe_weights_as_activations": QEffDeepseekV3MoE.moe_weights_as_activations,
+            "moe_waa_unpack": QEffDeepseekV3MoE.moe_waa_unpack,
+            "original_moe": QEffDeepseekV3MoE.original_moe,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
+            "gate.forward": QEffDeepseekMoEGate.forward,
         },
         "DeepseekV3Attention": {
             "forward": QEffDeepseekV3Attention.forward,
