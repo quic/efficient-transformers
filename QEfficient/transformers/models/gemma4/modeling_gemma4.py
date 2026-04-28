@@ -166,22 +166,28 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
         top_k_index: torch.Tensor,
         top_k_weights: torch.Tensor,
     ) -> torch.Tensor:
-        tokens = hidden_states.shape[0]
-        top_k = top_k_index.shape[-1]
+        Compiler-friendly static MoE:
+        - no dynamic expert dispatch
+        gate_up_proj_t = self.gate_up_proj.transpose(1, 2)
+        gate_up_out = torch.matmul(hidden_states, gate_up_proj_t).permute(1, 0, 2)
+        gate, up = gate_up_out.chunk(2, dim=-1)
+        activated = self.act_fn(gate) * up
 
-        selected_gate_up = self.gate_up_proj[top_k_index.reshape(-1)].transpose(1, 2)
-        gate_proj, up_proj = selected_gate_up.chunk(2, dim=-1)
-        down_proj = self.down_proj[top_k_index.reshape(-1)].transpose(1, 2)
+        down_proj_t = self.down_proj.transpose(1, 2)
+        experts_out = torch.matmul(activated.permute(1, 0, 2), down_proj_t).permute(1, 0, 2)
 
-        expert_inputs = hidden_states.unsqueeze(1).expand(-1, top_k, -1).reshape(-1, 1, self.hidden_dim)
-        gate = torch.bmm(expert_inputs, gate_proj)
-        up = torch.bmm(expert_inputs, up_proj)
-        gated_output = self.act_fn(gate) * up
+        expert_weights = torch.zeros(
+            hidden_states.shape[0],
+            self.num_experts,
+            dtype=top_k_weights.dtype,
+            device=top_k_weights.device,
+        )
+        expert_weights.scatter_add_(1, top_k_index, top_k_weights)
+        weighted_experts = experts_out.transpose(1, 2)  # [tokens, hidden, num_experts]
+        combine_weights = expert_weights.to(experts_out.dtype).unsqueeze(-1)  # [tokens, num_experts, 1]
+        return torch.bmm(weighted_experts, combine_weights).squeeze(-1)
 
-        experts_out = torch.bmm(gated_output, down_proj).view(tokens, top_k, self.hidden_dim)
-        experts_out = experts_out * top_k_weights.unsqueeze(-1)
-        return torch.einsum("tkh->th", experts_out)
-
+  
 
 class QEffGemma4TextAttention(Gemma4TextAttention):
     def __qeff_init__(self):

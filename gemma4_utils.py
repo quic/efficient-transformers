@@ -91,11 +91,10 @@ def build_compile_kwargs(
         kwargs["convert_to_fp16"] = True
 
     if npi_mode == "enabled":
-        # Intentionally do not set `node_precision_info=True`.
-        # QEfficient converts boolean True to a bare flag (`-node-precision-info`),
-        # while qaic-compile expects `-node-precision-info=<path>`.
-        # If a model supports NPI, its compile path can inject a valid file path.
-        pass
+        if skip_vision:
+            pass
+        else:
+            kwargs["node_precision_info"] = True
     elif npi_mode == "disabled":
         kwargs["node_precision_info"] = False
         if not skip_vision:

@@ -11,13 +11,12 @@ from gemma4_utils import (
     CHAT_TEMPLATE,
 )
 
-MODEL_ID = "tiny-random/gemma-4-dense"
+MODEL_ID = "google/gemma-4-26B-A4B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
 TEXT_PROMPT = "Tell me about Taj Mahal?"
 IMAGE_PROMPT = "Can you Describe this image in detail?"
 IMAGE_URL = (
-    "https://raw.githubusercontent.com/google-gemma/cookbook/refs/heads/main/"
-    "Demos/sample-data/GoldenGate.png"
+    "https://picsum.photos/id/0/367/267"
 )
 
 SKIP_VISION = False
@@ -25,18 +24,18 @@ ENABLE_NPI = True
 DISABLE_NPI = True
 ENABLE_FP16_CLIP = True
 
-PREFILL_SEQ_LEN = 128
+PREFILL_SEQ_LEN = 1
 CTX_LEN = 2048
 GENERATION_LEN = 1920
 
 NUM_CORES = 16
-NUM_DEVICES = 2
-DEVICE_IDS = [0, 1]
+NUM_DEVICES = 4
+DEVICE_IDS = [0, 1, 2 ,3 ]
 MOS = 1
 
-USE_ONNX_SUBFUNCTIONS = True
+USE_ONNX_SUBFUNCTIONS = False
 VISION_USE_ONNX_SUBFUNCTIONS = False
-LANG_USE_ONNX_SUBFUNCTIONS = True
+LANG_USE_ONNX_SUBFUNCTIONS = False
 
 MXFP6_MATMUL = True
 MXINT8_KV_CACHE = True
