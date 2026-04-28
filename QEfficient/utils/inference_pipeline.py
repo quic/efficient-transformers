@@ -203,7 +203,7 @@ def inference_pipelines(base_path: str | Path) -> List[int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run layerwise QAIC prefill + decode from a base path.")
-    parser.add_argument("base_path", type=Path, help="Path to onnx_layerwise_tmp (contains layer_*/...)")
+    parser.add_argument("base_path", type=Path, help="Path to onnx layer wise without onnx_layerwise_tmp ")
     parser.add_argument("--model-name", default="moonshotai/Kimi-K2.5")
     parser.add_argument("--prompt", default="Help")
     parser.add_argument("--max-len", type=int, default=32)
