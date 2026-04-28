@@ -1148,10 +1148,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         self.up_proj_w = []
         self.down_proj_w = []
         with torch.no_grad():
-            for e in range(self.num_experts):
-                self.gate_proj_w.append(self.experts[e].gate_proj.weight.T)
-                self.up_proj_w.append(self.experts[e].up_proj.weight.T)
-                self.down_proj_w.append(self.experts[e].down_proj.weight.T)
+            for e in range(len(self.experts)):
+                self.gate_proj_w.append(self.experts[e].gate_proj.qweight.T)
+                self.up_proj_w.append(self.experts[e].up_proj.qweight.T)
+                self.down_proj_w.append(self.experts[e].down_proj.qweight.T)
             self.gate_proj_w = torch.stack(self.gate_proj_w)  # [E, H, I]
             self.up_proj_w = torch.stack(self.up_proj_w)  # [E, H, I]
             self.down_proj_w = torch.stack(self.down_proj_w)  # [E, I, H]
@@ -1159,11 +1159,11 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
     def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
-        if self.num_experts % num_nsp != 0:
+        if len(self.experts) % num_nsp != 0:
             raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
+                f"num_experts ({len(self.experts)}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
             )
-        local_experts = self.num_experts // num_nsp
+        local_experts = len(self.experts) // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
         W_g = self.gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
         W_u = self.up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
@@ -1238,10 +1238,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         masked_logits.scatter_(1, top_i, top_w)
         routing_weights = masked_logits
         expert_out = x.new_zeros((T, H))
-        for e in range(self.num_experts):
+        for e in range(len(self.experts)):
             routing_weight = routing_weights[:, e].unsqueeze(-1)
-            W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T
-            W_d = self.experts[e].down_proj.weight.T
+            W_g, W_u = self.experts[e].gate_proj.qweight.T, self.experts[e].up_proj.qweight.T
+            W_d = self.experts[e].down_proj.qweight.T
             gate = x @ W_g
             up = x @ W_u
             down = (up * self.experts[e].act_fn(gate)) @ W_d
@@ -1288,15 +1288,15 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
 
-        if self.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
+        if len(self.experts) % EXPERT_BLOCKING_NUM_NSP == 0:
             expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
             return expert_out.view(B, S, H), router_logits
 
         expert_out = x.new_zeros((T, H))
-        for e in range(self.num_experts):
+        for e in range(len(self.experts)):
             routing_weight = routing_weights[:, e].unsqueeze(-1)
-            W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T
-            W_d = self.experts[e].down_proj.weight.T
+            W_g, W_u = self.experts[e].gate_proj.qweight.T, self.experts[e].up_proj.qweight.T
+            W_d = self.experts[e].down_proj.qweight.T
             gate = x @ W_g
             up = x @ W_u
             down = (up * self.experts[e].act_fn(gate)) @ W_d
