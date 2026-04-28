@@ -55,7 +55,7 @@ def yarn_linear_ramp_mask(min, max, dim):
     if min == max:
         max += 0.001  # Prevent singularity
 
-    linear_func = (torch.arange(dim, dtype=torch.float32) - min) / (max - min)
+    linear_func = (torch.arange(dim, dtype=torch.float16) - min) / (max - min)
     ramp_func = torch.clamp(linear_func, 0, 1)
     return ramp_func
 
@@ -145,9 +145,9 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
         self.max_seq_len_cached = seq_len
         dim = self.dim
 
-        freq_extra = 1.0 / (self.base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim))
+        freq_extra = 1.0 / (self.base ** (torch.arange(0, dim, 2, dtype=torch.float16, device=device) / dim))
         freq_inter = 1.0 / (
-            self.scaling_factor * self.base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
+            self.scaling_factor * self.base ** (torch.arange(0, dim, 2, dtype=torch.float16, device=device) / dim)
         )
 
         low, high = yarn_find_correction_range(
@@ -157,11 +157,11 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
             self.base,
             self.original_max_position_embeddings,
         )
-        inv_freq_mask = 1.0 - yarn_linear_ramp_mask(low, high, dim // 2).to(device=device, dtype=torch.float32)
+        inv_freq_mask = 1.0 - yarn_linear_ramp_mask(low, high, dim // 2).to(device=device, dtype=torch.float16)
         inv_freq = freq_inter * (1 - inv_freq_mask) + freq_extra * inv_freq_mask
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
-        t = torch.arange(seq_len, device=device, dtype=torch.float32)
+        t = torch.arange(seq_len, device=device, dtype=torch.float16)
 
         freqs = torch.outer(t, inv_freq)
 
@@ -282,14 +282,16 @@ class QEffDeepseekV3Attention(nn.Module):
 
         kva = self.kv_a_layernorm(kva)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        window_cache_layer_idx = self.layer_idx - getattr(QEffDeepseekV3Model, "_start", 0)
+
         if compressed_kvs is not None:
-            kva = compressed_kvs.update_ckv(kva, self.layer_idx, cache_kwargs)
+            kva = compressed_kvs.update_ckv(kva, window_cache_layer_idx, cache_kwargs)
 
         cos, sin = self.rotary_emb(kva, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         if compressed_kvs is not None:
-            k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
+            k_pe = compressed_kvs.update_k_pe(k_pe, window_cache_layer_idx, cache_kwargs)
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
 
@@ -347,16 +349,17 @@ class QEffDeepseekV3Attention(nn.Module):
 
         kva = self.kv_a_layernorm(kva)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        window_cache_layer_idx = self.layer_idx - getattr(QEffDeepseekV3Model, "_start", 0)
 
         ## Write Only
         if compressed_kvs is not None:
-            compressed_kvs.write_only_ckv(kva, self.layer_idx, cache_kwargs)
+            compressed_kvs.write_only_ckv(kva, window_cache_layer_idx, cache_kwargs)
 
         cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         if compressed_kvs is not None:
-            compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
+            compressed_kvs.write_only_k_pe(k_pe, window_cache_layer_idx, cache_kwargs)
 
         if mla_absorption is not None:
             absorption = mla_absorption.get("absorption", False)
@@ -433,8 +436,10 @@ class QEffDeepseekV3Attention(nn.Module):
         kva = self.kv_a_layernorm(kva)
 
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        window_cache_layer_idx = self.layer_idx - getattr(QEffDeepseekV3Model, "_start", 0)
+
         if compressed_kvs is not None:
-            kva = compressed_kvs.update_ckv(kva, self.layer_idx, cache_kwargs)
+            kva = compressed_kvs.update_ckv(kva, window_cache_layer_idx, cache_kwargs)
 
         # ---- MLA absorption flags ----
         if mla_absorption is not None:
@@ -452,7 +457,7 @@ class QEffDeepseekV3Attention(nn.Module):
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         if compressed_kvs is not None:
-            k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
+            k_pe = compressed_kvs.update_k_pe(k_pe, window_cache_layer_idx, cache_kwargs)
 
         kva_expanded = (
             kva.unsqueeze(2).expand(-1, -1, p, -1, -1).reshape(bsz, self.num_heads, seq_kv, self.kv_lora_rank)
@@ -495,7 +500,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
                 attn_weights,
             )
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float16).to(q_pe.dtype)
         ## Do v_proj here
         attn_output = torch.matmul(attn_weights, value_states)
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.num_heads * self.v_head_dim)
@@ -609,19 +614,22 @@ class QEffDeepseekV3Attention(nn.Module):
         query_states = torch.cat((q_nope, q_pe), -1)
         k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
         key_states = torch.cat((k_nope, k_pe_new), -1)
+        window_cache_layer_idx = self.layer_idx - getattr(QEffDeepseekV3Model, "_start", 0)
 
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_value.update(
+                key_states, value_states, window_cache_layer_idx, cache_kwargs
+            )
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
         if attention_mask is not None:  # no matter the length, we just slice it
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float16), attn_weights
             )
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float16).to(query_states.dtype)
         attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
@@ -957,6 +965,10 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
 class QEffDeepseekV3Model(nn.Module):
     """Adapted DeepseekV3Model with batch_index and QEff rotary embedding."""
 
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         scaling_factor = self.config.rope_scaling["factor"]
         kwargs = {
@@ -993,6 +1005,7 @@ class QEffDeepseekV3Model(nn.Module):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        layer_indices_to_run: Optional[List[int]] = None,
         **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1018,9 +1031,9 @@ class QEffDeepseekV3Model(nn.Module):
 
         if cache_compressed:
             compressed_kvs = QEffDynamicCompressedKVRopeCache.from_legacy_cache(compressed_kvs)
-            target_len = compressed_kvs.layers[0].ckv.shape[-2]
-        else:
-            target_len = past_key_values[0][0].shape[2]
+        #     target_len = compressed_kvs.layers[0].ckv.shape[-2]
+        # else:
+        #     target_len = past_key_values[0][0].shape[2]
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -1031,7 +1044,12 @@ class QEffDeepseekV3Model(nn.Module):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_len)
+        # causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_len)
+        start = QEffDeepseekV3Model._start
+        end = QEffDeepseekV3Model._end
+
+        ctx_len = compressed_kvs.layers[0].ckv.shape[-2]
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=ctx_len)
         hidden_states = inputs_embeds
         position_embeddings = None
 
@@ -1039,7 +1057,11 @@ class QEffDeepseekV3Model(nn.Module):
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
 
-        for decoder_layer in self.layers:
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            if layer_idx < start or layer_idx >= end:
+                continue
+            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
+                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1064,7 +1086,10 @@ class QEffDeepseekV3Model(nn.Module):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-        hidden_states = self.norm(hidden_states)
+        total_layers = getattr(QEffDeepseekV3Model, "_total_layers", len(self.layers))
+        if QEffDeepseekV3Model._end == total_layers:
+            hidden_states = self.norm(hidden_states)
+
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -1091,7 +1116,7 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.layers[0].__class__}
+        return {self.model.layers[QEffDeepseekV3Model._start].__class__}
 
     def forward(
         self,
@@ -1109,6 +1134,7 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
+        layer_indices_to_run: Optional[List[int]] = None,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1132,13 +1158,18 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
             return_dict=return_dict,
             cache_position=cache_position,
             mla_absorption=mla_absorption,
+            layer_indices_to_run=layer_indices_to_run,
             **kwargs,
         )
 
         hidden_states = outputs[0]
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states).float()
+        total_layers = getattr(QEffDeepseekV3Model, "_total_layers", len(self.model.layers))
+        if QEffDeepseekV3Model._end < total_layers:
+            logits = hidden_states
+        else:
+            logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+            logits = self.lm_head(hidden_states).float()
 
         loss = None
         if labels is not None:
