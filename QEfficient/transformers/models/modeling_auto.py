@@ -2794,12 +2794,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         retain_full_kv: Optional[bool] = False,
     ):
         if enable:
+            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if enable_chunking:
                 self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
             else:
                 self.model, tf = PrefillOnlyTransform.apply(self.model)
 
         else:
+            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if retain_full_kv:
                 self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
@@ -2876,7 +2878,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
             if mla_absorption := qaic_config.get("mla_absorption", None):
                 self.hash_params["mla_absorption"] = mla_absorption
-                # setattr(self.model.model, "mla_absorption", mla_absorption)
                 setattr(self.model, "mla_absorption", mla_absorption)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
@@ -3090,14 +3091,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
         enable_chunking = kwargs.get("enable_chunking", False)
 
-        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
-            if prefill_only:
-                self.prefill(enable=True)
-                self.hash_params["prefill_only"] = True
-            else:
-                self.prefill(enable=False)
-                self.hash_params.pop("prefill_only", None)
-
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
@@ -3201,8 +3194,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
-            mla_absorption = kwargs.get("mla_absorption", None)
-            if mla_absorption is not None:
+            if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
+                mla_absorption = self.model.qaic_config["mla_absorption"]
                 cache_compressed = mla_absorption.get("cache_compressed", False)
             else:
                 cache_compressed = False
@@ -3498,7 +3491,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        if mla_absorption is not None:
+        if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
+            mla_absorption = self.model.qaic_config["mla_absorption"]
             cache_compressed = mla_absorption.get("cache_compressed", False)
         else:
             cache_compressed = False
