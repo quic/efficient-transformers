@@ -38,7 +38,19 @@ The Hugging Face `Trainer` class and `TrainingArguments` class provide the main 
 Transformer's [Trainer](https://huggingface.co/docs/transformers/main/en/main_classes/trainer#trainer) class goes hand-in-hand with the [TrainingArguments](https://huggingface.co/docs/transformers/v5.2.0/en/main_classes/trainer#transformers.TrainingArguments) class, which offers a wide range of options to customize how a model is trained.
 Since this stack is based on HF's Trainer class. Please refer to above docs to configure the config.yaml file for finetuning. 
 For TRL-based supervised finetuning -`SFTTrainer`, see the [TRL SFTTrainer docs](https://huggingface.co/docs/trl/v0.22.2/en/sft_trainer#trl.SFTTrainer).
+`SFTTrainer` class is a wrapper around the [`transformers.Trainer`] class and inherits all of its attributes and methods.
 `SFTConfig` includes only the parameters specific to SFT training; for the full list of training arguments, refer to the [`transformers.TrainingArguments`](https://huggingface.co/docs/transformers/v5.2.0/en/main_classes/trainer#transformers.TrainingArguments) documentation.
+
+## Dependency Versions
+
+| Package | Version |
+|---|---|
+| `trl` | 0.22.0 |
+| `transformers` | 4.57.3 |
+| `peft` | 0.17.0 |
+| `datasets` | 4.5.0 |
+| `accelerate` | 1.10.1 |
+| `torch` | 2.9.1 |
 
 ### Installation
 
