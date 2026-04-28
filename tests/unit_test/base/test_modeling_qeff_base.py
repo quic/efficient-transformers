@@ -12,6 +12,7 @@ Run with: pytest tests/unit_test/base/ -n auto -v
 """
 
 import pytest
+import torch
 from transformers import GPT2Config, GPT2LMHeadModel, LlamaConfig, LlamaForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -163,20 +164,32 @@ class TestQEFFBaseModelWeightOffloading:
         qeff._model_offloaded_check()
 
     def test_offload_clears_parameter_storage(self):
-        """_offload_model_weights clears parameter storage."""
+        """_offload_model_weights moves all parameters and buffers to meta device."""
         model, cfg = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
-        # Check that parameters have storage before offloading
-        has_storage_before = any(p.storage() and p.storage().size() > 0 for p in qeff.model.parameters())
-        assert has_storage_before
+        # Check that parameters are NOT on meta before offloading
+        assert not any(p.is_meta for p in qeff.model.parameters())
 
         qeff._offload_model_weights(offload_pt_weights=True)
 
-        # After offloading, parameters should have no storage or be on meta device
-        has_storage_after = any(
-            p.storage() and p.storage().size() > 0 for p in qeff.model.parameters() if not p.is_meta
-        )
-        assert not has_storage_after
+        # After offloading, ALL parameters and buffers must be on meta device
+        assert all(p.is_meta for p in qeff.model.parameters())
+        assert all(b.is_meta for b in qeff.model.buffers())
+
+    def test_offload_clears_plain_tensor_attributes(self):
+        """_offload_model_weights clears plain tensor attributes (not params/buffers)."""
+        model, cfg = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        # Attach a plain tensor attribute to a submodule (simulates MoE stacked weights)
+        first_child = next(iter(qeff.model.modules()))
+        first_child.extra_weight = torch.randn(8, 8)
+        assert not first_child.extra_weight.is_meta
+
+        qeff._offload_model_weights(offload_pt_weights=True)
+
+        # The plain tensor attribute should also be on meta device
+        assert first_child.extra_weight.is_meta
 
 
 @pytest.mark.cpu_only
