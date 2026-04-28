@@ -9,7 +9,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -3098,14 +3098,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
-                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                    prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
-                )
-                kv_cache_shape[2] = (
-                    seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                    if enable_chunking
-                    else seq_len
-                )
+                if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
+                    seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
+                        prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
+                    )
+                    kv_cache_shape[2] = (
+                        seq_len
+                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
+                        if enable_chunking
+                        else seq_len
+                    )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
                 self.hash_params.pop("prefill_only", None)
@@ -3402,7 +3404,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        mla_absorption: Optional[Dict[str, bool]] = None,
         **compiler_options,
     ) -> str:
         """
@@ -3447,11 +3448,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-        mla_absorption: Dict[str, bool], optional
-            Configuration dictionary for multi-head latent Attention (MLA) absorption behavior.
-            - "cache_compressed" (bool): If True, compresses kvs are cached to save memory.
-            - "absorption" (bool): If True, enables absorption of attention matrices for efficiency.
-            - "online" (bool): If True, applies MLA absorption on device during inference
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -3494,7 +3490,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             cache_compressed = mla_absorption.get("cache_compressed", False)
         else:
             cache_compressed = False
-        if mla_absorption is not None and not cache_compressed:
+        if (
+            self.model.qaic_config is not None
+            and self.model.qaic_config.get("mla_absorption", None) is not None
+            and not cache_compressed
+        ):
             logger.warning("mla_absorption will be ignored as cache_compressed is set to False")
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
@@ -3653,7 +3653,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
-            mla_absorption=mla_absorption,
             **compiler_options,
         )
 

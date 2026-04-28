@@ -443,10 +443,6 @@ class QEffDeepseekV3Attention(nn.Module):
         else:
             absorption = False
 
-        head_block_size = kva.shape[1]
-        p = self.num_heads // head_block_size
-        seq_kv = kva.shape[2]
-
         # ---- Rotary ----
         cos, sin = self.rotary_emb(q_pe, seq_len=32 * 1024)  # Doesn't need q_pe as head_dim is initialized
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
@@ -454,13 +450,13 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
-        kva_expanded = (
-            kva.unsqueeze(2).expand(-1, -1, p, -1, -1).reshape(bsz, self.num_heads, seq_kv, self.kv_lora_rank)
-        )
+        k_heads, q_heads = kva.shape[1], q_pe.shape[1]
+        num_heads_to_repeat = q_heads - k_heads
+        repeated_kva = kva[:, 0, :, :].expand(bsz, num_heads_to_repeat, -1, self.kv_lora_rank)
+        kva_expanded = torch.cat((kva, repeated_kva), dim=1)
 
-        k_pe_expanded = (
-            k_pe.unsqueeze(2).expand(-1, -1, p, -1, -1).reshape(bsz, self.num_heads, seq_kv, self.qk_rope_head_dim)
-        )
+        repeated_k_pe = k_pe[:, 0, :, :].expand(bsz, num_heads_to_repeat, -1, self.qk_rope_head_dim)
+        k_pe_expanded = torch.cat((k_pe, repeated_k_pe), dim=1)
 
         v_up_per_head = self.v_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.v_head_dim).permute(1, 0, 2)
         value_states = torch.matmul(kva_expanded, v_up_per_head)
