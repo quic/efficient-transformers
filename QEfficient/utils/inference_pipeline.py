@@ -86,34 +86,27 @@ def output_placeholder(session: QAICInferenceSession, output_name: str) -> np.nd
     return np.zeros(shape, dtype=dtype)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run layerwise QAIC prefill + decode from a base path.")
-    parser.add_argument("base_path", type=Path, help="Path to onnx_layerwise_tmp (contains layer_*/...)")
-    parser.add_argument("--model-name", default="moonshotai/Kimi-K2.5")
-    parser.add_argument("--prompt", default="Help")
-    parser.add_argument("--max-len", type=int, default=32)
-    parser.add_argument(
-        "--device-start",
-        type=int,
-        default=None,
-        help="Optional starting device id. If set, layer i uses device_start + i.",
-    )
-    args = parser.parse_args()
-
+def inference_pipeline(
+    base_path: str | Path,
+    model_name: str = "moonshotai/Kimi-K2.5",
+    prompt: str = "Help",
+    max_len: int = 32,
+    device_start: Optional[int] = None,
+) -> List[int]:
     tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name,
+        model_name,
         padding_side="right",
         trust_remote_code=True,
     )
-    prompt_ids = tokenizer(args.prompt, return_tensors="np", add_special_tokens=True)["input_ids"][0].tolist()
+    prompt_ids = tokenizer(prompt, return_tensors="np", add_special_tokens=True)["input_ids"][0].tolist()
     all_ids = list(prompt_ids)
 
-    qpc_paths = discover_qpc_paths(args.base_path)
+    qpc_paths = discover_qpc_paths(Path(base_path))
     print(f"[LOAD] Found {len(qpc_paths)} layer sessions")
 
     sessions: List[Dict[str, object]] = []
     for i, qpc in enumerate(qpc_paths):
-        device_ids = [args.device_start + i] if args.device_start is not None else None
+        device_ids = [device_start + i] if device_start is not None else None
         session = QAICInferenceSession(str(qpc), device_ids=device_ids)
         session.skip_buffers(
             [n for n in session.input_names + session.output_names if "compressed_kv" in n or "k_pe" in n]
@@ -167,7 +160,7 @@ def main() -> None:
 
     # Decode
     generated_ids: List[int] = []
-    while len(all_ids) < args.max_len:
+    while len(all_ids) < max_len:
         next_token_id = int(np.argmax(logits, axis=-1)[0, 0])
         generated_ids.append(next_token_id)
         all_ids.append(next_token_id)
@@ -200,6 +193,34 @@ def main() -> None:
     print(generated_ids)
     print("Generated text:")
     print(tokenizer.decode(generated_ids, skip_special_tokens=True))
+    return generated_ids
+
+
+def inference_pipelines(base_path: str | Path) -> List[int]:
+    # Backward-compatible wrapper used by some local scripts.
+    return inference_pipeline(base_path=base_path)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run layerwise QAIC prefill + decode from a base path.")
+    parser.add_argument("base_path", type=Path, help="Path to onnx_layerwise_tmp (contains layer_*/...)")
+    parser.add_argument("--model-name", default="moonshotai/Kimi-K2.5")
+    parser.add_argument("--prompt", default="Help")
+    parser.add_argument("--max-len", type=int, default=32)
+    parser.add_argument(
+        "--device-start",
+        type=int,
+        default=None,
+        help="Optional starting device id. If set, layer i uses device_start + i.",
+    )
+    args = parser.parse_args()
+    inference_pipeline(
+        base_path=args.base_path,
+        model_name=args.model_name,
+        prompt=args.prompt,
+        max_len=args.max_len,
+        device_start=args.device_start,
+    )
 
 
 if __name__ == "__main__":
