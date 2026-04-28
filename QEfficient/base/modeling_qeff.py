@@ -136,18 +136,22 @@ class QEFFBaseModel(ABC):
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
-                for param in self.model.parameters():
-                    if param.storage():
-                        param.storage().resize_(0)
-                for buffer in self.model.buffers():
-                    if buffer.storage():
-                        buffer.storage().resize_(0)
+                # Clear plain tensor attributes that are not registered as parameters
+                # or buffers (e.g. stacked expert weights in MoE models). These are not
+                # handled by to_empty().
+                param_data_ptrs = {p.data_ptr() for p in self.model.parameters()}
+                buf_data_ptrs = {b.data_ptr() for b in self.model.buffers()}
+                registered_ptrs = param_data_ptrs | buf_data_ptrs
+                for module in self.model.modules():
+                    for attr_name in list(vars(module).keys()):
+                        attr = getattr(module, attr_name, None)
+                        if isinstance(attr, torch.Tensor) and attr.data_ptr() not in registered_ptrs:
+                            setattr(module, attr_name, torch.empty(0, device="meta"))
 
-                meta_model = self.model.to("meta")
-                del self.model
+                # Move all parameters and buffers to meta device with empty storage.
+                self.model.to_empty(device="meta")
                 gc.collect()
 
-                self.model = meta_model
                 self._is_weights_offloaded = True
                 return True
             except Exception as e:
