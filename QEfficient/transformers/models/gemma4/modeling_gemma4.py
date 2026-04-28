@@ -166,8 +166,6 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
         top_k_index: torch.Tensor,
         top_k_weights: torch.Tensor,
     ) -> torch.Tensor:
-        Compiler-friendly static MoE:
-        - no dynamic expert dispatch
         gate_up_proj_t = self.gate_up_proj.transpose(1, 2)
         gate_up_out = torch.matmul(hidden_states, gate_up_proj_t).permute(1, 0, 2)
         gate, up = gate_up_out.chunk(2, dim=-1)
