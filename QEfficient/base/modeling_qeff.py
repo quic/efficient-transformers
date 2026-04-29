@@ -72,6 +72,9 @@ class QEFFBaseModel(ABC):
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
+        self.trace_dir: Optional[str] = None
+        self._pending_trace_capture: bool = False
+        self._write_io_dir: Optional[str] = None
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
@@ -96,6 +99,20 @@ class QEFFBaseModel(ABC):
 
         if self.config.torch_dtype == torch.bfloat16:
             logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
+
+    def _prepare_trace_runtime(self, onnx_parent: str, write_io: bool = False, capture_trace: bool = False):
+        if write_io and onnx_parent:
+            self._write_io_dir = onnx_parent
+        if capture_trace and onnx_parent:
+            self.trace_dir = onnx_parent
+            self._pending_trace_capture = True
+
+    def _finalize_trace_runtime(self):
+        self._pending_trace_capture = False
+
+    def _abort_trace_runtime(self):
+        self._pending_trace_capture = False
+        self._write_io_dir = None
 
     def _normalize_torch_dtype(self):
         """
