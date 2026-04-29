@@ -404,7 +404,131 @@ QAIC_VISIBLE_DEVICES=0,1 python -m QEfficient.cloud.finetune_experimental \
 
 ## Running Tests
 
-Install the required plugins:
+### Tensor Parallelism (TP) *(Experimental)*
+
+Tensor Parallelism splits individual layers (e.g., weight matrices) across multiple devices, allowing large models to be trained by distributing the computation within each layer rather than across layers.
+
+#### How it works
+
+TP is controlled by a single parameter: **`tp_degree`**.
+
+| `tp_degree` value | Behaviour |
+|---|---|
+| `1` (default) | TP disabled — standard single-device training |
+| `> 1` | Each layer is split across `tp_degree` devices |
+
+When `tp_degree > 1` the framework distributes tensor operations (e.g., matrix multiplications in attention and MLP blocks) across devices, with each device holding a shard of the weights.
+
+#### Configuration parameter
+
+Add `tp_degree` under the `training` section of your YAML config or pass it as a CLI flag.
+
+```yaml
+# training section of your config YAML
+training:
+  device: "qaic"       # or "cuda"
+  tp_degree: 2         # split tensors across 2 devices
+```
+
+#### Installation Setup
+
+>  **Note:** TP requires a specific set of dependencies. Follow the steps below carefully.
+
+```bash
+python -m venv finetune_env
+source finetune_env/bin/activate
+
+git clone https://github.com/quic/efficient-transformers.git
+cd efficient-transformers
+git checkout ft_experimental      # Can remove this once merged to mainline
+pip install -e .
+
+pip install \
+  --index-url https://download.pytorch.org/whl/cpu \
+  --extra-index-url https://devpi.qualcomm.com/qcom/dev/+simple \
+  --trusted-host devpi.qualcomm.com \
+  "torch==2.9.1+cpu" \
+  "torchvision==0.24.1+cpu" \
+  "torchaudio==2.9.1+cpu"
+
+cd .. && git clone https://github.com/smedhe/transformers.git
+cd transformers
+git checkout v5.1.0_release_hf_stack_tp_ddp && pip install -e .
+
+cd .. && git clone https://github.com/smedhe/accelerate.git
+cd accelerate
+git checkout qaic_support_accel_23_02 && pip install -e .
+
+pip install trl==0.22.0
+pip install datasets==4.5.0
+pip install -U fsspec
+cd .. && cd efficient-transformers
+```
+
+#### Launch command
+
+**TP only — 2 devices, 2 processes (via YAML)**
+
+```bash
+QAIC_VISIBLE_DEVICES=0,1 torchrun --nproc-per-node=2 QEfficient/cloud/finetune_experimental.py \
+  QEfficient/finetune/experimental/configs/sft_tp_gsm8k_config.yaml
+```
+
+> **Note:** `tp_degree` must be ≤ the number of locally available devices. Each process handles one TP shard, so `nproc-per-node` should equal `tp_degree`.
+
+---
+
+### Tensor Parallelism + Data Distributed Parallel (TP + DDP) *(Experimental)*
+
+TP + DDP combines tensor parallelism with data parallelism. Each TP group handles a model shard, while DDP replicates those groups across multiple process groups to train on larger batches of data simultaneously.
+
+#### How it works
+
+TP + DDP is controlled by two parameters: **`tp_degree`** and the number of DDP replicas (determined by `nproc-per-node` and `tp_degree`).
+
+| Configuration | Behaviour |
+|---|---|
+| `tp_degree = 1`, `ddp_degree > 1` | Pure DDP |
+| `tp_degree > 1`, `ddp_degree = 1` | Pure TP |
+| `tp_degree > 1`, `ddp_degree > 1` | TP + DDP |
+
+- Total devices consumed per node: `LOCAL_WORLD_SIZE × tp_degree`, where `LOCAL_WORLD_SIZE` = number of processes per node.
+- For example, with `tp_degree=2` and `nproc-per-node=4`: 2 TP shards × 2 DDP replicas = 4 devices total.
+
+#### Configuration parameter
+
+```yaml
+# training section of your config YAML
+training:
+  device: "qaic"       # or "cuda"
+  tp_degree: 2         # tensor parallel degree
+```
+
+#### Installation Setup
+
+>  **Note:** TP + DDP uses the same installation setup as TP. Please follow the [TP Installation Setup](#installation-setup) steps before proceeding.
+
+#### Launch command
+
+**TP + DDP — 4 devices, 4 processes (via YAML)**
+
+```bash
+QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node=4 QEfficient/cloud/finetune_experimental.py \
+  QEfficient/finetune/experimental/configs/sft_tp_ddp_gsm8k_config.yaml
+```
+
+> **Note:** `nproc-per-node` should be `tp_degree`x`ddp_degree`.
+
+---
+
+#### Notes
+
+- TP and TP + DDP are currently **experimental features** and are primarily verified for **Llama-family** models.
+- Other architectures with different layer naming conventions may require adjustments.
+- These features require the custom `transformers` and `accelerate` forks listed in the installation setup above.
+
+***
+## To run the Finetune project tests
 
 ```bash
 pip install pytest pytest-mock

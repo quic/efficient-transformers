@@ -4,40 +4,29 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
 # Model configuration
 model:
   model_type: "hf"  # Hugging Face model
   auto_class_name: "AutoModelForCausalLM" # Auto class to load the model with
-  model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
+  model_name: "meta-llama/Llama-3.2-1b"  # Pretrained model name
   use_peft: true # Enable PEFT (Parameter Efficient Fine-Tuning)
   peft_config:
     lora_r: 8 # LoRA rank
     lora_alpha: 16
     lora_dropout: 0
-    target_modules: ["k_proj","gate_proj","q_proj","up_proj","v_proj","down_proj"] # Target modules for LoRA
+    target_modules: ["q_proj", "v_proj", "k_proj"] # Target modules for LoRA
     task_type: "CAUSAL_LM"  # Options: CAUSAL_LM, SEQ_2_SEQ_LM, etc.
-    peft_type: "LORA"  # Options: LORA, IA3, etc..
+    peft_type: "LORA"  # Options: LORA, IA3, etc.
 
 # Dataset configuration
 dataset:
   dataset_type: "sft_dataset"
   dataset_name: "openai/gsm8k" # Dataset name from Hugging Face Hub
-  prompt_template:  |
-    ### Instruction: Solve the math question using a basic calculator.
-    Calculator can be invoked using the format: <<expression=answer>>.
-    "expression" can be one of the 4 arithmetic operations, and "answer" will be filled in for you.
-    Example: <<20+30=50>>
-
-    ### Question: {question}
-
-    ### Answer:
-
+  prompt_template: "Solve the following math problem step by step.\n\n### Question:\n{question}\n\n### Answer:\n" # Template to create prompt from dataset fields
   completion_template: "{answer}"    # Model will be trained on this part. 
-  config_name: "main" # Config name for the dataset
-  data_seed: 42 # Random seed for dataset shuffling, for deterministic shuffling and reproducibility
-  dataset_num_samples: 1000
-
+  config_name: "main" # Config name for the dataset 
+  data_seed: 42 # Random seed for dataset shuffling
+  dataset_num_samples: 100
 
 
 # Training configuration
@@ -45,8 +34,12 @@ training:
   type: "sft"
   gradient_accumulation_steps: 1  # Number of steps to accumulate gradients
   per_device_train_batch_size: 1  # Batch size per device during training
+  num_train_epochs: 1
   torch_compile: False # Whether to use torch.compile
-  ddp_degree: 4
+  tp_degree: 2
+  ddp_degree: 2
+  pp_degree: 1
+  device: "qaic"
   ddp_config: # DDP configuration
     ddp_backend: "qccl"
     ddp_find_unused_parameters: False
@@ -54,11 +47,13 @@ training:
     ddp_broadcast_buffers: True
     ddp_timeout: 1800
 
+
 # Optimizer configuration
 optimizers:
   optimizer_name: "adamw"
   lr: 1e-4
   
+
 scheduler:
   scheduler_name: "cosine"
 

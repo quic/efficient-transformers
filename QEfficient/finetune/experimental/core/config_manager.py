@@ -241,10 +241,6 @@ class ModelConfig:
         default="AutoModelForCausalLM",
         metadata={"help": "The AutoClass name to load the model (e.g., 'AutoModelForCausalLM')."},
     )
-    load_in_4bit: bool = field(
-        default=False,
-        metadata={"help": "Whether to load the model in 4-bit quantization."},
-    )
     use_peft: bool = field(
         default=True,
         metadata={"help": "Whether to use PEFT (Parameter-Efficient Fine-Tuning)."},
@@ -333,10 +329,10 @@ class TrainingConfig:
         default=None,
         metadata={"help": "The log_file output name."},
     )
-    overwrite_output_dir: bool = field(
-        default=False,
-        metadata={"help": "whether it is allowed to reuse and overwrite an existing output_dir."},
-    )
+    # overwrite_output_dir: bool = field(
+    #     default=False,
+    #     metadata={"help": "Whether to overwrite the output directory."},
+    # )
     seed: int = field(
         default=42,
         metadata={"help": "Random seed for reproducibility."},
@@ -478,6 +474,14 @@ class TrainingConfig:
     pp_degree: int = field(
         default=1,
         metadata={"help": "Pipeline parallelism degree (number of pipeline stages). Set > 1 to enable PP."},
+    )
+    tp_degree: int = field(
+        default=1,
+        metadata={"help": "Tensor parallelism degree (number of pipeline stages). Set > 1 to enable TP."},
+    )
+    ddp_degree: int = field(
+        default=1,
+        metadata={"help": "Data parallelism degree (number of pipeline stages). Set > 1 to enable DDP."},
     )
 
 
@@ -865,13 +869,98 @@ class ConfigManager:
         self._push(errors, training.get("logging_steps", 0) < 0, "training.logging_steps must be >= 0.")
         self._push(errors, training.get("save_total_limit", 0) < 0, "training.save_total_limit must be >= 0.")
 
-        # Pipeline Parallelism (PP) config
+        # Pipeline / Tensor / Data parallelism config
         pp_degree = training.get("pp_degree", 1)
+        tp_degree = training.get("tp_degree", 1)
+        ddp_degree = training.get("ddp_degree", 1)
+
         self._push(
             errors,
             not isinstance(pp_degree, int) or pp_degree < 1,
             "training.pp_degree must be a positive integer (default 1 = no PP; > 1 enables PP).",
         )
+        self._push(
+            errors,
+            not isinstance(tp_degree, int) or tp_degree < 1,
+            "training.tp_degree must be a positive integer (default 1 = no TP; > 1 enables TP).",
+        )
+        self._push(
+            errors,
+            not isinstance(ddp_degree, int) or ddp_degree < 1,
+            "training.ddp_degree must be a positive integer (default 1 = no DDP; > 1 enables DDP).",
+        )
+
+        # Supported modes:
+        #  - PP only
+        #  - DDP only (single-server / multi-server)
+        #  - TP only (single-server)
+        #  - TP + DDP (single-server)
+        if isinstance(pp_degree, int) and isinstance(tp_degree, int) and isinstance(ddp_degree, int):
+            self._push(
+                errors,
+                pp_degree > 1 and tp_degree > 1,
+                "Unsupported parallelism combination: TP cannot be combined with PP. "
+                "Supported modes are PP only, DDP only, TP only, or TP+DDP (single-server).",
+            )
+            self._push(
+                errors,
+                pp_degree > 1 and ddp_degree > 1,
+                "Unsupported parallelism combination: DDP cannot be combined with PP. "
+                "Supported modes are PP only, DDP only, TP only, or TP+DDP (single-server).",
+            )
+
+        # LOCAL_WORLD_SIZE consistency checks (when launched in distributed mode)
+        if "LOCAL_WORLD_SIZE" in os.environ:
+            try:
+                local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
+            except ValueError:
+                local_world_size = -1
+
+            self._push(
+                errors,
+                local_world_size < 1,
+                f"Invalid LOCAL_WORLD_SIZE={os.environ.get('LOCAL_WORLD_SIZE')!r}; expected a positive integer.",
+            )
+
+            if (
+                local_world_size > 0
+                and isinstance(pp_degree, int)
+                and isinstance(tp_degree, int)
+                and isinstance(ddp_degree, int)
+            ):
+                expected_world_size = pp_degree * tp_degree * ddp_degree
+                self._push(
+                    errors,
+                    expected_world_size != local_world_size,
+                    "Parallelism degree mismatch: pp_degree * tp_degree * ddp_degree "
+                    f"must equal WORLD_SIZE ({pp_degree} * {tp_degree} * {ddp_degree} = {expected_world_size}, "
+                    f"LOCAL_WORLD_SIZE={local_world_size}).",
+                )
+
+        if (
+            world_size > 0
+            and isinstance(pp_degree, int)
+            and isinstance(tp_degree, int)
+            and isinstance(ddp_degree, int)
+            and (pp_degree > 1 or tp_degree > 1)
+        ):
+            expected_world_size = pp_degree * tp_degree * ddp_degree
+            self._push(
+                errors,
+                expected_world_size != world_size,
+                "Parallelism degree mismatch for TP/PP modes: pp_degree * tp_degree * ddp_degree "
+                f"must equal WORLD_SIZE ({pp_degree} * {tp_degree} * {ddp_degree} = {expected_world_size}, "
+                f"WORLD_SIZE={world_size}).",
+            )
+
+        if local_world_size > 0 and world_size > 0:
+            multi_server = world_size > local_world_size
+            self._push(
+                errors,
+                multi_server and tp_degree > 1,
+                "Unsupported parallelism combination: TP and TP+DDP are supported only on a single server. "
+                "Detected multi-server launch from WORLD_SIZE > LOCAL_WORLD_SIZE.",
+            )
 
         # DDP config
         ddp = training.get("ddp_config", {})
