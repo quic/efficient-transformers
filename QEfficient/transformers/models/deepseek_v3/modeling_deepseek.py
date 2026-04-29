@@ -451,12 +451,26 @@ class QEffDeepseekV3Attention(nn.Module):
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
         k_heads, q_heads = kva.shape[1], q_pe.shape[1]
-        num_heads_to_repeat = q_heads - k_heads
-        repeated_kva = kva[:, 0, :, :].expand(bsz, num_heads_to_repeat, -1, self.kv_lora_rank)
-        kva_expanded = torch.cat((kva, repeated_kva), dim=1)
 
-        repeated_k_pe = k_pe[:, 0, :, :].expand(bsz, num_heads_to_repeat, -1, self.qk_rope_head_dim)
-        k_pe_expanded = torch.cat((k_pe, repeated_k_pe), dim=1)
+        if k_heads > 1:
+            num_heads_to_repeat = math.ceil(q_heads / k_heads)
+
+            kva_expanded = (
+                kva.unsqueeze(2)
+                .expand(-1, -1, num_heads_to_repeat, -1, -1)
+                .reshape(bsz, num_heads_to_repeat * k_heads, -1, self.config.kv_lora_rank)
+            )
+            kva_expanded = kva_expanded[:, :q_heads, :, :]
+
+            k_pe_expanded = (
+                k_pe.unsqueeze(2)
+                .expand(-1, -1, num_heads_to_repeat, -1, -1)
+                .reshape(bsz, num_heads_to_repeat * k_heads, -1, self.config.qk_rope_head_dim)
+            )
+            k_pe_expanded = k_pe_expanded[:, :q_heads, :, :]
+        else:
+            kva_expanded = kva
+            k_pe_expanded = k_pe
 
         v_up_per_head = self.v_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.v_head_dim).permute(1, 0, 2)
         value_states = torch.matmul(kva_expanded, v_up_per_head)
