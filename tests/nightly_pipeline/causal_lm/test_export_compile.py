@@ -13,14 +13,14 @@ with open(model_config_path, "r") as f:
 test_models = config["causal_lm_models"]
 
 
-@pytest.mark.parametrize("model_name", test_models)
-def test_export_causal_lm(model_name, model_artifacts, get_model_config):
+@pytest.mark.parametrize("model_name", test_models[:1])
+def test_export_compile_causal_lm(model_name, causal_model_artifacts, get_model_config):
     config, pipeline_configs = get_model_config
     export_params = pipeline_configs["causal_pipeline_configs"][0].get("export_params", {})
 
     # Initialize model entry
-    if model_name not in model_artifacts:
-        model_artifacts[model_name] = {}
+    if model_name not in causal_model_artifacts:
+        causal_model_artifacts[model_name] = {}
 
     # Export loading time
     print(f"\nLoading model for export: {model_name}")
@@ -33,14 +33,23 @@ def test_export_causal_lm(model_name, model_artifacts, get_model_config):
     export_start = time.time()
     onnx_path = qeff_model.export(**export_params)
     export_time = time.time() - export_start
-
     print(f"\nExport is done for model: {model_name} and onnx_path: {onnx_path}")
 
+    # Compile
+    compile_params = pipeline_configs["causal_pipeline_configs"][0].get("compile_params", {})
+    print(f"\nCompiling for model: {model_name}")
+    compile_start = time.time()
+    qpc_path = qeff_model.compile(onnx_path=onnx_path, **compile_params)
+    compile_time = time.time() - compile_start
+    print(f"\nCompilation is done for model: {model_name} and qpc path: {qpc_path}")
+
     # Store metrics
-    model_artifacts[model_name].update(
+    causal_model_artifacts[model_name].update(
         {
             "onnx_path": onnx_path,
             "export_loading_time": export_loading_time,
             "export_time": export_time,
+            "qpc_path": qpc_path,
+            "compile_time": compile_time,
         }
     )

@@ -121,9 +121,39 @@ def artifacts_dir(request):
 
 
 @pytest.fixture(scope="session")
-def artifacts_file(artifacts_dir):
+def causal_model_artifacts_file(artifacts_dir):
     """Path to shared artifacts JSON file."""
-    return artifacts_dir / "model_artifacts.json"
+    return artifacts_dir / "causal_model_artifacts.json"
+
+
+@pytest.fixture(scope="session")
+def embedding_model_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "embedding_model_artifacts.json"
+
+
+@pytest.fixture(scope="session")
+def sequence_model_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "sequence_model_artifacts.json"
+
+
+@pytest.fixture(scope="session")
+def audio_model_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "audio_model_artifacts.json"
+
+
+@pytest.fixture(scope="session")
+def audio_embedding_model_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "audio_embedding_model_artifacts.json"
+
+
+@pytest.fixture(scope="session")
+def image_text_to_text_model_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "image_text_to_text_model_artifacts.json"
 
 
 def load_artifacts(filepath):
@@ -153,11 +183,51 @@ def save_artifacts(filepath, data):
 
 
 @pytest.fixture
-def model_artifacts(artifacts_file):
+def causal_model_artifacts(causal_model_artifacts_file):
     """Fixture to get/set model artifacts."""
-    artifacts = load_artifacts(artifacts_file)
+    artifacts = load_artifacts(causal_model_artifacts_file)
     yield artifacts
-    save_artifacts(artifacts_file, artifacts)
+    save_artifacts(causal_model_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def embedding_model_artifacts(embedding_model_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(embedding_model_artifacts_file)
+    yield artifacts
+    save_artifacts(embedding_model_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def sequence_model_artifacts(sequence_model_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(sequence_model_artifacts_file)
+    yield artifacts
+    save_artifacts(sequence_model_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def audio_model_artifacts(audio_model_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(audio_model_artifacts_file)
+    yield artifacts
+    save_artifacts(audio_model_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def audio_embedding_model_artifacts(audio_embedding_model_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(audio_embedding_model_artifacts_file)
+    yield artifacts
+    save_artifacts(audio_embedding_model_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def image_text_to_text_model_artifacts(image_text_to_text_model_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(image_text_to_text_model_artifacts_file)
+    yield artifacts
+    save_artifacts(image_text_to_text_model_artifacts_file, artifacts)
 
 
 @pytest.fixture
