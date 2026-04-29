@@ -13,7 +13,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 # from QEfficient import QEFFAutoModelForCausalLM
 
 ## For AWQ model update pytorch version to 2.8.*
-model_id = "Qwen/Qwen3.5-0.8B"
+model_id = "tiny-random/qwen3.5"
 config = AutoConfig.from_pretrained(model_id)
 config.torch_dtype = "float32"
 # config.text_config.num_hidden_layers = 2
