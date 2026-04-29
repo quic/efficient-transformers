@@ -20,9 +20,7 @@ from QEfficient.finetune.configs.peft_config import LoraConfig
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 from QEfficient.finetune.utils.helper import Peft_Method
-from QEfficient.utils.logging_utils import QEFFLogger
-
-logger = QEFFLogger.get_logger("FT")
+from QEfficient.finetune.utils.logging_utils import logger
 
 
 def update_config(config, **kwargs):

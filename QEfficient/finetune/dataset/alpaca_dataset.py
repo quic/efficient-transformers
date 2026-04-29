@@ -11,9 +11,7 @@ import json
 import torch
 from torch.utils.data import Dataset
 
-from QEfficient.utils.logging_utils import QEFFLogger
-
-logger = QEFFLogger.get_logger("FT")
+from QEfficient.finetune.utils.logging_utils import logger
 
 PROMPT_DICT = {
     "prompt_input": (

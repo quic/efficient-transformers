@@ -101,8 +101,7 @@ pipeline {
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_qaic_llm &&
-                           mkdir -p $PWD/Qeff_logs &&
-                           export QEFF_LOG_PATH=$PWD/Qeff_logs &&
+                           export QEFF_LOG_PATH=$PWD/Non_qaic_llm &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
                            pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log2.xml --durations=10 &&
