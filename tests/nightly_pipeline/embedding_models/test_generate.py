@@ -15,7 +15,7 @@ from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModel as AutoModel
 
-from ..nightly_utils import get_onnx_and_qpc_size, human_readable
+from ..nightly_utils import NIGHTLY_SKIPPED_MODELS, get_onnx_and_qpc_size
 
 
 def max_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -35,6 +35,10 @@ test_models = config["embedding_models"]
 @pytest.mark.parametrize("model_name", test_models[:1])
 @pytest.mark.parametrize("pooling", [None])
 def test_generate_causal_lm(model_name, pooling, get_model_config, embedding_model_artifacts):
+
+    if model_name in NIGHTLY_SKIPPED_MODELS:
+        pytest.skip(f"Skipping {model_name} as it is in nightly skipped models list.")
+
     config, pipeline_configs = get_model_config
     compile_params = pipeline_configs["embedding_model_configs"][0].get("compile_params", {})
     generate_params = pipeline_configs["embedding_model_configs"][0].get("generate_params", {})
@@ -67,7 +71,6 @@ def test_generate_causal_lm(model_name, pooling, get_model_config, embedding_mod
 
     onnx_and_qpc_dir = os.path.dirname(onnx_path)
     size = get_onnx_and_qpc_size(onnx_and_qpc_dir)
-    size = human_readable(size)
     # Store all metrics and execution info
     embedding_model_artifacts[model_name].update(
         {

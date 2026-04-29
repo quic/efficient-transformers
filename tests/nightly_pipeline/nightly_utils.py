@@ -17,3 +17,14 @@ def get_onnx_and_qpc_size(dir):
                 total_size += os.path.getsize(file_path)
     print(f"Total size of {dir}: {total_size} bytes")
     return human_readable(total_size)
+
+
+NIGHTLY_SKIPPED_MODELS = {
+    "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    "meta-llama/Llama-3.2-90B-Vision-Instruct",
+    "Llama-4-Scout-17B-16E-Instruct",
+    "allenai/Molmo-7B-D-0924",
+    "hpcai-tech/grok-1",
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+    "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+}

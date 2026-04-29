@@ -15,7 +15,7 @@ from transformers import AutoProcessor
 
 from QEfficient import QEFFAutoModelForSpeechSeq2Seq
 
-from ..nightly_utils import get_onnx_and_qpc_size, human_readable
+from ..nightly_utils import NIGHTLY_SKIPPED_MODELS, get_onnx_and_qpc_size
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -26,6 +26,10 @@ test_models = config["audio_models"]
 
 @pytest.mark.parametrize("model_name", test_models[:1])
 def test_generate_audio_model(model_name, get_model_config, audio_model_artifacts):
+
+    if model_name in NIGHTLY_SKIPPED_MODELS:
+        pytest.skip(f"Skipping {model_name} as it is in nightly skipped models list.")
+
     config, pipeline_configs = get_model_config
     compile_params = pipeline_configs["audio_model_configs"][0].get("compile_params", {})
     generate_params = pipeline_configs["audio_model_configs"][0].get("generate_params", {})
@@ -49,7 +53,7 @@ def test_generate_audio_model(model_name, get_model_config, audio_model_artifact
     data = ds[0]["audio"]["array"]
     # Reshape so shape corresponds to data with batch size 1
     data = data.reshape(-1)
-    print(generate_params)
+
     exec_info = qeff_model.generate(
         inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), **generate_params
     )
@@ -59,7 +63,6 @@ def test_generate_audio_model(model_name, get_model_config, audio_model_artifact
 
     onnx_and_qpc_dir = os.path.dirname(onnx_path)
     size = get_onnx_and_qpc_size(onnx_and_qpc_dir)
-    size = human_readable(size)
     # Store all metrics and execution info
     audio_model_artifacts[model_name].update(
         {

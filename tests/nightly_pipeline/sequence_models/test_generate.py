@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForSequenceClassification
 
-from ..nightly_utils import get_onnx_and_qpc_size
+from ..nightly_utils import NIGHTLY_SKIPPED_MODELS, get_onnx_and_qpc_size
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -26,6 +26,9 @@ test_models = config["sequence_models"]
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate_sequence_model(model_name, get_model_config, sequence_model_artifacts):
     """Test export and compile for sequnce models."""
+    if model_name in NIGHTLY_SKIPPED_MODELS:
+        pytest.skip(f"Skipping {model_name} as it is in nightly skipped models list.")
+
     config, pipeline_configs = get_model_config
     compile_params = pipeline_configs["sequence_model_configs"][0].get("compile_params", {})
     generate_params = pipeline_configs["sequence_model_configs"][0].get("generate_params", {})
