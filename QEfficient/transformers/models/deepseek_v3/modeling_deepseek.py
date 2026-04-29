@@ -1143,18 +1143,19 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
     #            setattr(exp, "up_proj", up_proj)
     #            setattr(exp, "down_proj", down_proj)
 
-    def __qeff_init__(self):
-        self.gate_proj_w = []
-        self.up_proj_w = []
-        self.down_proj_w = []
-        with torch.no_grad():
-            for e in range(len(self.experts)):
-                self.gate_proj_w.append(self.experts[e].gate_proj.qweight.T)
-                self.up_proj_w.append(self.experts[e].up_proj.qweight.T)
-                self.down_proj_w.append(self.experts[e].down_proj.qweight.T)
-            self.gate_proj_w = torch.stack(self.gate_proj_w)  # [E, H, I]
-            self.up_proj_w = torch.stack(self.up_proj_w)  # [E, H, I]
-            self.down_proj_w = torch.stack(self.down_proj_w)  # [E, I, H]
+    # def __qeff_init__(self):
+    #     import ipdb; ipdb.set_trace()
+    #     self.gate_proj_w = []
+    #     self.up_proj_w = []
+    #     self.down_proj_w = []
+    #     with torch.no_grad():
+    #         for e in range(len(self.experts)):
+    #             self.gate_proj_w.append(self.experts[e].gate_proj.qweight.T)
+    #             self.up_proj_w.append(self.experts[e].up_proj.qweight.T)
+    #             self.down_proj_w.append(self.experts[e].down_proj.qweight.T)
+    #         self.gate_proj_w = torch.stack(self.gate_proj_w)  # [E, H, I]
+    #         self.up_proj_w = torch.stack(self.up_proj_w)  # [E, H, I]
+    #         self.down_proj_w = torch.stack(self.down_proj_w)  # [E, I, H]
 
     def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
         T, H = x.shape
@@ -1248,60 +1249,31 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             expert_out += down * routing_weight
         return expert_out.view(B, S, H), router_logits
 
-    #   def forward(self, hidden_states):
-    #        """
-    #        Forward pass of MoE block.
-    #        """
-    #        residuals = hidden_states
-    #        orig_shape = hidden_states.shape
-    #        topk_indices, topk_weights, _, _ = self.gate(hidden_states)
-    #        # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
-    #
-    #        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-    #        mask = torch.zeros(hidden_states.shape[0], self.config.n_routed_experts)
-    #        mask.scatter_(1, topk_indices, topk_weights)
-    #
-    #        if os.environ.get("NUM_FFN_BLOCKS", None) is not None and os.environ.get("FFN_W_BLOCK_SIZE", None) is not None:
-    #            hidden_states = self.moe_blocked_weights_forward(
-    #                hidden_states, topk_weights, mask, self.config.n_routed_experts
-    #            ).view(*orig_shape)
-    #        elif os.environ.get("NUM_FFN_BLOCKS", None) is not None:
-    #            hidden_states = self.moe_blocked_forward(
-    #                hidden_states, topk_weights, mask, self.config.n_routed_experts
-    #            ).view(*orig_shape)
-    #        else:
-    #            hidden_states = self.moe(hidden_states, topk_weights, mask, self.config.n_routed_experts).view(*orig_shape)
-    #
-    #        hidden_states = hidden_states + self.shared_experts(residuals)
-    #        return hidden_states
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        topk_idx, topk_weight, router_probs, router_weights = self.gate(hidden_states)
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
-        router_logits = self.gate(x)
-        prob = F.softmax(router_logits, -1, dtype=torch.float)
-        top_w, top_i = torch.topk(prob, self.top_k, -1)
-        if self.norm_topk_prob:
-            top_w /= top_w.sum(-1, keepdim=True)
-        top_w = top_w.to(hidden_states.dtype)
-        routing_weights = torch.zeros_like(router_logits)
-        routing_weights.scatter_(1, top_i, top_w)
+
+        routing_weights = torch.zeros(T, self.config.n_routed_experts)
+        routing_weights.scatter_(1, topk_idx, topk_weight)
 
         if len(self.experts) % EXPERT_BLOCKING_NUM_NSP == 0:
             expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
-            return expert_out.view(B, S, H), router_logits
+            return expert_out.view(B, S, H)
 
-        expert_out = x.new_zeros((T, H))
-        for e in range(len(self.experts)):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-            W_g, W_u = self.experts[e].gate_proj.qweight.T, self.experts[e].up_proj.qweight.T
-            W_d = self.experts[e].down_proj.qweight.T
-            gate = x @ W_g
-            up = x @ W_u
-            down = (up * self.experts[e].act_fn(gate)) @ W_d
-            expert_out += down * routing_weight
-        return expert_out.view(B, S, H), router_logits
+        final_hidden_states = x.new_zeros((T, H))
+        for expert_idx in range(self.n_routed_experts):
+            expert = self.experts[expert_idx]
+            gate_out = expert.gate_proj(hidden_states)
+            up_out = expert.up_proj(hidden_states)
+            hidden = expert.act_fn(gate_out) * up_out
+            expert_output = expert.down_proj(hidden)
+            current_hidden_states = expert_output * routing_weights[:, expert_idx].unsqueeze(-1)
+            final_hidden_states += current_hidden_states
+
+        return final_hidden_states.view(B, S, H)
 
 
 class QEffDeepseekV3DecoderLayer(nn.Module):

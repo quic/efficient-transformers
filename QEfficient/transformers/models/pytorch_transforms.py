@@ -1063,7 +1063,7 @@ class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3MoE": {
             "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
             "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
-            "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
+            # "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
         },
     }
 

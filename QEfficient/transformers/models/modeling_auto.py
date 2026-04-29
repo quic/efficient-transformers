@@ -3100,13 +3100,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
-                if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
+                
+                if self.model.config.model_type == "gpt_oss":
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                         prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                     )
                     kv_cache_shape[2] = (
-                        seq_len
-                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
+                        seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
                         if enable_chunking
                         else seq_len
                     )
@@ -3117,11 +3117,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("NUM_FFN_BLOCKS", None)
                 self.hash_params.pop("ENABLE_OPT_SWA", None)
                 self.hash_params.pop("chunking", None)
-                if kwargs.get("retain_full_kv", False):
-                    kv_cache_shape[2] = seq_len + (
-                        self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
-                    )
-                    self.hash_params["retain_full_kv"] = True
+                if self.model.config.model_type == "gpt_oss":
+                    if kwargs.get("retain_full_kv", False):
+                        kv_cache_shape[2] = seq_len + (
+                            self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
+                        )
+                        self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
