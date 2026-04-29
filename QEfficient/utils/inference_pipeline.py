@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import argparse
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from transformers import AutoTokenizer
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
+SessionInfo = Dict[str, object]
 LAYER_DIR_RE = re.compile(r"layer_(\d+)_(\d+)$")
 
 
@@ -86,12 +89,63 @@ def output_placeholder(session: QAICInferenceSession, output_name: str) -> np.nd
     return np.zeros(shape, dtype=dtype)
 
 
+def resolve_base_path(base_path: str | Path) -> Path:
+    base = Path(base_path)
+    if (base / "onnx_layerwise_tmp").is_dir():
+        return base
+    children = sorted(
+        p for p in base.iterdir() if p.is_dir() and (p / "onnx_layerwise_tmp").is_dir()
+    )
+    if len(children) == 1:
+        return children[0]
+    if not children:
+        raise FileNotFoundError(f"No onnx_layerwise_tmp under: {base}")
+    raise RuntimeError(
+        f"Multiple candidate model directories under {base}. Pass one of: {[str(p) for p in children]}"
+    )
+
+
+def load_single_session(idx: int, qpc: Path, device_start: Optional[int]) -> Tuple[int, SessionInfo]:
+    device_ids = [device_start + idx] if device_start is not None else None
+    session = QAICInferenceSession(str(qpc), device_ids=device_ids)
+    session.skip_buffers(
+        [n for n in session.input_names + session.output_names if "compressed_kv" in n or "k_pe" in n]
+    )
+
+    out_name = pick_main_output_name(session)
+    session.set_buffers({out_name: output_placeholder(session, out_name)})
+
+    return idx, {
+        "session": session,
+        "token_input": pick_token_input_name(session),
+        "hidden_input": pick_hidden_input_name(session),
+        "pos_input": pick_pos_input_name(session),
+        "out_name": out_name,
+    }
+
+
+def load_sessions_threaded(
+    qpc_paths: List[Path], device_start: Optional[int], max_workers: Optional[int]
+) -> List[SessionInfo]:
+    worker_count = max_workers if max_workers is not None else min(64, len(qpc_paths) or 1)
+    indexed: List[Optional[SessionInfo]] = [None] * len(qpc_paths)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(load_single_session, idx, qpc, device_start) for idx, qpc in enumerate(qpc_paths)]
+        for future in futures:
+            idx, info = future.result()
+            indexed[idx] = info
+            print(f"[LOAD] layer {idx}: {qpc_paths[idx]} -> out={info['out_name']}")
+
+    return [info for info in indexed if info is not None]
+
+
 def inference_pipeline(
     base_path: str | Path,
     model_name: str = "moonshotai/Kimi-K2.5",
-    prompt: str = "Help",
-    max_len: int = 32,
+    prompt: str = "Help me with this",
+    max_len: int = 1000,
     device_start: Optional[int] = None,
+    max_workers: Optional[int] = None,
 ) -> List[int]:
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
@@ -101,31 +155,14 @@ def inference_pipeline(
     prompt_ids = tokenizer(prompt, return_tensors="np", add_special_tokens=True)["input_ids"][0].tolist()
     all_ids = list(prompt_ids)
 
-    qpc_paths = discover_qpc_paths(Path(base_path + "/onnx_layerwise_tmp"))
+    resolved_base = resolve_base_path(base_path)
+    qpc_paths = discover_qpc_paths(resolved_base / "onnx_layerwise_tmp")
     print(f"[LOAD] Found {len(qpc_paths)} layer sessions")
 
-    sessions: List[Dict[str, object]] = []
-    for i, qpc in enumerate(qpc_paths):
-        device_ids = [device_start + i] if device_start is not None else None
-        session = QAICInferenceSession(str(qpc), device_ids=device_ids)
-        session.skip_buffers(
-            [n for n in session.input_names + session.output_names if "compressed_kv" in n or "k_pe" in n]
-        )
+    start = time.time()
+    sessions = load_sessions_threaded(qpc_paths, device_start, max_workers)
 
-        out_name = pick_main_output_name(session)
-        session.set_buffers({out_name: output_placeholder(session, out_name)})
-
-        sessions.append(
-            {
-                "session": session,
-                "token_input": pick_token_input_name(session),
-                "hidden_input": pick_hidden_input_name(session),
-                "pos_input": pick_pos_input_name(session),
-                "out_name": out_name,
-            }
-        )
-        print(f"[LOAD] layer {i}: {qpc} -> out={out_name}")
-
+    print(f"[LOAD] Total load time: {time.time() - start:.2f}s")
     if not sessions:
         raise RuntimeError("No sessions loaded")
     if sessions[0]["token_input"] is None:
@@ -133,7 +170,6 @@ def inference_pipeline(
 
     logits = None
 
-    # Prefill: pass each prompt token through all layers
     for pos, token_id in enumerate(prompt_ids):
         hidden = None
         for i, info in enumerate(sessions):
@@ -158,7 +194,8 @@ def inference_pipeline(
     if logits is None:
         raise RuntimeError("Prompt produced no logits")
 
-    # Decode
+    start = time.time()
+    print("[RUN] Starting inference pipeline")
     generated_ids: List[int] = []
     while len(all_ids) < max_len:
         next_token_id = int(np.argmax(logits, axis=-1)[0, 0])
@@ -189,6 +226,7 @@ def inference_pipeline(
             hidden = outputs[info["out_name"]]
         logits = hidden
 
+    print(f"[RUN] Total inference time: {time.time() - start:.2f}s")
     print("Generated token ids:")
     print(generated_ids)
     print("Generated text:")
@@ -196,30 +234,28 @@ def inference_pipeline(
     return generated_ids
 
 
-def inference_pipelines(base_path: str | Path) -> List[int]:
-    # Backward-compatible wrapper used by some local scripts.
-    return inference_pipeline(base_path=base_path)
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run layerwise QAIC prefill + decode from a base path.")
-    parser.add_argument("base_path", type=Path, help="Path to onnx layer wise without onnx_layerwise_tmp ")
+    parser = argparse.ArgumentParser(description="Threaded layerwise QAIC pipeline")
+    parser.add_argument("base_path", type=Path, help="Path to model dir or parent of model dir")
     parser.add_argument("--model-name", default="moonshotai/Kimi-K2.5")
-    parser.add_argument("--prompt", default="Help")
+    parser.add_argument("--prompt", default="Help me with this")
     parser.add_argument("--max-len", type=int, default=32)
     parser.add_argument(
         "--device-start",
         type=int,
-        default=None,
+        default=0,
         help="Optional starting device id. If set, layer i uses device_start + i.",
     )
+    parser.add_argument("--max-workers", type=int, default=None, help="Thread pool size for load")
     args = parser.parse_args()
+
     inference_pipeline(
         base_path=args.base_path,
         model_name=args.model_name,
         prompt=args.prompt,
         max_len=args.max_len,
         device_start=args.device_start,
+        max_workers=args.max_workers,
     )
 
 
