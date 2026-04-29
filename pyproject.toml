@@ -19,13 +19,13 @@ classifiers = [
 ]
 requires-python = ">=3.8,<3.13"
 dependencies = [
-    "transformers==4.57.3",
-    "diffusers== 0.35.1",
-    "huggingface-hub==0.34.0",
+    "transformers==5.5.0",
+    "diffusers==0.37.0",
+    "huggingface-hub==1.7.1",
     "hf_transfer==0.1.9",
-    "peft==0.17.0",
+    "peft==0.18.1",
     "datasets==2.20.0",
-    "fsspec==2023.6.0",
+    "fsspec==2023.10.0",
     "sentencepiece==0.2.0",
     "onnx==1.18.0",
     "onnxruntime==1.22",
@@ -55,9 +55,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-
-test = ["pytest","pytest-mock","pytest-xdist"]
-
+test = ["pytest", "pytest-mock", "pytest-xdist"]
 docs = ["Sphinx==7.1.2","sphinx-rtd-theme==2.0.0","myst-parser==3.0.1","sphinx-multiversion"]
 quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
 

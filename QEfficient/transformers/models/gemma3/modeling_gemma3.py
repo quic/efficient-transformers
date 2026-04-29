@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import copy
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -17,10 +16,10 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3Attention,
-    Gemma3Config,
     Gemma3DecoderLayer,
     Gemma3ForCausalLM,
     Gemma3ForConditionalGeneration,
+    Gemma3TextConfig,
     Gemma3TextModel,
     logger,
     repeat_kv,
@@ -58,11 +57,12 @@ class QEffGemma3CustomRMSNormAIC(nn.Module):
     """
 
     def forward(self, hidden_states):
-        return GemmaRMSNormFunc.apply(
+        out = GemmaRMSNormFunc.apply(
             hidden_states,
             (self.weight).to(hidden_states.dtype) + 1.0,
             self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
         )
+        return out.to(hidden_states.dtype)
 
 
 class QEffGemma3RotaryEmbedding(nn.Module):
@@ -116,23 +116,25 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Args:
         q (`torch.Tensor`): The query tensor.
         k (`torch.Tensor`): The key tensor.
-        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding, already indexed by position_ids and shaped
+            `[batch_size, seq_len, head_dim]`. In Transformers v5+, position_ids are consumed inside
+            `Gemma3RotaryEmbedding.forward` via `inv_freq @ position_ids`, so no gather step is needed here.
+        sin (`torch.Tensor`): The sine part of the rotary embedding, already indexed by position_ids and shaped
+            `[batch_size, seq_len, head_dim]`. Same contract as `cos`.
         position_ids (`torch.Tensor`):
-            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
-            used to pass offsetted position ids when working with a KV-cache.
+            Retained for API compatibility but not used in this function. Position indexing is performed upstream
+            inside `Gemma3RotaryEmbedding.forward` before `cos`/`sin` are passed here.
         unsqueeze_dim (`int`, *optional*, defaults to 1):
-            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+            The dimension along which to unsqueeze `cos` and `sin` so that they broadcast correctly against `q`
+            and `k`. For example, if q and k have shape `[batch_size, heads, seq_len, head_dim]`, set
+            `unsqueeze_dim=1` so that `cos`/`sin` of shape `[batch_size, 1, seq_len, head_dim]` broadcast
+            across the heads dimension. If q and k have shape `[batch_size, seq_len, heads, head_dim]`, set
+            `unsqueeze_dim=2`.
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
 
     # Apply rotation
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -180,37 +182,26 @@ def _is_local(layer_idx: int, pattern: int = 6) -> bool:
 class QEffGemma3Attention(Gemma3Attention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: Gemma3Config, layer_idx: Optional[int] = None):
+    def __init__(self, config: Gemma3TextConfig, layer_idx: Optional[int] = None):
         super().__init__(config, layer_idx)
         # Define the general __qeff_init__() for any changes in the init calls
         # Set the init in the module mapping pytorch transforms
         self.__qeff_init__()
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffGemma3RotaryEmbedding(
-            self.head_dim,
-            self.config,
-            max_position_embeddings=self.config.max_position_embeddings,
-            base=self.config.rope_theta,
-        )
-
-        config = copy.deepcopy(self.config)
-        config.rope_theta = config.rope_local_base_freq
-        config.rope_scaling = {"rope_type": "default", "factor": 1.0}
-        self.is_local = _is_local(self.layer_idx, self.config._sliding_window_pattern)
-        self.window = self.config.sliding_window if self.is_local else None
-
-        self.rotary_emb_local = QEffGemma3RotaryEmbedding(
-            self.head_dim,
-            config,
-            max_position_embeddings=config.max_position_embeddings,
-            base=config.rope_theta,
-        )
+        # In Transformers v4.57, each Gemma3Attention owned its own `rotary_emb` and `rotary_emb_local`
+        # instances, and __qeff_init__ replaced them with QEffGemma3RotaryEmbedding
+        #
+        # In Transformers v5.5+, `rotary_emb` was lifted out of each attention layer and placed as a
+        # single shared instance on Gemma3TextModel (see Gemma3TextModel.__init__). It now accepts a
+        # `layer_type` argument to handle both "sliding_attention" and "full_attention" in one call.
+        # Gemma3Attention no longer owns a `rotary_emb` at all, so there is nothing to replace here.
+        pass
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Optional[torch.Tensor],
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]],
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
@@ -238,12 +229,10 @@ class QEffGemma3Attention(Gemma3Attention):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-        if self.is_sliding:
-            cos, sin = self.rotary_emb_local(value_states, seq_len=self.config.max_position_embeddings)
-        else:
-            cos, sin = self.rotary_emb(value_states, seq_len=self.config.max_position_embeddings)
 
+        cos, sin = position_embeddings
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
@@ -298,8 +287,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings_global: Optional[torch.Tensor] = None,
-        position_embeddings_local: Optional[torch.Tensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
@@ -328,7 +316,7 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
 
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
-            position_embeddings=None,
+            position_embeddings=position_embeddings,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_value,
@@ -403,8 +391,8 @@ class QEffGemma3TextModel(Gemma3TextModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
-            # return_legacy_cache = True
+        # Convert legacy list cache to QEffSlidingWindowCache BEFORE any masking logic
+        if use_cache and not isinstance(past_key_values, Cache):
             past_key_values = QEffSlidingWindowCache.from_legacy_cache(
                 config=self.config, past_key_values=past_key_values
             )
@@ -426,20 +414,26 @@ class QEffGemma3TextModel(Gemma3TextModel):
                 last_cache_position = (
                     attention_mask.shape[-1] if attention_mask.dim() == 2 else cache_position[-1].item()
                 )
-        causal_mask = None
-        # embed positions
+
         hidden_states = inputs_embeds
+
+        # Compute position embeddings per layer_type using the single rotary_emb
+        position_embeddings = {}
+        for layer_type in set(self.config.layer_types):
+            position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
+            layer_type = self.config.layer_types[i]
             layer_outputs = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask,
+                position_embeddings=position_embeddings[layer_type],
+                attention_mask=None,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
@@ -461,8 +455,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        if use_cache:
-            next_cache = past_key_values.to_legacy_cache()
+        next_cache = past_key_values.to_legacy_cache() if use_cache else None
 
         output = BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
@@ -570,7 +563,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             attentions=outputs.attentions,
         )
 
-    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=torch.float32):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = (
@@ -587,8 +580,8 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
         for i in range(config.num_hidden_layers):
             if hasattr(config, "sliding_window"):
                 cache_shape = global_cache_shape if not is_sliding[i] else sliding_cache_shape
-            new_layer_key_cache = torch.zeros(cache_shape, dtype=self.config.torch_dtype)
-            new_layer_value_cache = torch.zeros(cache_shape, dtype=self.config.torch_dtype)
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=dtype)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=dtype)
             pkv = (new_layer_key_cache, new_layer_value_cache)
             past_key_values.append(pkv)
         return past_key_values
@@ -597,7 +590,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
 class QEffGemma3EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
-        self.model = model
+        self.model = model.model
         self.model.vision_model = self.model.vision_tower
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -611,6 +604,8 @@ class QEffGemma3EncoderWrapper(nn.Module):
 
     def forward(self, pixel_values):
         image_features = self.model.get_image_features(pixel_values=pixel_values)
+        if hasattr(image_features, "pooler_output"):
+            image_features = image_features.pooler_output
         return image_features
 
 
@@ -663,10 +658,23 @@ class QEffGemma3DecoderWrapper(nn.Module):
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-        return logits, vision_embeds, image_idx, outputs.past_key_values
+        present = outputs.past_key_values
+        if isinstance(present, Cache):
+            if hasattr(present, "to_legacy_cache"):
+                present = present.to_legacy_cache()
+            elif hasattr(present, "layers"):
+                legacy_cache = ()
+                for layer in present.layers:
+                    legacy_cache += ((getattr(layer, "keys", None), getattr(layer, "values", None)),)
+                present = legacy_cache
+        return logits, vision_embeds, image_idx, present
 
 
 class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
+    def __qeff_init__(self):
+        # Module mapping swaps class post-init, so set aliases here.
+        self.language_model = self.model.language_model
+
     def get_qeff_vision_encoder(self):
         return QEffGemma3EncoderWrapper(self)
 
@@ -683,6 +691,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
         image_features = self.get_image_features(pixel_values=pixel_values)
+        if hasattr(image_features, "pooler_output"):
+            image_features = image_features.pooler_output
         inputs_embeds = self.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.config.image_token_index
@@ -692,6 +702,10 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         image_features_expanded = image_features.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        if past_key_values is not None and not isinstance(past_key_values, Cache):
+            past_key_values = QEffSlidingWindowCache.from_legacy_cache(
+                config=self.language_model.config, past_key_values=past_key_values
+            )
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
@@ -704,7 +718,16 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-        return logits, pixel_values, image_idx, outputs.past_key_values
+        present = outputs.past_key_values
+        if isinstance(present, Cache):
+            if hasattr(present, "to_legacy_cache"):
+                present = present.to_legacy_cache()
+            elif hasattr(present, "layers"):
+                legacy_cache = ()
+                for layer in present.layers:
+                    legacy_cache += ((getattr(layer, "keys", None), getattr(layer, "values", None)),)
+                present = legacy_cache
+        return logits, pixel_values, image_idx, present
 
     def get_npi_file(self, model_name: str) -> str:
         if constants.NPI_MAPPING[model_name] is not None:
@@ -884,7 +907,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             return lang_output_names
         return output_names
 
-    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=torch.float32):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = (
@@ -901,8 +924,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         for i in range(config.num_hidden_layers):
             if hasattr(config, "sliding_window"):
                 cache_shape = global_cache_shape if not is_sliding[i] else sliding_cache_shape
-            new_layer_key_cache = torch.zeros(cache_shape, dtype=self.config.torch_dtype)
-            new_layer_value_cache = torch.zeros(cache_shape, dtype=self.config.torch_dtype)
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=dtype)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=dtype)
             pkv = (new_layer_key_cache, new_layer_value_cache)
             past_key_values.append(pkv)
         return past_key_values
@@ -953,10 +976,14 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         # Add data for KV
+        pkv_dtype = (
+            next(self.language_model.parameters()).dtype if hasattr(self, "language_model") else self.config.torch_dtype
+        )
         lang_inputs["past_key_values"] = self.get_dummy_pkv_cache(
             config=self.language_model.config,
             batch_size=fbs if continuous_batching else bs,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            dtype=pkv_dtype,
         )
 
         if comp_ctx_lengths is not None:
