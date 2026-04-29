@@ -175,6 +175,12 @@ def compile_modules_parallel(
         else:
             specializations = [specializations]
 
+        # Tag each spec with the module name so _compile knows the graph name.
+        specializations = [
+            {**s, "_graph_name": f"{module_name}_model_type_{s['model_type']}" if "model_type" in s else module_name}
+            for s in specializations
+        ]
+
         if module_obj.qpc_path is None:
             # Compile with prepared specializations
             module_obj.compile(specializations=specializations, **compile_kwargs)
@@ -227,6 +233,12 @@ def compile_modules_sequential(
                 specializations = [specializations]
         else:
             specializations = [specializations]
+
+        # Tag each spec with the module name so _compile knows the graph name.
+        specializations = [
+            {**s, "_graph_name": f"{module_name}_model_type_{s['model_type']}" if "model_type" in s else module_name}
+            for s in specializations
+        ]
 
         if module_obj.qpc_path is None:
             # Compile with prepared specializations

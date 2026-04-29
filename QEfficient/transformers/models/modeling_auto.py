@@ -450,15 +450,20 @@ class QEFFAutoModel(QEFFTransformersBase):
         if isinstance(seq_len, list) and len(seq_len) >= 15:
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
+        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
+            {
+                "_graph_name": "Embedding" if len(_seq_lens) == 1 else f"Embedding_{i}",
+                "batch_size": batch_size,
+                "seq_len": sl,
+            }
+            for i, sl in enumerate(_seq_lens)
         ]
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
@@ -795,14 +800,19 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         if isinstance(seq_len, list) and len(seq_len) >= 15:
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
+        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
+            {
+                "_graph_name": "SeqClassification" if len(_seq_lens) == 1 else f"SeqClassification_{i}",
+                "batch_size": batch_size,
+                "seq_len": sl,
+            }
+            for i, sl in enumerate(_seq_lens)
         ]
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
@@ -933,7 +943,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     def compile(
         self,
         compile_dir,
-        compile_only,
         specializations,
         convert_to_fp16,
         mxfp6_matmul,
@@ -950,8 +959,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         ----------
         compile_dir : str
             Directory to save the generated QPC package.
-        compile_only : bool
-            If True, only compilation occurs without running inference.
         specializations : List[Dict[str, Union[int, str]]]
             List of dictionaries, each specifying a compilation specialization.
         convert_to_fp16 : bool
@@ -976,7 +983,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         """
         return self._compile(
             compile_dir=compile_dir,
-            compile_only=compile_only,
             specializations=specializations,
             convert_to_fp16=convert_to_fp16,
             mxfp6_matmul=mxfp6_matmul,
@@ -1119,7 +1125,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     def compile(
         self,
         compile_dir,
-        compile_only,
         specializations,
         convert_to_fp16,
         mxfp6_matmul,
@@ -1136,8 +1141,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         ----------
         compile_dir : str
             Directory to save the generated QPC package.
-        compile_only : bool
-            If True, only compilation occurs without running inference.
         specializations : List[Dict[str, Union[int, str]]]
             List of dictionaries, each specifying a compilation specialization.
         convert_to_fp16 : bool
@@ -1162,7 +1165,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         """
         return self._compile(
             compile_dir=compile_dir,
-            compile_only=compile_only,
             specializations=specializations,
             convert_to_fp16=convert_to_fp16,
             mxfp6_matmul=mxfp6_matmul,
@@ -1581,8 +1583,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not skip_vision:
             vision_qpc_path = self.vision_model._compile(
                 compile_dir=compile_dir,
-                compile_only=True,
                 specializations=specializations["vision"],
+                specialization_module_name="Vision",
                 convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
@@ -1629,7 +1631,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
             lang_qpc_path = self.lang_model._compile(
                 compile_dir=compile_dir,
-                compile_only=True,
                 retained_state=True,
                 specializations=specializations,
                 convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -2270,7 +2271,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             retained_state=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -3260,7 +3260,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: remove this; not required
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
-        return {k: v for k, v in spec.items() if v is not None}
+        result = {k: v for k, v in spec.items() if v is not None}
+        result["_graph_name"] = "Prefill"
+        return result
 
     def build_decode_specialization(
         self,
@@ -3318,7 +3320,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
-        return {k: v for k, v in spec.items() if v is not None}
+        result = {k: v for k, v in spec.items() if v is not None}
+        result["_graph_name"] = "Decode"
+        return result
 
     def compile(
         self,
@@ -3557,7 +3561,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         qpc_path = self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             retained_state=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -3922,7 +3925,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             retained_state=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
@@ -4239,15 +4241,16 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :str: Path of the compiled ``qpc`` package.
         """
 
+        _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
-            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
+            {"_graph_name": "CTC" if len(_seq_lens) == 1 else f"CTC_{i}", "batch_size": batch_size, "seq_len": sl}
+            for i, sl in enumerate(_seq_lens)
         ]
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            compile_only=True,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,
