@@ -175,7 +175,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLVisionAttention,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2RMSNorm as Qwen2_5RMSNorm,
+    Qwen2_5_VLRMSNorm as Qwen2_5RMSNorm,
 )
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
@@ -192,6 +192,23 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeRMSNorm,
     Qwen3MoeRotaryEmbedding,
     Qwen3MoeSparseMoeBlock,
+)
+from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
+    Qwen3OmniMoeAudioAttention,
+    Qwen3OmniMoeAudioEncoder,
+    Qwen3OmniMoeAudioEncoderLayer,
+    Qwen3OmniMoeForConditionalGeneration,
+    Qwen3OmniMoeTextRMSNorm,
+    Qwen3OmniMoeThinkerForConditionalGeneration,
+    Qwen3OmniMoeThinkerTextAttention,
+    Qwen3OmniMoeThinkerTextDecoderLayer,
+    Qwen3OmniMoeThinkerTextModel,
+    Qwen3OmniMoeThinkerTextRMSNorm,
+    Qwen3OmniMoeThinkerTextRotaryEmbedding,
+    Qwen3OmniMoeThinkerTextSparseMoeBlock,
+    Qwen3OmniMoeThinkerTextTopKRouter,
+    Qwen3OmniMoeVisionAttention,
+    Qwen3OmniMoeVisionEncoder,
 )
 from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLForConditionalGeneration,
@@ -455,6 +472,21 @@ from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeRotaryEmbedding,
     QEffQwen3MoeSparseMoeBlock,
 )
+from QEfficient.transformers.models.qwen3_omni.modeling_qwen3_omni import (
+    QEffQwen3OmniMoeAudioAttention,
+    QEffQwen3OmniMoeAudioEncoder,
+    QEffQwen3OmniMoeAudioEncoderLayer,
+    QEffQwen3OmniMoeForConditionalGeneration,
+    QEffQwen3OmniMoeThinkerForConditionalGeneration,
+    QEffQwen3OmniMoeThinkerTextAttention,
+    QEffQwen3OmniMoeThinkerTextDecoderLayer,
+    QEffQwen3OmniMoeThinkerTextModel,
+    QEffQwen3OmniMoeThinkerTextRotaryEmbedding,
+    QEffQwen3OmniMoeThinkerTextSparseMoeBlock,
+    QEffQwen3OmniMoeThinkerTextTopKRouter,
+    QEffQwen3OmniMoeVisionAttention,
+    QEffQwen3OmniMoeVisionEncoder,
+)
 from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLForConditionalGeneration,
     QEffQwen3VLModel,
@@ -526,6 +558,8 @@ class CustomOpsTransform(ModuleMappingTransform):
         Olmo2RMSNorm: CustomRMSNormAIC,
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
+        Qwen3OmniMoeTextRMSNorm: CustomRMSNormAIC,
+        Qwen3OmniMoeThinkerTextRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -694,6 +728,20 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
         Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
+        # Qwen3Omni
+        Qwen3OmniMoeAudioEncoder: QEffQwen3OmniMoeAudioEncoder,
+        Qwen3OmniMoeAudioEncoderLayer: QEffQwen3OmniMoeAudioEncoderLayer,
+        Qwen3OmniMoeAudioAttention: QEffQwen3OmniMoeAudioAttention,
+        Qwen3OmniMoeForConditionalGeneration: QEffQwen3OmniMoeForConditionalGeneration,
+        Qwen3OmniMoeThinkerForConditionalGeneration: QEffQwen3OmniMoeThinkerForConditionalGeneration,
+        Qwen3OmniMoeThinkerTextSparseMoeBlock: QEffQwen3OmniMoeThinkerTextSparseMoeBlock,
+        Qwen3OmniMoeThinkerTextModel: QEffQwen3OmniMoeThinkerTextModel,
+        Qwen3OmniMoeThinkerTextDecoderLayer: QEffQwen3OmniMoeThinkerTextDecoderLayer,
+        Qwen3OmniMoeThinkerTextAttention: QEffQwen3OmniMoeThinkerTextAttention,
+        Qwen3OmniMoeVisionAttention: QEffQwen3OmniMoeVisionAttention,
+        Qwen3OmniMoeVisionEncoder: QEffQwen3OmniMoeVisionEncoder,
+        Qwen3OmniMoeThinkerTextRotaryEmbedding: QEffQwen3OmniMoeThinkerTextRotaryEmbedding,
+        Qwen3OmniMoeThinkerTextTopKRouter: QEffQwen3OmniMoeThinkerTextTopKRouter,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
