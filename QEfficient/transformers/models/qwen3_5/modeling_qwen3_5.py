@@ -5,8 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List, Optional, Tuple, Type, Union
 import math
+from typing import List, Optional, Tuple, Type, Union
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -307,7 +308,6 @@ def eager_attention_forward(
     scaling: float,
     **kwargs,
 ):
-
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
@@ -331,7 +331,6 @@ def qeff_torch_causal_conv1d_update(
     position_ids: torch.Tensor,
     bias: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-
     _, hidden_size, seq_len = hidden_states.shape
     state_len = conv_state.shape[-1]
     idx = position_ids[0].flatten()
@@ -357,7 +356,6 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
     """
 
     def __qeff_init__(self):
-
         # pass
         self.rotary_emb = QEffQwen3_5TextRotaryEmbedding(config=self.config)
 
@@ -480,7 +478,6 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         ones_lower=None,
         eye=None,
     ):
-
         initial_dtype = query.dtype
         if use_qk_l2norm_in_kernel:
             query = l2norm(query, dim=-1, eps=1e-6)
@@ -562,14 +559,14 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # attn = L
 
         ## Factorized Approximation code ##
-        I = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
-        L = I.clone()
+        eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
+        L = eye.clone()
         Apow = attn
 
         K = 32
         for _ in range(int(math.log2(K))):
-            L = L @ (I + Apow)
-            Apow = Apow @ Apow   # square for next power
+            L = L @ (eye + Apow)
+            Apow = Apow @ Apow  # square for next power
 
         attn = L
 
@@ -1193,9 +1190,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
-
-        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
-        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)  # noqa: F841
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)  # noqa: F841
 
         lang_prefill = {
             "batch_size": 1 if continuous_batching else batch_size,
@@ -1309,9 +1305,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
-        kv_cache_linear = []
-        kv_cache_linear.append([1, 6144, 4])
-        kv_cache_linear.append([1, 16, 128, 128])
+        linear_batch_size = fbs if continuous_batching else bs
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
@@ -1319,8 +1313,11 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
                 for kv in ["key", "value"]:
                     lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
             else:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_linear[0], dtype=torch.float32))
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_linear[1], dtype=torch.float32))
+                layer = self.model.language_model.layers[i].linear_attn
+                conv_shape = (linear_batch_size, layer.conv_dim, layer.conv_kernel_size)
+                recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
+                lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=torch.float32))
 
         #
         if continuous_batching:
