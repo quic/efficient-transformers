@@ -902,15 +902,15 @@ def blocked_kv_mla_attention_forward(
         if k_heads > 1:
             num_heads_to_repeat = math.ceil(q_heads / k_heads)
             compressed_kv_block = (
-                compressed_kv_block.unsqueeze(1)
-                .expand(-1, num_heads_to_repeat, -1, -1, -1)
+                compressed_kv_block.unsqueeze(2)
+                .expand(-1, -1, num_heads_to_repeat, -1, -1)
                 .reshape(batch_size, num_heads_to_repeat * k_heads, -1, module.config.kv_lora_rank)
             )
             compressed_kv_block = compressed_kv_block[:, :q_heads, :, :]
 
             k_pe_block = (
-                k_pe_block.unsqueeze(1)
-                .expand(-1, num_heads_to_repeat, -1, -1, -1)
+                k_pe_block.unsqueeze(2)
+                .expand(-1, -1, num_heads_to_repeat, -1, -1)
                 .reshape(batch_size, num_heads_to_repeat * k_heads, -1, module.config.qk_rope_head_dim)
             )
             k_pe_block = k_pe_block[:, :q_heads, :, :]

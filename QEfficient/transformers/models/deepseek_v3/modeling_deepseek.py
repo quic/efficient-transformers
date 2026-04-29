@@ -456,15 +456,15 @@ class QEffDeepseekV3Attention(nn.Module):
             num_heads_to_repeat = math.ceil(q_heads / k_heads)
 
             kva_expanded = (
-                kva.unsqueeze(1)
-                .expand(-1, num_heads_to_repeat, -1, -1, -1)
+                kva.unsqueeze(2)
+                .expand(-1, -1, num_heads_to_repeat, -1, -1)
                 .reshape(bsz, num_heads_to_repeat * k_heads, -1, self.config.kv_lora_rank)
             )
             kva_expanded = kva_expanded[:, :q_heads, :, :]
 
             k_pe_expanded = (
-                k_pe.unsqueeze(1)
-                .expand(-1, num_heads_to_repeat, -1, -1, -1)
+                k_pe.unsqueeze(2)
+                .expand(-1, -1, num_heads_to_repeat, -1, -1)
                 .reshape(bsz, num_heads_to_repeat * k_heads, -1, self.config.qk_rope_head_dim)
             )
             k_pe_expanded = k_pe_expanded[:, :q_heads, :, :]
