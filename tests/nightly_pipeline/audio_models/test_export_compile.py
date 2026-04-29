@@ -15,7 +15,7 @@ with open(model_config_path, "r") as f:
 test_models = config["audio_models"]
 
 
-@pytest.mark.parametrize("model_name", test_models[:1])
+@pytest.mark.parametrize("model_name", test_models)
 def test_export_compile_audio_model(model_name, get_model_config, audio_model_artifacts):
     """Test export and compile of audio model."""
 

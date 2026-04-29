@@ -15,7 +15,7 @@ with open(model_config_path, "r") as f:
 test_models = config["causal_lm_models"]
 
 
-@pytest.mark.parametrize("model_name", test_models[:1])
+@pytest.mark.parametrize("model_name", test_models)
 def test_generate_causal_lm(model_name, causal_model_artifacts, get_model_config):
 
     if model_name in NIGHTLY_SKIPPED_MODELS:

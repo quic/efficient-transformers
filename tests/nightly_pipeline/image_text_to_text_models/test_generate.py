@@ -34,7 +34,7 @@ with open(model_config_path, "r") as f:
 test_models = config["image_text_to_text_models"]
 
 
-@pytest.mark.parametrize("model_name", test_models[:1])
+@pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_generate_image_text_to_text_model(
     model_name, kv_offload, image_text_to_text_model_artifacts, get_model_config

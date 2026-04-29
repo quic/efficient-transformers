@@ -25,7 +25,7 @@ with open(model_config_path, "r") as f:
 test_models = config["audio_embedding_models"]
 
 
-@pytest.mark.parametrize("model_name", test_models[:1])
+@pytest.mark.parametrize("model_name", test_models)
 def test_generate_audio_embedding_model(model_name, get_model_config, audio_embedding_model_artifacts):
 
     if model_name in NIGHTLY_SKIPPED_MODELS:

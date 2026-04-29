@@ -32,7 +32,7 @@ with open(model_config_path, "r") as f:
 test_models = config["embedding_models"]
 
 
-@pytest.mark.parametrize("model_name", test_models[:1])
+@pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("pooling", [None])
 def test_generate_causal_lm(model_name, pooling, get_model_config, embedding_model_artifacts):
 
