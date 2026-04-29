@@ -20,6 +20,9 @@ Tests verify:
 All tests run on CPU only, using tiny in-memory models.
 """
 
+import subprocess
+from pathlib import Path
+
 import pytest
 import torch
 from transformers import GPT2Config, GPT2LMHeadModel
@@ -658,3 +661,249 @@ class TestQEFFAutoModelForCausalLMPrefillStateChange:
 
         assert hasattr(PrefillOnlyChunkedTransform, "_module_mapping")
         assert isinstance(PrefillOnlyChunkedTransform._module_mapping, dict)
+
+
+@pytest.mark.cpu_only
+class TestQEFFAutoModelForCausalLMEvaluatePerformance:
+    """evaluate_performance() API behavior and artifact generation."""
+
+    def _setup_qeff(self, tmp_path, monkeypatch):
+        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+        qeff = QEFFAutoModelForCausalLM(make_tiny_gpt2())
+        fake_compile_dir = tmp_path / "compile" / "qpc-fakehash"
+        fake_qpc_path = fake_compile_dir / "qpc"
+        fake_qpc_path.mkdir(parents=True, exist_ok=True)
+        (fake_qpc_path / "programqpc.bin").write_bytes(b"qpc")
+        (fake_compile_dir / "specializations.json").write_text(
+            '{"specializations": [{"batch_size": "1", "seq_len": "8", "ctx_len": "16"}, {"batch_size": "1", "seq_len": "1", "ctx_len": "16"}]}'
+        )
+
+        compile_calls = []
+
+        def fake_compile(**kwargs):
+            compile_calls.append(kwargs)
+            return fake_qpc_path
+
+        monkeypatch.setattr(qeff, "compile", fake_compile)
+        return qeff, fake_qpc_path, compile_calls
+
+    def _mock_subprocess(self, monkeypatch):
+        import QEfficient.transformers.models.modeling_auto as modeling_auto
+
+        def fake_run(cmd, capture_output=True, text=True):
+            exe = Path(cmd[0]).name
+            if exe == "qaic-runner":
+                profiling_dir = Path(cmd[cmd.index("--aic-profiling-out-dir") + 1])
+                profiling_dir.mkdir(parents=True, exist_ok=True)
+                (profiling_dir / "runner_profile.raw").write_bytes(b"profile")
+
+                out_dir = Path(cmd[cmd.index("--write-output-dir") + 1])
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "runner_output.raw").write_bytes(b"output")
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="Inference per second: 111.5\n", stderr=""
+                )
+
+            if exe == "qaic-opstats":
+                opstats_out = Path(cmd[cmd.index("--output-dir") + 1])
+                opstats_out.mkdir(parents=True, exist_ok=True)
+                (opstats_out / "summary.txt").write_text("summary")
+                (opstats_out / "trace.json").write_text("{}")
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="opstats ok\n", stderr="")
+
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(modeling_auto.subprocess, "run", fake_run)
+
+    def test_has_evaluate_performance_method(self):
+        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+        assert hasattr(QEFFAutoModelForCausalLM, "evaluate_performance")
+        assert callable(QEFFAutoModelForCausalLM.evaluate_performance)
+
+    def test_evaluate_performance_always_calls_compile_and_forces_perf_flags(self, tmp_path, monkeypatch):
+        qeff, _, compile_calls = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        qeff.evaluate_performance(
+            output_dir=str(tmp_path / "perf"),
+            compile_kwargs={"aic_perf_warning": False, "aic_perf_warnings": False},
+            runner_num_iters=1,
+        )
+
+        assert len(compile_calls) == 1
+        compile_kwargs_used = compile_calls[0]
+        assert compile_kwargs_used["aic_perf_metrics"] is True
+        assert compile_kwargs_used["aic_perf_warning"] is True
+        assert "aic_perf_warnings" not in compile_kwargs_used
+        assert compile_kwargs_used["stats_level"] == 70
+        assert compile_kwargs_used["ddr_stats"] is True
+        assert compile_kwargs_used["aic_pmu_recipe"] == "KernelUtil"
+
+    def test_evaluate_performance_non_raw_profiling_does_not_force_raw_compile_flags(self, tmp_path, monkeypatch):
+        qeff, _, compile_calls = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        qeff.evaluate_performance(
+            output_dir=str(tmp_path / "perf_trace"),
+            profiling_type="trace",
+            runner_num_iters=1,
+        )
+
+        assert len(compile_calls) == 1
+        compile_kwargs_used = compile_calls[0]
+        assert "stats_level" not in compile_kwargs_used
+        assert "ddr_stats" not in compile_kwargs_used
+        assert "aic_pmu_recipe" not in compile_kwargs_used
+
+    def test_evaluate_performance_creates_artifacts_with_new_directory_structure(self, tmp_path, monkeypatch):
+        qeff, _, _ = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        result = qeff.evaluate_performance(
+            output_dir=str(tmp_path / "perf_no_opstats"),
+            runner_num_iters=1,
+        )
+
+        assert Path(result["batch_input_json_paths"]["prefill"]).is_file()
+        assert Path(result["batch_input_json_paths"]["decode"]).is_file()
+        assert Path(result["profiling_output_dirs"]["prefill"], "runner_profile.raw").is_file()
+        assert Path(result["profiling_output_dirs"]["decode"], "runner_profile.raw").is_file()
+        assert Path(result["runner_outputs_dirs"]["prefill"], "runner_output.raw").is_file()
+        assert Path(result["runner_outputs_dirs"]["decode"], "runner_output.raw").is_file()
+        assert Path(result["log_paths"]["prefill"]["runner_command"]).is_file()
+        assert Path(result["log_paths"]["decode"]["runner_command"]).is_file()
+        assert "qaic-runner" in Path(result["log_paths"]["prefill"]["runner_command"]).read_text()
+        assert "qaic-runner" in Path(result["log_paths"]["decode"]["runner_command"]).read_text()
+        assert Path(result["opstats_output_dirs"]["prefill"], "summary.txt").is_file()
+        assert Path(result["opstats_output_dirs"]["prefill"], "trace.json").is_file()
+        assert Path(result["opstats_output_dirs"]["decode"], "summary.txt").is_file()
+        assert Path(result["opstats_output_dirs"]["decode"], "trace.json").is_file()
+        assert Path(result["log_paths"]["prefill"]["opstats_command"]).is_file()
+        assert Path(result["log_paths"]["decode"]["opstats_command"]).is_file()
+        assert "qaic-opstats" in Path(result["log_paths"]["prefill"]["opstats_command"]).read_text()
+        assert "qaic-opstats" in Path(result["log_paths"]["decode"]["opstats_command"]).read_text()
+        assert "--aic-profiling-out-dir" in result["runner_command"]
+        assert "--write-output-start-iter 1" in result["runner_command"]
+
+        output_dir = Path(result["output_dir"])
+        assert (output_dir / "compile").is_dir()
+        assert (output_dir / "io").is_dir()
+        assert (output_dir / "io" / "prefill").is_dir()
+        assert (output_dir / "io" / "decode").is_dir()
+        assert (output_dir / "performance_analysis").is_dir()
+        assert (output_dir / "compile" / "compile_logs").is_dir()
+        assert (output_dir / "performance_analysis" / "profiling").is_dir()
+        assert (output_dir / "performance_analysis" / "profiling" / "prefill").is_dir()
+        assert (output_dir / "performance_analysis" / "profiling" / "decode").is_dir()
+        assert (output_dir / "performance_analysis" / "runner_outputs").is_dir()
+        assert (output_dir / "performance_analysis" / "runner_outputs" / "prefill").is_dir()
+        assert (output_dir / "performance_analysis" / "runner_outputs" / "decode").is_dir()
+        assert (output_dir / "performance_analysis" / "opstats").is_dir()
+        assert (output_dir / "performance_analysis" / "opstats" / "prefill").is_dir()
+        assert (output_dir / "performance_analysis" / "opstats" / "decode").is_dir()
+
+    def test_evaluate_performance_without_output_dir_uses_qpc_parent_layout(self, tmp_path, monkeypatch):
+        qeff, fake_qpc_path, compile_calls = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        result = qeff.evaluate_performance(
+            runner_num_iters=1,
+        )
+
+        assert len(compile_calls) == 1
+        assert "compile_dir" not in compile_calls[0]
+
+        expected_root = fake_qpc_path.parent.parent
+        assert Path(result["output_dir"]) == expected_root
+        assert (expected_root / "io").is_dir()
+        assert (expected_root / "io" / "prefill").is_dir()
+        assert (expected_root / "io" / "decode").is_dir()
+        assert (expected_root / "performance_analysis").is_dir()
+        assert (fake_qpc_path.parent / "compile_logs").is_dir()
+
+    def test_evaluate_performance_writes_opstats_command_log(self, tmp_path, monkeypatch):
+        qeff, _, _ = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        result = qeff.evaluate_performance(
+            output_dir=str(tmp_path / "perf_with_opstats"),
+            runner_num_iters=1,
+        )
+
+        assert Path(result["opstats_output_dirs"]["prefill"], "summary.txt").is_file()
+        assert Path(result["opstats_output_dirs"]["prefill"], "trace.json").is_file()
+        assert Path(result["opstats_output_dirs"]["decode"], "summary.txt").is_file()
+        assert Path(result["opstats_output_dirs"]["decode"], "trace.json").is_file()
+        assert Path(result["log_paths"]["prefill"]["runner_command"]).is_file()
+        assert Path(result["log_paths"]["decode"]["runner_command"]).is_file()
+        assert Path(result["log_paths"]["prefill"]["opstats_command"]).is_file()
+        assert Path(result["log_paths"]["decode"]["opstats_command"]).is_file()
+        assert "qaic-opstats" in Path(result["log_paths"]["prefill"]["opstats_command"]).read_text()
+        assert "qaic-opstats" in Path(result["log_paths"]["decode"]["opstats_command"]).read_text()
+
+    def test_evaluate_performance_allows_write_output_start_iter_override(self, tmp_path, monkeypatch):
+        qeff, _, _ = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        result = qeff.evaluate_performance(
+            output_dir=str(tmp_path / "perf_custom_write_output"),
+            profiling_start_iter=4,
+            write_output_start_iter=2,
+            runner_num_iters=1,
+        )
+
+        assert "--write-output-start-iter 2" in result["runner_commands"]["prefill"]
+        assert "--write-output-start-iter 2" in result["runner_commands"]["decode"]
+
+    def test_evaluate_performance_rejects_invalid_write_output_start_iter(self, tmp_path, monkeypatch):
+        qeff, _, _ = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        with pytest.raises(ValueError, match="write_output_start_iter"):
+            qeff.evaluate_performance(
+                output_dir=str(tmp_path / "perf_bad_write_output"),
+                profiling_start_iter=3,
+                write_output_start_iter=3,
+                runner_num_iters=1,
+            )
+
+    def test_evaluate_performance_prefill_only_runs_only_prefill_stage(self, tmp_path, monkeypatch):
+        qeff, _, compile_calls = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        result = qeff.evaluate_performance(
+            output_dir=str(tmp_path / "perf_prefill_only"),
+            prefill_only=True,
+            runner_num_iters=1,
+        )
+
+        assert len(compile_calls) == 1
+        assert compile_calls[0]["prefill_only"] is True
+        assert result["stages_ran"] == ["prefill"]
+        assert "prefill" in result["runner_commands"]
+        assert "decode" not in result["runner_commands"]
+        assert "prefill" in result["batch_input_json_paths"]
+        assert "decode" not in result["batch_input_json_paths"]
+        assert Path(result["output_dir"], "io", "prefill").is_dir()
+        assert not Path(result["output_dir"], "io", "decode").exists()
+
+    def test_evaluate_performance_prompt_len_one_runs_decode_only(self, tmp_path, monkeypatch):
+        qeff, _, _ = self._setup_qeff(tmp_path, monkeypatch)
+        self._mock_subprocess(monkeypatch)
+
+        result = qeff.evaluate_performance(
+            output_dir=str(tmp_path / "perf_decode_only"),
+            prefill_only=True,
+            compile_kwargs={"prefill_seq_len": 1},
+            runner_num_iters=1,
+        )
+
+        assert result["stages_ran"] == ["decode"]
+        assert "decode" in result["runner_commands"]
+        assert "prefill" not in result["runner_commands"]
+        assert "decode" in result["batch_input_json_paths"]
+        assert "prefill" not in result["batch_input_json_paths"]
+        assert Path(result["output_dir"], "io", "decode").is_dir()
+        assert not Path(result["output_dir"], "io", "prefill").exists()
