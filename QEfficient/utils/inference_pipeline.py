@@ -93,24 +93,18 @@ def resolve_base_path(base_path: str | Path) -> Path:
     base = Path(base_path)
     if (base / "onnx_layerwise_tmp").is_dir():
         return base
-    children = sorted(
-        p for p in base.iterdir() if p.is_dir() and (p / "onnx_layerwise_tmp").is_dir()
-    )
+    children = sorted(p for p in base.iterdir() if p.is_dir() and (p / "onnx_layerwise_tmp").is_dir())
     if len(children) == 1:
         return children[0]
     if not children:
         raise FileNotFoundError(f"No onnx_layerwise_tmp under: {base}")
-    raise RuntimeError(
-        f"Multiple candidate model directories under {base}. Pass one of: {[str(p) for p in children]}"
-    )
+    raise RuntimeError(f"Multiple candidate model directories under {base}. Pass one of: {[str(p) for p in children]}")
 
 
 def load_single_session(idx: int, qpc: Path, device_start: Optional[int]) -> Tuple[int, SessionInfo]:
     device_ids = [device_start + idx] if device_start is not None else None
     session = QAICInferenceSession(str(qpc), device_ids=device_ids)
-    session.skip_buffers(
-        [n for n in session.input_names + session.output_names if "compressed_kv" in n or "k_pe" in n]
-    )
+    session.skip_buffers([n for n in session.input_names + session.output_names if "compressed_kv" in n or "k_pe" in n])
 
     out_name = pick_main_output_name(session)
     session.set_buffers({out_name: output_placeholder(session, out_name)})
