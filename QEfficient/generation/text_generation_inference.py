@@ -502,6 +502,12 @@ class QEffTextGenerationBase:
         self._session.skip_buffers(
             [x for x in self._session.input_names + self._session.output_names if x.startswith("past_")]
         )
+        self._session.skip_buffers(
+            [x for x in self._session.input_names + self._session.output_names if x.startswith("compressed_")]
+        )
+        self._session.skip_buffers(
+            [x for x in self._session.input_names + self._session.output_names if x.startswith("k_pe")]
+        )
 
     def _set_tokenizer_params(self):
         """
@@ -843,6 +849,7 @@ class QEffTextGenerationBase:
             ]
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
+
             outputs = self._session.run(chunk_inputs)
 
             if self._write_io_dir is not None:
