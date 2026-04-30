@@ -41,6 +41,7 @@ NEW_GENERATION_TOKENS = 10
 def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_custom_dtype(
     model_name, kv_offload, torch_dtype, manual_cleanup
 ):
+
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
@@ -64,6 +65,7 @@ def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_custom_dtype(
 def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_custom_dtype(
     model_name, kv_offload, torch_dtype, manual_cleanup
 ):
+
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:

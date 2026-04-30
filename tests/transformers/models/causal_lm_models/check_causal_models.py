@@ -57,6 +57,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     retain_full_kv: Optional[bool] = None,
     compare_results: bool = False,
 ):
+
     torch.manual_seed(42)
     replace_transformers_quantizers()
     model_hf = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config)

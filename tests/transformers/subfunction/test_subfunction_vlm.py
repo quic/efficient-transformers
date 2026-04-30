@@ -50,6 +50,7 @@ def check_image_text_to_text_subfunction_core(
     num_devices: int = 1,
     config: Optional[AutoConfig] = None,
 ):
+
     img_size = model_config_dict[model_name]["img_size"]
     img_url = model_config_dict[model_name]["img_url"]
     query = model_config_dict[model_name]["text_prompt"]
@@ -116,6 +117,7 @@ def check_image_text_to_text_subfunction_core(
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_full_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
+
     torch.manual_seed(42)
     check_image_text_to_text_subfunction_core(model_name, kv_offload=kv_offload, manual_cleanup=manual_cleanup)
 
@@ -125,6 +127,7 @@ def test_full_image_text_to_text_subfunction(model_name, kv_offload, manual_clea
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
+
     torch.manual_seed(42)
     check_image_text_to_text_subfunction_core(
         model_name,
@@ -139,6 +142,7 @@ def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_clean
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_dummy_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
+
     torch.manual_seed(42)
     hf_config = AutoConfig.from_pretrained(
         model_name, trust_remote_code=True, **model_config_dict[model_name].get("additional_params", {})

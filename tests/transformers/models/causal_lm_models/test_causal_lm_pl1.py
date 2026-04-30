@@ -32,6 +32,7 @@ model_config_dict = {model["model_name"]: model for model in causal_pl1_models}
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
+
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
 
@@ -51,6 +52,7 @@ def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_ful
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
+
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
     torch.manual_seed(42)
@@ -69,6 +71,7 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_full_kv, manual_cleanup):
+
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
 
@@ -94,6 +97,7 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1(model_name, retain_fu
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain_full_kv, manual_cleanup):
+
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
     torch.manual_seed(42)
@@ -113,6 +117,7 @@ def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain_
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain_full_kv, manual_cleanup):
+
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
     torch.manual_seed(42)
@@ -132,6 +137,7 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain_f
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_CB(model_name, retain_full_kv, manual_cleanup):
+
     if model_name == "gpt2" and retain_full_kv:
         pytest.skip("Skipping test for gpt2 with retain_full_kv=True as it is not supported.")
 
