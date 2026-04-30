@@ -191,6 +191,10 @@ WAN_ONNX_EXPORT_WIDTH_45P = 64
 # WAN I2V
 WAN_DIT_I2V_IMG_LATENT_CHANNELS = 32
 
+# QWEN Image
+QWEN_IMAGE_SL = 128
+QWEN_IMAGE_CL = 256
+
 # For the purpose of automatic CCL lists generation, to limit the number of elements in CCL list, the starting point will be calculated based on context length
 CCL_START_MAP = {
     32768: (4096, 4000),

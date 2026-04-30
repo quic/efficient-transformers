@@ -5,6 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
+from diffusers.models.attention_processor import Attention
+from diffusers.models.autoencoders.autoencoder_kl_qwenimage import (
+    QwenImageDecoder3d,
+    QwenImageEncoder3d,
+    QwenImageResample,
+    QwenImageResidualBlock,
+)
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
     AutoencoderKLWan,
     WanDecoder3d,
@@ -20,11 +27,21 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformer2DModel,
     FluxTransformerBlock,
 )
+from diffusers.models.transformers.transformer_qwenimage import (
+    QwenImageTransformer2DModel,
+    QwenImageTransformerBlock,
+)
 from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
 from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
+from QEfficient.diffusers.models.autoencoders.autoencoder_kl_qwenimage import (
+    QEffQwenImageDecoder3d,
+    QEffQwenImageEncoder3d,
+    QEffQwenImageResample,
+    QEffQwenImageResidualBlock,
+)
 from QEfficient.diffusers.models.autoencoders.autoencoder_kl_wan import (
     QEffAutoencoderKLWan,
     QEffWanDecoder3d,
@@ -43,6 +60,11 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxSingleTransformerBlock,
     QEffFluxTransformer2DModel,
     QEffFluxTransformerBlock,
+)
+from QEfficient.diffusers.models.transformers.transformer_qwenimage import (
+    QEffQwenImageAttention,
+    QEffQwenImageTransformer2DModel,
+    QEffQwenImageTransformerBlock,
 )
 from QEfficient.diffusers.models.transformers.transformer_wan import (
     QEffWanAttention,
@@ -69,10 +91,17 @@ class AttentionTransform(ModuleMappingTransform):
         WanAttention: QEffWanAttention,
         WanTransformer3DModel: QEffWanTransformer3DModel,
         AutoencoderKLWan: QEffAutoencoderKLWan,
+        QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
+        QwenImageTransformerBlock: QEffQwenImageTransformerBlock,
+        Attention: QEffQwenImageAttention,
         WanDecoder3d: QEffWanDecoder3d,
         WanEncoder3d: QEffWanEncoder3d,
         WanResidualBlock: QEffWanResidualBlock,
         WanResample: QEffWanResample,
+        QwenImageResample: QEffQwenImageResample,
+        QwenImageResidualBlock: QEffQwenImageResidualBlock,
+        QwenImageEncoder3d: QEffQwenImageEncoder3d,
+        QwenImageDecoder3d: QEffQwenImageDecoder3d,
     }
 
 
