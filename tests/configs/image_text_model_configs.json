@@ -614,5 +614,18 @@
       "additional_params": {
     }
   }
+  ],
+  "image_text_embedding_models": [
+    {
+      "model_name": "Qwen/Qwen3-VL-Embedding-8B",
+      "model_type": "qwen3_vl",
+      "batch_size": 1,
+      "ctx_len": 2048,
+      "num_layers": 1,
+      "vision_depth": 9,
+      "deepstack_index": 8,
+      "compile_prefill_seq_len": null,
+      "mad_max_threshold": 0.001
+    }
   ]
 }
