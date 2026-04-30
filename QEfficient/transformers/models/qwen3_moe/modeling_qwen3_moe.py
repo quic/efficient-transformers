@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from typing import List, Optional, Tuple, Type
 
 import torch
@@ -31,6 +32,11 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
     past_key_value_update,
+)
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DGeneralized,
+    CtxScatterFunc3DInt,
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -100,8 +106,135 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
+
+
+def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
+    """Build packed->original token index"""
+    batch_size, seq_len = T2Ei.shape
+    int32_max = torch.iinfo(torch.int32).max
+    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
+    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_dest = valid_prefix - 1
+    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
+    # Once the compiler fix for ConstantOfShape(INT32_MAX) is available, this
+    # can be switched back to ``torch.full_like(token_idx, int32_max)``.
+    matched_idx = int32_max_scalar.expand_as(token_idx)
+    matched_idx = CtxScatterFunc3DInt.apply(
+        matched_idx.unsqueeze(-1),
+        scatter_pos,
+        token_idx.unsqueeze(-1),
+    ).squeeze(-1)
+    return matched_idx
+
+
+def _cumsum_scatter_gather_update_expert_blocked(
+    x: torch.Tensor,
+    T2Ei: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    routing_weight: torch.Tensor,
+    expert_out: torch.Tensor,
+    act_fn,
+    T: int,
+    packed_chunk_size: int,
+) -> torch.Tensor:
+    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
+
+    Accumulates one local expert's contribution in-place onto ``expert_out``.
+    Uses a packed/cumsum layout so the MLP runs only over active rows, then
+    scatters the weighted output back to original token positions.
+
+    Shapes:
+        x               : [T, H]
+        T2Ei            : [num_nsp, T]            (bool)
+        W_g, W_u        : [num_nsp, H, I]
+        W_d             : [num_nsp, I, H]
+        routing_weight  : [num_nsp, T]
+        expert_out      : [num_nsp, T, H]         (accumulator, in-out)
+    """
+    batch_size, seq_len = T2Ei.shape
+    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+
+    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
+    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
+    rw_expanded = routing_weight.unsqueeze(-1)
+
+    for packed_start in range(0, seq_len, packed_chunk_size):
+        packed_stop = packed_start + packed_chunk_size
+        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
+
+        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+
+        gate_prime = x_chunk @ W_g
+        up_prime = x_chunk @ W_u
+        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
+
+        rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
+        down_chunk = down_chunk * rw_chunk
+
+        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        updated_chunk = expert_out_chunk + down_chunk
+
+        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
+        updated_chunk = torch.where(
+            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
+        )
+        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+
+    return expert_out
+
+
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def __qeff_init__(self):
+        self.gate_proj_w = []
+        self.up_proj_w = []
+        self.down_proj_w = []
+        with torch.no_grad():
+            for e in range(self.num_experts):
+                self.gate_proj_w.append(self.experts[e].gate_proj.weight.T)
+                self.up_proj_w.append(self.experts[e].up_proj.weight.T)
+                self.down_proj_w.append(self.experts[e].down_proj.weight.T)
+            self.gate_proj_w = torch.stack(self.gate_proj_w)  # [E, H, I]
+            self.up_proj_w = torch.stack(self.up_proj_w)  # [E, H, I]
+            self.down_proj_w = torch.stack(self.down_proj_w)  # [E, I, H]
+
+    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
+        T, H = x.shape
+        num_nsp = EXPERT_BLOCKING_NUM_NSP
+        if self.num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
+            )
+        local_experts = self.num_experts // num_nsp
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self.gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.down_proj_w.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        expert_out = x.new_zeros((num_nsp, T, H))
+        for slot in range(local_experts):
+            routing_weight = rw[:, slot, :]
+            T2Ei = routing_weight > 0
+            expert_out = _cumsum_scatter_gather_update_expert_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=W_g[:, slot],
+                W_u=W_u[:, slot],
+                W_d=W_d[:, slot],
+                routing_weight=routing_weight,
+                expert_out=expert_out,
+                act_fn=self.experts[0].act_fn,
+                T=T,
+                packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
+            )
+        return expert_out.sum(dim=0)
+
+    def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
@@ -113,20 +246,44 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         top_w = top_w.to(hidden_states.dtype)
         masked_logits = torch.zeros_like(router_logits)
         masked_logits.scatter_(1, top_i, top_w)
-        # Routing weights for each expert [T, E]
         routing_weights = masked_logits
-        # ────────────────── allocate the output tensor ─────
-        expert_out = x.new_zeros((T, H))  # accumulation buffer
-        # ───────────────────────── Expert computation loop ─────────────────────────────
+        expert_out = x.new_zeros((T, H))
         for e in range(self.num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
-            W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T  # [H, I], [H, I]
-            W_d = self.experts[e].down_proj.weight.T  # [I, H]
-            gate = x @ W_g  # [T, I]
-            up = x @ W_u  # [T, I]
-            down = (up * self.experts[e].act_fn(gate)) @ W_d  # [T, H]
-            masked_down = down * routing_weight
-            expert_out += masked_down
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
+            W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T
+            W_d = self.experts[e].down_proj.weight.T
+            gate = x @ W_g
+            up = x @ W_u
+            down = (up * self.experts[e].act_fn(gate)) @ W_d
+            expert_out += down * routing_weight
+        return expert_out.view(B, S, H), router_logits
+
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, H = hidden_states.shape
+        T = B * S
+        x = hidden_states.view(T, H)
+        router_logits = self.gate(x)
+        prob = F.softmax(router_logits, -1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, -1)
+        if self.norm_topk_prob:
+            top_w /= top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(hidden_states.dtype)
+        routing_weights = torch.zeros_like(router_logits)
+        routing_weights.scatter_(1, top_i, top_w)
+
+        if self.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
+            expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
+            return expert_out.view(B, S, H), router_logits
+
+        expert_out = x.new_zeros((T, H))
+        for e in range(self.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
+            W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T
+            W_d = self.experts[e].down_proj.weight.T
+            gate = x @ W_g
+            up = x @ W_u
+            down = (up * self.experts[e].act_fn(gate)) @ W_d
+            expert_out += down * routing_weight
         return expert_out.view(B, S, H), router_logits
 
 

@@ -14,14 +14,15 @@ from transformers import AutoConfig, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"  # weights are not required to convert to fp32
+# model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"  # weights are not required to convert to fp32
+model_id = "yujiepan/qwen3-moe-tiny-random"
 prompt = """
 Explain quantum computing in simple terms.
 """
 config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-PREFILL_SEQ_LEN = 128
-CTX_LEN = 128 * 3
+PREFILL_SEQ_LEN = 256
+CTX_LEN = PREFILL_SEQ_LEN * 3
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 decode_qpc_path = qeff_model.compile(
@@ -48,7 +49,7 @@ prefill_qpc_path = qeff_model.compile(
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=2,
+    num_devices=1,
     split_retained_state_io=True,
     mos=1,
     aic_enable_depth_first=True,
