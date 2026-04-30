@@ -10,7 +10,7 @@
           "compilation":  {
                               "onnx_path": null,
                               "compile_dir": null,
-                              "mdp_ts_num_devices": 8,
+                              "mdp_ts_num_devices": 4,
                               "convert_to_fp16": true,
                               "compile_only":true,
                               "aic_num_cores": 16,
@@ -31,7 +31,7 @@
           "compilation":   {
                               "onnx_path": null,
                               "compile_dir": null,
-                              "mdp_ts_num_devices": 8,
+                              "mdp_ts_num_devices": 4,
                               "mxfp6_matmul": false,
                               "convert_to_fp16": true,
                               "aic_num_cores": 16,

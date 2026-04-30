@@ -21,7 +21,7 @@ from diffusers import (
 from diffusers.pipelines.qwenimage.pipeline_qwenimage import calculate_shift
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
 
-from QEfficient import QEFFQwenImagePipeline
+from QEfficient import QEffQwenImagePipeline
 from QEfficient.diffusers.pipelines.pipeline_utils import ModulePerf, QEffPipelineOutput
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils._utils import load_json
@@ -63,7 +63,7 @@ def qwen_pipeline_call_with_mad_validation(
     mad_tolerances: Dict[str, float] = None,
 ):
     """
-    Replicate QEFFQwenImagePipeline.__call__ flow and validate MAD for transformer and VAE.
+    Replicate QEffQwenImagePipeline.__call__ flow and validate MAD for transformer and VAE.
     """
     mad_validator = MADValidator(tolerances=mad_tolerances)
     device = "cpu"
@@ -132,7 +132,7 @@ def qwen_pipeline_call_with_mad_validation(
 
     # Step 4: Latents and timesteps
     num_channels_latents = pipeline.transformer.model.config.in_channels // 4
-    latents = pipeline.prepare_latents(
+    latents = pipeline.model.prepare_latents(
         batch_size * num_images_per_prompt,
         num_channels_latents,
         height,
@@ -184,9 +184,9 @@ def qwen_pipeline_call_with_mad_validation(
     txt_rotary_emb = torch.cat([qaic_txt_freqs_cos, qaic_txt_freqs_sin], dim=-1)
 
     # Step 5: Denoising + transformer MAD
-    with pipeline.progress_bar(total=num_inference_steps) as progress_bar:
+    with pipeline.model.progress_bar(total=num_inference_steps) as progress_bar:
         for i, t in enumerate(timesteps):
-            if pipeline.interrupt:
+            if pipeline._interrupt:
                 continue
 
             timestep = (t.expand(latents.shape[0]) / 1000).detach().numpy().astype(np.float32)
@@ -253,7 +253,7 @@ def qwen_pipeline_call_with_mad_validation(
     pipeline.transformer.qpc_session.deactivate()
 
     # Step 6: VAE decode + MAD
-    latents = pipeline._unpack_latents(latents, height, width, pipeline.vae_scale_factor)
+    latents = pipeline.model._unpack_latents(latents, height, width, pipeline.vae_scale_factor)
     latents = latents.to(pipeline.vae_decoder.model.dtype)
 
     latents_mean = (
@@ -338,9 +338,8 @@ def qwen_image_pipeline():
         transformer=transformer,
     )
 
-    pipeline = QEFFQwenImagePipeline(copy.deepcopy(pytorch_pipeline))
+    pipeline = QEffQwenImagePipeline(copy.deepcopy(pytorch_pipeline))
 
-    # Match WAN test style: run reference and wrapped modules in eval mode.
     pytorch_pipeline.transformer.eval()
     pytorch_pipeline.vae.eval()
     pipeline.transformer.model.eval()

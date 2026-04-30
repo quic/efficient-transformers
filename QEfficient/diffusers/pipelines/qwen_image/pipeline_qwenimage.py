@@ -5,12 +5,11 @@
 #
 # ----------------------------------------------------------------------------
 """
-QEfficient QWEN image Pipeline Implementation
+QEfficient Qwen Image pipeline implementation.
 
-This module provides an optimized implementation of QWEN image pipeline
-for high-performance text-to-image generation on Qualcomm AI hardware.
-
-TODO: 1. Update Qwen text encoder, Vae decoder to Qaic; present running on cpu
+This module wraps `diffusers.QwenImagePipeline` with QEfficient export,
+compilation, and runtime integrations for QAIC deployment.
+TODO: 1. Update Qwen text encoder to Qaic; present running on cpu
 """
 
 import os
@@ -40,23 +39,28 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import constants
 
 
-class QEFFQwenImagePipeline(QwenImagePipeline):
+class QEffQwenImagePipeline:
     """
-    #TODO : update docs
-    A QEfficient-optimized QwenImage pipeline, inheriting from `diffusers.QwenImagePipeline`.
+    QEfficient-optimized Qwen Image text-to-image pipeline.
 
-    This class integrates QEfficient components (e.g., optimized models for text encoder,
-    transformer, and VAE) to enhance performance, particularly for deployment on Qualcomm AI hardware.
-    It provides methods for text-to-image generation leveraging these optimized components.
+    This wrapper integrates QEfficient model components for ONNX export, QAIC
+    compilation, and inference while preserving the familiar Diffusers API.
     """
 
     _hf_auto_class = QwenImagePipeline
 
     def __init__(self, model, **kwargs):
-        "#TODO : update docs"
+        """
+        Initialize the QEfficient Qwen Image pipeline wrapper.
+
+        Args:
+            model (`QwenImagePipeline`):
+                The underlying Diffusers Qwen Image pipeline instance.
+            **kwargs:
+                Additional metadata passed from `from_pretrained`.
+        """
         self.model = model
         self.kwargs = kwargs
 
@@ -86,29 +90,20 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
         self.default_sample_size = model.default_sample_size
 
-        self.vae_decoder.get_onnx_params = self.vae_decoder.get_video_onnx_params
-
-    @property
-    def do_classifier_free_guidance(self):
-        """
-        Determine if classifier-free guidance should be used.
-
-        Returns:
-            bool: True if CFG should be applied based on current guidance scales
-        """
-        return self._guidance_scale > 1.0 and (self._guidance_scale_2 is None or self._guidance_scale_2 > 1.0)
-
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
         """
-        Instantiate a QEFFQwenImagePipeline from pretrained Diffusers models.
+        Instantiate a QEffQwenImagePipeline from a pretrained checkpoint.
 
         Args:
-            pretrained_model_name_or_path (`str` or `os.PathLike`, *optional*):
-                The path to the pretrained model or its name.
-            **kwargs (additional keyword arguments):
-                Additional arguments that can be passed to the underlying `QwenImagePipeline.from_pretrained`
-                method.
+            pretrained_model_name_or_path (`str` or `os.PathLike`):
+                Local path or model identifier.
+            **kwargs:
+                Additional keyword arguments passed to
+                `QwenImagePipeline.from_pretrained`.
+
+        Returns:
+            `QEffQwenImagePipeline`: Initialized QEff pipeline instance.
         """
         model = cls._hf_auto_class.from_pretrained(
             pretrained_model_name_or_path,
@@ -130,21 +125,18 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         """
         Export all pipeline modules to ONNX format for deployment preparation.
 
-        This method systematically exports the unified transformer to ONNX format with
-        video-specific configurations including temporal dimensions, dynamic axes, and
-        optimization settings. The export process prepares the model for subsequent
-        compilation to QPC format for efficient inference on QAIC hardware.
+        This method exports the Qwen Image transformer and VAE decoder with
+        their module-specific dynamic axes and export settings.
 
         Args:
-            export_dir (str, optional): Target directory for saving ONNX model files. If None,
-                uses the default export directory structure. The directory will be created
-                if it doesn't exist.
-            use_onnx_subfunctions (bool, default=False): Whether to enable ONNX subfunction
-                optimization for supported modules. This can optimize the graph structure
-                and improve compilation efficiency for complex models like the transformer.
+            export_dir (`str`, *optional*):
+                Target directory for ONNX artifacts. If `None`, the default
+                export structure is used.
+            use_onnx_subfunctions (`bool`, *optional*, defaults to `False`):
+                Enables ONNX subfunction export for supported modules.
 
         Returns:
-            str: Absolute path to the export directory containing all ONNX model files.
+            `str`: Absolute path to the export directory.
 
         Raises:
             RuntimeError: If ONNX export fails for any module
@@ -152,7 +144,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             ValueError: If module configurations are invalid
 
         Example:
-            >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
+            >>> pipeline = QEffQwenImagePipeline.from_pretrained("Qwen/Qwen-Image")
             >>> export_path = pipeline.export(
             ...     export_dir="/path/to/export",
             ...     use_onnx_subfunctions=True
@@ -181,10 +173,10 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
     @staticmethod
     def get_default_config_path():
         """
-        Get the default configuration file path for WAN pipeline.
+        Get the default configuration file path for the Qwen Image pipeline.
 
         Returns:
-            str: Path to the default WAN configuration JSON file.
+            `str`: Path to the default Qwen Image configuration JSON file.
         """
         return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/qwen_config.json")
 
@@ -192,40 +184,34 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         self,
         compile_config: Optional[str] = None,
         parallel: bool = False,
-        height: int = constants.WAN_ONNX_EXPORT_HEIGHT_45P,  # TODO update with QWEN values
-        width: int = constants.WAN_ONNX_EXPORT_WIDTH_45P,
+        height: int = 1024,
+        width: int = 1024,
         use_onnx_subfunctions: bool = False,
-    ) -> str:
+    ) -> None:
         """
-        Compiles the ONNX graphs of the different model components for deployment on Qualcomm AI hardware.
-
-        This method takes the ONNX paths of the transformer and compiles them into an optimized format
-        for inference using JSON-based configuration.
+        Compile ONNX models into optimized QPC binaries for QAIC.
 
         Args:
-            compile_config (str, optional): Path to a JSON configuration file containing
-                compilation settings, device mappings, and optimization parameters. If None,
-                uses the default configuration.
-            parallel (bool, default=False): Compilation mode selection:
-                - True: Compile modules in parallel using ThreadPoolExecutor for faster processing
-                - False: Compile modules sequentially for lower resource usage
-            height (int, default=192): Target image height in pixels.
-            width (int, default=320): Target image width in pixels.
-            use_onnx_subfunctions (bool, default=False): Whether to export models with ONNX
-                subfunctions before compilation if not already exported.
+            compile_config (`str`, *optional*):
+                Path to a JSON compilation config. If `None`, the default
+                config is used.
+            parallel (`bool`, *optional*, defaults to `False`):
+                If `True`, compile modules in parallel.
+            height (`int`, *optional*):
+                Target image height in pixel space.
+            width (`int`, *optional*):
+                Target image width in pixel space.
+            use_onnx_subfunctions (`bool`, *optional*, defaults to `False`):
+                Re-export modules with ONNX subfunctions before compile when needed.
 
         Raises:
-            RuntimeError: If compilation fails for any module or if QAIC compiler is not available
-            FileNotFoundError: If ONNX models haven't been exported or config file is missing
-            ValueError: If configuration parameters are invalid
-            OSError: If there are issues with file I/O during compilation
+            RuntimeError: If compilation fails for any module.
+            FileNotFoundError: If required files/configuration are missing.
+            ValueError: If configuration parameters are invalid.
+            OSError: If file I/O fails.
 
         Example:
-            >>> pipeline = QEffWanPipeline.from_pretrained("path/to/wan/model")
-            >>> # Sequential compilation with default config
-            >>> pipeline.compile(height=480, width=832, num_frames=81)
-            >>>
-            >>> # Parallel compilation with custom config
+            >>> pipeline = QEffQwenImagePipeline.from_pretrained("Qwen/Qwen-Image")
             >>> pipeline.compile(
             ...     compile_config="/path/to/custom_config.json",
             ...     parallel=True,
@@ -400,9 +386,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         use_onnx_subfunctions: bool = False,
     ):
         """
-        # TODO update docs
-        Generate images from text prompts using the QEfficient-optimized QwenImage pipeline.
-
+        Generate images from text prompts with the QEfficient Qwen Image pipeline.
         This method performs text-to-image generation by encoding the input prompts through the
         Qwen text encoder, running the diffusion process with the transformer model, and decoding
         the final latents to images using the VAE decoder. All components are optimized for
@@ -430,22 +414,34 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             callback_on_step_end (Optional[Callable], optional): Callback function at end of each step.
             callback_on_step_end_tensor_inputs (List[str], defaults to ["latents"]): Tensor inputs for callback.
             max_sequence_length (int, defaults to 512): Maximum sequence length for text encoder.
+            custom_config_path (`str`, *optional*): JSON config path used by compile/config manager.
+            parallel_compile (`bool`, *optional*, defaults to `False`): Whether to compile modules in parallel.
+            use_onnx_subfunctions (`bool`, *optional*, defaults to `False`): Whether to enable ONNX subfunction export.
 
         Returns:
-            Union[QwenImagePipelineOutput, Tuple]: Generated images.
+            Union[QwenImagePipelineOutput, Tuple]:
+                Generated images and per-module performance metrics.
 
         Examples:
-            ```python
-            from QEfficient import QEFFQwenImagePipeline
-
-            pipeline = QEFFQwenImagePipeline.from_pretrained("Qwen/Qwen-Image")
-            pipeline.compile(num_devices_text_encoder=1, num_devices_transformer=4, num_devices_vae_decoder=1)
-
-            image = pipeline("A cat holding a sign that says hello world", num_inference_steps=50).images[0]
-            image.save("qwenimage.png")
-            ```
+            >>> from QEfficient import QEffQwenImagePipeline
+            >>> pipeline = QEffQwenImagePipeline.from_pretrained("Qwen/Qwen-Image")
+            >>> output = pipeline(
+            ...      prompt="A cat holding a sign that says hello world",
+            ...      negative_prompt="",
+            ...      width=1664,
+            ...      height=928,
+            ...      num_inference_steps=50,
+            ...      true_cfg_scale=4.0,
+            ...      generator=torch.Generator(device="cpu").manual_seed(42),
+            ...      parallel_compile=True,
+            ...      max_sequence_length=128,
+            ...      use_onnx_subfunctions=True,
+            ...  )
+            >>> image = output.images[0]
+            >>> image.save("output.png")
         """
-        device = "cpu"
+        device = self.model._execution_device
+
         height = height
         width = width
 
@@ -489,6 +485,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         )
         do_true_cfg = true_cfg_scale > 1 and has_neg_prompt
 
+        # 3: Encode prompts with both text encoders
         prompt_embeds, prompt_embeds_mask = self.encode_prompt(
             prompt=prompt,
             prompt_embeds=prompt_embeds,
@@ -498,6 +495,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
             max_sequence_length=max_sequence_length,
         )
 
+        # Encode negative prompts if using true classifier-free guidance
         if do_true_cfg:
             negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(
                 prompt=negative_prompt,
@@ -510,7 +508,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.model.config.in_channels // 4
-        latents = self.prepare_latents(
+        latents = self.model.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
             height,
@@ -542,16 +540,14 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
-        txt_seq_lens = [
-            max_sequence_length
-        ]  # prompt_embeds_mask.sum(dim=1).tolist() if prompt_embeds_mask is not None else None
-        negative_txt_seq_lens = [
-            max_sequence_length
-        ]  # (negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None)
+        txt_seq_lens = [max_sequence_length]
+        negative_txt_seq_lens = [max_sequence_length]
 
         # # Initialize transformer session
         if self.transformer.qpc_session is None:
-            self.transformer.qpc_session = QAICInferenceSession(str(self.transformer.qpc_path))
+            self.transformer.qpc_session = QAICInferenceSession(
+                str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
+            )
 
         # 6. Denoising loop
         self.scheduler.set_begin_index(0)
@@ -564,12 +560,11 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
 
         img_rotary_emb = torch.cat([qaic_img_freqs_cos, qaic_img_freqs_sin], dim=-1)  # [6032, 128]
         txt_rotary_emb = torch.cat([qaic_txt_freqs_cos, qaic_txt_freqs_sin], dim=-1)  # [126, 128]
-
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
+        with self.model.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                if self.interrupt:
+                if self._interrupt:
                     continue
-                # self._current_timestep = t
+                self._current_timestep = t
                 timestep = (t.expand(latents.shape[0]) / 1000).detach().numpy().astype(np.float32)
 
                 # Conditional pass
@@ -594,7 +589,7 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                     transformer_inputs_uncond = {
                         "hidden_states": latents.detach().numpy().astype(np.float32),
                         "encoder_hidden_states": negative_prompt_embeds.detach().numpy().astype(np.float32),
-                        "encoder_hidden_states_mask": negative_prompt_embeds_mask.detach().numpy().astype(np.float32),
+                        "encoder_hidden_states_mask": negative_prompt_embeds_mask.detach().numpy().astype(np.int64),
                         "img_rotary_emb": img_rotary_emb.detach().numpy().astype(np.float32),
                         "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
                         "timestep": timestep,
@@ -631,10 +626,12 @@ class QEFFQwenImagePipeline(QwenImagePipeline):
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
+        self._current_timestep = None
+        vae_decoder_perf = 0.0
         if output_type == "latent":
             image = latents
         else:
-            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            latents = self.model._unpack_latents(latents, height, width, self.vae_scale_factor)
             latents = latents.to(self.vae_decoder.model.dtype)
             latents_mean = (
                 torch.tensor(self.vae_decoder.model.config.latents_mean)

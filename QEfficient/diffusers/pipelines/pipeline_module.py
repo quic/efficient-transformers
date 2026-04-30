@@ -9,7 +9,6 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
-from diffusers.models.transformers.transformer_wan import WanTransformerBlock
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -18,11 +17,6 @@ from QEfficient.diffusers.models.pytorch_transforms import (
     CustomOpsTransform,
     NormalizationTransform,
 )
-from QEfficient.diffusers.models.transformers.transformer_flux import (
-    QEffFluxSingleTransformerBlock,
-    QEffFluxTransformerBlock,
-)
-from QEfficient.diffusers.models.transformers.transformer_qwenimage import QEffQwenImageTransformerBlock
 from QEfficient.transformers.models.pytorch_transforms import (
     T5ModelTransform,
 )
@@ -271,19 +265,26 @@ class QEffVAE(QEFFBaseModel):
                 - output_names (List[str]): Names of model outputs
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-
-        # VAE decoder takes latent representation as input
-        example_inputs = {
-            "latent_sample": torch.randn(bs, 16, latent_height, latent_width),
-            "return_dict": False,
-        }
-
+        if self.model.__class__.__name__ == "AutoencoderKLQwenImage":
+            # for models with latent frame
+            example_inputs = {
+                "latent_sample": torch.randn(bs, 16, 1, latent_height, latent_width),
+                "return_dict": False,
+            }
+            dynamic_axes = {
+                "latent_sample": {0: "batch_size", 3: "latent_height", 4: "latent_width"},
+            }
+        else:
+            # VAE decoder takes latent representation as input
+            example_inputs = {
+                "latent_sample": torch.randn(bs, 16, latent_height, latent_width),
+                "return_dict": False,
+            }
+            # All dimensions except channels can be dynamic
+            dynamic_axes = {
+                "latent_sample": {0: "batch_size", 1: "channels", 2: "latent_height", 3: "latent_width"},
+            }
         output_names = ["sample"]
-
-        # All dimensions except channels can be dynamic
-        dynamic_axes = {
-            "latent_sample": {0: "batch_size", 1: "channels", 2: "latent_height", 3: "latent_width"},
-        }
 
         return example_inputs, dynamic_axes, output_names
 
@@ -339,15 +340,9 @@ class QEffVAE(QEFFBaseModel):
                 - output_names (List[str]): Names of model outputs
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        # TODO : clean up for qwen imge
-        if self.model.__class__.__name__ == "AutoencoderKLQwenImage":
-            latent_frames = 1
-            latent_height = 116
-            latent_width = 208  # TODO make this constants and verify with lower dims
-        else:
-            latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
-            latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_45P
-            latent_width = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_45P
+        latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
+        latent_height = constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_45P
+        latent_width = constants.WAN_ONNX_EXPORT_LATENT_WIDTH_45P
 
         # VAE decoder takes latent representation as input
         example_inputs = {
@@ -518,7 +513,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """
@@ -529,7 +523,6 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             output_names (List[str]): Names of model outputs
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
-            export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
 
@@ -537,22 +530,15 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             str: Path to the exported ONNX model
         """
 
-        if use_onnx_subfunctions:
-            export_kwargs = {
-                "export_modules_as_functions": {QEffFluxTransformerBlock, QEffFluxSingleTransformerBlock},
-                "use_onnx_subfunctions": True,
-            }
-
         # Sort _use_default_values in config to ensure consistent hash generation during export
         self.model.config["_use_default_values"].sort()
-
         return self._export(
             example_inputs=inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
             offload_pt_weights=False,  # As weights are needed with AdaLN changes
-            **export_kwargs,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
@@ -674,7 +660,6 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """Export the Wan transformer model to ONNX format.
@@ -684,14 +669,11 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             output_names (List[str]): Names of model outputs
             dynamic_axes (Dict): Specification of dynamic dimensions
             export_dir (str, optional): Directory to save ONNX model
-            export_kwargs (Dict, optional): Additional export arguments (e.g., export_modules_as_functions)
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
         Returns:
             str: Path to the exported ONNX model
         """
-        if use_onnx_subfunctions:
-            export_kwargs = {"export_modules_as_functions": {WanTransformerBlock}, "use_onnx_subfunctions": True}
 
         return self._export(
             example_inputs=inputs,
@@ -699,7 +681,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             offload_pt_weights=True,
-            **export_kwargs,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(self, specializations, **compiler_options) -> None:
@@ -723,11 +705,10 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
     """
 
     _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
-    _onnx_transforms = [SplitTensorsTransform]
+    _onnx_transforms = [SplitTensorsTransform]  # No FP16 clip, to preserve scale factors changes in modeling
 
-    def __init__(self, model: nn.modules):
+    def __init__(self, model: nn.Module):
         super().__init__(model)
-        self.model = model
 
     def get_onnx_params(self):
         """
@@ -745,7 +726,7 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         # For testing purpose I have set this to constant values from the original models
         cl = constants.QWEN_IMAGE_CL
         seq_length = constants.QWEN_IMAGE_SL
-        rot_dim = 128
+        rot_dim = sum(self.model.config.axes_dims_rope)
         example_inputs = {
             "hidden_states": torch.randn(bs, cl, self.model.config.in_channels, dtype=torch.float32),
             "encoder_hidden_states": torch.randn(
@@ -776,7 +757,6 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict,
         export_dir: str = None,
-        export_kwargs: Dict = {},
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """
@@ -791,8 +771,6 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
                 Dynamic axis configuration for ONNX inputs/outputs.
             export_dir (`str`, *optional*):
                 Directory to write the ONNX model into.
-            export_kwargs (`Dict`, *optional*):
-                Additional keyword arguments forwarded to `torch.onnx.export`.
             use_onnx_subfunctions (`bool`, *optional*, defaults to `False`):
                 Enables exporting transformer blocks as ONNX subfunctions.
 
@@ -800,19 +778,13 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
             `str`: Path to the exported ONNX model.
         """
 
-        if use_onnx_subfunctions:
-            export_kwargs = {
-                "export_modules_as_functions": {QEffQwenImageTransformerBlock},
-                "use_onnx_subfunctions": True,
-            }
-
         return self._export(
             example_inputs=inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            offload_pt_weights=False,  # As weights are needed with AdaLN changes
-            **export_kwargs,
+            offload_pt_weights=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:
@@ -831,6 +803,6 @@ class QEffQwenImageTransformer2DModel(QEFFBaseModel):
         Get the model configuration as a dictionary.
 
         Returns:
-            Dict: The configuration dictionary of the underlying Wan transformer model
+            Dict: The configuration dictionary of the underlying Qwen transformer model
         """
         return self.model.config.__dict__

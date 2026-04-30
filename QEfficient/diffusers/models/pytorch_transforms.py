@@ -28,7 +28,6 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformerBlock,
 )
 from diffusers.models.transformers.transformer_qwenimage import (
-    QwenDoubleStreamAttnProcessor2_0,
     QwenImageTransformer2DModel,
     QwenImageTransformerBlock,
 )
@@ -39,6 +38,7 @@ from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
 from QEfficient.diffusers.models.autoencoders.autoencoder_kl_qwenimage import (
     QEffQwenImageDecoder3d,
+    QEffQwenImageEncoder3d,
     QEffQwenImageResample,
     QEffQwenImageResidualBlock,
 )
@@ -62,7 +62,6 @@ from QEfficient.diffusers.models.transformers.transformer_flux import (
     QEffFluxTransformerBlock,
 )
 from QEfficient.diffusers.models.transformers.transformer_qwenimage import (
-    QEffQwenDoubleStreamAttnProcessor2_0,
     QEffQwenImageAttention,
     QEffQwenImageTransformer2DModel,
     QEffQwenImageTransformerBlock,
@@ -94,7 +93,6 @@ class AttentionTransform(ModuleMappingTransform):
         AutoencoderKLWan: QEffAutoencoderKLWan,
         QwenImageTransformer2DModel: QEffQwenImageTransformer2DModel,
         QwenImageTransformerBlock: QEffQwenImageTransformerBlock,
-        QwenDoubleStreamAttnProcessor2_0: QEffQwenDoubleStreamAttnProcessor2_0,
         Attention: QEffQwenImageAttention,
         WanDecoder3d: QEffWanDecoder3d,
         WanEncoder3d: QEffWanEncoder3d,
@@ -102,7 +100,7 @@ class AttentionTransform(ModuleMappingTransform):
         WanResample: QEffWanResample,
         QwenImageResample: QEffQwenImageResample,
         QwenImageResidualBlock: QEffQwenImageResidualBlock,
-        QwenImageEncoder3d: QEffQwenImageResidualBlock,
+        QwenImageEncoder3d: QEffQwenImageEncoder3d,
         QwenImageDecoder3d: QEffQwenImageDecoder3d,
     }
 

@@ -5,8 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-
-import logging
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
@@ -20,15 +18,10 @@ from diffusers.models.transformers.transformer_qwenimage import (
     QwenImageTransformerBlock,
 )
 
-logger = logging.getLogger(__name__)
-
 
 def qeff_apply_rotary_emb_qwen(x, freqs_cos, freqs_sin):
     """
-    Apply rotary embeddings to input tensors using the given frequency tensor. This function applies rotary embeddings
-    to the given query or key 'x' tensors using the provided frequency tensor 'freqs_cis'. The input tensors are
-    reshaped as complex numbers, and the frequency tensor is reshaped for broadcasting compatibility. The resulting
-    tensors contain rotary embeddings and are returned as real tensors.
+    Apply rotary embeddings to query/key tensors using cosine and sine tables.
 
     Args:
         x (`torch.Tensor`):
@@ -63,8 +56,25 @@ def qeff_apply_rotary_emb_qwen(x, freqs_cos, freqs_sin):
 
 
 class QEffQwenEmbedRope(nn.Module):
-    # TODO : better do with transformer ???
+    """
+    Rotary embedding helper for Qwen Image video/text positional encodings.
+
+    The module precomputes positive and negative frequency tables and returns
+    per-sample image and text RoPE tensors expected by the Qwen transformer.
+    """
+
     def __init__(self, theta: int, axes_dim: List[int], scale_rope=False):
+        """
+        Initialize RoPE frequency caches.
+
+        Args:
+            theta (`int`):
+                Base frequency used in rotary embedding computation.
+            axes_dim (`List[int]`):
+                RoPE dimensions for `(frame, height, width)` axes.
+            scale_rope (`bool`, *optional*, defaults to `False`):
+                Enables centered/negative indexing strategy for spatial axes.
+        """
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
@@ -91,7 +101,43 @@ class QEffQwenEmbedRope(nn.Module):
 
         self.rope_cache = {}
 
+    def rope_params(self, index, dim, theta=10000):
+        """
+        Compute cosine/sine RoPE parameters for a single axis.
+
+        Args:
+            index (`torch.Tensor`):
+                1D position indices for the axis.
+            dim (`int`):
+                Rotary dimension for the axis; must be even.
+            theta (`int`, *optional*, defaults to `10000`):
+                Base frequency used for geometric progression.
+
+        Returns:
+            Tuple[`torch.Tensor`, `torch.Tensor`]:
+                Cosine and sine tables for `index`.
+        """
+        assert dim % 2 == 0
+        freqs = torch.outer(index, 1.0 / torch.pow(theta, torch.arange(0, dim, 2).to(torch.float32).div(dim)))
+        # Return cos and sin separately instead of complex tensor
+        freqs_cos = torch.cos(freqs)
+        freqs_sin = torch.sin(freqs)
+        return freqs_cos, freqs_sin
+
     def _compute_video_freqs(self, frame, height, width, idx=0):
+        """
+        Compute image RoPE cosine/sine tables for one `(frame, height, width)` tuple.
+
+        Args:
+            frame (`int`): Number of latent frames.
+            height (`int`): Latent height.
+            width (`int`): Latent width.
+            idx (`int`, *optional*): Offset used for frame indexing.
+
+        Returns:
+            Tuple[`torch.Tensor`, `torch.Tensor`]:
+                Cosine and sine tables with shape `[frame*height*width, rope_dim/2]`.
+        """
         seq_lens = frame * height * width
         freqs_pos_cos = self.pos_freqs_cos.split([x // 2 for x in self.axes_dim], dim=1)
         freqs_pos_sin = self.pos_freqs_sin.split([x // 2 for x in self.axes_dim], dim=1)
@@ -134,10 +180,17 @@ class QEffQwenEmbedRope(nn.Module):
     def forward(self, video_fhw, txt_seq_lens, device):
         """
         Args:
-            video_fhw: [frame, height, width] a list of 3 integers representing the shape of the video
-            txt_length: [bs] a list of 1 integers representing the length of the text
+            video_fhw:
+                Video latent shape description. Supports one or many
+                `(frame, height, width)` tuples.
+            txt_seq_lens:
+                Text sequence lengths for each sample in the batch.
+            device:
+                Target device for returned frequency tensors.
+
         Returns:
-            Tuple of (vid_freqs_cos, vid_freqs_sin, txt_freqs_cos, txt_freqs_sin)
+            Tuple[`torch.Tensor`, `torch.Tensor`, `torch.Tensor`, `torch.Tensor`]:
+                `(img_cos, img_sin, txt_cos, txt_sin)` RoPE frequency tables.
         """
         if self.pos_freqs_cos.device != device:
             self.pos_freqs_cos = self.pos_freqs_cos.to(device)
@@ -183,18 +236,6 @@ class QEffQwenEmbedRope(nn.Module):
 
         return vid_freqs_cos, vid_freqs_sin, txt_freqs_cos, txt_freqs_sin
 
-    def rope_params(self, index, dim, theta=10000):
-        """
-        Args:
-            index: [0, 1, 2, 3] 1D Tensor representing the position index of the token
-        """
-        assert dim % 2 == 0
-        freqs = torch.outer(index, 1.0 / torch.pow(theta, torch.arange(0, dim, 2).to(torch.float32).div(dim)))
-        # Return cos and sin separately instead of complex tensor
-        freqs_cos = torch.cos(freqs)
-        freqs_sin = torch.sin(freqs)
-        return freqs_cos, freqs_sin
-
 
 class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
     def __call__(
@@ -204,9 +245,31 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
         encoder_hidden_states: torch.FloatTensor = None,  # Text stream
         encoder_hidden_states_mask: torch.FloatTensor = None,
         attention_mask: Optional[torch.FloatTensor] = None,
-        img_rotary_emb: Optional[torch.Tensor] = None,  # TODO : must tensor not optional
-        txt_rotary_emb: Optional[torch.Tensor] = None,  # TODO : must tensor not optional, check if neg  prompt = ""
+        img_rotary_emb: torch.FloatTensor = None,
+        txt_rotary_emb: torch.FloatTensor = None,
     ) -> torch.FloatTensor:
+        """
+        Run joint text-image attention for a Qwen dual-stream block.
+
+        Args:
+            attn (`Attention`): Attention module instance.
+            hidden_states (`torch.FloatTensor`): Image-stream states `[B, S_img, C]`.
+            encoder_hidden_states (`torch.FloatTensor`, *optional*):
+                Text-stream states `[B, S_txt, C]`.
+            encoder_hidden_states_mask (`torch.FloatTensor`, *optional*):
+                Text mask passed through the attention API.
+            attention_mask (`torch.FloatTensor`, *optional*):
+                Additional attention mask.
+            img_rotary_emb (`torch.Tensor`, *optional*):
+                Image RoPE tensor where last dim packs `(cos, sin)`.
+            txt_rotary_emb (`torch.Tensor`, *optional*):
+                Text RoPE tensor where last dim packs `(cos, sin)`.
+
+        Returns:
+            Tuple[`torch.FloatTensor`, `torch.FloatTensor`]:
+                Image and text attention outputs.
+        """
+
         if encoder_hidden_states is None:
             raise ValueError("QwenDoubleStreamAttnProcessor2_0 requires encoder_hidden_states (text stream)")
 
@@ -245,7 +308,7 @@ class QEffQwenDoubleStreamAttnProcessor2_0(QwenDoubleStreamAttnProcessor2_0):
             txt_key = attn.norm_added_k(txt_key)
 
         # Apply RoPE
-        if img_rotary_emb is not None and txt_rotary_emb is not None:  # TODO: clean up all ways  not none
+        if img_rotary_emb is not None and txt_rotary_emb is not None:
             # Unpack the 4 tensors (cos and sin for both img and txt)
             img_freqs_cos, img_freqs_sin = torch.chunk(img_rotary_emb, 2, dim=-1)  # [6032,64] each
             txt_freqs_cos, txt_freqs_sin = torch.chunk(txt_rotary_emb, 2, dim=-1)  # [126,64] each
@@ -311,8 +374,24 @@ class QEffQwenImageTransformerBlock(QwenImageTransformerBlock):
         txt_rotary_emb: torch.Tensor = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass for one Qwen dual-stream transformer block.
+
+        Args:
+            hidden_states (`torch.Tensor`): Image-stream hidden states.
+            encoder_hidden_states (`torch.Tensor`): Text-stream hidden states.
+            encoder_hidden_states_mask (`torch.Tensor`): Text attention mask.
+            temb (`torch.Tensor`): Timestep embedding.
+            img_rotary_emb (`torch.Tensor`, *optional*): Image RoPE frequencies.
+            txt_rotary_emb (`torch.Tensor`, *optional*): Text RoPE frequencies.
+            joint_attention_kwargs (`Dict[str, Any]`, *optional*):
+                Additional kwargs forwarded to the attention processor.
+
+        Returns:
+            Tuple[`torch.Tensor`, `torch.Tensor`]:
+                Updated `(encoder_hidden_states, hidden_states)`.
+        """
         global sf_value
-        # Get modulation parameters for both streams
         img_mod_params = self.img_mod(temb)  # [B, 6*dim]
         txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
 
@@ -405,7 +484,6 @@ class QEffQwenImageTransformer2DModel(QwenImageTransformer2DModel):
         txt_seq_lens: torch.Tensor = None,
         img_rotary_emb: torch.Tensor = None,
         txt_rotary_emb: torch.Tensor = None,
-        guidance: torch.Tensor = None,  # TODO: this should probably be removed
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
