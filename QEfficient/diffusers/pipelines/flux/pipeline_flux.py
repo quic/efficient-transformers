@@ -722,6 +722,12 @@ class QEffFluxPipeline:
         # Step 6: Calculate compressed latent dimension for transformer buffer allocation
         cl, _, _ = calculate_compressed_latent_dimension(height, width, self.model.vae_scale_factor)
 
+        # Deactivate text encoder sessions to free device resources before loading transformer
+        if self.text_encoder.qpc_session is not None:
+            self.text_encoder.qpc_session.deactivate()
+        if self.text_encoder_2.qpc_session is not None:
+            self.text_encoder_2.qpc_session.deactivate()
+
         # Initialize transformer inference session
         if self.transformer.qpc_session is None:
             self.transformer.qpc_session = QAICInferenceSession(
@@ -819,6 +825,10 @@ class QEffFluxPipeline:
             # Unpack and denormalize latents
             latents = self.model._unpack_latents(latents, height, width, self.model.vae_scale_factor)
             latents = (latents / self.vae_decode.model.scaling_factor) + self.vae_decode.model.shift_factor
+
+            # Deactivate transformer session to free device resources before loading VAE decoder
+            if self.transformer.qpc_session is not None:
+                self.transformer.qpc_session.deactivate()
 
             # Initialize VAE decoder inference session
             if self.vae_decode.qpc_session is None:
