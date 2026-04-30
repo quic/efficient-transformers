@@ -70,6 +70,7 @@ def test_generate_image_text_to_text_model(
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
             model_name,
             kv_offload=kv_offload,
+            trust_remote_code=True,
         )
     else:
         qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -92,7 +93,7 @@ def test_generate_image_text_to_text_model(
 
     if model_name in ModelConfig.INTERNVL_MODELS:
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
-        model_hf = AutoModelForCausalLM.from_pretrained(model_name)
+        model_hf = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
         processor = InternProcessor(model_hf, tokenizer)
         prompt = [query]
         img_url_list = [img_url]

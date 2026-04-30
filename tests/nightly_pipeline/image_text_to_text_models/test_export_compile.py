@@ -40,6 +40,7 @@ def test_export_compile_image_text_to_text_model(
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
             model_name,
             kv_offload=kv_offload,
+            trust_remote_code=True,
         )
     else:
         qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
