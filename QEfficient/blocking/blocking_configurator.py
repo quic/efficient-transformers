@@ -215,16 +215,20 @@ def attention_configurator(
         best_config["q_kv_ratio"] = q_kv_ratio
         best_config["vtcm_footprint"] = footprint
 
+    kv_metrics = []
+    for num_kv_blocks in num_kv_blocks_list:
+        kv_cl_per_nsp = math.ceil(ctx_len / num_kv_blocks)
+        kv_size_per_nsp = num_heads_per_iter * bs * kv_cl_per_nsp * head_dim * data_bytes
+        kv_metrics.append((num_kv_blocks, kv_cl_per_nsp, kv_size_per_nsp))
+
     for num_q_blocks in num_q_blocks_list:
-        for num_kv_blocks in num_kv_blocks_list:
-            q_sl_per_nsp = math.ceil(seq_len / num_nsps / num_q_blocks)
-            q_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * head_dim * data_bytes
+        q_sl_per_nsp = math.ceil(seq_len / num_nsps / num_q_blocks)
+        q_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * head_dim * data_bytes
 
-            kv_cl_per_nsp = math.ceil(ctx_len / num_kv_blocks)
-            kv_size_per_nsp = num_heads_per_iter * bs * kv_cl_per_nsp * head_dim * data_bytes
-
+        for num_kv_blocks, kv_cl_per_nsp, kv_size_per_nsp in kv_metrics:
             qk_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * kv_cl_per_nsp * data_bytes
             vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp
+
             q_kv_ratio = max(q_size_per_nsp / kv_size_per_nsp, kv_size_per_nsp / q_size_per_nsp)
             num_total_blocks = num_q_blocks * num_kv_blocks
 
