@@ -41,7 +41,7 @@ def main():
         aic_hw_version=args.aic_hw_version,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
     )
-    print(f"Model compiled to: {qpc_path}")
+    print(f"Model compiled to the path: {qpc_path}")
 
     # Generate text
     exec_info = model.generate(
