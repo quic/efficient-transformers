@@ -817,3 +817,223 @@ def blocked_q_attention_forward(
     attn_weights = torch.cat(q_attn_blocks, dim=2)
 
     return attn_output, attn_weights
+
+
+def blocked_kv_mla_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    per_head_k_up_normal: torch.Tensor,
+    per_head_v_up: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    compressed_kvs: Optional[torch.Tensor],
+    mla_absorption: Dict[str, Any],
+    *,
+    use_causal_mask: bool = False,
+    sliding_window: Optional[int] = None,
+    skip_kv: bool = False,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    # Initialize result tensor
+    batch_size, num_heads, seq_len, _ = query.shape
+    output = torch.zeros(
+        batch_size, num_heads, seq_len, module.config.kv_lora_rank, device=query.device, dtype=query.dtype
+    )
+
+    if hasattr(module, "config"):
+        mask_dtype = module.config.torch_dtype
+    else:
+        mask_dtype = query.dtype
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
+
+    # Initialize Running Maximum and Denominator
+    current_max = torch.full(
+        (batch_size, num_heads, seq_len),
+        float(MIN_MASKED_ATTENTION_VALUE),
+        device=query.device,
+        dtype=query.dtype,
+    )
+    skip_kv = True
+    current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device, dtype=query.dtype)
+
+    ctx_len = compressed_kvs.layers[layer_idx].ckv.shape[2]
+    kv_block_size = -(-ctx_len // num_kv_blocks)
+
+    position_ids = cache_kwargs.get("position_ids")
+    current_position = position_ids.max(dim=-1).values
+
+    for j in range(num_kv_blocks):
+        start_index = j * kv_block_size
+        if j == num_kv_blocks - 1:
+            kv_len_block = ctx_len - start_index
+        else:
+            kv_len_block = kv_block_size
+        end_index = start_index + kv_len_block
+
+        skip_future = None
+        if skip_kv:
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            # Eager mode Only
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if skip_future.item():
+                    break
+
+        compressed_kv_block = compressed_kvs.read_only_blocked_ckv(start_index, end_index, layer_idx, cache_kwargs)
+        k_pe_block = compressed_kvs.read_only_blocked_k_pe(start_index, end_index, layer_idx, cache_kwargs)
+
+        causal_mask_block = _create_causal_mask(
+            position_ids=position_ids,
+            target_length=end_index,
+            start_index=start_index,
+        )
+
+        if mla_absorption is not None:
+            absorption = mla_absorption.get("absorption", False)
+        else:
+            absorption = False
+
+        k_heads, q_heads = compressed_kv_block.shape[1], query.shape[1]
+        num_heads_to_repeat = q_heads - k_heads
+        repeated_ckv_block = compressed_kv_block[:, 0, :, :].expand(
+            batch_size, num_heads_to_repeat, -1, module.kv_lora_rank
+        )
+        compressed_kv_block = torch.cat((compressed_kv_block, repeated_ckv_block), dim=1)
+
+        repeated_k_pe_block = k_pe_block[:, 0, :, :].expand(
+            batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim
+        )
+        k_pe_block = torch.cat((k_pe_block, repeated_k_pe_block), dim=1)
+
+        if absorption:
+            krope_nope = torch.cat((compressed_kv_block, k_pe_block), dim=-1)
+            k_heads, q_heads = krope_nope.shape[1], query.shape[1]
+            num_heads_to_repeat = q_heads - k_heads
+            repeated_k = krope_nope[:, 0, :, :].expand(
+                batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim + module.kv_lora_rank
+            )
+            krope_nope = torch.cat((krope_nope, repeated_k), dim=1)
+            attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
+            # [1, 64, q_len, 576] X [1, 1, 576, kv_block_size] -> [1, 64, q_len, kv_block_size]
+            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+            current_max, current_denominator, output = update_running_softmax(
+                current_max,
+                attn_weights_block,
+                current_denominator,
+                output,
+                compressed_kv_block,
+                skip_kv,
+                skip_future,
+            )  # [1, 64, q_len, kv_block_size] X [1, 1, kv_block_size, 512] -> [1, 64, q_len, 512]
+        else:
+            k_heads, q_heads = compressed_kv_block.shape[1], query.shape[1]
+            num_heads_to_repeat = q_heads - k_heads
+            repeated_ckv_block = compressed_kv_block[:, 0, :, :].expand(
+                batch_size, num_heads_to_repeat, -1, module.kv_lora_rank
+            )
+            compressed_kv_block = torch.cat((compressed_kv_block, repeated_ckv_block), dim=1)
+            knope = torch.matmul(compressed_kv_block, per_head_k_up_normal)
+
+            repeated_k_pe_block = k_pe_block[:, 0, :, :].expand(
+                batch_size, num_heads_to_repeat, -1, module.qk_rope_head_dim
+            )
+            k_pe_block = torch.cat((k_pe_block, repeated_k_pe_block), dim=1)
+
+            krope_nope = torch.cat((knope, k_pe_block.expand(-1, num_heads, -1, -1)), dim=-1)
+            attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
+            attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+            current_max, current_denominator, output = update_running_softmax(
+                current_max,
+                attn_weights_block,
+                current_denominator,
+                output,
+                compressed_kv_block,
+                skip_kv,
+                skip_future,
+            )
+
+    attn_output = torch.matmul(output, per_head_v_up)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    attn_weights = None
+
+    return attn_output, attn_weights
+
+
+def blocked_h_mla_attention_forward(
+    module: nn.Module,
+    q_a_proj_out: torch.Tensor,
+    fusedqk: torch.Tensor,
+    q_nope: torch.Tensor,
+    q_pe: torch.Tensor,
+    kva: torch.Tensor,
+    k_pe: torch.Tensor,
+    per_head_q_up: torch.Tensor,
+    per_head_k_up: torch.Tensor,
+    per_head_v_up: torch.Tensor,
+    per_head_k_up_normal: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    mla_absorption: Dict[str, Any],
+    head_block_size: int,
+    *,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """
+    H-blocked attention that slices along head dimension to create blocks and processes each block.
+    """
+    batch_size, num_heads, q_len, _ = q_pe.shape
+    if head_block_size <= 0:
+        head_block_size = num_heads
+    num_head_blocks = math.ceil(num_heads / head_block_size)
+
+    if hasattr(module, "config"):
+        mask_dtype = module.config.torch_dtype
+    else:
+        mask_dtype = q_pe.dtype
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=q_pe.device)
+
+    if mla_absorption is not None:
+        absorption = mla_absorption.get("absorption", False)
+        online = mla_absorption.get("online", False)
+    else:
+        absorption = False
+
+    h_output_blocks = []
+    h_attn_blocks = []
+    # Process each head block independently
+    for head_block_idx in range(num_head_blocks):
+        h_start = head_block_idx * head_block_size
+        h_end = min(h_start + head_block_size, num_heads)
+
+        if absorption:
+            if online:
+                qup_kupT = torch.matmul(per_head_q_up[:, h_start:h_end, :, :], per_head_k_up[:, h_start:h_end, :, :])
+                dq_qup_kupT = torch.matmul(q_a_proj_out, qup_kupT)
+            else:
+                dq_qup_kupT = torch.matmul(q_a_proj_out, fusedqk[:, h_start:h_end, :, :])
+            qkupTrope_nope = torch.cat((dq_qup_kupT, q_pe[:, h_start:h_end, :, :]), dim=-1)
+            krope_nope = torch.cat((kva, k_pe), dim=-1)
+            attn_weights = torch.matmul(qkupTrope_nope, krope_nope.transpose(2, 3)) * scaling
+        else:
+            knope = torch.matmul(kva, per_head_k_up_normal[:, h_start:h_end, :, :])
+            krope_nope = torch.cat((knope, k_pe), dim=-1)
+            qrope_nope = torch.cat((q_nope[:, h_start:h_end, :, :], q_pe[:, h_start:h_end, :, :]), dim=-1)
+            attn_weights = torch.matmul(qrope_nope, krope_nope.transpose(2, 3)) * scaling
+
+        if attention_mask is not None:
+            attn_weights = torch.where(attention_mask, masked_tensor, attn_weights)
+        attn_weights = torch.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
+        attn_output = torch.matmul(attn_weights, kva)
+        attn_output = torch.matmul(attn_output, per_head_v_up[:, h_start:h_end, :, :])
+        h_output_blocks.append(attn_output)
+        h_attn_blocks.append(attn_weights)
+
+    attn_output = torch.cat(h_output_blocks, dim=1).transpose(1, 2).contiguous()
+    attn_weights = torch.cat(h_attn_blocks, dim=1)
+    return attn_output, attn_weights

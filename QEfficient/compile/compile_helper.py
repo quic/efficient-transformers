@@ -14,35 +14,34 @@ from typing import List, Optional, Tuple
 
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.utils import constants
-from QEfficient.utils._utils import load_json, load_yaml
+from QEfficient.utils._utils import load_json, load_yaml, to_named_specializations
 from QEfficient.utils.logging_utils import logger
 
 
 def create_and_dump_specializations(
     batch_size: int, prompt_len: int, ctx_len: int, path: str, full_batch_size: Optional[int] = None
 ):
-    # Create specialization file.
-    specializations = {
-        "specializations": [
-            {
-                "batch_size": str(batch_size),
-                "seq_len": str(prompt_len),
-                "ctx_len": str(ctx_len),
-            },
-            {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)},
-        ]
-    }
-    # If continuous batching is enabled by proving full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS
+    # Build the base specialization entries first, then convert to named format.
+    base_specializations = [
+        {
+            "batch_size": str(batch_size),
+            "seq_len": str(prompt_len),
+            "ctx_len": str(ctx_len),
+        },
+        {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)},
+    ]
+    # If continuous batching is enabled by providing full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS
     if full_batch_size is not None:
-        specializations["specializations"][0]["full_batch_size"] = str(full_batch_size)
-        specializations["specializations"][1]["full_batch_size"] = str(full_batch_size)
-        specializations["specializations"][1]["batch_size"] = str(full_batch_size)
+        base_specializations[0]["full_batch_size"] = str(full_batch_size)
+        base_specializations[1]["full_batch_size"] = str(full_batch_size)
+        base_specializations[1]["batch_size"] = str(full_batch_size)
 
-    # To handle repetative input in specializations when prompt_len is 1
+    # To handle repetitive input in specializations when prompt_len is 1
     if prompt_len == 1 and full_batch_size is None:
-        specializations["specializations"].pop()
+        base_specializations.pop()
 
     # Dump
+    specializations = {"specializations": to_named_specializations(base_specializations)}
     with open(path, "w") as file:
         json.dump(specializations, file, indent=4)
 
@@ -139,7 +138,6 @@ def compile_kv_model_on_cloud_ai_100(
         "-retained-state",
         f"-aic-num-cores={num_cores}",
         f"-custom-IO-list-file={custom_io_path}",
-        "-compile-only",
         f"-aic-binary-dir={aic_binary_dir}",
     ]
     if mxfp6:
