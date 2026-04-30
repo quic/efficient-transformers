@@ -188,9 +188,12 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
     else:
         raise FileNotFoundError(f"expected specializations.json file at path, {qpc_base_path}")
 
-    compilation_batch_size = int(data["specializations"][0]["batch_size"])
-    compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
-    if compilation_fbs := data["specializations"][0].get("full_batch_size", None):
+    # Support both the legacy flat format and the new {name, symbols} format.
+    first = data["specializations"][0]
+    spec = first.get("symbols", first)
+    compilation_batch_size = int(spec["batch_size"])
+    compilation_ctx_len = int(spec["ctx_len"])
+    if compilation_fbs := spec.get("full_batch_size", None):
         compilation_fbs = int(compilation_fbs)
     return compilation_batch_size, compilation_ctx_len, compilation_fbs
 
@@ -498,6 +501,12 @@ class QEffTextGenerationBase:
         # Skip inputs/outputs
         self._session.skip_buffers(
             [x for x in self._session.input_names + self._session.output_names if x.startswith("past_")]
+        )
+        self._session.skip_buffers(
+            [x for x in self._session.input_names + self._session.output_names if x.startswith("compressed_")]
+        )
+        self._session.skip_buffers(
+            [x for x in self._session.input_names + self._session.output_names if x.startswith("k_pe")]
         )
 
     def _set_tokenizer_params(self):
@@ -840,6 +849,7 @@ class QEffTextGenerationBase:
             ]
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
+
             outputs = self._session.run(chunk_inputs)
 
             if self._write_io_dir is not None:

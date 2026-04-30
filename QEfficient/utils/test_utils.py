@@ -463,7 +463,6 @@ class ModelConfig:
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "allenai/Molmo-7B-D-0924",
         "meta-llama/Llama-3.2-11B-Vision-Instruct",
-        "google/gemma-3-4b-it",
     }
 
     DUAL_QPC_MODELS = {
