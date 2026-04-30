@@ -111,13 +111,7 @@ EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_C
 
 
 def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
-    """Build packed->original token index table for an NSP-sliced expert mask.
-
-    Given ``T2Ei`` of shape ``[num_nsp, T]`` marking which tokens are routed to
-    an expert, produces an index tensor where ``matched_idx[b, j]`` is the
-    original token position in ``x`` that lands at packed position ``j`` for
-    NSP lane ``b`` (or ``INT32_MAX`` when ``j`` is past the last valid row).
-    """
+    """Build packed->original token index"""
     batch_size, seq_len = T2Ei.shape
     int32_max = torch.iinfo(torch.int32).max
     int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
