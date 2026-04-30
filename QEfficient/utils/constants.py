@@ -316,3 +316,24 @@ class QnnConstants:
         },
         "SKIP_QNN_CONVERTER_STEP": False,
     }
+
+
+@dataclass
+class LoggerConfig:
+    """
+    Centralized logger configuration for the project.
+    - Keep all defaults here.
+    - Environment variable names are centralized to avoid magic strings.
+    """
+
+    # Environment variables
+    log_path_env: str = "QEFF_LOG_PATH"  # optional: set log file path
+    log_level_env: str = "QEFF_LOG_LEVEL"  # project-wide log level (e.g., DEBUG/INFO/WARN/ERROR)
+
+    # Defaults
+    default_log_dir: str = os.path.expanduser("~/.cache/qefficient_logs")
+    default_level: str = "INFO"  # default when env is not set
+
+    # Rotating file behavior
+    max_bytes: int = 5 * 1024 * 1024  # 5 MB
+    backup_count: int = 10  # keep last 10 files
