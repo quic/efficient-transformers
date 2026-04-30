@@ -5,7 +5,7 @@
       "model_type": "llava",
       "batch_size": 1,
       "prompt_len": 784,
-      "ctx_len": 1024,
+      "ctx_len": 2048,
       "img_size": 336,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
       "text_prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
@@ -612,7 +612,37 @@
       "text_prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
       "num_layers": 1,
       "additional_params": {
+      }
     }
-  }
+  ],
+  "image_text_reranker_models": [
+    {
+      "model_name": "Qwen/Qwen3-VL-Reranker-2B",
+      "model_type": "qwen3_vl",
+      "batch_size": 1,
+      "prompt_len": 128,
+      "ctx_len": 1024,
+      "img_size": 1540,
+      "img_url": "https://picsum.photos/id/237/536/354",
+      "instruction": "Retrieve candidates relevant to the query.",
+      "query_text": "A woman playing with her dog on a beach at sunset.",
+      "document_text": "A woman and her dog spend time together on a beach during sunset.",
+      "num_layers": 1,
+      "additional_params": {}
+    },
+    {
+      "model_name": "Qwen/Qwen3-VL-Reranker-8B",
+      "model_type": "qwen3_vl",
+      "batch_size": 1,
+      "prompt_len": 128,
+      "ctx_len": 1024,
+      "img_size": 1540,
+      "img_url": "https://picsum.photos/id/237/536/354",
+      "instruction": "Retrieve candidates relevant to the query.",
+      "query_text": "A woman playing with her dog on a beach at sunset.",
+      "document_text": "A woman and her dog spend time together on a beach during sunset.",
+      "num_layers": 1,
+      "additional_params": {}
+    }
   ]
 }
