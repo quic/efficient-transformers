@@ -36,7 +36,11 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
-from QEfficient.customop.ctx_scatter_gather import CtxGatherFunc3D, CtxScatterFunc3D
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DGeneralized,
+    CtxScatterFunc3DInt,
+)
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -52,9 +56,36 @@ class QEffGptOssExperts(GptOssExperts):
 
 
 EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 
 
-def _ctx_scatter_gather_gptoss_expert_blocked(
+def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
+    """Build packed->original token index table for an NSP-sliced expert mask.
+
+    Given ``T2Ei`` of shape ``[num_nsp, T]`` marking which tokens are routed to
+    an expert, produces an index tensor where ``matched_idx[b, j]`` is the
+    original token position in ``x`` that lands at packed position ``j`` for
+    NSP lane ``b`` (or ``INT32_MAX`` when ``j`` is past the last valid row).
+    """
+    batch_size, seq_len = T2Ei.shape
+    int32_max = torch.iinfo(torch.int32).max
+    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
+    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_dest = valid_prefix - 1
+    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
+    # Once the compiler fix for ConstantOfShape(INT32_MAX) is available, this
+    # can be switched back to ``torch.full_like(token_idx, int32_max)``.
+    matched_idx = int32_max_scalar.expand_as(token_idx)
+    matched_idx = CtxScatterFunc3DInt.apply(
+        matched_idx.unsqueeze(-1),
+        scatter_pos,
+        token_idx.unsqueeze(-1),
+    ).squeeze(-1)
+    return matched_idx
+
+
+def _cumsum_scatter_gather_update_gptoss_expert_blocked(
     x: torch.Tensor,
     T2Ei: torch.Tensor,
     W_g: torch.Tensor,
@@ -63,37 +94,64 @@ def _ctx_scatter_gather_gptoss_expert_blocked(
     b_g: torch.Tensor,
     b_u: torch.Tensor,
     b_d: torch.Tensor,
+    routing_weight: torch.Tensor,
+    expert_out: torch.Tensor,
     limit: float,
     alpha: float,
     T: int,
+    packed_chunk_size: int,
 ) -> torch.Tensor:
-    batch_size, hidden_size = T2Ei.shape[0], x.shape[1]
-    scatter_idx = (torch.cumsum(T2Ei.long(), dim=1) - 1).to(torch.int32)
-    invalid_mask = ~T2Ei
-    int32_max = torch.tensor(torch.iinfo(torch.int32).max, dtype=torch.int32, device=x.device)
-    scatter_safe_idx = torch.where(invalid_mask, int32_max, scatter_idx)
+    """Cumsum-scatter-gather-update expert helper for GPT-OSS NSP-blocked dispatch.
 
-    x_prime = torch.zeros(batch_size, T, hidden_size, dtype=x.dtype, device=x.device)
-    x_prime = CtxScatterFunc3D.apply(x_prime, scatter_safe_idx, x.unsqueeze(0).expand(batch_size, -1, -1))
+    Same algorithm as the Qwen3-MOE version but with GPT-OSS biases and GLU
+    activation (clamped gate/up, ``(up + 1) * gate * sigmoid(gate * alpha)``).
 
+    Shapes:
+        x               : [T, H]
+        T2Ei            : [num_nsp, T]            (bool)
+        W_g, W_u        : [num_nsp, H, I]
+        W_d             : [num_nsp, I, H]
+        b_g, b_u        : [num_nsp, I]
+        b_d             : [num_nsp, H]
+        routing_weight  : [num_nsp, T]
+        expert_out      : [num_nsp, T, H]         (accumulator, in-out)
+    """
+    batch_size, seq_len = T2Ei.shape
+    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+
+    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
     valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
-    row_range = torch.arange(T, device=x.device, dtype=torch.int32).unsqueeze(0)
-    valid_output_rows = row_range < valid_rows
-    x_prime = torch.where(valid_output_rows.unsqueeze(-1), x_prime, torch.zeros_like(x_prime))
+    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
+    rw_expanded = routing_weight.unsqueeze(-1)
 
-    gate = (x_prime @ W_g) + b_g.unsqueeze(1)
-    up = (x_prime @ W_u) + b_u.unsqueeze(1)
-    gate = gate.clamp(min=torch.finfo(torch.float16).min, max=limit)
-    up = up.clamp(min=-limit, max=limit)
-    glu = gate * torch.sigmoid(gate * alpha)
-    intermediate = (up + 1) * glu
-    down_prime = (intermediate @ W_d) + b_d.unsqueeze(1)
-    down_prime = torch.where(valid_output_rows.unsqueeze(-1), down_prime, torch.zeros_like(down_prime))
+    for packed_start in range(0, seq_len, packed_chunk_size):
+        packed_stop = packed_start + packed_chunk_size
+        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
-    gather_idx = torch.where(invalid_mask, int32_max, scatter_idx)
-    delta_out = CtxGatherFunc3D.apply(down_prime, gather_idx)
-    delta_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(delta_out), delta_out)
-    return delta_out
+        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+
+        gate = (x_chunk @ W_g) + b_g.unsqueeze(1)
+        up = (x_chunk @ W_u) + b_u.unsqueeze(1)
+        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=limit)
+        up = up.clamp(min=-limit, max=limit)
+        glu = gate * torch.sigmoid(gate * alpha)
+        intermediate = (up + 1) * glu
+        down_chunk = (intermediate @ W_d) + b_d.unsqueeze(1)
+
+        rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
+        down_chunk = down_chunk * rw_chunk
+
+        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        updated_chunk = expert_out_chunk + down_chunk
+
+        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
+        updated_chunk = torch.where(
+            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
+        )
+        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+
+    return expert_out
 
 
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
@@ -116,11 +174,11 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         b_u = self.experts.up_proj_bias.view(local_experts, num_nsp, expert_dim).transpose(0, 1).contiguous()
         b_d = self.experts.down_proj_bias.view(local_experts, num_nsp, H).transpose(0, 1).contiguous()
 
-        expert_out_partial = x.new_zeros((num_nsp, T, H))
+        expert_out = x.new_zeros((num_nsp, T, H))
         for local_slot in range(local_experts):
-            routing_weight = routing_weights_by_expert[:, local_slot, :].unsqueeze(-1)
-            T2Ei = routing_weight.squeeze(-1) > 0
-            delta = _ctx_scatter_gather_gptoss_expert_blocked(
+            routing_weight = routing_weights_by_expert[:, local_slot, :]
+            T2Ei = routing_weight > 0
+            expert_out = _cumsum_scatter_gather_update_gptoss_expert_blocked(
                 x=x,
                 T2Ei=T2Ei,
                 W_g=W_g[:, local_slot],
@@ -129,13 +187,15 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
                 b_g=b_g[:, local_slot],
                 b_u=b_u[:, local_slot],
                 b_d=b_d[:, local_slot],
+                routing_weight=routing_weight,
+                expert_out=expert_out,
                 limit=self.experts.limit,
                 alpha=self.experts.alpha,
                 T=T,
+                packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
             )
-            expert_out_partial = expert_out_partial + (delta * routing_weight)
 
-        return expert_out_partial.sum(dim=0)
+        return expert_out.sum(dim=0)
 
     def forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
