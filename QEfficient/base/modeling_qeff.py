@@ -8,8 +8,6 @@
 import gc
 import inspect
 import logging
-import shutil
-import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -20,13 +18,13 @@ import torch
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
-    FP16ClipTransform,
+    CustomOpTransform,
     OnnxTransformPipeline,
+    RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
-from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -34,15 +32,10 @@ from QEfficient.transformers.models.pytorch_transforms import (
 )
 from QEfficient.utils import (
     constants,
-    create_json,
     create_model_params,
     dump_qconfig,
-    generate_mdp_partition_config,
     get_attr_or_key,
-    hash_dict_params,
-    load_json,
     require_value,
-    to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
 
@@ -58,6 +51,10 @@ class QEFFBaseModel(ABC):
     :_pytorch_transforms: Pytorch transformations to be applied after initialization.
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
+
+    _start = 0
+    _end = 1
+    _total_layers = None
 
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
@@ -285,6 +282,13 @@ class QEFFBaseModel(ABC):
             instance using from_pretrained() for re-export.
 
         """
+
+        idx = int(QEFFBaseModel._start)
+        # agent change start: generalized layerwise window
+        end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
+        if end_idx <= idx:
+            raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
+
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
         export_kwargs.pop("mla_absorption", None)
@@ -300,12 +304,44 @@ class QEFFBaseModel(ABC):
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
+        # Setup temporary paths
+        tmp_onnx_dir = export_dir / "onnx_layerwise_tmp"
+        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
+
+        output_name = []
+        output_name.append("logits")
+        # agent change start: emit retained states for all layers in current export window
+        for layer_idx in range(idx, end_idx):
+            output_name.append(f"compressed_kv.{layer_idx}_InternalRetainedState")
+            output_name.append(f"k_pe.{layer_idx}_InternalRetainedState")
+
+        if idx >= 1:
+            z = example_inputs.pop("input_ids")
+            # z = example_inputs["input_ids"]
+            ################### model_dependent ############################
+            inputs_embeds = torch.rand(z.shape[0], z.shape[1], 7168, device=z.device, dtype=torch.float16)
+            # example_inputs[f"layer_{QEFFBaseModel._start}/inputs_embeds"] = inputs_embeds
+            # dynamic_axes[f"layer_{QEFFBaseModel._start}/inputs_embeds"] = dynamic_axes.pop("input_ids")
+            example_inputs["inputs_embeds"] = inputs_embeds
+            dynamic_axes["inputs_embeds"] = dynamic_axes.pop("input_ids")
+        # Create input_names from example_inputs
+        # example_inputs[f"layer_{QEFFBaseModel._start}/position_ids"] = example_inputs.pop("position_ids")
+        # dynamic_axes[f"layer_{QEFFBaseModel._start}/position_ids"] = dynamic_axes.pop("position_ids")
+
+        window_size = end_idx - idx
+        if "compressed_kvs" in example_inputs:
+            example_inputs["compressed_kvs"] = [
+                val for i, val in enumerate(example_inputs["compressed_kvs"]) if i < window_size
+            ]
+
         # Create input_names from example_inputs
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
                 if param == "past_key_values":
                     for i in range(len(example_inputs["past_key_values"])):
+                        # example_inputs["past_key_values"] = [
+                        #     val for i, val in enumerate(example_inputs["past_key_values"]) if i < window_size]
                         if len(example_inputs["past_key_values"][0]) == 2:
                             input_names.extend([f"past_key.{i}", f"past_value.{i}"])
                         elif len(example_inputs["past_key_values"][0]) == 4:
@@ -322,67 +358,65 @@ class QEFFBaseModel(ABC):
                                 f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
                             )
                 elif param == "compressed_kvs":
-                    for i in range(len(example_inputs["compressed_kvs"])):
-                        input_names.extend(
-                            [
-                                f"compressed_kv.{i}",
-                            ]
-                        )
-                        input_names.extend(
-                            [
-                                f"k_pe.{i}",
-                            ]
-                        )
+                    if len(example_inputs["compressed_kvs"][0]) == 2:
+                        for layer_offset in range(len(example_inputs["compressed_kvs"])):
+                            layer_idx = idx + layer_offset
+                            input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
+                    else:
+                        for i in range(len(example_inputs["compressed_kvs"])):
+                            input_names.extend(
+                                [
+                                    f"compressed_kv.{i}",
+                                ]
+                            )
+                            input_names.extend(
+                                [
+                                    f"k_pe.{i}",
+                                ]
+                            )
                 else:
                     input_names.append(param)
+        dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
 
-        try:
+        import os
+        import time
+
+        layerwise_dir = export_dir / "onnx_layerwise_tmp"
+        start_time = time.time()
+
+        # example_inputs["layer_indices_to_run"] = [i]
+        current_layer_dir = layerwise_dir / f"layer_{idx}_{end_idx}"
+        current_layer_dir.mkdir(parents=True, exist_ok=True)
+
+        layer_onnx_path = str(current_layer_dir / f"{self.model_name}_layer_{idx}_{end_idx}.onnx")
+        layer_onnx_path_tmp = str(current_layer_dir / f"{self.model_name}_layer_tmp_{idx}_{end_idx}.onnx")
+        if not os.path.isfile(layer_onnx_path):
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
-                str(onnx_path),
+                layer_onnx_path_tmp,
                 input_names=input_names,
-                output_names=output_names,
+                output_names=output_name,
                 dynamic_axes=dynamic_axes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
             )
-            logger.info("PyTorch export successful")
-            _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(onnx_path, load_external_data=False)
+            total_end = time.time()
+            print(f"\nTotal export time: {total_end - start_time:.2f} seconds")
 
-            needs_external_tensor_data = any(
-                transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
-            )
-            transform_kwargs = {
-                "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
-                "model_name": self.model_name,
-            }
-            if onnx_transform_kwargs is not None:
-                transform_kwargs.update(onnx_transform_kwargs)
-
-            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
-            model, transformed = onnx_transforms.apply(model, **transform_kwargs)
-
-            # Add metadata to the model
-            model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
-            )
-            logger.info("ONNX transforms applied")
-
-            onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
-            onnx.save(model, onnx_path_tmp)
-            onnx_path_tmp.replace(onnx_path)
-            del model
-            gc.collect()
-            logger.info("Transformed ONNX saved")
-
-        except Exception as e:
-            logger.error(f"ONNX export or transforms failed: {e}")
-            raise e
-
-        self.onnx_path = onnx_path
-        return onnx_path
+        model = onnx.load(layer_onnx_path_tmp, load_external_data=False)
+        # print(model.functions)
+        transform_kwargs = {
+            "onnx_base_dir": str(current_layer_dir),
+            "model_name": self.model_name,
+            "layer_idx": idx,
+        }
+        _onnx_transforms = [SplitTensorsTransform, CustomOpTransform, RenameFunctionOutputsTransform]
+        onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
+        model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+        onnx.save(model, layer_onnx_path_tmp)
+        self.onnx_path = layer_onnx_path_tmp
+        return layer_onnx_path_tmp
 
     def get_onnx_path(
         self,
@@ -545,145 +579,146 @@ class QEFFBaseModel(ABC):
                 **compiler_options,
             )
         )
-        compile_dir = Path(compile_dir or onnx_path.parent)
-        qpc_path = compile_dir / "qpc"
-        if not onnx_path.is_file():
-            raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
+        return onnx_path
+        # compile_dir = Path(compile_dir or onnx_path.parent)
+        # qpc_path = compile_dir / "qpc"
+        # if not onnx_path.is_file():
+        #     raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
-        if enable_qnn:
-            if compiler_options:
-                logger.warning(
-                    f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
-                )
+        # if enable_qnn:
+        #     if compiler_options:
+        #         logger.warning(
+        #             f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
+        #         )
 
-            self.qpc_path = qnn_compile(
-                onnx_path=onnx_path,
-                qpc_base_path=compile_dir,
-                specializations=specializations,
-                custom_io=custom_io,
-                device_group=list(range(mdp_ts_num_devices)),
-                num_cores=compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
-                mxfp6=compiler_options.get("mxfp6_matmul", constants.DEFAULT_AIC_MXPF6_MATMUL),
-                mxint8=mxint8_kv_cache,
-                qnn_config=qnn_config,
-            )
+        #     self.qpc_path = qnn_compile(
+        #         onnx_path=onnx_path,
+        #         qpc_base_path=compile_dir,
+        #         specializations=specializations,
+        #         custom_io=custom_io,
+        #         device_group=list(range(mdp_ts_num_devices)),
+        #         num_cores=compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
+        #         mxfp6=compiler_options.get("mxfp6_matmul", constants.DEFAULT_AIC_MXPF6_MATMUL),
+        #         mxint8=mxint8_kv_cache,
+        #         qnn_config=qnn_config,
+        #     )
 
-            return self.qpc_path
+        #     return self.qpc_path
 
-        command = (
-            constants.COMPILER
-            + [
-                f"-aic-hw-version={compiler_options.pop('aic_hw_version', compiler_options.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}"
-            ]
-            + [f"-m={onnx_path}"]
-        )
+        # command = (
+        #     constants.COMPILER
+        #     + [
+        #         f"-aic-hw-version={compiler_options.pop('aic_hw_version', compiler_options.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}"
+        #     ]
+        #     + [f"-m={onnx_path}"]
+        # )
 
-        # MDP partition config: prioritize dump over load
-        mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
-        mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
-        mdp_ts_json = None
+        # # MDP partition config: prioritize dump over load
+        # mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
+        # mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        # mdp_ts_json = None
 
-        if mdp_dump_json_path:
-            if mdp_ts_json_path:
-                logger.warning(
-                    "Loading and Dumping partition is not supported at the same time. Prioritizing dump config over load config!"
-                )
-            command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
-        elif mdp_ts_json_path:
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
-            mdp_ts_json = load_json(str(mdp_ts_json_path))
-        elif mdp_ts_num_devices > 1:
-            # Generate mdp config only if neither dump nor load is provided and num_devices > 1
-            mdp_ts_json = generate_mdp_partition_config(
-                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
-            )
-            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            create_json(str(mdp_ts_json_path), mdp_ts_json)
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+        # if mdp_dump_json_path:
+        #     if mdp_ts_json_path:
+        #         logger.warning(
+        #             "Loading and Dumping partition is not supported at the same time. Prioritizing dump config over load config!"
+        #         )
+        #     command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
+        # elif mdp_ts_json_path:
+        #     command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+        #     mdp_ts_json = load_json(str(mdp_ts_json_path))
+        # elif mdp_ts_num_devices > 1:
+        #     # Generate mdp config only if neither dump nor load is provided and num_devices > 1
+        #     mdp_ts_json = generate_mdp_partition_config(
+        #         mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+        #     )
+        #     mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+        #     create_json(str(mdp_ts_json_path), mdp_ts_json)
+        #     command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
-        for key, value in compiler_options.items():
-            option = "-" + key.replace("_", "-")
-            if isinstance(value, bool):
-                if value:
-                    command.append(option)
-                continue
-            command.append(f"{option}={value}")
+        # for key, value in compiler_options.items():
+        #     option = "-" + key.replace("_", "-")
+        #     if isinstance(value, bool):
+        #         if value:
+        #             command.append(option)
+        #         continue
+        #     command.append(f"{option}={value}")
 
-        if use_onnx_subfunctions:
-            logger.info("Using ONNX subfunctions for compilation.")
-            command.append("-sub-functions")
+        # if use_onnx_subfunctions:
+        #     logger.info("Using ONNX subfunctions for compilation.")
+        #     command.append("-sub-functions")
 
-        compile_hash_params = {
-            "command": command,
-            "specializations": specializations,
-            "custom_io": custom_io,
-            "mdp_ts_num_devices": mdp_ts_num_devices,
-            "mdp_ts_json": mdp_ts_json,
-            "num_speculative_tokens": num_speculative_tokens,
-            "prefill_only": prefill_only,
-        }
-        compile_hash = hash_dict_params(compile_hash_params)
+        # compile_hash_params = {
+        #     "command": command,
+        #     "specializations": specializations,
+        #     "custom_io": custom_io,
+        #     "mdp_ts_num_devices": mdp_ts_num_devices,
+        #     "mdp_ts_json": mdp_ts_json,
+        #     "num_speculative_tokens": num_speculative_tokens,
+        #     "prefill_only": prefill_only,
+        # }
+        # compile_hash = hash_dict_params(compile_hash_params)
 
-        compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
-        qpc_path = compile_dir / "qpc"
-        qpc_path.mkdir(parents=True, exist_ok=True)
+        # compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        # qpc_path = compile_dir / "qpc"
+        # qpc_path.mkdir(parents=True, exist_ok=True)
 
-        if qpc_path.is_dir():
-            if (qpc_path / "programqpc.bin").is_file():
-                self.qpc_path = qpc_path
-                return qpc_path
-            # Probably compilation failure last time, delete directory to start over
-            shutil.rmtree(qpc_path)
+        # if qpc_path.is_dir():
+        #     if (qpc_path / "programqpc.bin").is_file():
+        #         self.qpc_path = qpc_path
+        #         return qpc_path
+        #     # Probably compilation failure last time, delete directory to start over
+        #     shutil.rmtree(qpc_path)
 
-        # Write the generated MDP partition config file (not if user provided it)
+        # # Write the generated MDP partition config file (not if user provided it)
 
-        # Write specializations.json file
-        if specializations is not None:
-            specializations_json = compile_dir / "specializations.json"
-            specializations_data = {
-                "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
-            }
-            create_json(str(specializations_json), specializations_data)
-            command.append(f"-network-specialization-config={specializations_json}")
+        # # Write specializations.json file
+        # if specializations is not None:
+        #     specializations_json = compile_dir / "specializations.json"
+        #     specializations_data = {
+        #         "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
+        #     }
+        #     create_json(str(specializations_json), specializations_data)
+        #     command.append(f"-network-specialization-config={specializations_json}")
 
-        # Write custom_io.yaml file
-        model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
-        pkv_in_bfloat16 = (custom_io is not None) and any(
-            "past_" in key and "bfloat16" in value for key, value in custom_io.items()
-        )
-        if custom_io is not None:
-            custom_io_yaml = compile_dir / "custom_io.yaml"
-            with open(custom_io_yaml, "w") as fp:
-                for io_name, dtype in custom_io.items():
-                    fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
-            if model_in_bfloat16 and pkv_in_bfloat16:
-                logger.warning(
-                    "Model and Past KV types are both bfloat16. Custom IO list file will be ignored during compile."
-                )
-            else:
-                command.append(f"-custom-IO-list-file={custom_io_yaml}")
+        # # Write custom_io.yaml file
+        # model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
+        # pkv_in_bfloat16 = (custom_io is not None) and any(
+        #     "past_" in key and "bfloat16" in value for key, value in custom_io.items()
+        # )
+        # if custom_io is not None:
+        #     custom_io_yaml = compile_dir / "custom_io.yaml"
+        #     with open(custom_io_yaml, "w") as fp:
+        #         for io_name, dtype in custom_io.items():
+        #             fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
+        #     if model_in_bfloat16 and pkv_in_bfloat16:
+        #         logger.warning(
+        #             "Model and Past KV types are both bfloat16. Custom IO list file will be ignored during compile."
+        #         )
+        #     else:
+        #         command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
-        command.append(f"-aic-binary-dir={qpc_path}")
-        logger.info(f"Running compiler: {' '.join(command)}")
+        # command.append(f"-aic-binary-dir={qpc_path}")
+        # logger.info(f"Running compiler: {' '.join(command)}")
 
-        try:
-            subprocess.run(command, capture_output=True, check=True)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                "\n".join(
-                    [
-                        "Compilation failed!",
-                        f"Compiler command: {e.cmd}",
-                        f"Compiler exitcode: {e.returncode}",
-                        "Compiler stderr:",
-                        e.stderr.decode(),
-                    ]
-                )
-            )
-        # Dump JSON file with hashed parameters
-        hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
-        create_json(hashed_compile_params_path, compile_hash_params)
-        logger.info("Hashed parameters exported successfully.")
+        # try:
+        #     subprocess.run(command, capture_output=True, check=True)
+        # except subprocess.CalledProcessError as e:
+        #     raise RuntimeError(
+        #         "\n".join(
+        #             [
+        #                 "Compilation failed!",
+        #                 f"Compiler command: {e.cmd}",
+        #                 f"Compiler exitcode: {e.returncode}",
+        #                 "Compiler stderr:",
+        #                 e.stderr.decode(),
+        #             ]
+        #         )
+        #     )
+        # # Dump JSON file with hashed parameters
+        # hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
+        # create_json(hashed_compile_params_path, compile_hash_params)
+        # logger.info("Hashed parameters exported successfully.")
 
-        self.qpc_path = qpc_path
-        return qpc_path
+        # self.qpc_path = qpc_path
+        # return qpc_path
