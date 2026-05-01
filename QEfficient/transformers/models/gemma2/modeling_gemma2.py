@@ -191,6 +191,7 @@ class QEffGemma2DecoderLayer(Gemma2DecoderLayer):
     - add new args batch idx for the CB models
     """
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
