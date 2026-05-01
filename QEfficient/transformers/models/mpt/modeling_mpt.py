@@ -106,23 +106,19 @@ class QEffMptAttention(MptAttention):
 
         attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.softmax_scale
 
-        query_length = seq_length if past_key_value is None else seq_length + past_key_value.get_seq_length()
-
         if position_bias is not None:
             if len(position_bias.shape) != 3:
                 raise ValueError(f"Expecting position_bias shape to be 3 dimensions, got {len(position_bias.shape)}")
             key_length = key_states.shape[-2]
-
-            position_bias_query_index = max(0, position_bias.size(1) - query_length)
-            position_bias_key_index = max(0, position_bias.size(2) - key_length)
-
-            position_bias = position_bias[:, position_bias_query_index:, position_bias_key_index:]
+            # MPT alibi has shape [num_heads, 1, max_seq_len], so only the key axis needs trimming here.
+            position_bias = position_bias[:, :, -key_length:]
+            position_bias = position_bias.unsqueeze(0).expand(batch_size, -1, seq_length, -1)
 
             attention_scores = attention_scores + position_bias
 
         if attention_mask is not None:
             attention_scores = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=value_states.dtype), attention_scores
+                attention_mask, torch.full_like(attention_scores, MIN_MASKED_ATTENTION_VALUE), attention_scores
             )
 
         # (batch_size, n_heads, seq_length, key_length)
@@ -143,6 +139,7 @@ class QEffMptBlock(MptBlock):
     - add new args cache idx for the kv retention
     """
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

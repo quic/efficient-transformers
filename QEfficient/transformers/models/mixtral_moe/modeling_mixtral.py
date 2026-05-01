@@ -100,7 +100,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+            attention_mask, torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -261,7 +261,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
                     :, None
                 ],
                 current_hidden_states,
-                torch.tensor(0.0),
+                torch.zeros_like(current_hidden_states),
             )
             final_hidden_states = final_hidden_states + current_hidden_states
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
@@ -275,6 +275,7 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
     - add new args batch idx for the CB retention
     """
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

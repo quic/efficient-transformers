@@ -8,15 +8,17 @@
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, OrderedDict
 
 import onnx
 import torch
+from torch._subclasses.fake_tensor import FakeTensor
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
@@ -34,6 +36,8 @@ from QEfficient.compile.mdp_generator import (
     generate_mdp_partition_config,
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.customop.ctx_scatter_gather import CtxGather, CtxScatter
+from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -54,6 +58,19 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
+
+
+def _prune_unused_fake_initializers(onnx_program) -> None:
+    initializers = onnx_program.model.graph.initializers
+    used_names = {name for node in onnx_program.model.graph for name in node.inputs}
+    used_names.update(output.name for output in onnx_program.model.graph.outputs)
+
+    for name in list(initializers):
+        const_value = getattr(initializers[name], "const_value", None)
+        raw_value = getattr(const_value, "raw", None)
+        if isinstance(raw_value, FakeTensor) and name not in used_names:
+            del initializers[name]
+
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +342,8 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        use_dynamo: bool = False,
+        dynamic_shapes: Optional[Dict[str, Dict[int, any]]] = None,
         **export_kwargs,
     ) -> str:
         """
@@ -433,19 +452,87 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
 
+        # Rearrange example_inputs and dynamic_shapes to follow model.forward signature
+        sig = inspect.signature(self.model.forward)
+
+        ordered_example_inputs = OrderedDict()
+        ordered_dynamic_shapes = OrderedDict() if dynamic_shapes is not None else None
+
+        # First, add keys that are in the forward signature (in that order)
+        for name, param in sig.parameters.items():
+            if name in example_inputs:
+                ordered_example_inputs[name] = example_inputs[name]
+
+            if dynamic_shapes is not None and name in dynamic_shapes:
+                ordered_dynamic_shapes[name] = dynamic_shapes[name]
+
+        # Optionally, append any extra keys not in the forward signature
+        for name, value in example_inputs.items():
+            if name not in ordered_example_inputs:
+                ordered_example_inputs[name] = value
+
+        if dynamic_shapes is not None:
+            for name, value in dynamic_shapes.items():
+                if name not in ordered_dynamic_shapes:
+                    ordered_dynamic_shapes[name] = value
+
+        example_inputs = ordered_example_inputs
+        dynamic_shapes = ordered_dynamic_shapes
+
         try:
-            with layerwise_safe_onnx_export_patches():
-                torch.onnx.export(
-                    self.model,
-                    (),
-                    str(onnx_path),
-                    kwargs=example_inputs,
-                    input_names=input_names,
-                    output_names=output_names,
-                    dynamic_axes=dynamic_axes,
-                    opset_version=constants.ONNX_EXPORT_OPSET,
-                    **export_kwargs,
-                )
+            export_kwargs = {} if export_kwargs is None else export_kwargs
+
+            if use_dynamo:
+                dynamic_axes = None
+                export_kwargs = dict(export_kwargs)
+                export_kwargs.setdefault("report", False)
+                export_kwargs.setdefault("optimize", False)
+                export_kwargs["dynamo"] = True
+                export_kwargs["custom_translation_table"] = {
+                    **(export_kwargs.pop("custom_translation_table", None) or {}),
+                    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
+                    torch.ops.qefficient.ctx_gather.default: CtxGather,
+                    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
+                }
+
+                prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+                try:
+                    onnx_program = torch.onnx.export(
+                        self.model,
+                        args=(),
+                        f=None,
+                        kwargs=example_inputs,
+                        input_names=input_names,
+                        output_names=output_names,
+                        dynamic_axes=dynamic_axes,
+                        dynamic_shapes=dynamic_shapes,
+                        opset_version=constants.ONNX_EXPORT_OPSET,
+                        **export_kwargs,
+                    )
+                    if onnx_program is None:
+                        raise RuntimeError("torch.onnx.export returned None for dynamo export")
+                    _prune_unused_fake_initializers(onnx_program)
+                    onnx_program.save(str(onnx_path))
+                finally:
+                    if prev_invoke_fallback is None:
+                        os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+                    else:
+                        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
+            else:
+                with layerwise_safe_onnx_export_patches():
+                    torch.onnx.export(
+                        self.model,
+                        (),
+                        str(onnx_path),
+                        kwargs=example_inputs,
+                        input_names=input_names,
+                        output_names=output_names,
+                        dynamic_axes=dynamic_axes,
+                        dynamo=False,
+                        opset_version=constants.ONNX_EXPORT_OPSET,
+                        **export_kwargs,
+                    )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
@@ -456,6 +543,7 @@ class QEFFBaseModel(ABC):
             transform_kwargs = {
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
+                "dynamic_axes": dynamic_axes,
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -495,6 +583,7 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
+        use_dynamo: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
@@ -504,6 +593,7 @@ class QEFFBaseModel(ABC):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
+            "use_dynamo": use_dynamo,
             "retain_full_kv": retain_full_kv,
         }
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
@@ -837,6 +927,7 @@ class QEFFBaseModel(ABC):
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         prefill_only: Optional[str] = None,
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
@@ -901,6 +992,7 @@ class QEFFBaseModel(ABC):
                     specializations,
                     offload_pt_weights,
                     use_onnx_subfunctions,
+                    use_dynamo,
                     retain_full_kv,
                     num_devices=mdp_ts_num_devices,
                     qaic_config=qaic_config,
@@ -999,6 +1091,7 @@ class QEFFBaseModel(ABC):
                 continue
             command.append(f"{option}={value}")
 
+
         # Final custom-IO normalization against ONNX I/O names.
         # This only rewrites retained-state aliases:
         # *_InternalRetainedState <-> *_RetainedState.
@@ -1080,6 +1173,7 @@ class QEFFBaseModel(ABC):
                 command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
+        print(command)
         logger.info(f"Running compiler: {' '.join(command)}")
 
         try:

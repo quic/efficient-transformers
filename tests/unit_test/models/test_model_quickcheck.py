@@ -2417,6 +2417,91 @@ def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
         _skip_on_model_fetch_error(exc, LAYERWISE_TINY_MODEL_ID)
     resolved = _layerwise.assert_layerwise_supported(config)
     assert resolved in {"qwen3_vl_moe", "qwen3_vl_moe_text"}
+# -----------------------------------------------------------------------------
+# Dynamo-inline compile + repeated-subfunction export coverage
+# -----------------------------------------------------------------------------
+
+
+def _assert_repeated_block_functions(onnx_path: Path, expected_classnames) -> None:
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    function_names = [func.name for func in onnx_model.functions]
+    assert any(any(class_name in name for class_name in expected_classnames) for name in function_names), (
+        f"Expected repeated subfunction class names {expected_classnames} not found in exported ONNX functions: "
+        f"{function_names}"
+    )
+
+
+def _assert_no_repeated_block_functions(onnx_path: Path, expected_classnames) -> None:
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    function_names = [func.name for func in onnx_model.functions]
+    assert not any(any(class_name in name for class_name in expected_classnames) for name in function_names), (
+        f"Unexpected repeated subfunction class names {expected_classnames} found in exported ONNX functions: "
+        f"{function_names}"
+    )
+
+
+def _build_vlm_text_qeff_model(model_id: str):
+    config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+
+    if getattr(config, "model_type", "") in {"qwen2_5_vl", "qwen2_5_vl_text"} and getattr(
+        config, "text_config", None
+    ) is not None:
+        qwen2_cfg_dict = config.text_config.to_dict()
+        qwen2_cfg_dict["model_type"] = "qwen2"
+        qwen2_allowed_keys = set(Qwen2Config().to_dict().keys())
+        qwen2_cfg = Qwen2Config(**{k: v for k, v in qwen2_cfg_dict.items() if k in qwen2_allowed_keys})
+        text_model = AutoModelForCausalLM.from_config(qwen2_cfg, trust_remote_code=True, **MODEL_KWARGS)
+        text_model = text_model.to(torch.float32)
+        text_model.eval()
+        return QEFFAutoModelForCausalLM(text_model)
+
+    text_configs = [getattr(config, "text_config", None), getattr(config, "llm_config", None)]
+    for text_config in text_configs:
+        if text_config is None:
+            continue
+        text_model = AutoModelForCausalLM.from_config(
+            text_config,
+            trust_remote_code=True,
+            **MODEL_KWARGS,
+        )
+        text_model = text_model.to(torch.float32)
+        text_model.eval()
+        return QEFFAutoModelForCausalLM(text_model)
+    raise RuntimeError(f"No text fallback config path available for {model_id}")
+
+
+@pytest.mark.llm_model
+def test_text_embedding_repeated_subfunction_export_smoke(tmp_path):
+    from QEfficient.utils.export_utils import get_decoder_layer_classes_for_export
+
+    model_hf = AutoModel.from_pretrained(TINY_TEXT_EMBEDDING_MODEL_ID, **MODEL_KWARGS)
+    model_hf.eval()
+
+    qeff_model = QEFFAutoModel(model_hf)
+    discovered = get_decoder_layer_classes_for_export(qeff_model.model)
+    assert discovered, "Expected repeated encoder block classes to be auto-discovered for embedding export"
+
+    expected_classnames = [cls.__name__ for cls in discovered]
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / "embedding-repeated", use_dynamo=True, use_onnx_subfunctions=True)
+    )
+    _assert_repeated_block_functions(onnx_path, expected_classnames)
+
+
+@pytest.mark.llm_model
+def test_whisper_repeated_subfunction_export_smoke(tmp_path):
+    model_hf = AutoModelForSpeechSeq2Seq.from_pretrained(
+        TINY_WHISPER_MODEL_ID,
+        **MODEL_KWARGS,
+        low_cpu_mem_usage=False,
+    )
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, pretrained_model_name_or_path=TINY_WHISPER_MODEL_ID)
+    expected = [cls.__name__ for cls in qeff_model.model.get_submodules_for_export()]
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / "whisper-repeated", use_dynamo=True, use_onnx_subfunctions=True)
+    )
+    _assert_repeated_block_functions(onnx_path, expected)
 
 
 @pytest.mark.llm_model
@@ -3489,3 +3574,20 @@ def test_layerwise_export_default_names_unchanged(tmp_path):
         assert f"past_key.{window}" in captured["input_names"]
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["output_names"])
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["input_names"])
+    ("vlm_name", "model_id"),
+    [item for item in sorted(VLM_EXPORT_MODEL_IDS.items()) if item[0] in {"qwen2_5_vl", "internvl2"}],
+    ids=[item[0] for item in sorted(VLM_EXPORT_MODEL_IDS.items()) if item[0] in {"qwen2_5_vl", "internvl2"}],
+)
+def test_vlm_text_side_repeated_subfunction_export(vlm_name, model_id, tmp_path):
+    try:
+        qeff_text_model = _build_vlm_text_qeff_model(model_id)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    expected = [cls.__name__ for cls in qeff_text_model.model.get_submodules_for_export()]
+    onnx_path = _exported_onnx_path(
+        qeff_text_model.export(
+            tmp_path / f"vlm-text-repeated-{vlm_name}", use_dynamo=True, use_onnx_subfunctions=True
+        )
+    )
+    _assert_repeated_block_functions(onnx_path, expected)

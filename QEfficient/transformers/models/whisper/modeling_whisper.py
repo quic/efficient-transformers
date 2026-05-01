@@ -177,6 +177,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
     - added input_features argument to pass forward to attention
     """
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
