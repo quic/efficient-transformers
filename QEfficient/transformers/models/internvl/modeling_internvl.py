@@ -29,7 +29,6 @@ class QEffInternEncoderWrapper(nn.Module):
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
         return {self.model.vision_model.encoder.layers[0].__class__}
-
     def forward(self, pixel_values):
         vision_embeds = self.model.extract_feature(pixel_values)
         # Reshape from [num_patches, 256, hidden_dim] -> [1, num_patches*256, head_dim]
