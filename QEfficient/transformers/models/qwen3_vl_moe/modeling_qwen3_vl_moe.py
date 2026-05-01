@@ -450,6 +450,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
 
 
 class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

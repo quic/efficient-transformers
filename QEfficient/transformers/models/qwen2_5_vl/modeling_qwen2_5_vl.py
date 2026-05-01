@@ -517,6 +517,7 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
 
 
 class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

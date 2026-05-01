@@ -910,6 +910,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 class QEffDeepseekV3DecoderLayer(nn.Module):
     """Adapted DeepseekV3DecoderLayer with batch_index and proper position_ids handling."""
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
