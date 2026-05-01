@@ -311,6 +311,7 @@ class QEffMolmoSequentialBlock(nn.Module):
     def __qeff_init__(self):
         self.rotary_emb = QEffMolmoRotaryEmbedding(config=self.config)
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         x: torch.Tensor,
@@ -574,7 +575,6 @@ class QEffMolmoEncoderWrapper(nn.Module):
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
         return {self.model.model.transformer.blocks[0].__class__}
-
     def forward(self, pixel_values, image_masks, image_input_idx, valid_idx):
         image_features, _ = self.model.model.vision_backbone(pixel_values, image_masks)
         num_image, num_patch = image_features.shape[1:3]

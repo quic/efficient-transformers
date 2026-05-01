@@ -65,7 +65,7 @@ class QEffGPTJAttention(GPTJAttention):
         if attention_mask is not None:
             # Apply the attention mask
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=value.dtype), attn_weights
+                attention_mask, torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE), attn_weights
             )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
@@ -152,6 +152,7 @@ class QEffGPTJAttention(GPTJAttention):
 
 
 class QEffGPTJBlock(GPTJBlock):
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: Optional[torch.FloatTensor],

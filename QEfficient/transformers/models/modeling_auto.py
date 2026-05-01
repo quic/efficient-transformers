@@ -9,12 +9,14 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import onnx
 import torch
 import torch.nn as nn
+
+# Optional: helps type hints
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -30,7 +32,7 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.base.onnx_transforms import FP16ClipTransform, RewriteUnsupportedOpsTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
@@ -419,8 +421,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     _hf_auto_class = AutoModel
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    # FP16Clip inlines external weights; without Split the saved protobuf exceeds 2GB for large embedders.
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = [FP16ClipTransform, RewriteUnsupportedOpsTransform]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
         """
@@ -522,7 +523,32 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
+    def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes):
+        from torch.export import Dim
+
+        dim_registry: Dict[str, any] = {}
+        dynamic_shapes: Dict[str, Dict[int, any]] = {}
+        for input_name, axes_map in dynamic_axes.items():
+            input_dynamic_shapes: Dict[int, any] = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=513)
+                    elif "sliding_window" in dim_name:
+                        dim_registry[dim_name] = Dim(
+                            dim_name,
+                            min=2,
+                            max=getattr(self.model.config, "sliding_window", 4096),
+                        )
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+                input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            dynamic_shapes[input_name] = input_dynamic_shapes
+        return dynamic_shapes
+
+    def export(self, export_dir: Optional[str] = None, use_dynamo: Optional[bool] = False, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -554,12 +580,20 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         output_names = ["output"]
 
+        dynamic_shapes = None
+        if use_dynamo:
+            dynamic_shapes = self.convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
+        use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
+
         return self._export(
             example_inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes,
+            **kwargs,
         )
 
     def compile(
@@ -573,6 +607,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -651,6 +686,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
@@ -1074,7 +1110,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = []
+    _onnx_transforms = [RewriteUnsupportedOpsTransform]
 
     def __init__(self, model: nn.modules, **kwargs):
         """
@@ -1092,7 +1128,17 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
-    def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True, **kwargs):
+    def export(
+        self,
+        inputs,
+        output_names,
+        dynamic_axes,
+        dynamic_shapes,
+        export_dir=None,
+        offload_pt_weights=True,
+        use_dynamo: Optional[bool] = False,
+        **kwargs,
+    ):
         """
         Exports the vision encoder component to ONNX format.
 
@@ -1116,13 +1162,17 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the generated ONNX graph file for the vision encoder.
         """
+        use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
         return self._export(
             inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
+            dynamic_shapes=dynamic_shapes,
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
+            **kwargs,
         )
 
     def compile(
@@ -1135,6 +1185,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         aic_num_cores,
         custom_io,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1175,6 +1226,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             aic_num_cores=aic_num_cores,
             custom_io=custom_io,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
@@ -1211,7 +1263,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         VlmKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
-    _onnx_transforms = []
+    _onnx_transforms = [RewriteUnsupportedOpsTransform]
 
     def __init__(self, model, qaic_config: Optional[dict] = None, **kwargs):
         """
@@ -1246,23 +1298,19 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             else:
                 self.model, tf = PrefillOnlyTransform.apply(self.model)
 
-        else:
-            if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
-            else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
-
     def export(
         self,
         inputs,
         output_names,
         dynamic_axes,
+        dynamic_shapes,
         export_dir=None,
         offload_pt_weights=True,
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
         kv_cache_prefix: Optional[str] = None,
+        use_dynamo: Optional[bool] = False,
         **kwargs,
     ):
         """
@@ -1317,9 +1365,11 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
+                dynamic_shapes=dynamic_shapes,
                 export_dir=export_dir,
                 offload_pt_weights=offload_pt_weights,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                use_dynamo=use_dynamo,
             )
 
     def compile(
@@ -1332,6 +1382,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         aic_num_cores,
         custom_io,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1372,6 +1423,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             aic_num_cores=aic_num_cores,
             custom_io=custom_io,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
@@ -1515,6 +1567,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        use_dynamo: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -1553,6 +1606,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
 
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
+
         try:
             inputs = self.model.get_dummy_inputs(
                 kv_offload=True,
@@ -1567,6 +1621,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         except TypeError:
             inputs = self.model.get_dummy_inputs(kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode)
             dynamic_axes = self.model.get_onnx_dynamic_axes(
+                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
+            )
+
+        dynamic_shapes = {}
+        dynamic_shapes["vision"] = None
+        dynamic_shapes["lang"] = None
+        if use_dynamo:
+            dynamic_shapes = self.model.get_onnx_dynamic_shapes(
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
             )
         output_names = self.model.get_output_names(kv_offload=True)
@@ -1606,10 +1668,28 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
             )
 
-        if prefill_only and prefill_seq_len > 1:
-            offload_pt_weights = False  # to keep weight for decode onnx
-        else:
-            offload_pt_weights = kwargs.get("offload_pt_weights", True)
+        self.vision_model.export(
+            inputs["vision"],
+            output_names["vision"],
+            dynamic_axes["vision"],
+            export_dir=export_dir,
+            offload_pt_weights=False,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes["vision"],
+        )
+
+        offload_pt_weights = kwargs.get("offload_pt_weights", True)
+        self.lang_model.export(
+            inputs["lang"],
+            output_names["lang"],
+            dynamic_axes["lang"],
+            export_dir=export_dir,
+            offload_pt_weights=offload_pt_weights,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes["lang"],
+        )
 
         if not skip_lang:
             self.lang_model.export(
@@ -1807,6 +1887,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -2013,6 +2094,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
+                use_dynamo=use_dynamo,
             )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
@@ -2050,6 +2132,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
                 use_onnx_subfunctions=use_onnx_subfunctions,
+                use_dynamo=use_dynamo,
                 **compiler_options_vision,
             )
             self.qpc_paths["vision_qpc_path"] = vision_qpc_path
@@ -2098,6 +2181,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io=custom_io_lang,
                 mxint8_kv_cache=mxint8_kv_cache,
                 use_onnx_subfunctions=use_onnx_subfunctions,
+                use_dynamo=use_dynamo,
                 **compiler_options,
             )
             self.qpc_paths.update({qpc_key: lang_qpc_path})
@@ -2536,7 +2620,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         VlmNoKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
-    _onnx_transforms = []
+    _onnx_transforms = [RewriteUnsupportedOpsTransform]
 
     def __init__(
         self,
@@ -2671,6 +2755,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         prefill_only: bool = False,
         enable_chunking: bool = False,
         kv_cache_prefix: Optional[str] = None,
+        use_dynamo: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -2705,12 +2790,17 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
         # Prefix only the LLM KV-cache retained buffers (vision/multimodal buffers untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
+        dynamic_shapes = None
+        if use_dynamo:
+            dynamic_shapes = self.model.get_onnx_dynamic_shapes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         return self._export(
-            inputs,
+            example_inputs=inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
+            dynamic_shapes=dynamic_shapes,
         )
 
     def compile(
@@ -2734,6 +2824,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         use_onnx_subfunctions: bool = False,
         qaic_config: Optional[dict] = None,
         kv_cache_prefix: Optional[str] = None,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -2867,6 +2958,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
             kv_cache_prefix=kv_cache_prefix,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
         return self.qpc_path
@@ -3360,7 +3452,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         KVCacheExternalModuleMapperTransform,
     ]
 
-    _onnx_transforms = []
+    _onnx_transforms = [RewriteUnsupportedOpsTransform]
 
     def prefill(
         self,
@@ -3709,6 +3801,123 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             window_size=layerwise_window_size,
             final_compile=final_compile,
         )
+    def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
+        """
+        Convert ONNX dynamic_axes format to torch.export dynamic_shapes format
+
+        Args:
+            dynamic_axes: ONNX format like {"input_ids": {0: "batch_size", 1: "seq_len"}}
+
+        Returns:
+            dynamic_shapes: torch.export format with Dim objects matching model forward args
+        """
+        from torch.export import Dim
+
+        # Create dimension registry to reuse Dim objects with same names
+        dim_registry = {}
+        dynamic_shapes = {}
+
+        max_seq_len = getattr(self.model.config, "max_position_embeddings", 1024)
+        batch_min = 1 if getattr(self.model.config, "model_type", None) == "gpt_oss" else 2
+        # Handle regular model inputs (not past_key_values)
+        # These match the QEffLlamaForCausalLM forward signature:
+        # input_ids, attention_mask, position_ids, past_key_values, batch_index, etc.
+        for input_name, axes_map in dynamic_axes.items():
+            if not input_name.startswith("past_"):
+                input_dynamic_shapes = {}
+                for axis_idx, dim_name in axes_map.items():
+                    # Create or reuse Dim object for this dimension name
+                    if dim_name not in dim_registry:
+                        if dim_name == "batch_size":
+                            dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=64)
+                        elif "seq_len" in dim_name:
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
+                        elif "ctx_len" in dim_name:
+                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+                        elif "sliding_window" in dim_name:
+                            dim_registry[dim_name] = Dim(
+                                "sliding_window",
+                                min=2,
+                                max=getattr(self.model.config, "sliding_window", max_seq_len),
+                            )
+                        else:
+                            dim_registry[dim_name] = Dim.DYNAMIC
+
+                    input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+
+                dynamic_shapes[input_name] = input_dynamic_shapes
+
+        # Handle past_key_values specially - collect all past_key.X and past_value.X
+        past_keys = {}
+        past_values = {}
+
+        for input_name, axes_map in dynamic_axes.items():
+            if input_name.startswith("past_key."):
+                layer_idx = int(input_name.split(".")[1])
+                layer_dynamic_shapes = {}
+                for axis_idx, dim_name in axes_map.items():
+                    if dim_name not in dim_registry:
+                        if dim_name == "batch_size":
+                            dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=64)
+                        elif "seq_len" in dim_name:
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
+                        elif "ctx_len" in dim_name:
+                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+                        elif "sliding_window" in dim_name:
+                            dim_registry[dim_name] = Dim(
+                                "sliding_window",
+                                min=2,
+                                max=getattr(self.model.config, "sliding_window", max_seq_len),
+                            )
+                        else:
+                            dim_registry[dim_name] = Dim.DYNAMIC
+                    layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+                past_keys[layer_idx] = layer_dynamic_shapes
+
+            elif input_name.startswith("past_value."):
+                layer_idx = int(input_name.split(".")[1])
+                layer_dynamic_shapes = {}
+                for axis_idx, dim_name in axes_map.items():
+                    if dim_name not in dim_registry:
+                        if dim_name == "batch_size":
+                            dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=64)
+                        elif "seq_len" in dim_name:
+                            dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
+                        elif "ctx_len" in dim_name:
+                            dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+                        elif "sliding_window" in dim_name:
+                            dim_registry[dim_name] = Dim(
+                                "sliding_window",
+                                min=2,
+                                max=getattr(self.model.config, "sliding_window", max_seq_len),
+                            )
+                        else:
+                            dim_registry[dim_name] = Dim.DYNAMIC
+                    layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+                past_values[layer_idx] = layer_dynamic_shapes
+
+        # Reconstruct past_key_values as nested structure if we have past keys/values
+        if past_keys or past_values:
+            max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+            past_kv_shapes = []
+
+            for layer_idx in range(max_layer + 1):
+                layer_shapes = []
+                if layer_idx in past_keys:
+                    layer_shapes.append(past_keys[layer_idx])
+                else:
+                    layer_shapes.append({})
+
+                if layer_idx in past_values:
+                    layer_shapes.append(past_values[layer_idx])
+                else:
+                    layer_shapes.append({})
+
+                past_kv_shapes.append(layer_shapes)
+
+            dynamic_shapes["past_key_values"] = past_kv_shapes
+
+        return dynamic_shapes
 
     def export(
         self,
@@ -3720,6 +3929,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        use_dynamo: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -3736,6 +3946,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If not provided, the default export directory is used.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        use_dynamo: bool, optional
+            whether to enable dynamo during export.
         Returns
         -------
         str
@@ -3772,10 +3984,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-
+        if use_dynamo:
+            seq_len = max(2, seq_len)
+            fbs = max(2, fbs)
+            if getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching:
+                bs = 1
+            else:
+                bs = max(2, bs)
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
+        if len(kv_cache_shape) == 3:
+            kv_cache_shape = list(kv_cache_shape)
+            kv_cache_shape[1] = max(2, kv_cache_shape[1])
+        else:
+            kv_cache_shape = list(kv_cache_shape)
+            kv_cache_shape[2] = max(2, kv_cache_shape[2])
         enable_chunking = kwargs.get("enable_chunking", False)
         if (
             kwargs.get("retain_full_kv", False)
@@ -3790,11 +4014,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
-                if not enable_chunking and self.continuous_batching:
-                    raise NotImplementedError(
-                        "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                    )
-                self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
+                if self.continuous_batching and not enable_chunking:
+                    raise NotImplementedError("Can't enable prefix-caching without chunking")
+                self.prefill(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
                 if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
@@ -4018,15 +4240,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_cache_prefix=kv_cache_prefix,
             )
         else:
+            dynamic_shapes = None
+            if use_dynamo:
+                dynamic_shapes = self.convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
+
             return self._export(
                 example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 export_dir=export_dir,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                use_dynamo=use_dynamo,
+                dynamic_shapes=dynamic_shapes,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
             )
+        
 
     def build_prefill_specialization(
         self,
@@ -4182,6 +4411,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -4233,6 +4463,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         moe_prefill_packed_chunk_size : int, optional
             Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
             ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
+        use_dynamo: bool,optional
+            whether to enable dynamo during export
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -4542,6 +4774,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
             kv_cache_prefix=kv_cache_prefix,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
@@ -4701,7 +4934,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
-    _onnx_transforms = []
+    _onnx_transforms = [RewriteUnsupportedOpsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
         """
@@ -5059,7 +5292,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
     _hf_auto_class = AutoModelForCTC
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    _onnx_transforms = []
+    _onnx_transforms = [RewriteUnsupportedOpsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model, **kwargs)
