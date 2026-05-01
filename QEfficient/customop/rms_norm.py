@@ -10,12 +10,13 @@ import torch
 from torch import nn
 
 from QEfficient.utils import constants
+from QEfficient.utils.custom_op_utils import select_interface
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
 
 @onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))
-def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float):
+def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float) -> onnxscript.FLOAT:
     weight = ops.Cast(weight, to=1)
     variance = ops.ReduceMean(ops.Pow(hidden_states, 2), axes=[-1], keepdims=1)
     epsilon = ops.Expand(epsilon, ops.Shape(variance))
@@ -29,6 +30,11 @@ class CustomRMSNormFunc(torch.autograd.Function):
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + epsilon)
         return weight * hidden_states
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        # Not needed for inference/export
+        raise NotImplementedError("backward not supported for export")
 
     @staticmethod
     def setup_context(ctx, inputs, outputs):
@@ -51,7 +57,8 @@ class CustomRMSNormAIC(nn.Module):
         self.weight = torch.nn.Parameter(torch.ones(hidden_size))
 
     def forward(self, hidden_states):
-        return CustomRMSNormFunc.apply(
+        rms_interface = select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)
+        return rms_interface(
             hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 

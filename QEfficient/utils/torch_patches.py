@@ -5,17 +5,44 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Monkey patches for torch.onnx.utils to fix ONNX export issues."""
+"""Runtime monkey patches for ONNX export compatibility.
 
+Patches kept here:
+  - TorchScript ONNX exporter (_setup_trace_module_map, _get_module_attributes,
+    _jit_pass_onnx_track_scope_attributes): fix attribute-type mismatches in the
+    legacy trace-based exporter (use_dynamo=False path).
+  - Layerwise safe export pass patches: disable expensive ONNX exporter passes
+    for layerwise prefill export (TorchScript path).
+  - temporarily_enable_nested_compile_regions / temporarily_disable_nested_compile_regions:
+    context managers for dynamo export path subgraph boundary management.
+
+Patches removed (upstreamed to PyTorch):
+  - FunctionalTensorMode.__torch_dispatch__ tracker-entry KeyError
+  - _verify_exported_program_signature repeated_subgraph buffer handling
+  - ExportedProgram.named_buffers constants fallback
+  - invoke_subgraph_placeholder kwargs forwarding
+  - materialize_as_graph FunctionalTensor mode handling
+  - InvokeSubgraphHOP.gen_schema GraphModule reuse
+  - _translate_fx_graph / _convert_fx_arg_to_onnx_arg nested tensor constants
+"""
+
+import inspect
 from contextlib import contextmanager
 
 import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
+from torch.onnx._internal.torchscript_exporter import utils as ts_utils
 
-# Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
+_original_track_scope_attrs = getattr(_C, "_jit_pass_onnx_track_scope_attributes", None)
+_original_ts_setup_trace_module_map = ts_utils._setup_trace_module_map
+_original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes", None)
+
+_PATCHES_ACTIVE = False
+_MISSING_INSTANCE_ATTR = object()
+
 _safe_export_patch_depth = 0
 _safe_export_original_passes = {}
 _SAFE_EXPORT_REQUIRED_PASSES = {
@@ -135,6 +162,15 @@ def _get_module_attributes(module):
 
     import torch.nn
 
+    # added _is_safe_value guard to prevent IValue-incompatible
+    # types from being passed into the ONNX scope-attribute tracker.
+    def _is_safe_value(value):
+        if isinstance(value, (int, float, bool, str, torch.Tensor)) or value is None:
+            return True
+        if isinstance(value, (list, tuple)):
+            return all(_is_safe_value(item) for item in value)
+        return False
+
     annotations = typing.get_type_hints(type(module))
     base_m_annotations = typing.get_type_hints(torch.nn.Module)
     [annotations.pop(k, None) for k in base_m_annotations]
@@ -142,19 +178,27 @@ def _get_module_attributes(module):
     attrs = {}
     for k in annotations:
         try:
-            attrs[k] = getattr(module, k)
+            value = getattr(module, k)
+            # Only include IValue-compatible attribute types
+            if _is_safe_value(value):
+                attrs[k] = value
         except AttributeError:
             _C._jit_onnx_log(f"Skipping module attribute '{k}'")
             continue
     return attrs
 
 
-def _layerwise_safe_export_passes_enabled():
-    try:
-        from QEfficient.base.modeling_qeff import QEFFBaseModel
-    except Exception:
-        return False
-    return bool(getattr(QEFFBaseModel, "_layerwise_active", False))
+def _track_scope_attributes_patched(graph, attrs):
+    """Ensure scope attributes passed to ONNX are IValue-compatible."""
+    safe_attrs = {}
+    for key, value in attrs.items():
+        if isinstance(value, (int, float, bool, str, torch.Tensor)) or value is None:
+            safe_attrs[key] = value
+        elif isinstance(value, (list, tuple)) and all(
+            isinstance(item, (int, float, bool, str, torch.Tensor)) or item is None for item in value
+        ):
+            safe_attrs[key] = value
+    return _original_track_scope_attrs(graph, safe_attrs)
 
 
 def _enable_safe_export_pass_patches(keep_passes=None):
@@ -207,14 +251,131 @@ def layerwise_safe_onnx_export_patches(enabled: bool = True, keep_passes=None):
 
 
 def apply_torch_patches():
-    """Apply monkey patches for ONNX export."""
+    """Apply monkey patches for ONNX export (TorchScript path)."""
+    global _PATCHES_ACTIVE
+    if _PATCHES_ACTIVE:
+        return
+
+    # Patch onnx_utils (used by both TorchScript and as fallback)
     onnx_utils._setup_trace_module_map = _setup_trace_module_map_patched
     if hasattr(onnx_utils, "_get_module_attributes"):
         onnx_utils._get_module_attributes = _get_module_attributes
 
+    # Patch ts_utils (TorchScript-specific exporter utilities)
+    ts_utils._setup_trace_module_map = _setup_trace_module_map_patched
+    if hasattr(ts_utils, "_get_module_attributes"):
+        ts_utils._get_module_attributes = _get_module_attributes
+
+    # Patch _C scope-attribute tracker to filter out IValue-incompatible types
+    if _original_track_scope_attrs is not None:
+        _C._jit_pass_onnx_track_scope_attributes = _track_scope_attributes_patched
+
+    _PATCHES_ACTIVE = True
+
 
 def undo_torch_patches():
     """Undo monkey patches and restore original functions."""
+    global _PATCHES_ACTIVE
+    if not _PATCHES_ACTIVE:
+        return
+
     onnx_utils._setup_trace_module_map = _original_setup_trace_module_map
     if _original_get_module_attributes:
         onnx_utils._get_module_attributes = _original_get_module_attributes
+
+    ts_utils._setup_trace_module_map = _original_ts_setup_trace_module_map
+    if _original_ts_get_module_attributes:
+        ts_utils._get_module_attributes = _original_ts_get_module_attributes
+
+    if _original_track_scope_attrs is not None:
+        _C._jit_pass_onnx_track_scope_attributes = _original_track_scope_attrs
+
+    _PATCHES_ACTIVE = False
+
+
+@contextmanager
+def temporarily_enable_nested_compile_regions(model, target_classes=None):
+    """
+    Wrap selected module ``forward`` methods with ``nested_compile_region``
+    during export so repeated block functions are materialized by dynamo.
+    """
+
+    target_classes = tuple(target_classes) if target_classes else None
+    patched_modules = []
+
+    try:
+        for module in model.modules():
+            if target_classes and not isinstance(module, target_classes):
+                continue
+
+            bound_forward = getattr(module, "forward", None)
+            if bound_forward is None:
+                continue
+
+            wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
+            # Skip if already wrapped by nested_compile_region
+            if getattr(wrapped_forward, "__qualname__", "") == "mark_compile_region.<locals>.wrap.<locals>.inner":
+                continue
+
+            previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
+            nested_forward = torch.compiler.nested_compile_region(wrapped_forward)
+            setattr(module, "forward", nested_forward.__get__(module, type(module)))
+            patched_modules.append((module, previous_forward))
+
+        yield
+    finally:
+        for module, previous_forward in reversed(patched_modules):
+            if previous_forward is _MISSING_INSTANCE_ATTR:
+                delattr(module, "forward")
+            else:
+                setattr(module, "forward", previous_forward)
+
+
+@contextmanager
+def temporarily_disable_nested_compile_regions(model, target_classes=None):
+    """
+    Replace nested_compile_region-wrapped ``forward`` methods with their original
+    underlying functions for the duration of plain dynamo export (Path 3).
+
+    Used when use_dynamo=True and use_onnx_subfunctions=False so that
+    @nested_compile_region boundaries statically present on decoder layer
+    forward() methods do not create unwanted subgraph splits during tracing.
+    """
+
+    target_classes = tuple(target_classes) if target_classes else None
+    patched_modules = []
+
+    try:
+        for module in model.modules():
+            if target_classes and not isinstance(module, target_classes):
+                continue
+
+            bound_forward = getattr(module, "forward", None)
+            if bound_forward is None:
+                continue
+
+            wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
+            # Only unwrap methods that are actually nested_compile_region-wrapped
+            if getattr(wrapped_forward, "__qualname__", "") != "mark_compile_region.<locals>.wrap.<locals>.inner":
+                continue
+
+            # Extract the original forward from the closure
+            closure = getattr(wrapped_forward, "__closure__", None) or ()
+            original_forward = next(
+                (cell.cell_contents for cell in closure if inspect.isfunction(cell.cell_contents)),
+                None,
+            )
+            if original_forward is None:
+                continue
+
+            previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
+            setattr(module, "forward", original_forward.__get__(module, type(module)))
+            patched_modules.append((module, previous_forward))
+
+        yield
+    finally:
+        for module, previous_forward in reversed(patched_modules):
+            if previous_forward is _MISSING_INSTANCE_ATTR:
+                delattr(module, "forward")
+            else:
+                setattr(module, "forward", previous_forward)

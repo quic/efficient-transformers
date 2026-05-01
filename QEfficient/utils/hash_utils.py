@@ -20,6 +20,12 @@ def json_serializable(obj):
     if is_dataclass(obj):
         # Convert dataclass to dict for serialization
         return asdict(obj)
+    if obj.__class__.__name__ == "Dim":
+        return str(obj)
+    if obj.__class__.__name__ == "_DimHint":
+        return str(obj)
+    if hasattr(obj, "name") and hasattr(obj, "min") and hasattr(obj, "max"):
+        return {"name": obj.name, "min": obj.min, "max": obj.max}
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
@@ -60,6 +66,7 @@ def create_export_hash(**kwargs):
     export_params = {}
     export_params["output_names"] = kwargs.get("output_names")
     export_params["dynamic_axes"] = kwargs.get("dynamic_axes")
+    export_params["dynamic_shapes"] = kwargs.get("dynamic_shapes")
     export_hash_params["export_params"] = export_params
 
     blocking_kwargs = export_hash_params.pop("blocking_kwargs", None)

@@ -61,7 +61,7 @@ class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin):
+def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -69,9 +69,14 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
         k (`torch.Tensor`): The key tensor.
         cos (`torch.Tensor`): The cosine part of the rotary embedding.
         sin (`torch.Tensor`): The sine part of the rotary embedding.
+        position_ids (`torch.Tensor`, *optional*): token position indices for KV-cache gather.
+        unsqueeze_dim (`int`, *optional*, defaults to 1): broadcast axis.
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    if position_ids is not None:
+        cos = cos[position_ids].unsqueeze(unsqueeze_dim)
+        sin = sin[position_ids].unsqueeze(unsqueeze_dim)
     # Apply rotation
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -93,9 +98,8 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
-        )
+        masked_fill = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+        attn_weights = torch.where(attention_mask, masked_fill, attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -134,26 +138,43 @@ class QEffLlamaAttention(LlamaAttention):
         key_states = self.k_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
 
-        # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-        past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
+        # Keep rotary cache length static inside nested compile regions to avoid
+        # Python cache-object calls (e.g., get_seq_length) that break invoke_subgraph capture.
+        past_seen_tokens = position_ids.max() + 1 if position_ids is not None else 0
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
-        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
-        if use_blocking:
-            attn_output, attn_weights = generic_blocked_attention_interface(
-                module=self,
-                query=query_states,
-                key=key_states,
-                value=value_states,
-                attention_mask=attention_mask,
+
+        cache_kwargs = {}
+        if past_key_values is not None:
+            if num_kv_blocks is not None:
+                cache_kwargs = {
+                    "batch_index": batch_index,
+                    "position_ids": position_ids,
+                    "past_seen_tokens": past_seen_tokens,
+                }
+                past_key_values.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+                if comp_ctx_lengths is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                key_states, value_states = past_key_values.update(
+                    key_states, value_states, self.layer_idx, cache_kwargs
+                )
+
+        if num_kv_blocks is not None:
+            attention_interface = eager_attention_forward_blockedKV
+            attn_output, attn_weights = attention_interface(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
                 scaling=self.scaling,
+                num_kv_blocks=num_kv_blocks,
+                cache_kwargs=cache_kwargs,
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_values,
-                blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
-                batch_index=batch_index,
-                position_ids=position_ids,
-                past_seen_tokens=past_seen_tokens,
+                **kwargs,
             )
         else:
             key, value, attention_mask, _ = past_key_value_update(
@@ -169,8 +190,8 @@ class QEffLlamaAttention(LlamaAttention):
             attn_output, attn_weights = eager_attention_forward(
                 self,
                 query_states,
-                key,
-                value,
+                key_states,
+                value_states,
                 attention_mask,
                 scaling=self.scaling,
                 **kwargs,
@@ -188,6 +209,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
     - add new args batch idx for the CB models
     """
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -203,10 +225,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
-
         hidden_states = self.input_layernorm(hidden_states)
-
-        # Self Attention
         hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -222,7 +241,6 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
         )
         hidden_states = residual + hidden_states
 
-        # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
