@@ -85,6 +85,35 @@ class QEffFalconAttention(FalconAttention):
     - add new args position idx for the cache_kwargs for kv retention
     """
 
+    def __qeff_init__(self):
+        self.rotary_emb = QEffFalconRotaryEmbedding(config=self.config)
+
+    def _split_heads_for_nested_region(
+        self, fused_qkv: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Avoid list-index based slicing that materializes anonymous constants in nested export."""
+        if self.new_decoder_architecture:
+            batch, seq_len, _ = fused_qkv.shape
+            qkv = fused_qkv.view(batch, seq_len, -1, self.num_heads // self.num_kv_heads + 2, self.head_dim)
+            query = qkv[:, :, :, :-2, :]
+            key = qkv[:, :, :, -2:-1, :]
+            value = qkv[:, :, :, -1:, :]
+            key = torch.broadcast_to(key, query.shape)
+            value = torch.broadcast_to(value, query.shape)
+            return (query.flatten(2, 3), key.flatten(2, 3), value.flatten(2, 3))
+
+        batch_size, seq_length, _ = fused_qkv.shape
+        if not self.multi_query:
+            qkv = fused_qkv.view(batch_size, seq_length, self.num_heads, 3, self.head_dim)
+            return qkv[:, :, :, 0, :], qkv[:, :, :, 1, :], qkv[:, :, :, 2, :]
+
+        qkv = fused_qkv.view(batch_size, seq_length, self.num_heads + 2, self.head_dim)
+        return (
+            qkv[:, :, : self.num_heads, :],
+            qkv[:, :, self.num_heads : self.num_heads + 1, :],
+            qkv[:, :, self.num_heads + 1 :, :],
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -105,7 +134,7 @@ class QEffFalconAttention(FalconAttention):
         fused_qkv = self.query_key_value(hidden_states)  # [batch_size, seq_length, 3 x hidden_size]
         num_kv_heads = self.num_heads if self.new_decoder_architecture else self.num_kv_heads
         # 3 x [batch_size, seq_length, num_heads, head_dim]
-        (query_layer, key_layer, value_layer) = self._split_heads(fused_qkv)
+        (query_layer, key_layer, value_layer) = self._split_heads_for_nested_region(fused_qkv)
 
         batch_size, query_length, _, _ = query_layer.shape
 
@@ -134,7 +163,7 @@ class QEffFalconAttention(FalconAttention):
         attention_scores = query_layer @ key_layer.transpose(-1, -2)
         attention_scores /= math.sqrt(self.head_dim)
         attention_scores = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype), attention_scores
+            attention_mask, torch.full_like(attention_scores, MIN_MASKED_ATTENTION_VALUE), attention_scores
         )
         attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=torch.float32).to(
             query_layer.dtype
@@ -152,6 +181,7 @@ class QEffFalconAttention(FalconAttention):
 
 
 class QEffFalconDecoderLayer(FalconDecoderLayer):
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

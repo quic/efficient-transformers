@@ -31,7 +31,7 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
     if attention_mask is not None:
         if attention_mask.dtype == torch.bool:
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+                attention_mask, torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype), attn_weights
             )
         else:
             attn_weights = attn_weights + attention_mask
@@ -150,6 +150,7 @@ class QEffGPT2Block(GPT2Block):
     - add new args cache idx for the kv retention
     """
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
