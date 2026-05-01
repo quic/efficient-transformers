@@ -162,6 +162,7 @@ class QEffLlamaSwiftKVDecoderLayer(nn.Module):
         self.sin_cached = sin_cached
         self.cos_cached = cos_cached
 
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
