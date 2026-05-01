@@ -34,4 +34,5 @@ NIGHTLY_SKIPPED_MODELS = {
     "hpcai-tech/grok-1",
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
     "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+    "Qwen/Qwen2.5-VL-3B-Instruct",
 }

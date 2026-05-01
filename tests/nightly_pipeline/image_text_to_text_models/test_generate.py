@@ -49,6 +49,8 @@ def test_generate_image_text_to_text_model(
     img_url = generate_params.pop("image_url", None)
     query = generate_params.pop("query", None)
     generation_len = generate_params.get("generation_len", 25)
+    prompt_len = compile_params.get("prefill_seq_len", 1)
+    batch_size = 1
 
     # Retrieve onnx_path from previous stage
     if (
