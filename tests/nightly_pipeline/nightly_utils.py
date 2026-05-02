@@ -27,12 +27,16 @@ def get_onnx_and_qpc_size(dir):
 
 
 NIGHTLY_SKIPPED_MODELS = {
+    # Vision Models
     "meta-llama/Llama-3.2-11B-Vision-Instruct",
     "meta-llama/Llama-3.2-90B-Vision-Instruct",
     "Llama-4-Scout-17B-16E-Instruct",
     "allenai/Molmo-7B-D-0924",
+    "Qwen/Qwen2.5-VL-3B-Instruct",
+    # Causal Models
     "hpcai-tech/grok-1",
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
     "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
-    "Qwen/Qwen2.5-VL-3B-Instruct",
+    # Embedding Models
+    "intfloat/multilingual-e5-large",
 }

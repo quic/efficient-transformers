@@ -42,7 +42,7 @@ def test_generate_causal_lm(model_name, pooling, get_model_config, embedding_mod
     config, pipeline_configs = get_model_config
     compile_params = pipeline_configs["embedding_model_configs"][0].get("compile_params", {})
     generate_params = pipeline_configs["embedding_model_configs"][0].get("generate_params", {})
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
     # Retrieve onnx_path from previous stage
     if model_name not in embedding_model_artifacts or "onnx_path" not in embedding_model_artifacts[model_name]:
@@ -53,11 +53,11 @@ def test_generate_causal_lm(model_name, pooling, get_model_config, embedding_mod
         pytest.skip(f"QPC path not available for {model_name}. Run test_compile.py first.")
 
     if pooling == "max":
-        qeff_model = AutoModel.from_pretrained(model_name, pooling=max_pooling)
+        qeff_model = AutoModel.from_pretrained(model_name, pooling=max_pooling, trust_remote_code=True)
     elif pooling == "mean":
-        qeff_model = AutoModel.from_pretrained(model_name, pooling="mean")
+        qeff_model = AutoModel.from_pretrained(model_name, pooling="mean", trust_remote_code=True)
     else:
-        qeff_model = AutoModel.from_pretrained(model_name)
+        qeff_model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
 
     onnx_path = embedding_model_artifacts[model_name].get("onnx_path")
     _ = qeff_model.compile(onnx_path=onnx_path, **compile_params)

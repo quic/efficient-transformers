@@ -51,11 +51,11 @@ def test_export_compile_embedding_model(model_name, pooling, get_model_config, e
     print(f"\nLoading model for export: {model_name}")
     export_load_start = time.time()
     if pooling == "max":
-        qeff_model = AutoModel.from_pretrained(model_name, pooling=max_pooling)
+        qeff_model = AutoModel.from_pretrained(model_name, pooling=max_pooling, trust_remote_code=True)
     elif pooling == "mean":
-        qeff_model = AutoModel.from_pretrained(model_name, pooling="mean")
+        qeff_model = AutoModel.from_pretrained(model_name, pooling="mean", trust_remote_code=True)
     else:
-        qeff_model = AutoModel.from_pretrained(model_name)
+        qeff_model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
     export_loading_time = time.time() - export_load_start
 
     # Export time
