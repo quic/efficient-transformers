@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint
 from torch.export import Dim
+from transformers.models.clip.modeling_clip import CLIPEncoderLayer
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
 )
@@ -558,3 +559,9 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                 name="pixel_values", datatype=self.config.torch_dtype, shape=("batch_size", 3, "img_size", "img_size")
             ),
         ]
+
+
+class QEffCLIPEncoderLayer(CLIPEncoderLayer):
+    @torch.compiler.nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
