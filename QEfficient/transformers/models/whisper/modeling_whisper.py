@@ -21,6 +21,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
+    WhisperEncoderLayer,
     WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
@@ -895,3 +896,9 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         return [
             IOInfo(name="input_features", datatype=torch.float32, shape=("batch_size", "num_mel_bins", "feature_len")),
         ]
+
+
+class QEffWhisperEncoderLayerRegion(WhisperEncoderLayer):
+    @torch.compiler.nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)

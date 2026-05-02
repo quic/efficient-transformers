@@ -6,8 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Union
-from typing import Type
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -28,6 +27,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
     repeat_kv,
     rotate_half,
 )
+from transformers.models.siglip.modeling_siglip import SiglipEncoderLayer
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
@@ -649,6 +649,7 @@ class QEffGemma3EncoderWrapper(nn.Module):
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
         return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+
     def forward(self, pixel_values):
         image_features = self.model.get_image_features(pixel_values=pixel_values)
         if hasattr(image_features, "pooler_output"):
@@ -1249,3 +1250,9 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 shape=("batch_size", 3, "img_size", "img_size"),
             ),
         ]
+
+
+class QEffSiglipEncoderLayer(SiglipEncoderLayer):
+    @torch.compiler.nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
