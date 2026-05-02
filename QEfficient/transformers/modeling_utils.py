@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from collections import namedtuple
-from typing import Dict, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
@@ -88,8 +88,14 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
+from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.customop import CustomRMSNormAIC
+from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.logging_utils import logger
+
+if TYPE_CHECKING:
+    from QEfficient.base.modeling_qeff import QEFFBaseModel
 
 # Placeholder for all non-transformer models
 from .models.codegen.modeling_codegen import (
@@ -185,11 +191,35 @@ qeff_supported_architectures = ModelArchitectures(
     ]
 )
 
+
 # This is for supporting different seq_len for different layers for Sliding window attn, chunked attn etc.
 DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "llama4", "gemma3_text", "llama4_text"}
 
 # This is for supporting different modelling classes specially written for prefill-only model
-SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss"}
+SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "kimi_k2", "kimi_k25"}
+
+_PROXY_ONLY_ONNX_TRANSFORMS = (FP16ClipTransform, SplitTensorsTransform)
+
+
+def _configure_proxy_for_model(instance: "QEFFBaseModel", enable_proxy: bool) -> None:
+    """
+    Configure per-instance transform lists based on proxy mode.
+
+    Keep class-defined ONNX transforms by default.
+    Proxy flow appends additional proxy-only transforms.
+    """
+    instance._pytorch_transforms = list(instance._pytorch_transforms)
+    instance._onnx_transforms = list(instance._onnx_transforms)
+    instance._enable_proxy = enable_proxy
+
+    if enable_proxy:
+        if QeffProxyModuleTransform not in instance._pytorch_transforms:
+            instance._pytorch_transforms.append(QeffProxyModuleTransform)
+        for transform in _PROXY_ONLY_ONNX_TRANSFORMS:
+            if transform not in instance._onnx_transforms:
+                instance._onnx_transforms.append(transform)
+        logger.info("Proxy Model Enabled for QEfficient Model")
+
 
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.

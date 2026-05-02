@@ -1,0 +1,6 @@
+{
+   "embedding_models": [
+        {"model_name": "jinaai/jina-embeddings-v2-base-code", "pooling": "mean"},
+        {"model_name": "sentence-transformers/nli-bert-base-cls-pooling", "pooling": "cls"}
+    ]
+}

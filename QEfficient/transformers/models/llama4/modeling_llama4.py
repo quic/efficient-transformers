@@ -58,10 +58,10 @@ def eager_attention_forward_vision(
         attn_weights = attn_weights + causal_mask
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
-    attn_weights = nn.functional.softmax(attn_weights.float(), dim=-1).to(query.dtype)
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
@@ -142,12 +142,12 @@ class QEffLlama4VisionRotaryEmbedding(nn.Module):
 
         # -- rotary base frequencies ------------------------------------- #
         head_dim = self.hidden_size // self.n_heads // 2  # real+imag split
-        rope_freq = 1.0 / (self.theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
+        rope_freq = 1.0 / (self.theta ** (torch.arange(0, head_dim, 2).to(self.config.torch_dtype) / head_dim))
 
         # angles along x / y; repeat_interleave = [freq0,freq0,freq1,freq1,…]
         ang_x = ((x + 1) * rope_freq).repeat_interleave(2, dim=-1)
         ang_y = ((y + 1) * rope_freq).repeat_interleave(2, dim=-1)
-        freqs = torch.cat([ang_x, ang_y], dim=-1).float()[..., ::2]  # [n_patches, head_dim]
+        freqs = torch.cat([ang_x, ang_y], dim=-1).to(self.config.torch_dtype)[..., ::2]  # [n_patches, head_dim]
 
         # -- add CLS row = zeros  ---------------------------------------- #
         freqs = torch.cat([freqs, freqs.new_zeros((1, freqs.shape[1]))], dim=0)
@@ -221,6 +221,7 @@ class QEffLlama4VisionModel(Llama4VisionModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        **kwargs,
     ) -> Union[BaseModelOutput, Tuple[torch.Tensor, ...]]:
         r"""
 
@@ -324,6 +325,7 @@ class QEffLlama4TextRotaryEmbedding(nn.Module):
 
         # Get inverse frequency and scaling function (handles yarn/etc)
         inv_freq, self.attention_scaling = self.rope_init_fn(config, device)
+        inv_freq = inv_freq.to(config.torch_dtype)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
         # Precompute static cache
@@ -339,7 +341,8 @@ class QEffLlama4TextRotaryEmbedding(nn.Module):
         sin = torch.sin(freqs)
         freqs_cis = torch.stack([cos, sin], dim=-1)  # [seq_len, dim/2, 2]
 
-        self.register_buffer("freqs_cis_cached", freqs_cis * self.attention_scaling, persistent=False)
+        freqs_cis = (freqs_cis * self.attention_scaling).to(self.config.torch_dtype)
+        self.register_buffer("freqs_cis_cached", freqs_cis, persistent=False)
 
     def forward(self, seq_len: Optional[int] = None, position_ids: Optional[torch.LongTensor] = None):
         """
@@ -387,7 +390,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -399,6 +402,7 @@ def eager_attention_forward(
 
 class QEffLlama4TextExperts(Llama4TextExperts):
     def __qeff_init__(self):
+        # TODO: Update qeff_init with config to get the custom dtype
         self.gate_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
         self.up_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
 
@@ -425,12 +429,12 @@ class QEffLlama4TextMoe(Llama4TextMoe):
 
         # ── Book-keeping: create one boolean mask per expert once  ───────────────
         # routing_weights[e]  ==  True where token routed to that expert. Shape [E, T]
-        routing_weights = torch.sigmoid(masked_logits.float()).to(hidden.dtype)
+        routing_weights = torch.sigmoid(masked_logits.to(hidden.dtype)).to(hidden.dtype)
 
         # ────────────────── allocate the two big tensors ─────
         ffn_dim = self.experts.intermediate_size  # = 8/3 · H
-        upgate = x.new_zeros((T, ffn_dim))
-        expert_out = x.new_zeros((T, H))  # accum-out buffer
+        upgate = hidden.new_zeros((T, ffn_dim))
+        expert_out = hidden.new_zeros((T, H))  # accum-out buffer
 
         # ───────────────────────── Stage-1 : Up-Gate ─────────────────────────────
         # Loop over experts
@@ -469,7 +473,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         attention_mask: Optional[torch.Tensor],
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -502,9 +506,9 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
 
-        if past_key_value is not None:
+        if past_key_values is not None:
             chunk_position_ids = position_ids
-            if self.use_rope:
+            if self.use_rope and self.config.attention_chunk_size:
                 chunk_position_ids = torch.where(
                     chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
                 )
@@ -518,7 +522,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                 cache_kwargs["CCL"] = attention_mask.shape[-1]
 
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
 
@@ -534,7 +538,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights, past_key_values
 
 
 class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
@@ -569,7 +573,7 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
             attention_mask=attention_mask,
             position_embeddings=position_embeddings,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
@@ -663,10 +667,16 @@ class QEffLlama4TextModel(Llama4TextModel):
         causal_mask = _create_causal_mask(
             position_ids=position_ids, target_length=past_key_values.layers[3].keys.shape[-2]
         )
-        chunk_position_ids = torch.where(
-            position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
-        )
-        target_length = min(past_key_values.layers[0].keys.shape[-2], torch.tensor(self.config.attention_chunk_size))
+        if self.config.attention_chunk_size:
+            chunk_position_ids = torch.where(
+                position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
+            )
+            target_length = min(
+                past_key_values.layers[0].keys.shape[-2], torch.tensor(self.config.attention_chunk_size)
+            )
+        else:
+            chunk_position_ids = position_ids
+            target_length = past_key_values.layers[0].keys.shape[-2]
         chunk_causal_mask = _create_causal_mask(position_ids=chunk_position_ids, target_length=target_length)
         causal_mask_mapping = {
             "full_attention": causal_mask,
@@ -798,7 +808,7 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
         is_chunked_attention = torch.tensor(
             [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
         )
-        attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
+        attention_chunk_size = getattr(config, "attention_chunk_size", None) or seq_len
         global_cache_shape = [batch_size, n_heads, seq_len, d_head]
         chunked_cache_shape = [
             batch_size,
@@ -810,8 +820,8 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
         past_key_values = []
         for i in range(config.num_hidden_layers):
             cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
-            new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
-            new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=config.torch_dtype)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=config.torch_dtype)
             pkv = (new_layer_key_cache, new_layer_value_cache)
             past_key_values.append(pkv)
         return past_key_values
@@ -967,13 +977,12 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        attention_chunk_size = getattr(
+            getattr(getattr(self, "config", None), "text_config", None), "attention_chunk_size", None
+        )
         chunk_ctx_len = min(
             ctx_len,
-            (
-                self.config.text_config.attention_chunk_size
-                if hasattr(self, "config")
-                else constants.LLAMA4_ATTENTION_CHUNK_SIZE
-            ),
+            (attention_chunk_size if attention_chunk_size is not None else constants.LLAMA4_ATTENTION_CHUNK_SIZE),
         )
         if (
             prefill_seq_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
@@ -1158,7 +1167,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         is_chunked_attention = torch.tensor(
             [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
         )
-        attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
+        attention_chunk_size = getattr(config, "attention_chunk_size", None) or seq_len
         global_cache_shape = [batch_size, n_heads, seq_len, d_head]
         chunked_cache_shape = [
             batch_size,
@@ -1170,8 +1179,8 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         past_key_values = []
         for i in range(config.num_hidden_layers):
             cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
-            new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
-            new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=config.torch_dtype)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=config.torch_dtype)
             pkv = (new_layer_key_cache, new_layer_value_cache)
             past_key_values.append(pkv)
         return past_key_values
@@ -1214,9 +1223,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         # Define inputs
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=self.config.torch_dtype)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=self.config.torch_dtype)
         lang_inputs["position_ids"] = (
             torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -1237,7 +1246,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(past_key_values[0][0].shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(
+                    torch.zeros(past_key_values[0][0].shape, dtype=self.config.torch_dtype)
+                )
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -1261,7 +1272,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(
                 name="pixel_values",
-                datatype=torch.float32,
+                datatype=self.config.torch_dtype,
                 shape=("max_num_tiles", 3, "img_size", "img_size"),
             ),
         ]

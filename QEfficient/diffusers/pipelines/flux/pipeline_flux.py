@@ -35,7 +35,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
-    set_module_device_ids,
+    set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.logging_utils import logger
@@ -237,7 +237,8 @@ class QEffFluxPipeline:
             if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
                 export_params["use_onnx_subfunctions"] = True
 
-            module_obj.export(**export_params)
+            if module_obj.qpc_path is None:
+                module_obj.export(**export_params)
 
     @staticmethod
     def get_default_config_path() -> str:
@@ -248,7 +249,7 @@ class QEffFluxPipeline:
             str: Absolute path to the flux_config.json file containing default pipeline
                 configuration settings for compilation and device allocation.
         """
-        return "QEfficient/diffusers/pipelines/configs/flux_config.json"
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/flux_config.json")
 
     def compile(
         self,
@@ -292,6 +293,12 @@ class QEffFluxPipeline:
             ...     width=512
             ... )
         """
+        # Load compilation configuration
+        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
+
+        # Set device IDs, qpc path if precompiled qpc exist
+        set_execute_params(self)
+
         # Ensure all modules are exported to ONNX before compilation
         if any(
             path is None
@@ -303,9 +310,6 @@ class QEffFluxPipeline:
             ]
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
-
-        # Load compilation configuration
-        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Calculate compressed latent dimension using utility function
         cl, latent_height, latent_width = calculate_compressed_latent_dimension(
@@ -516,6 +520,8 @@ class QEffFluxPipeline:
                 - encoder_perf_times (List[float]): Performance times [CLIP_time, T5_time]
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
+        text_encoder_perf = 0.0
+        text_encoder_2_perf = 0.0
 
         if prompt_embeds is None:
             # Use primary prompt for both encoders if secondary not provided
@@ -640,9 +646,6 @@ class QEffFluxPipeline:
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
-        # Set device IDs for all modules based on configuration
-        set_module_device_ids(self)
-
         # Validate all inputs
         self.model.check_inputs(
             prompt,
@@ -687,17 +690,15 @@ class QEffFluxPipeline:
 
         # Encode negative prompts if using true classifier-free guidance
         if do_true_cfg:
-            (
-                negative_prompt_embeds,
-                negative_pooled_prompt_embeds,
-                negative_text_ids,
-            ) = self.encode_prompt(
-                prompt=negative_prompt,
-                prompt_2=negative_prompt_2,
-                prompt_embeds=negative_prompt_embeds,
-                pooled_prompt_embeds=negative_pooled_prompt_embeds,
-                num_images_per_prompt=num_images_per_prompt,
-                max_sequence_length=max_sequence_length,
+            (negative_prompt_embeds, negative_pooled_prompt_embeds, negative_text_ids, text_encoder_perf_2) = (
+                self.encode_prompt(
+                    prompt=negative_prompt,
+                    prompt_2=negative_prompt_2,
+                    prompt_embeds=negative_prompt_embeds,
+                    pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                    num_images_per_prompt=num_images_per_prompt,
+                    max_sequence_length=max_sequence_length,
+                )
             )
 
         # Step 4: Prepare timesteps for denoising

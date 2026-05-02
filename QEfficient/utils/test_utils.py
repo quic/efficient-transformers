@@ -5,10 +5,282 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Dict, Optional
+
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
+
+from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
+from QEfficient.utils import hf_download
+
+
+def get_custom_n_layers(model_name):
+    """
+    Function to set number layers of the variuos types of models such as swiftkv models and others
+    --------
+
+    :model_name: str
+
+    :return n_layer
+    """
+    if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8", "openai/gpt-oss-20b"}:
+        return 2
+    elif model_name in ModelConfig.SWIFTKV_MODELS:
+        return -1
+    return 1
+
+
+def load_hf_causal_lm_model(
+    model_name: str,
+    num_hidden_layers: int = -1,
+    config: Optional[AutoConfig] = None,
+    torch_dtype: Optional[torch.dtype] = torch.float32,
+):
+    model_path = hf_download(
+        repo_id=model_name,
+        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
+    )
+    if config is None:
+        model_kwargs = dict(attn_implementation="eager", low_cpu_mem_usage=False, torch_dtype=torch_dtype)
+        if num_hidden_layers != -1:
+            model_kwargs["num_hidden_layers"] = num_hidden_layers
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
+            **model_kwargs,
+        )
+    else:
+        model_hf = AutoModelForCausalLM.from_config(
+            config,
+            attn_implementation="eager",
+            torch_dtype=torch_dtype,
+            trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
+        )
+
+    try:
+        model_hf = model_hf.to(torch_dtype)
+        model_hf.config.torch_dtype = torch_dtype
+    except ValueError:
+        pass
+    model_hf.eval()
+    return model_hf
+
+
+def load_qeff_causal_lm_model(
+    model_name: str,
+    num_hidden_layers: int = -1,
+    continuous_batching: bool = False,
+    qaic_config: Dict = None,
+    config: Optional[AutoConfig] = None,
+):
+    kwargs = dict(continuous_batching=continuous_batching, qaic_config=qaic_config)
+    if config is None:
+        if num_hidden_layers != -1:
+            kwargs["num_hidden_layers"] = num_hidden_layers
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+    else:
+        model_hf = load_hf_causal_lm_model(model_name, num_hidden_layers, config)
+        qeff_model = QEFFAutoModelForCausalLM(model_hf, **kwargs)
+    return qeff_model
+
+
+def set_num_layers_vlm(config: AutoConfig, n_layer: int = -1):
+    if n_layer == -1:
+        return config
+    elif hasattr(config, "model_type") and "mllama" in config.model_type:
+        config.text_config.num_hidden_layers = n_layer
+        config.text_config.cross_attention_layers = [
+            x for x in config.text_config.cross_attention_layers if x < n_layer
+        ]
+    elif hasattr(config, "text_config"):
+        config.text_config.num_hidden_layers = n_layer
+        config.vision_config.num_hidden_layers = n_layer
+        if hasattr(config.vision_config, "depth"):
+            config.vision_config.depth = n_layer
+    elif hasattr(config, "llm_config"):
+        config.llm_config.num_hidden_layers = n_layer
+        config.vision_config.num_hidden_layers = n_layer
+        if hasattr(config.vision_config, "depth"):
+            config.vision_config.depth = n_layer
+    else:
+        config.num_hidden_layers = n_layer
+    return config
+
+
+def load_hf_vlm_model(
+    model_name: str,
+    num_hidden_layers: int = -1,
+    config: Optional[AutoConfig] = None,
+):
+    if config is None:
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        config = set_num_layers_vlm(config, num_hidden_layers)
+        try:
+            model_hf = AutoModelForImageTextToText.from_pretrained(
+                config._name_or_path,
+                low_cpu_mem_usage=False,
+                config=config,
+            )
+        except ValueError:
+            model_hf = AutoModelForCausalLM.from_pretrained(
+                config._name_or_path,
+                low_cpu_mem_usage=False,
+                trust_remote_code=True,
+                config=config,
+            )
+    else:
+        try:
+            model_hf = AutoModelForImageTextToText.from_config(
+                config,
+                attn_implementation="eager",
+                trust_remote_code=True,
+            )
+        except ValueError:
+            model_hf = AutoModelForCausalLM.from_config(
+                config,
+                attn_implementation="eager",
+                trust_remote_code=True,
+            )
+        torch_dtype = getattr(model_hf.config, "torch_dtype", None)
+        if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
+            model_hf = model_hf.to(torch.float32)
+
+    model_hf.eval()
+    return model_hf
+
+
+def load_qeff_vlm_model(
+    model_name: str,
+    num_hidden_layers: int = -1,
+    kv_offload: bool = False,
+    continuous_batching: bool = False,
+    config: Optional[AutoConfig] = None,
+    qaic_config: Optional[dict] = None,
+    torch_dtype: Optional[torch.dtype] = torch.float32,
+):
+    if config is None:
+        config = AutoConfig.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+        )
+        config = set_num_layers_vlm(config, num_hidden_layers)
+        try:
+            qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+                model_name,
+                low_cpu_mem_usage=False,
+                config=config,
+                kv_offload=kv_offload,
+                continuous_batching=continuous_batching,
+                qaic_config=qaic_config,
+                torch_dtype=torch_dtype,
+            )
+        except ValueError:
+            qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+                model_name,
+                low_cpu_mem_usage=False,
+                config=config,
+                kv_offload=kv_offload,
+                continuous_batching=continuous_batching,
+                qaic_config=qaic_config,
+                trust_remote_code=True,
+                torch_dtype=torch_dtype,
+            )
+    else:
+        model_hf = load_hf_vlm_model(
+            model_name,
+            config=config,
+        )
+        qeff_model = QEFFAutoModelForImageTextToText(
+            model_hf,
+            kv_offload=kv_offload,
+            continuous_batching=continuous_batching,
+            qaic_config=qaic_config,
+            torch_dtype=torch_dtype,
+        )
+
+    return qeff_model
+
+
+def load_vlm_model(config):
+    try:
+        model_hf = AutoModelForImageTextToText.from_pretrained(
+            config._name_or_path,
+            low_cpu_mem_usage=False,
+            config=config,
+        )
+    except ValueError:
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            config._name_or_path,
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            config=config,
+        )
+    model_hf.eval()
+    return model_hf
+
+
+def load_vlm_model_from_config(config):
+    try:
+        model_hf = AutoModelForImageTextToText.from_config(
+            config,
+            attn_implementation="eager",
+            trust_remote_code=True,
+        )
+    except ValueError:
+        model_hf = AutoModelForCausalLM.from_config(
+            config,
+            attn_implementation="eager",
+            trust_remote_code=True,
+        )
+    torch_dtype = getattr(model_hf.config, "torch_dtype", None)
+    if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
+        model_hf = model_hf.to(torch.float32)
+    model_hf.eval()
+    return model_hf
+
+
+def load_qeff_model_with_sampler(
+    model_name: str,
+    is_vlm: bool,
+    continuous_batching: bool,
+    num_hidden_layers: Optional[int] = -1,
+    config: Optional[AutoConfig] = None,
+    qaic_config: Optional[dict] = None,
+):
+    """
+    Get a QEfficient model with the sampler transform.
+
+    Args:
+        model_name (str): The name of the model to test.
+        is_vlm (bool): Whether the model is a vision-language model.
+        continuous_batching (bool): Whether to use continuous batching.
+        num_hidden_layers (Optional[int]): The number of hidden layers to use.
+        config (Optional[AutoConfig]): The configuration to use.
+        qaic_config (Optional[dict]): The QAIC configuration to use.
+    """
+    if is_vlm:
+        qeff_model = load_qeff_vlm_model(
+            model_name,
+            continuous_batching=continuous_batching,
+            num_hidden_layers=num_hidden_layers,
+            kv_offload=True,
+            config=config,
+            qaic_config=qaic_config,
+        )
+
+    else:
+        qeff_model = load_qeff_causal_lm_model(
+            model_name,
+            continuous_batching=continuous_batching,
+            qaic_config=qaic_config,
+            config=config,
+            num_hidden_layers=num_hidden_layers,
+        )
+
+    return qeff_model
 
 
 # Processor class for InternVL models
@@ -169,6 +441,38 @@ class ModelConfig:
         "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
     }
 
+    STANDARD_VLM_MODELS = {
+        "llava-hf/llava-1.5-7b-hf",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "google/gemma-3-4b-it",
+        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    }
+
+    INTERNVL_MODELS = {
+        "OpenGVLab/InternVL2_5-1B",
+        "OpenGVLab/InternVL3_5-1B",
+    }
+
+    MOLMO_MODELS = {
+        "allenai/Molmo-7B-D-0924",
+    }
+
+    SKIPPED_MODELS = {
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "allenai/Molmo-7B-D-0924",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    }
+
+    DUAL_QPC_MODELS = {
+        "OpenGVLab/InternVL2_5-1B",
+        "OpenGVLab/InternVL3_5-1B",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "Qwen/Qwen3-VL-2B-Instruct",
+    }
+
     EXTERNAL_MODELS = {
         "hpcai-tech/grok-1": {
             "pytorch_hf_tokens_custom_case": [
@@ -228,4 +532,8 @@ class ModelConfig:
 
     SWIFTKV_MODELS = {
         "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+    }
+
+    FULL_MODEL_TESTS_TO_SKIP = {
+        "hpcai-tech/grok-1",
     }

@@ -130,8 +130,8 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
         model_params=copy_of_hash_params,
         output_names=all_args.get("output_names"),
         dynamic_axes=all_args.get("dynamic_axes"),
-        export_kwargs=all_args.get("export_kwargs", None),
         blocking_kwargs=all_args.get("blocking_kwargs", None),
+        export_kwargs=all_args.get("export_kwargs", None),
         onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
     )
 
@@ -166,7 +166,8 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     if "output_names" in kwargs:
         kwargs["output_names"] = [
             re.sub("_RetainedState", "_InternalRetainedState", name)
-            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            if name.endswith("_RetainedState")
+            and ("key" in name or "value" in name or "compressed_kv" in name or "k_pe" in name)
             else name
             for name in kwargs["output_names"]
         ]
@@ -180,7 +181,6 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
     qeff_model._onnx_transforms.append(CustomOpTransform)
 
-    # TODO: Handle this in the modelling class QEFFTransformersBase,remove from here. Refer diffusers implementation
     submodule_classes = qeff_model.model.get_submodules_for_export()
     if submodule_classes:
         kwargs["export_modules_as_functions"] = submodule_classes

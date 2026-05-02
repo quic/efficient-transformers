@@ -20,13 +20,18 @@ import torch
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
+    FP16ClipTransform,
     OnnxTransformPipeline,
+    SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
+from QEfficient.transformers.models.pytorch_transforms import (
+    BlockingAttentionTransform,
+    ReplicateKVHeadTransform,
+)
 from QEfficient.utils import (
     constants,
     create_json,
@@ -37,6 +42,7 @@ from QEfficient.utils import (
     hash_dict_params,
     load_json,
     require_value,
+    to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
 
@@ -56,13 +62,13 @@ class QEFFBaseModel(ABC):
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
-    @classmethod
-    def _transform_names(cls) -> List[str]:
-        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
+    def _transform_names(self) -> List[str]:
+        return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
+        self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
@@ -74,6 +80,10 @@ class QEFFBaseModel(ABC):
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
 
+        # Flag for checking if model has been transformed yet
+        self.is_transformed: bool = False
+
+        self._normalize_torch_dtype()
         # Apply the transformations
         any_transformed = False
         for transform in self._pytorch_transforms:
@@ -84,6 +94,44 @@ class QEFFBaseModel(ABC):
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+
+        if self.config.torch_dtype == torch.bfloat16:
+            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
+
+    def _normalize_torch_dtype(self):
+        """
+        Normalizes torch_dtype across all nested configs to match the top-level config.
+
+        This method ensures consistency by propagating the top-level torch_dtype
+        to all nested configs (llm_config, vision_config, etc.) that may exist in
+        multimodal models.
+        """
+        top_level_dtype = getattr(self.config, "torch_dtype", torch.float32)
+
+        if top_level_dtype is None:
+            top_level_dtype = torch.float32
+        elif isinstance(top_level_dtype, str):
+            top_level_dtype = getattr(torch, top_level_dtype, torch.float32)
+
+        self.config.torch_dtype = top_level_dtype
+
+        # Normalize llm_config if it exists
+        if hasattr(self.config, "llm_config"):
+            self.config.llm_config.torch_dtype = top_level_dtype
+            if hasattr(self.config.llm_config, "use_bfloat16"):
+                self.config.llm_config.use_bfloat16 = top_level_dtype == torch.bfloat16
+
+        # Normalize vision_config if it exists
+        if hasattr(self.config, "vision_config"):
+            self.config.vision_config.torch_dtype = top_level_dtype
+            if hasattr(self.config.vision_config, "use_bfloat16"):
+                self.config.vision_config.use_bfloat16 = top_level_dtype == torch.bfloat16
+
+        # Normalize text_config if it exists (for models like Qwen2.5-VL)
+        if hasattr(self.config, "text_config"):
+            self.config.text_config.torch_dtype = top_level_dtype
+
+        logger.info(f"Normalized all config torch_dtype to: {top_level_dtype}")
 
     def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
@@ -184,7 +232,7 @@ class QEFFBaseModel(ABC):
                     :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
                     :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
 
-                for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+                for QAIC compilation path, any flag that is supported by ``qaic-compile`` can be passed. Params are converted to flags as below:
 
                     - aic_num_cores=16 -> -aic-num-cores=16
                     - convert_to_fp16=True -> -convert-to-fp16
@@ -239,6 +287,7 @@ class QEFFBaseModel(ABC):
         """
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
+        export_kwargs.pop("mla_absorption", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
@@ -249,10 +298,7 @@ class QEFFBaseModel(ABC):
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
 
-        # Setup temporary paths
-        tmp_onnx_dir = export_dir / "onnx_tmp"
-        tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
-        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
+        export_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
         input_names = []
@@ -277,7 +323,6 @@ class QEFFBaseModel(ABC):
                             )
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
-                        # input_names.extend([f"compressed_kvs.{i}",])
                         input_names.extend(
                             [
                                 f"compressed_kv.{i}",
@@ -295,7 +340,7 @@ class QEFFBaseModel(ABC):
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
-                str(tmp_onnx_path),
+                str(onnx_path),
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -304,11 +349,13 @@ class QEFFBaseModel(ABC):
             )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
+            model = onnx.load(onnx_path, load_external_data=False)
 
-            # Clear temporary references
+            needs_external_tensor_data = any(
+                transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
+            )
             transform_kwargs = {
-                "onnx_base_dir": str(tmp_onnx_dir),
+                "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
             }
             if onnx_transform_kwargs is not None:
@@ -323,7 +370,9 @@ class QEFFBaseModel(ABC):
             )
             logger.info("ONNX transforms applied")
 
-            onnx.save(model, onnx_path)
+            onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
+            onnx.save(model, onnx_path_tmp)
+            onnx_path_tmp.replace(onnx_path)
             del model
             gc.collect()
             logger.info("Transformed ONNX saved")
@@ -331,9 +380,6 @@ class QEFFBaseModel(ABC):
         except Exception as e:
             logger.error(f"ONNX export or transforms failed: {e}")
             raise e
-
-        finally:
-            shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -346,17 +392,15 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
-        enable_mla: Optional[bool] = False,
-        mla_absorption_config: Optional[bool] = False,
-        mdp_ts_num_devices: Optional[int] = 1,
+        mla_absorption: Optional[Dict[str, bool]] = None,
+        qaic_config: Optional[dict] = None,
+        **compiler_options,
     ):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
-            "enable_mla": enable_mla,
-            "mla_absorption_config": mla_absorption_config,
-            "mdp_ts_num_devices": mdp_ts_num_devices,
+            "mla_absorption": mla_absorption,
         }
 
         if prefill_only:
@@ -367,6 +411,27 @@ class QEFFBaseModel(ABC):
                     "enable_chunking": enable_chunking,
                 }
             )
+
+        # Transform before export
+        qaic_config = (
+            qaic_config if qaic_config else getattr(self.model, "qaic_config", None) if hasattr(self, "model") else None
+        )
+        if specializations is not None:
+            bs = require_value(get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
+            seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
+            ctx_len = get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
+        else:
+            bs = None
+            seq_len = None
+            ctx_len = None
+
+        self.transform(
+            ctx_len=ctx_len,
+            seq_len=seq_len,
+            bs=bs,
+            qaic_config=qaic_config,
+            **compiler_options,
+        )
 
         self.export(**kwargs)
         return self.onnx_path
@@ -384,11 +449,22 @@ class QEFFBaseModel(ABC):
 
         qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
 
-        if getattr(self.model, "config", None) or getattr(self.model.model, "config", None):
+        model_config = getattr(self.model, "config", None) or getattr(self.model.model, "config", None)
+
+        if model_config:
+            if "DeepseekV3ForCausalLM" in (getattr(model_config, "architectures", None) or []):
+                if qaic_config:
+                    if qaic_config.get("blocking_mode", None) == "h":
+                        qaic_config["head_block_size"] = qaic_config.get("head_block_size", num_devices)
+                    num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", 1)
+                    self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
+                        self.model, num_kv_heads_repeat
+                    )
+                    if replicate_kv_transformed:
+                        self.hash_params["config"] = self.model.config.to_diff_dict()
+
             blocking_config = build_transformer_blocking_config_for_transform(
-                getattr(self.model, "config", None)
-                if getattr(self.model, "config", None)
-                else getattr(self.model.model, "config", None),
+                model_config,
                 ctx_len=ctx_len,
                 seq_len=seq_len,
                 bs=bs,
@@ -402,13 +478,7 @@ class QEFFBaseModel(ABC):
 
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
-            blocking_kwargs = self.hash_params.setdefault("blocking_kwargs", {})
-            if blocking_config.num_kv_blocks:
-                blocking_kwargs["num_kv_blocks"] = blocking_config.num_kv_blocks
-            if blocking_config.num_q_blocks:
-                blocking_kwargs["num_q_blocks"] = blocking_config.num_q_blocks
-            if blocking_config.head_block_size:
-                blocking_kwargs["head_block_size"] = blocking_config.head_block_size
+            self.hash_params["blocking_kwargs"] = blocking_config
 
     @dump_qconfig
     def _compile(
@@ -428,16 +498,13 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        disable_blocking: Optional[bool] = True,
-        blocking_mode: Optional[str] = "hqkv",
-        vtcm_ratio: Optional[float] = 0.75,
+        mla_absorption: Optional[Dict[str, bool]] = None,
         qaic_config: Optional[dict] = None,
-        enable_mla: Optional[bool] = False,
-        mla_absorption_config: Optional[Dict[str, bool]] = False,
+        specialization_module_name: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
-        Interface for qaic-exec compiler
+        Interface for qaic-compile compiler
 
         Args:
             :onnx_path (str): Onnx file to compile
@@ -450,7 +517,7 @@ class QEFFBaseModel(ABC):
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
             :compiler_options: Pass any compiler option as input.
-                Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+                Any flag that is supported by `qaic-compile` can be passed. Params are converted to flags as below:
 
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
@@ -459,23 +526,6 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
-
-        # Transform before export
-        qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
-        bs = require_value(get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
-        seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
-        ctx_len = get_attr_or_key(specializations[0], ("ctx_len", "context_length"))
-        self.transform(
-            ctx_len=ctx_len,
-            seq_len=seq_len,
-            bs=bs,
-            num_devices=mdp_ts_num_devices,
-            disable_blocking=disable_blocking,
-            blocking_mode=blocking_mode,
-            vtcm_ratio=vtcm_ratio,
-            qaic_config=qaic_config,
-            **compiler_options,
-        )
 
         onnx_path = Path(
             onnx_path
@@ -489,9 +539,10 @@ class QEFFBaseModel(ABC):
                 offload_pt_weights,
                 use_onnx_subfunctions,
                 retain_full_kv,
-                enable_mla,
-                mla_absorption_config,
-                mdp_ts_num_devices,
+                mla_absorption,
+                num_devices=mdp_ts_num_devices,
+                qaic_config=qaic_config,
+                **compiler_options,
             )
         )
         compile_dir = Path(compile_dir or onnx_path.parent)
@@ -531,7 +582,6 @@ class QEFFBaseModel(ABC):
         mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
         mdp_ts_json = None
-        user_provided_load_config = False
 
         if mdp_dump_json_path:
             if mdp_ts_json_path:
@@ -542,12 +592,14 @@ class QEFFBaseModel(ABC):
         elif mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
-            user_provided_load_config = True
         elif mdp_ts_num_devices > 1:
             # Generate mdp config only if neither dump nor load is provided and num_devices > 1
             mdp_ts_json = generate_mdp_partition_config(
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )
+            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+            create_json(str(mdp_ts_json_path), mdp_ts_json)
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
@@ -584,27 +636,32 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(qpc_path)
 
         # Write the generated MDP partition config file (not if user provided it)
-        if mdp_ts_json is not None and not user_provided_load_config:
-            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            create_json(str(mdp_ts_json_path), mdp_ts_json)
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
             specializations_data = {
-                "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
+                "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
             }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
 
         # Write custom_io.yaml file
+        model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
+        pkv_in_bfloat16 = (custom_io is not None) and any(
+            "past_" in key and "bfloat16" in value for key, value in custom_io.items()
+        )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
             with open(custom_io_yaml, "w") as fp:
                 for io_name, dtype in custom_io.items():
                     fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
-            command.append(f"-custom-IO-list-file={custom_io_yaml}")
+            if model_in_bfloat16 and pkv_in_bfloat16:
+                logger.warning(
+                    "Model and Past KV types are both bfloat16. Custom IO list file will be ignored during compile."
+                )
+            else:
+                command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")

@@ -58,6 +58,17 @@
 
 ---
 
+## Sequence Classification Models
+
+### Text Classification Task
+**QEff Auto Class:** `QEFFAutoModelForSequenceClassification`
+
+| Architecture | Model Family | Representative Models | vLLM Support |
+|--------------|--------------|----------------------|--------------|
+| **DebertaV2ForSequenceClassification** | Llama Prompt Guard | [meta-llama/Llama-Prompt-Guard-2-22M](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M) | ✕ |
+
+---
+
 ## Multimodal Language Models
 
 ### Vision-Language Models (Text + Image Generation)
@@ -117,11 +128,18 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 | **FluxPipeline**  | FLUX.1     | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/stabilityai/stable-diffusion-2-1) |          |
 
 ### Video Generation Models
+#### Text to Video Generation Models
 **QEff Auto Class:** `QEffWanPipeline`
 
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
-| **WanPipeline**  | Wan2.2     | [Wan-AI/Wan2.2-T2V-A14B-Diffusers](https://huggingface.co/stabilityai/stable-diffusion-2-1) |         |
+| **WanPipeline**  | Wan2.2     | [Wan-AI/Wan2.2-T2V-A14B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers) |         |
+
+#### Image to Video Generation Models
+**QEff Auto Class:** `QEffWanImageToVideoPipeline`
+| Architecture | Model Family | Representative Models                                                                 | vLLM Support |
+|--------------|--------------|----------------------------------------------------------------------------------------|--------------|
+| **WanImageToVideoPipeline**  | Wan2.2     | [Wan-AI/Wan2.2-I2V-A14B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B-Diffusers) |         |
 
 ---
 
@@ -133,6 +151,8 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 ③ Pass `disable_sliding_window` for few family models when using vLLM.
 ```
 ---
+
+
 
 (models_coming_soon)=
 # Models Coming Soon

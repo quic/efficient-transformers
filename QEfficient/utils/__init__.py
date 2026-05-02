@@ -36,6 +36,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     padding_check_and_fix,
     qpc_exists,
     require_value,
+    to_named_specializations,
 )
 from QEfficient.utils.hash_utils import (  # noqa: F401
     create_export_hash,

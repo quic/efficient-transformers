@@ -24,12 +24,14 @@ from QEfficient.base import (
     QEFFAutoModelForCausalLM,
     QEFFAutoModelForCTC,
     QEFFAutoModelForImageTextToText,
+    QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
     QEFFCommonLoader,
 )
 from QEfficient.compile.compile_helper import compile
 from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
 from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
+from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.peft import QEffAutoPeftModelForCausalLM
@@ -53,15 +55,17 @@ __all__ = [
     "QEFFAutoModelForCTC",
     "QEffAutoPeftModelForCausalLM",
     "QEFFAutoModelForImageTextToText",
+    "QEFFAutoModelForSequenceClassification",
     "QEFFAutoModelForSpeechSeq2Seq",
     "QEFFCommonLoader",
     "QEffFluxPipeline",
     "QEffWanPipeline",
+    "QEffWanImageToVideoPipeline",
 ]
 
 
 # Conditionally import QAIC-related modules if the SDK is installed
-__version__ = "0.0.1.dev0"
+__version__ = "1.22.0.dev0"
 
 
 def check_qaic_sdk():

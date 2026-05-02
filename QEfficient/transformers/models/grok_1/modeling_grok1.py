@@ -39,7 +39,7 @@ class QEFFGrok1CustomRMSNormAIC(nn.Module):
             torch.Tensor: Normalized tensor.
         """
         return CustomRMSNormFunc.apply(
-            hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+            hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 
 
@@ -59,6 +59,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """
@@ -87,8 +88,9 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
+        kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len = past_key_value.get_seq_length(layer_idx)
+            kv_seq_len = past_key_value.get_seq_length(layer_idx, cache_position)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
@@ -113,7 +115,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
                 attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
             )
 
-        attn_weights = F.softmax(attn_weights, dim=-1).to(query_states.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
@@ -149,7 +151,7 @@ class QEffGrok1MoeBlock(nn.Module):
         hidden_states = hidden_states.view(-1, hidden_dim)
         router_logits = self.gate(hidden_states)
 
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
         # Creating experts mask and routing weights masked
         awesome_experts_mask_1 = (

@@ -29,7 +29,7 @@ NPI_MAPPING = {
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
     ),
     "google/gemma-3-27b-it": os.path.join(
-        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_27b.yaml"
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "gemma_updated_npi.yaml"
     ),
 }
 
@@ -100,7 +100,7 @@ FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
 SIZE_THRESHOLD_DEFAULT = 1024
 
 
-COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-compile-only"]
+COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 DEFAULT_AIC_HW_VERSION = "ai100"
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
@@ -136,8 +136,12 @@ VISION_MXFP6_MATMUL = False
 LLAMA4_ATTENTION_CHUNK_SIZE = 8192
 LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 
-# Gemma3 Constant
-GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
+# DeepSeek Kimi-k2 Constant
+MAX_POSITION_EMBEDDINGS = 32768
+FP16_BYTES = 2
+DEFAULT_NUM_HEADS = 64
+KV_LORA_RANK = 512
+ROPE_DIM = 64
 
 # Wav2Vec2 Constant
 WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16,000 samples/sec × 30 sec)
@@ -145,6 +149,10 @@ WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16
 # Qwen2_5_vl Constants
 QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
+
+# Qwen3_vl Constanst
+QWEN3_VL_HEIGHT = 354
+QWEN3_VL_WIDTH = 536
 
 # Modules to cache while clearing the pytorch weights
 CACHE_MODULES = ["get_output_names", "get_dummy_inputs", "get_onnx_dynamic_axes", "get_specializations"]
@@ -173,12 +181,15 @@ WAN_ONNX_EXPORT_LATENT_FRAMES = 21
 WAN_ONNX_EXPORT_SEQ_LEN = 512
 WAN_ONNX_EXPORT_ROTARY_DIM = 128
 WAN_DIT_OUT_CHANNELS = 64
-# Wan dims for 180p
-WAN_ONNX_EXPORT_CL_180P = 5040
-WAN_ONNX_EXPORT_LATENT_HEIGHT_180P = 24
-WAN_ONNX_EXPORT_LATENT_WIDTH_180P = 40
-WAN_ONNX_EXPORT_HEIGHT_180P = 192
-WAN_ONNX_EXPORT_WIDTH_180P = 320
+# Wan dims for 45p
+WAN_ONNX_EXPORT_CL_45P = 252
+WAN_ONNX_EXPORT_LATENT_HEIGHT_45P = 6
+WAN_ONNX_EXPORT_LATENT_WIDTH_45P = 8
+WAN_ONNX_EXPORT_HEIGHT_45P = 48
+WAN_ONNX_EXPORT_WIDTH_45P = 64
+
+# WAN I2V
+WAN_DIT_I2V_IMG_LATENT_CHANNELS = 32
 
 # For the purpose of automatic CCL lists generation, to limit the number of elements in CCL list, the starting point will be calculated based on context length
 CCL_START_MAP = {
@@ -190,6 +201,7 @@ CCL_START_MAP = {
 CCL_MAX_ELEMENTS_LISTS = 5
 CCL_START_CTX_LEN = 4096
 CCL_MIN_CTX_LEN = 1024
+CCL_UNIQNE_STEP = 32
 
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256

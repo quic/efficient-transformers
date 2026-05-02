@@ -7,6 +7,4 @@
 
 # Default owners
 # review when someone opens a pull request and assign appropriate reviewer
-* @quic-rishinr @ochougul @quic-hemagnih @quic-amitraj
 pyproject.toml @carlstreeter-quic
-

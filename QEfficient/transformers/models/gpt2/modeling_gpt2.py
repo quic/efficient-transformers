@@ -40,10 +40,10 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
     if attention_mask is not None:
         # Apply the attention mask
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32)
 
     # Downcast (if necessary) back to V's dtype (if in mixed-precision) -- No-Op otherwise
     attn_weights = attn_weights.type(value.dtype)
@@ -64,7 +64,7 @@ class QEffGPT2Attention(GPT2Attention):
     def forward(
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -76,16 +76,16 @@ class QEffGPT2Attention(GPT2Attention):
         **kwargs,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
         is_cross_attention = encoder_hidden_states is not None
-        if past_key_value is not None:
-            if isinstance(past_key_value, QEffEncoderDecoderCache):
-                is_updated = past_key_value.is_updated.get(self.layer_idx)
+        if past_key_values is not None:
+            if isinstance(past_key_values, QEffEncoderDecoderCache):
+                is_updated = past_key_values.is_updated.get(self.layer_idx)
                 if is_cross_attention:
                     # after the first generated id, we can subsequently re-use all key/value_layer from cache
-                    curr_past_key_value = past_key_value.cross_attention_cache
+                    curr_past_key_value = past_key_values.cross_attention_cache
                 else:
-                    curr_past_key_value = past_key_value.self_attention_cache
+                    curr_past_key_value = past_key_values.self_attention_cache
             else:
-                curr_past_key_value = past_key_value
+                curr_past_key_value = past_key_values
 
         if is_cross_attention:
             if not hasattr(self, "q_attn"):
@@ -98,7 +98,7 @@ class QEffGPT2Attention(GPT2Attention):
             attention_mask = encoder_attention_mask
 
             # Try to get key/value states from cache if possible
-            if past_key_value is not None and is_updated:
+            if past_key_values is not None and is_updated:
                 key_states = curr_past_key_value.layers[self.layer_idx].keys
                 value_states = curr_past_key_value.layers[self.layer_idx].values
             else:
@@ -116,8 +116,8 @@ class QEffGPT2Attention(GPT2Attention):
         shape_q = (*query_states.shape[:-1], -1, self.head_dim)
         query_states = query_states.view(shape_q).transpose(1, 2)
 
-        if (past_key_value is not None and not is_cross_attention) or (
-            past_key_value is not None and is_cross_attention and not is_updated
+        if (past_key_values is not None and not is_cross_attention) or (
+            past_key_values is not None and is_cross_attention and not is_updated
         ):
             # save all key/value_layer to cache to be re-used for fast auto-regressive generation
             # Update the cache_kwargs with position_ids for Cloud AI 100
@@ -131,7 +131,7 @@ class QEffGPT2Attention(GPT2Attention):
             )
             # set flag that curr layer for cross-attn is already updated so we can re-use in subsequent calls
             if is_cross_attention:
-                past_key_value.is_updated[self.layer_idx] = True
+                past_key_values.is_updated[self.layer_idx] = True
 
         attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
@@ -178,7 +178,7 @@ class QEffGPT2Block(GPT2Block):
         hidden_states = self.ln_1(hidden_states)
         attn_output, self_attn_weights = self.attn(
             hidden_states,
-            past_key_value=past_key_value,
+            past_key_values=past_key_value,
             attention_mask=attention_mask,
             comp_ctx_lengths=comp_ctx_lengths,
             position_ids=position_ids,

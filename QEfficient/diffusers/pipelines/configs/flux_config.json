@@ -1,61 +1,61 @@
 {
   "description": "Default configuration for Flux pipeline",
 
-  "modules": 
+  "modules":
   {
-    "text_encoder": 
+    "text_encoder":
                     {
                       "specializations":{
                                           "batch_size": 1,
                                           "seq_len": 77
                                         },
-                      "compilation": 
+                      "compilation":
                                         {
                                           "onnx_path": null,
                                           "compile_dir": null,
                                           "mdp_ts_num_devices": 1,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
-                                          "aic_num_cores": 16,
-                                          "compile_only":true
+                                          "aic_num_cores": 16
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
-                                        }  
+                                          "device_ids": null,
+                                          "qpc_path" : null
+                                        }
 
                     },
-    "text_encoder_2": 
+    "text_encoder_2":
                     {
-                      "specializations": 
+                      "specializations":
                                         {
                                           "batch_size": 1,
                                           "seq_len": 256
                                         },
-                      "compilation": 
+                      "compilation":
                                         {
                                           "onnx_path": null,
                                           "compile_dir": null,
                                           "mdp_ts_num_devices": 1,
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
-                                          "aic_num_cores": 16,
-                                          "compile_only": true
+                                          "aic_num_cores": 16
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                          "qpc_path" : null
                                         }
                     },
-    "transformer": 
+    "transformer":
                     {
-                      "specializations": 
+                      "specializations":
                                         {
                                           "batch_size": 1,
                                           "seq_len": 256,
                                           "steps": 1
                                         },
-                      "compilation": 
+                      "compilation":
                                         {
                                           "onnx_path": null,
                                           "compile_dir": null,
@@ -64,22 +64,22 @@
                                           "convert_to_fp16": true,
                                           "aic_num_cores": 16,
                                           "mos": 1,
-                                          "mdts-mos": 1,
-                                          "compile_only":true
+                                          "mdts-mos": 1
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                          "qpc_path" : null
                                         }
                     },
-    "vae_decoder": 
+    "vae_decoder":
                     {
-                      "specializations": 
+                      "specializations":
                                         {
                                           "batch_size": 1,
                                           "channels": 16
                                         },
-                      "compilation": 
+                      "compilation":
                                         {
                                           "onnx_path": null,
                                           "compile_dir": null,
@@ -87,12 +87,12 @@
                                           "mxfp6_matmul": false,
                                           "convert_to_fp16": true,
                                           "aic_num_cores": 16,
-                                          "aic-enable-depth-first": true,
-                                          "compile_only":true
+                                          "aic-enable-depth-first": true
                                         },
                       "execute":
                                         {
-                                          "device_ids": null
+                                          "device_ids": null,
+                                          "qpc_path" : null
                                         }
                     }
   }

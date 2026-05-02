@@ -84,7 +84,7 @@ def eager_attention_forward(
 
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -139,9 +139,14 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
 
         else:
             if self.multi_query:
-                query, key, value = (
-                    self.c_attn(hidden_states).unsqueeze(1).split((self.embed_dim, self.kv_dim, self.kv_dim), dim=3)
-                )
+                x = self.c_attn(hidden_states).unsqueeze(1)  # shape: [B, 1, T, E + 2*KV]
+                e = int(self.embed_dim)
+                kv = int(self.kv_dim)
+
+                query = x[..., :e]
+                key = x[..., e : e + kv]
+                value = x[..., e + kv : e + 2 * kv]
+
                 query = query.view(*input_shape, -1, self.head_dim).transpose(1, 2)
             else:
                 query, key, value = (
@@ -434,7 +439,7 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        lm_logits = self.lm_head(hidden_states)
+        lm_logits = self.lm_head(hidden_states).float()
 
         return CausalLMOutputWithCrossAttentions(
             loss=None,
