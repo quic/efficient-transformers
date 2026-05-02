@@ -28,6 +28,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
+    Qwen3VLMoeVisionBlock,
     Qwen3VLMoeVisionModel,
     apply_rotary_pos_emb_vision,
     repeat_kv,
@@ -1360,3 +1361,9 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 shape=("batch_size", 3, "image_size", "image_size"),
             ),
         ]
+
+
+class QEffQwen3VLMoeVisionBlock(Qwen3VLMoeVisionBlock):
+    @torch.compiler.nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
