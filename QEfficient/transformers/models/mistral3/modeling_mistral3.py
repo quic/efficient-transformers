@@ -18,7 +18,11 @@ from transformers.models.mistral3.modeling_mistral3 import (
     Mistral3Model,
     Mistral3ModelOutputWithPast,
 )
-from transformers.models.pixtral.modeling_pixtral import PixtralVisionModel, position_ids_in_meshgrid
+from transformers.models.pixtral.modeling_pixtral import (
+    PixtralAttentionLayer,
+    PixtralVisionModel,
+    position_ids_in_meshgrid,
+)
 
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -747,3 +751,9 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
                 shape=("batch_size", 3, "image_size", "image_size"),
             ),
         ]
+
+
+class QEffPixtralAttentionLayer(PixtralAttentionLayer):
+    @torch.compiler.nested_compile_region
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
