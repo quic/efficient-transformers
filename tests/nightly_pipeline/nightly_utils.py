@@ -39,4 +39,6 @@ NIGHTLY_SKIPPED_MODELS = {
     "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
     # Embedding Models
     "intfloat/multilingual-e5-large",
+    # Audio Embedding Models
+    "facebook/wav2vec2-large",
 }
