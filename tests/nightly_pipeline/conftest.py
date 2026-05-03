@@ -9,15 +9,6 @@ import json
 import os
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import datetime
-
-try:
-    from datetime import UTC
-except ImportError:
-    from datetime import timezone
-
-    UTC = timezone.ut
-
 from pathlib import Path
 
 import numpy as np
@@ -52,9 +43,6 @@ def _resolve_pipeline_output_dir():
         if not output_path.is_absolute():
             output_path = (REPO_ROOT / output_path).resolve()
         return output_path
-
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    return (Path.home() / ".cache" / "Nightly_Pipeline" / timestamp).resolve()
 
 
 def pytest_configure(config):
