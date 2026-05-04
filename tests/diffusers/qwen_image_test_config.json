@@ -40,6 +40,7 @@
         "mdp_ts_num_devices": 1,
         "mxfp6_matmul": true,
         "convert_to_fp16": true,
+        "use_onnx_subfunctions": false,
         "compile_only": true,
         "aic_num_cores": 16,
         "mos": 1,

@@ -16,6 +16,7 @@
                               "aic_num_cores": 16,
                               "mos": 1,
                               "mdts_mos": 1,
+                              "mxfp6_matmul": true,
                               "node_precision_info": "QEfficient/diffusers/pipelines/configs/qwen_image.yaml"
                          },
           "execute":     {
