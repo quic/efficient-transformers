@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import torch
 from transformers.cache_utils import Cache
@@ -17,8 +17,10 @@ from transformers.cache_utils import Cache
 from QEfficient.blocking.blocked_attention_forwards import (
     blocked_bhqkv_attention_forward,
     blocked_h_attention_forward,
+    blocked_h_mla_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
+    blocked_kv_mla_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
 )
@@ -55,6 +57,11 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.QKV: blocked_qkv_attention_forward,
     BlockingMode.HQKV: blocked_hqkv_attention_forward,
     BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
+}
+
+_STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
+    BlockingMode.KV: blocked_kv_mla_attention_forward,
+    BlockingMode.H: blocked_h_mla_attention_forward,
 }
 
 
@@ -150,6 +157,69 @@ def generic_blocked_attention_interface(
         cache_kwargs=cache_kwargs,
         layer_idx=layer_idx,
         past_key_value=past_key_value,
+        num_kv_blocks=blocking_config.num_kv_blocks,
+        num_q_blocks=blocking_config.num_q_blocks,
+        head_block_size=blocking_config.head_block_size,
+        num_batch_blocks=blocking_config.num_batch_blocks,
+        score_mod=score_mod,
+        position_bias=position_bias,
+        sinks=sinks,
+    )
+
+    return attn_output, attn_weights
+
+
+def generic_blocked_mla_attention_interface(
+    module,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    mla_absorption: Dict[str, Any],
+    blocking_config: AttentionBlockingConfig,
+    query: Optional[torch.Tensor] = None,
+    q_a_proj_out: Optional[torch.Tensor] = None,
+    fusedqk: Optional[torch.Tensor] = None,
+    q_nope: Optional[torch.Tensor] = None,
+    q_pe: Optional[torch.Tensor] = None,
+    kva: Optional[torch.Tensor] = None,
+    k_pe: Optional[torch.Tensor] = None,
+    per_head_q_up: Optional[torch.Tensor] = None,
+    per_head_k_up: Optional[torch.Tensor] = None,
+    per_head_v_up: Optional[torch.Tensor] = None,
+    per_head_k_up_normal: Optional[torch.Tensor] = None,
+    layer_idx: Optional[int] = None,
+    compressed_kvs: Optional[torch.Tensor] = None,
+    comp_ctx_lengths: Optional[torch.LongTensor] = None,
+    batch_index: Optional[torch.LongTensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    past_seen_tokens: Optional[int] = None,
+    non_blocked_forward: Callable = None,
+    score_mod: Optional[Callable] = None,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    sliding_window: Optional[int] = None,
+    **kwargs,
+):
+    cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+    mla_blocking_strategy = _STRATEGIES_MLA.get(blocking_config.mode)
+    attn_output, attn_weights = mla_blocking_strategy(
+        module=module,
+        query=query,
+        q_a_proj_out=q_a_proj_out,
+        fusedqk=fusedqk,
+        q_nope=q_nope,
+        q_pe=q_pe,
+        kva=kva,
+        k_pe=k_pe,
+        per_head_q_up=per_head_q_up,
+        per_head_k_up=per_head_k_up,
+        per_head_v_up=per_head_v_up,
+        per_head_k_up_normal=per_head_k_up_normal,
+        attention_mask=attention_mask,
+        scaling=scaling,
+        cache_kwargs=cache_kwargs,
+        layer_idx=layer_idx,
+        compressed_kvs=compressed_kvs,
+        mla_absorption=mla_absorption,
         num_kv_blocks=blocking_config.num_kv_blocks,
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
