@@ -69,7 +69,7 @@
       "export_params": {},
       "compile_params": {
         "prefill_seq_len": 128,
-        "ctx_len": 2048,
+        "ctx_len": 1024,
         "num_cores": 16,
         "num_devices": 4,
         "mxfp6_matmul": true,
@@ -78,7 +78,7 @@
       },
       "generate_params": {
         "generation_len": 20,
-        "image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+        "image_url": "https://picsum.photos/id/237/536/354",
         "query": "Can you describe the image in detail?"
       }
     }
