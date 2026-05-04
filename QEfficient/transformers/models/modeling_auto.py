@@ -51,8 +51,10 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheTransform,
     PoolingTransform,
     PrefillOnlyChunkedTransform,
+    PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyTransform,
     RevertPrefillKeepAttentionTransform,
+    RevertPrefillOnlyExternalModuleMapperTransform,
     RevertPrefillOnlyTransform,
     SamplerTransform,
     SpDTransform,
@@ -2760,12 +2762,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         retain_full_kv: Optional[bool] = False,
     ):
         if enable:
+            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if enable_chunking:
                 self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
             else:
                 self.model, tf = PrefillOnlyTransform.apply(self.model)
 
         else:
+            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if retain_full_kv:
                 self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
@@ -2778,12 +2782,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         retain_full_kv: Optional[bool] = False,
     ):
         if enable:
+            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if enable_chunking:
                 self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
             else:
                 self.model, tf = PrefillOnlyTransform.apply(self.model)
 
         else:
+            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if retain_full_kv:
                 self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
@@ -2858,6 +2864,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.ccl_enabled = False
         if qaic_config:
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+            if mla_absorption := qaic_config.get("mla_absorption", None):
+                self.hash_params["mla_absorption"] = mla_absorption
+                setattr(self.model, "mla_absorption", mla_absorption)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
@@ -3065,10 +3074,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
+
+        # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
                 if not enable_chunking and self.continuous_batching:
@@ -3077,14 +3089,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
-                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                    prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
-                )
-                kv_cache_shape[2] = (
-                    seq_len + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                    if enable_chunking
-                    else seq_len
-                )
+                if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
+                    seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
+                        prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
+                    )
+                    kv_cache_shape[2] = (
+                        seq_len
+                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
+                        if enable_chunking
+                        else seq_len
+                    )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
                 self.hash_params.pop("prefill_only", None)
@@ -3169,6 +3183,41 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
+            if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
+                mla_absorption = self.model.qaic_config["mla_absorption"]
+                cache_compressed = mla_absorption.get("cache_compressed", False)
+            else:
+                cache_compressed = False
+            pkv_cache = self.model.get_dummy_pkv_cache(
+                self.model.config, fbs if self.continuous_batching else bs, seq_len
+            )
+            if cache_compressed:
+                example_inputs = {k: v for k, v in example_inputs.items() if "past" not in k}
+                dynamic_axes = {k: v for k, v in dynamic_axes.items() if "past" not in k}
+                output_names = [v for v in output_names if "past" not in v]
+                example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
+                for i in range(self.num_layers):
+                    example_inputs["compressed_kvs"][i].append(
+                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                    )
+                    example_inputs["compressed_kvs"][i].append(
+                        torch.zeros(pkv_cache[0][1].shape, dtype=self.model.config.torch_dtype)
+                    )
+                    dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                    dynamic_axes[f"k_pe.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                    output_names.append(f"compressed_kv.{i}_RetainedState")
+                    output_names.append(f"k_pe.{i}_RetainedState")
+            else:
+                example_inputs["past_key_values"] = [[] for _ in range(self.num_layers)]
+                for i in range(self.num_layers):
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                    )
+                    example_inputs["past_key_values"][i].append(
+                        torch.zeros(pkv_cache[0][1].shape, dtype=self.model.config.torch_dtype)
+                    )
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -3349,6 +3398,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **compiler_options,
     ) -> str:
         """
+
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
         This method generates a ``qpc`` package. If the model has not been exported yet,
@@ -3426,6 +3476,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
+            mla_absorption = self.model.qaic_config["mla_absorption"]
+            cache_compressed = mla_absorption.get("cache_compressed", False)
+        else:
+            cache_compressed = False
+        if (
+            self.model.qaic_config is not None
+            and self.model.qaic_config.get("mla_absorption", None) is not None
+            and not cache_compressed
+        ):
+            logger.warning("mla_absorption will be ignored as cache_compressed is set to False")
         if (kv_cache_batch_size or full_batch_size) and not self.continuous_batching:
             logger.warning(
                 "`kv_cache_batch_size` or `full_batch_size` is being passed"
@@ -3549,15 +3610,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if kw_spec := compiler_options.pop("specializations", None):
             specializations = kw_spec
-        # --- Compilation ---
-        custom_io = {}
+
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
+        # --- Compilation ---
+        custom_io = {}
+        if not cache_compressed:
+            for suffix in ["", "_RetainedState"]:
+                for i in range(self.num_layers):
+                    for kv in ["key", "value"]:
+                        custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+        else:
+            for suffix in ["", "_RetainedState"]:
+                for i in range(self.num_layers):
+                    custom_io[f"compressed_kv.{i}{suffix}"] = kv_cache_dtype
+                    custom_io[f"k_pe.{i}{suffix}"] = kv_cache_dtype
 
-        for suffix in ["", "_RetainedState"]:
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
         qpc_path = self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
