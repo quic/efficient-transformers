@@ -6,6 +6,8 @@
 # -----------------------------------------------------------------------------
 
 import os
+import re
+import subprocess
 from dataclasses import dataclass
 
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -101,7 +103,40 @@ SIZE_THRESHOLD_DEFAULT = 1024
 
 
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
-DEFAULT_AIC_HW_VERSION = "ai100"
+
+
+def get_default_aic_hw_version() -> str:
+    """Detect the AIC hardware version from the first available device.
+
+    Runs ``qaic-util -q`` and inspects the ``FW IMAGE_VARIANT`` field of the
+    first device (QID 0) to determine whether the hardware is ``ai100`` or
+    ``ai200``.  Falls back to ``"ai100"`` when no device is found or the tool
+    is unavailable.
+
+    Returns:
+        str: ``"ai200"`` if an AI200 device is detected, otherwise ``"ai100"``.
+    """
+    qaic_util = "/opt/qti-aic/tools/qaic-util"
+    try:
+        result = subprocess.run(
+            [qaic_util, "-q"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        output = result.stdout
+    except Exception:
+        return "ai100"
+
+    match = re.search(r"FW IMAGE_VARIANT\s*:\s*(\S+)", output)
+    if match:
+        variant = match.group(1).upper()
+        if "AIC200" in variant:
+            return "ai200"
+    return "ai100"
+
+
+DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
 # InternVL constants

@@ -93,6 +93,35 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
 }
 
 
+def _resolve_torch_dtype(kwargs: dict) -> None:
+    """
+    Resolve torch_dtype in kwargs before calling from_pretrained.
+
+    Rules
+    -----
+    * If the caller already set torch_dtype to something other than
+      bfloat16 (e.g. float16 or float32), leave it untouched.
+    * If torch_dtype is bfloat16 **and** the target HW is ai100
+      (the default), override it to float32 because the ai100 compiler
+      does not support bfloat16.
+    * If torch_dtype is bfloat16 and the target HW is ai200,
+      leave it as-is (ai200 supports bfloat16).
+    * If torch_dtype is not set at all, default to float32 so that
+      models whose config.json declares bfloat16 are still loaded in
+      a dtype that the ai100 compiler accepts.
+    """
+    aic_hw_version = constants.DEFAULT_AIC_HW_VERSION
+    current_dtype = kwargs.get("torch_dtype", None)
+
+    if (current_dtype is None or current_dtype == torch.bfloat16) and aic_hw_version != "ai200":
+        if current_dtype == torch.bfloat16:
+            logger.warning(
+                "torch_dtype=bfloat16 is not supported on %s. Overriding to torch.float32.",
+                aic_hw_version,
+            )
+        kwargs["torch_dtype"] = torch.float32
+
+
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Base class for QEfficient wrappers around HuggingFace transformer models.
@@ -154,6 +183,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -320,6 +350,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
@@ -700,6 +731,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
@@ -1276,6 +1308,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2089,6 +2122,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2701,6 +2735,8 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2953,6 +2989,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_offload = kwargs.pop("kv_offload", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
@@ -4263,6 +4301,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
