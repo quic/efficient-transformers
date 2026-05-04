@@ -9,6 +9,7 @@ import warnings
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
+import torch
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -262,6 +263,15 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
 )
 from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
     QEffDisentangledSelfAttention,
+)
+from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
+    QEffDeepseekV3Attention,
+    QEffDeepseekV3CustomRMSNormAIC,
+    QEffDeepseekV3DecoderLayer,
+    QEffDeepseekV3ForCausalLM,
+    QEffDeepseekV3Model,
+    QEffDeepseekV3MoE,
+    QEffPrefillOnlyDeepseekV3MoE,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -519,6 +529,7 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
+from QEfficient.utils.logging_utils import logger
 
 SPD_TARGET = "target"
 
@@ -792,6 +803,76 @@ class RevertPrefillOnlyTransform(ModuleMappingTransform):
     }
 
 
+class ReplicateKVHeadTransform:
+    """
+    Replicates KV heads in attention modules to match the number of KV heads in the target model.
+    This transform is used when the source model has fewer KV heads than required in target model.
+    """
+
+    def _duplicate_weights_for_linear_layer(
+        layer: nn.Module, orig_kv_heads: int, repeat: int, dim: int, hidden_size: int
+    ):
+        new_kv_heads = repeat  # for mla
+
+        layer.weight.data = torch.repeat_interleave(
+            layer.weight.data.view(orig_kv_heads, dim, hidden_size), repeat, 0
+        ).view(new_kv_heads * dim, hidden_size)
+
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, dim), repeat, 0).view(
+                new_kv_heads * dim
+            )
+
+    def _get_text_model(model):
+        """
+        Determine and return the appropriate text_model from a given model object.
+        """
+        # Check for VLMs
+        if hasattr(model, "language_model"):
+            if hasattr(model.language_model, "model"):
+                return model.language_model.model
+            else:
+                return model.language_model
+        # Check for CausalLMs
+        if hasattr(model, "model"):
+            return model.model
+
+        raise AttributeError("No suitable text model found in the provided model.")
+
+    @classmethod
+    def apply(cls, model: nn.Module, num_kv_heads_repeat: int = 1) -> nn.Module:
+        """
+        Replicates KV heads in attention modules based on provided multiplier.
+
+        Args:
+            model: The model to apply the transform to.
+            num_kv_heads_repeat: The number of times to repeat the KV heads.
+        """
+        transformed = False
+        if num_kv_heads_repeat is not None and num_kv_heads_repeat > 1:
+            text_model = cls._get_text_model(model)
+
+            orig_kv_heads = 1  # for mla #text_model.config.num_key_value_heads
+            new_kv_heads = num_kv_heads_repeat * orig_kv_heads
+            text_model.config.orig_kv_heads = orig_kv_heads
+            text_model.config.num_key_value_heads = new_kv_heads
+
+            hidden_size = text_model.config.hidden_size
+
+            logger.warning(f"Original KV heads: {orig_kv_heads}")
+            logger.warning(f"Modified KV heads: {new_kv_heads}")
+            transformed = True
+            for block in text_model.layers:
+                attn = getattr(block, "cross_attn", getattr(block, "self_attn", None))
+                attn.num_key_value_heads = new_kv_heads
+                head_dim = attn.kv_lora_rank + attn.qk_rope_head_dim
+
+                cls._duplicate_weights_for_linear_layer(
+                    attn.kv_a_proj_with_mqa, orig_kv_heads, num_kv_heads_repeat, head_dim, hidden_size
+                )
+        return model, transformed
+
+
 class SpDTransform:
     """
     Apply generic QEffForCausalLM forward pass to extract `num_speculative_tokens+1` hidden states before computing logits during decode phase and extract last predicted token during prefill.
@@ -912,6 +993,7 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
 
 
 class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
+    _match_class_replace_method = {}
     _match_string_replace_method = {
         "InternVLChatModel": {
             "forward": QEffInternVLModel.forward,
@@ -967,9 +1049,56 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "RMSNorm": {
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
         },
+        "DeepseekV3ForCausalLM": {
+            "forward": QEffDeepseekV3ForCausalLM.forward,
+            "get_submodules_for_export": QEffDeepseekV3ForCausalLM.get_submodules_for_export,
+            "get_dummy_pkv_cache": QEffDeepseekV3ForCausalLM.get_dummy_pkv_cache,
+        },
+        "DeepseekV3Model": {"forward": QEffDeepseekV3Model.forward, "__qeff_init__": QEffDeepseekV3Model.__qeff_init__},
+        "DeepseekV3DecoderLayer": {
+            "forward": QEffDeepseekV3DecoderLayer.forward,
+        },
+        "DeepseekV3MoE": {
+            "forward": QEffDeepseekV3MoE.forward,
+            "moe": QEffDeepseekV3MoE.moe,
+            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
+        },
+        "DeepseekV3Attention": {
+            "forward": QEffDeepseekV3Attention.forward,
+            "forward_full_kv": QEffDeepseekV3Attention.forward_full_kv,
+            "forward_full_kv_h_blocking": QEffDeepseekV3Attention.forward_full_kv_h_blocking,
+            "fused_forward": QEffDeepseekV3Attention.fused_forward,
+            "fused_forward_h_blocking": QEffDeepseekV3Attention.fused_forward_h_blocking,
+            "fused_forward_kv_blocking": QEffDeepseekV3Attention.fused_forward_kv_blocking,
+            "fused_forward_orig": QEffDeepseekV3Attention.fused_forward_orig,
+            "__qeff_init__": QEffDeepseekV3Attention.__qeff_init__,
+        },
+        "DeepseekV3RMSNorm": {
+            "forward": QEffDeepseekV3CustomRMSNormAIC.forward,
+        },
     }
 
+
+class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
+    _match_string_replace_method = {
+        "DeepseekV3MoE": {
+            "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
+            "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
+            "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
+        },
+    }
+
+
+class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
+    _match_class_replace_method = {}
+    _match_string_replace_method = {
+        "DeepseekV3MoE": {
+            "forward": QEffDeepseekV3MoE.forward,
+            "moe": QEffDeepseekV3MoE.moe,
+            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
+        },
+    }
 
 
 class T5ModelTransform(ModuleMappingTransform):
@@ -1049,7 +1178,9 @@ class BlockingAttentionTransform:
             if type(module) in cls._skip_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
                 continue
-            if type(module) in supported_attention_classes:
+            if type(module) in supported_attention_classes or "DeepseekV3ForCausalLM" in (
+                getattr(model.config, "architectures", None) or []
+            ):
                 module.attn_blocking_config = attn_blocking_config
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:

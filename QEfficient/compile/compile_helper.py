@@ -138,7 +138,6 @@ def compile_kv_model_on_cloud_ai_100(
         "-retained-state",
         f"-aic-num-cores={num_cores}",
         f"-custom-IO-list-file={custom_io_path}",
-        "-compile-only",
         f"-aic-binary-dir={aic_binary_dir}",
     ]
     if mxfp6:

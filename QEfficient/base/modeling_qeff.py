@@ -30,6 +30,7 @@ from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
     constants,
@@ -286,6 +287,7 @@ class QEFFBaseModel(ABC):
         """
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
+        export_kwargs.pop("mla_absorption", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
@@ -337,6 +339,18 @@ class QEFFBaseModel(ABC):
                             raise ValueError(
                                 f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(pkv_layers[0])}"
                             )
+                elif param == "compressed_kvs":
+                    for i in range(len(example_inputs["compressed_kvs"])):
+                        input_names.extend(
+                            [
+                                f"compressed_kv.{i}",
+                            ]
+                        )
+                        input_names.extend(
+                            [
+                                f"k_pe.{i}",
+                            ]
+                        )
                 else:
                     input_names.append(param)
 
@@ -397,6 +411,7 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
+        mla_absorption: Optional[Dict[str, bool]] = None,
         qaic_config: Optional[dict] = None,
         **compiler_options,
     ):
@@ -404,6 +419,7 @@ class QEFFBaseModel(ABC):
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
+            "mla_absorption": mla_absorption,
         }
 
         if prefill_only:
@@ -452,11 +468,22 @@ class QEFFBaseModel(ABC):
 
         qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
 
-        if getattr(self.model, "config", None) or getattr(self.model.model, "config", None):
+        model_config = getattr(self.model, "config", None) or getattr(self.model.model, "config", None)
+
+        if model_config:
+            if "DeepseekV3ForCausalLM" in (getattr(model_config, "architectures", None) or []):
+                if qaic_config:
+                    if qaic_config.get("blocking_mode", None) == "h":
+                        qaic_config["head_block_size"] = qaic_config.get("head_block_size", num_devices)
+                    num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", 1)
+                    self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
+                        self.model, num_kv_heads_repeat
+                    )
+                    if replicate_kv_transformed:
+                        self.hash_params["config"] = self.model.config.to_diff_dict()
+
             blocking_config = build_transformer_blocking_config_for_transform(
-                getattr(self.model, "config", None)
-                if getattr(self.model, "config", None)
-                else getattr(self.model.model, "config", None),
+                model_config,
                 ctx_len=ctx_len,
                 seq_len=seq_len,
                 bs=bs,
@@ -490,6 +517,7 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        mla_absorption: Optional[Dict[str, bool]] = None,
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         **compiler_options,
@@ -517,6 +545,7 @@ class QEFFBaseModel(ABC):
 
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
+
         onnx_path = Path(
             onnx_path
             if onnx_path
@@ -529,6 +558,7 @@ class QEFFBaseModel(ABC):
                 offload_pt_weights,
                 use_onnx_subfunctions,
                 retain_full_kv,
+                mla_absorption,
                 num_devices=mdp_ts_num_devices,
                 qaic_config=qaic_config,
                 **compiler_options,
