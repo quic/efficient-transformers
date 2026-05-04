@@ -13,6 +13,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Dict
 
+import torch
 import torch.nn as nn
 
 from QEfficient.base.onnx_transforms import (
