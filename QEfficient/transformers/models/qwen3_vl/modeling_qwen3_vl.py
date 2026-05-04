@@ -503,12 +503,11 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
 
-        # Qwen3-VL text MLP returns a tuple; element 0 is the FFN output.
         ffn_blocking_config = getattr(self, "ffn_blocking_config", FFNBlockingConfig())
         use_ffn_blocking = ffn_blocking_config is not None and ffn_blocking_config.mode != FFNBlockingMode.NONE
 
         if use_ffn_blocking:
-            ffn_out = generic_blocked_ffn_interface(
+            hidden_states = generic_blocked_ffn_interface(
                 w1=self.mlp.gate_proj,
                 w2=self.mlp.down_proj,
                 w3=self.mlp.up_proj,
@@ -516,9 +515,9 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
                 blocking_config=ffn_blocking_config,
             )
         else:
-            ffn_out = self.mlp(hidden_states)[0]
+            hidden_states = self.mlp(hidden_states)
 
-        hidden_states = residual + ffn_out
+        hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
 

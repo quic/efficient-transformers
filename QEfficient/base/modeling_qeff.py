@@ -33,8 +33,8 @@ from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
-    ReplicateKVHeadTransform,
     BlockingFFNTransform,
+    ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
     constants,
