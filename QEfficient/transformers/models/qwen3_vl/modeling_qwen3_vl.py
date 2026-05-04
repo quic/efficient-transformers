@@ -36,6 +36,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
+from QEfficient.blocking.ffn_blocking import FFNBlockingConfig, FFNBlockingMode, generic_blocked_ffn_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
@@ -501,8 +502,23 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states[0]
+
+        # Qwen3-VL text MLP returns a tuple; element 0 is the FFN output.
+        ffn_blocking_config = getattr(self, "ffn_blocking_config", FFNBlockingConfig())
+        use_ffn_blocking = ffn_blocking_config is not None and ffn_blocking_config.mode != FFNBlockingMode.NONE
+
+        if use_ffn_blocking:
+            ffn_out = generic_blocked_ffn_interface(
+                w1=self.mlp.gate_proj,
+                w2=self.mlp.down_proj,
+                w3=self.mlp.up_proj,
+                x=hidden_states,
+                blocking_config=ffn_blocking_config,
+            )
+        else:
+            ffn_out = self.mlp(hidden_states)[0]
+
+        hidden_states = residual + ffn_out
 
         outputs = (hidden_states,)
 
