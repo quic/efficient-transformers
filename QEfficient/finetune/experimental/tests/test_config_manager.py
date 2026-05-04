@@ -231,8 +231,8 @@ def test_torch_dtype_validation():
     """Test that torch_dtype validation works correctly."""
     # Test with default config - should have torch_dtype set to fp16 by default
     config_manager = ConfigManager()
-    training_config = config_manager.get_training_config()
-    assert training_config.get("torch_dtype") == "fp16"
+    model_config = config_manager.get_model_config()
+    assert model_config.get("torch_dtype") == "float16"
 
     # Validation should pass with default config
     config_manager.validate_config()  # Should not raise
@@ -240,11 +240,11 @@ def test_torch_dtype_validation():
 
 def test_torch_dtype_invalid():
     """Test that invalid torch_dtype raises validation error."""
-    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, ModelConfig
 
-    # Create config with invalid torch_dtype
-    training_config = TrainingConfig(torch_dtype="invalid_dtype")
-    master_config = MasterConfig(training=training_config)
+    # Create config with invalid model torch_dtype
+    model_config = ModelConfig(torch_dtype="invalid_dtype")
+    master_config = MasterConfig(model=model_config)
     config_manager = ConfigManager(config=master_config)
 
     # Validation should fail
@@ -286,6 +286,7 @@ def test_parallelism_world_size_product_mismatch(monkeypatch):
     """WORLD_SIZE must match pp*tp*ddp when TP/PP mode is enabled."""
     from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
 
+    monkeypatch.setenv("WORLD_SIZE", "8")
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
 
     training_config = TrainingConfig(tp_degree=2, pp_degree=1, ddp_degree=2)
@@ -296,6 +297,40 @@ def test_parallelism_world_size_product_mismatch(monkeypatch):
         config_manager.validate_config()
 
     assert "must equal WORLD_SIZE" in str(exc_info.value)
+
+
+def test_parallelism_local_world_size_product_mismatch(monkeypatch):
+    """LOCAL_WORLD_SIZE must match pp*tp*ddp when TP/PP mode is enabled."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    monkeypatch.setenv("WORLD_SIZE", "4")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
+
+    training_config = TrainingConfig(tp_degree=2, pp_degree=1, ddp_degree=2)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    with pytest.raises(ValueError) as exc_info:
+        config_manager.validate_config()
+
+    assert "must equal LOCAL_WORLD_SIZE" in str(exc_info.value)
+
+
+def test_parallelism_pure_ddp_multi_node_local_world_size_mismatch_allowed(monkeypatch):
+    """Pure multi-node DDP should not enforce pp*tp*ddp == LOCAL_WORLD_SIZE."""
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
+
+    # Pure DDP mode (pp=1, tp=1): ddp_degree does not need to match
+    # launcher local world size.
+    training_config = TrainingConfig(tp_degree=1, pp_degree=1, ddp_degree=8)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    # Should not raise
+    config_manager.validate_config()
 
 
 def test_parallelism_multi_node_ddp_does_not_require_ddp_degree_world_size_match(monkeypatch):

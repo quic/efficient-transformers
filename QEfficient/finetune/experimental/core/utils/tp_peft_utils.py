@@ -136,3 +136,40 @@ def apply_peft_to_model(model, tp_mesh=None, peft_config=None):
     apply_tp_modification_for_peft(model, tp_mesh)
 
     return model
+
+
+def _patch_tp_hooks_compat():
+    import inspect
+
+    from transformers.integrations import tensor_parallel as _tp_mod
+
+    fn = _tp_mod.add_tensor_parallel_hooks_to_module
+    if "current_module_plan" not in inspect.signature(fn).parameters:
+        return  # transformers <5.5, PEFT's 5-arg call already matches
+
+    orig = fn
+
+    def wrapper(model, module, tp_plan, layer_name, *rest, **kwargs):
+        # New 6-arg call: pass through.
+        if "current_module_plan" in kwargs or len(rest) >= 2:
+            return orig(model, module, tp_plan, layer_name, *rest, **kwargs)
+        # Legacy 5-arg PEFT call: rest == (device_mesh,).
+        # The plan string is the same for both `tp_plan` and `current_module_plan`
+        # for the simple LoRA case (colwise / rowwise / embedding_*).
+        if len(rest) == 1:
+            (device_mesh,) = rest
+            return orig(
+                model,
+                module,
+                tp_plan,
+                layer_name,
+                tp_plan,
+                device_mesh,
+                **kwargs,
+            )
+        return orig(model, module, tp_plan, layer_name, *rest, **kwargs)
+
+    _tp_mod.add_tensor_parallel_hooks_to_module = wrapper
+
+
+_patch_tp_hooks_compat()

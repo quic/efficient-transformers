@@ -41,7 +41,8 @@ training:
   seed: 42
   device: "qaic"
   do_eval: True
-  torch_dtype: "fp16"
+  fp16: True
+  bf16: False
   eval_strategy: "epoch"
   eval_steps: 100
   per_device_train_batch_size: 1

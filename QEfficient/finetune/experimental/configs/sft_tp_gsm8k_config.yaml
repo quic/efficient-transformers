@@ -10,6 +10,7 @@ model:
   auto_class_name: "AutoModelForCausalLM" # Auto class to load the model with
   model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
   use_peft: true # Enable PEFT (Parameter Efficient Fine-Tuning)
+  torch_dtype: "fp16"            # Weight dtype for model loading
   peft_config:
     lora_r: 8 # LoRA rank
     lora_alpha: 16
@@ -34,6 +35,8 @@ training:
   gradient_accumulation_steps: 1  # Number of steps to accumulate gradients
   per_device_train_batch_size: 1  # Batch size per device during training
   num_train_epochs: 1
+  fp16: True                      # AMP/GradScaler flag
+  bf16: False                     # AMP autocast flag (mutually exclusive with fp16)
   torch_compile: False # Whether to use torch.compile
   tp_degree: 2
   ddp_degree: 1

@@ -283,6 +283,7 @@ def create_master_config(
             use_cache=False,
             attn_implementation="sdpa",
             device_map=None,
+            torch_dtype="fp16",
             peft_config=PeftConfig(
                 lora_r=TEST_LORA_R,
                 lora_alpha=TEST_LORA_ALPHA,
@@ -331,6 +332,8 @@ def create_master_config(
             max_steps=TEST_MAX_STEPS,
             eval_steps=TEST_EVAL_STEPS,
             seed=TEST_SEED,
+            fp16=False,
+            bf16=False,
         ),
     )
 

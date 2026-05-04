@@ -33,8 +33,7 @@ def prepare_training_config(
     # Get training config as dict and create mutable copy to avoid mutating original
     training_config = dict(config_manager.get_training_config())
 
-    # Handle dtype conversion
-    # To do: (For Tanisha) Check if torch_dtype should rather be added directly in model_config only in config_manager.py
+    # torch_dtype is a model loading concern and is handled in model config.
     parallelism_config = {}
     tp_degree = training_config.get("tp_degree", 1)
     pp_degree = training_config.get("pp_degree", 1)
@@ -53,32 +52,13 @@ def prepare_training_config(
         pc = ParallelismConfig(**parallelism_config)
         training_config["parallelism_config"] = pc
 
-    torch_dtype = training_config.pop("torch_dtype", None)
-    if torch_dtype is None:
-        raise ValueError("'torch_dtype' field is required in training configuration. Expected one of: ['fp16', 'bf16']")
-
-    # Normalize precision flags before mapping torch_dtype.
-    # This avoids contradictory user-provided combinations such as
-    # torch_dtype="fp16" with fp16=False.
-    training_config.pop("fp16", None)
-    training_config.pop("bf16", None)
-
-    device = training_config.get("device", "qaic")
-    if device == "qaic":
-        # For QAIC, avoid setting HF's fp16/bf16 TrainingArguments flags:
-        # - bf16=True triggers a GPU-only capability check in TrainingArguments.
-        # - fp16=True routes through QAIC GradScaler unscale path that can fail in TP+DDP.
-        # Keep precision encoded via model torch_dtype instead.
-        training_config["fp16"] = False
-        training_config["bf16"] = False
-    else:
-        if torch_dtype in ("fp16", "bf16"):
-            training_config[torch_dtype] = True
+    # Keep AMP/autocast flags decoupled from model `torch_dtype`.
+    # `fp16`/`bf16` here control mixed precision execution
+    # (and GradScaler path for fp16).
+    training_config["fp16"] = bool(training_config.get("fp16", False))
+    training_config["bf16"] = bool(training_config.get("bf16", False))
 
     training_config["data_seed"] = training_config.get("seed")
-
-    # Restoring the "torch_dtype" after torch_dtype conversion using the saved value
-    training_config["torch_dtype"] = torch_dtype
 
     # Handle scheduler configuration
     scheduler_config = config_manager.get_scheduler_config()

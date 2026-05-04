@@ -16,10 +16,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from QEfficient.finetune.experimental.core.callbacks import TrainingLogger, replace_progress_callback
 import torch
 import torch.distributed as dist
 from accelerate.utils import ParallelismConfig
+from peft import get_peft_model
+
+from QEfficient.finetune.experimental.core.callbacks import TrainingLogger, replace_progress_callback
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory
 from QEfficient.finetune.experimental.core.config_manager import (
     ConfigManager,
@@ -31,7 +33,6 @@ from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
 from QEfficient.finetune.experimental.core.trainer import sft_trainer  # noqa: F401
 from QEfficient.finetune.experimental.core.utils.device_map_utils import get_device_map
 from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
-from QEfficient.finetune.experimental.core.utils.tp_peft_utils import apply_peft_to_model
 from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
 
 logger = Logger(__name__)
@@ -67,7 +68,7 @@ class FineTuningPipeline:
 
         # Prepare training configuration
         self.training_config = prepare_training_config(config_manager=self.config_manager)
-        self.tp_enabled = self.training_config["tp_degree"] > 1
+        self.tp_enabled = self.training_config.get("tp_degree", 1) > 1
         if self.tp_enabled:
             self._initialize_dist_tp()
         # Create datasets
@@ -236,10 +237,13 @@ class FineTuningPipeline:
                 peft_config_dataclass = model_config.get("peft_config")
                 if peft_config_dataclass is not None:
                     peft_config = convert_peft_config_to_lora_config(peft_config_dataclass)
+
                 # Apply PEFT to the model and include PEFT layers in TP plan
-                model_instance.model = apply_peft_to_model(
-                    model_instance.model, tp_mesh=tp_mesh, peft_config=peft_config
-                )
+                # model_instance.model = apply_peft_to_model(
+                #     model_instance.model, tp_mesh=tp_mesh, peft_config=peft_config
+                # )
+                peft_model = get_peft_model(model_instance.model, peft_config)
+                model_instance.model = peft_model
 
         return model_instance
 
@@ -338,15 +342,17 @@ class FineTuningPipeline:
         # variants that do not support group_by_length).
         args_signature = inspect.signature(args_cls.__init__)
         args_param_names = {
-            name for name, param in args_signature.parameters.items() if name != "self" and param.kind != param.VAR_KEYWORD
+            name
+            for name, param in args_signature.parameters.items()
+            if name != "self" and param.kind != param.VAR_KEYWORD
         }
         filtered_training_config = {k: v for k, v in training_config.items() if k in args_param_names}
 
         removed_keys = sorted(set(training_config) - set(filtered_training_config))
         if removed_keys:
+            args_cls_name = getattr(args_cls, "__name__", type(args_cls).__name__)
             logger.log_rank_zero(
-                "Dropping unsupported trainer args for "
-                f"{args_cls.__name__}: {', '.join(removed_keys)}",
+                f"Dropping unsupported trainer args for {args_cls_name}: {', '.join(removed_keys)}",
                 level=logging.WARNING,
             )
 
