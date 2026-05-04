@@ -8,11 +8,11 @@
 import json
 import logging
 import os
-import queue
 import threading
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from tabulate import tabulate
 
@@ -27,6 +27,7 @@ class JSONNamespaceFormatter(logging.Formatter):
 
     def format(self, record):
         log_record = {
+            "created": record.created,
             "date": datetime.fromtimestamp(record.created).strftime("%Y-%m-%d"),
             "time": datetime.fromtimestamp(record.created).strftime("%H:%M:%S"),
             "level": record.levelname,
@@ -36,38 +37,6 @@ class JSONNamespaceFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         return json.dumps(log_record)
-
-
-class QEFFLoggerThread(threading.Thread):
-    """
-    Custom formatter to output log records in JSON format with metadata.
-
-    Methods:
-        format(record): Formats a log record into a JSON string.
-
-    Parameters:
-        record (logging.LogRecord): The log record to format.
-
-    Returns:
-        str: JSON-formatted log string.
-    """
-
-    def __init__(self, logger, log_queue):
-        super().__init__(daemon=True)
-        self.logger = logger
-        self.log_queue = log_queue
-        self.running = True
-
-    def run(self):
-        while self.running:
-            try:
-                record = self.log_queue.get(timeout=1)
-                self.logger.handle(record)
-            except queue.Empty:
-                continue
-
-    def stop(self):
-        self.running = False
 
 
 class QEFFLogger:
@@ -81,8 +50,7 @@ class QEFFLogger:
 
     _instance: Optional[logging.Logger] = None
     _logfile: Optional[str] = None
-    _log_queue: queue.Queue = queue.Queue()
-    _logger_thread: Optional[QEFFLoggerThread] = None
+    _init_lock = threading.Lock()
 
     def __init__(self, loglevel: Optional[str] = None, log_path: Optional[str] = None):
         """
@@ -91,7 +59,10 @@ class QEFFLogger:
             loglevel: kept for backward compatibility, but env `QEFF_LOG_LEVEL` takes precedence.
             log_path: optional path to the log file (highest priority).
         """
-        if QEFFLogger._instance is None:
+        with QEFFLogger._init_lock:
+            if QEFFLogger._instance is not None:
+                return
+
             # Determine effective log level:
             # Priority: ENV(QEFF_LOG_LEVEL) -> arg(loglevel) -> LoggerConfig.default_level
             env_level = os.environ.get(LoggerConfig.log_level_env)
@@ -103,19 +74,28 @@ class QEFFLogger:
 
             # Resolve log path (arg > env > default dir + timestamp)
             env_path = os.environ.get(LoggerConfig.log_path_env)
-            self.log_path = log_path or env_path
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            if not self.log_path:
-                os.makedirs(LoggerConfig.default_log_dir, exist_ok=True)
-                self.log_path = os.path.join(LoggerConfig.default_log_dir, f"QEFF_{timestamp}.log")
-            else:
-                os.makedirs(self.log_path, exist_ok=True)
-                self.log_path = os.path.join(self.log_path, f"QEFF_{timestamp}.log")
-            # Initialize the base logger and start background thread
+            self.log_path = self._resolve_log_path(log_path or env_path)
+
+            # Initialize the base logger
             self.logger = self._initialize_logger()
             QEFFLogger._instance = self.logger
-            QEFFLogger._logger_thread = QEFFLoggerThread(self.logger, QEFFLogger._log_queue)
-            QEFFLogger._logger_thread.start()
+
+    @classmethod
+    def _resolve_log_path(cls, requested_path: Optional[str]) -> str:
+        """Resolve the final log file path from a user path or defaults."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_file = os.path.join(LoggerConfig.default_log_dir, f"QEFF_{timestamp}.log")
+        if not requested_path:
+            os.makedirs(LoggerConfig.default_log_dir, exist_ok=True)
+            return default_file
+
+        path = Path(requested_path).expanduser()
+        if path.suffix.lower() == ".log":
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return str(path)
+
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path / f"QEFF_{timestamp}.log")
 
     def _initialize_logger(self) -> logging.Logger:
         """
@@ -125,16 +105,20 @@ class QEFFLogger:
 
         logger = logging.getLogger("QEFF_LOGGER")
         logger.setLevel(getattr(logging, self.loglevel))
+        logger.propagate = False
 
         # Avoid duplicate handlers if reinitialized in same process
-        if not logger.handlers:
-            handler = RotatingFileHandler(
-                self.log_path,
-                maxBytes=LoggerConfig.max_bytes,
-                backupCount=LoggerConfig.backup_count,
-            )
-            handler.setFormatter(JSONNamespaceFormatter())
-            logger.addHandler(handler)
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
+
+        handler = RotatingFileHandler(
+            self.log_path,
+            maxBytes=LoggerConfig.max_bytes,
+            backupCount=LoggerConfig.backup_count,
+        )
+        handler.setFormatter(JSONNamespaceFormatter())
+        logger.addHandler(handler)
 
         return logger
 
@@ -162,18 +146,8 @@ class QEFFLogger:
         if not isinstance(level_num, int):
             raise ValueError(f"Invalid log level: {level}")
 
-        record = cls._instance.makeRecord(
-            name="QEFF_LOGGER",
-            level=level_num,
-            fn=fn,
-            lno=lno,
-            msg=msg,
-            args=(),
-            exc_info=None,
-            func=func,
-            extra={"namespace": namespace},
-        )
-        cls._log_queue.put(record)
+        logger = logging.LoggerAdapter(cls._instance, {"namespace": namespace})
+        logger.log(level_num, msg, stacklevel=2)
 
     @classmethod
     def set_loglevel(cls, loglevel: Optional[str] = None):
@@ -196,16 +170,12 @@ class QEFFLogger:
     @classmethod
     def close_logger(cls):
         """
-        Gracefully shut down the logger and its thread.
+        Gracefully shut down the logger.
         """
-        if cls._logger_thread:
-            cls._logger_thread.stop()
-            cls._logger_thread.join()
-            cls._logger_thread = None
-
         if cls._instance:
             handlers = cls._instance.handlers[:]
             for handler in handlers:
+                handler.flush()
                 handler.close()
                 cls._instance.removeHandler(handler)
             cls._instance = None
@@ -217,85 +187,98 @@ class QEFFLogger:
         return datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
 
     @classmethod
-    def print_table(cls) -> None:
+    def get_logfile_path(cls) -> Optional[str]:
+        """Return active log file path, if logger is initialized."""
+        return cls._logfile
+
+    @classmethod
+    def _iter_log_records(cls, path: str) -> Iterable[Dict[str, Any]]:
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    yield record
+
+    @classmethod
+    def _get_record_timestamp(cls, record: Dict[str, Any]) -> Optional[datetime]:
+        created = record.get("created")
+        if isinstance(created, (float, int)):
+            return datetime.fromtimestamp(float(created))
+
+        date_str = record.get("date")
+        time_str = record.get("time")
+        if not date_str or not time_str:
+            return None
+        try:
+            return cls._parse_dt(str(date_str), str(time_str))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _extract_milestone_times(cls, path: str) -> Dict[str, datetime]:
+        """
+        Extract first occurrence timestamp for each milestone key from JSON log lines.
+        """
+        milestone_patterns: Dict[str, Tuple[str, ...]] = {
+            "START_LOAD": ("initiating the model weight loading",),
+            "LOAD_DONE": ("pytorch transforms applied to model",),
+            "ONNX_SAVED": ("model export is finished and saved", "transformed onnx saved"),
+            "COMPILE_DONE": ("model compilation is finished and saved",),
+            "TEXT_DONE": ("text generation finished", "text generated finised"),
+            "TEXT_READY": ("specialization_file_path",),
+        }
+
+        times: Dict[str, datetime] = {}
+        for record in cls._iter_log_records(path):
+            message = str(record.get("message", "")).lower()
+            timestamp = cls._get_record_timestamp(record)
+            if not timestamp:
+                continue
+
+            for key, patterns in milestone_patterns.items():
+                if key in times:
+                    continue
+                if any(pattern in message for pattern in patterns):
+                    times[key] = timestamp
+                    break
+        return times
+
+    @classmethod
+    def print_table(cls) -> bool:
         """
         Parse the line-delimited JSON log in cls._logfile and print timing table with t1 as baseline (0.0s).
         """
         path = cls._logfile
         if not path:
-            raise FileNotFoundError(f"Log file path is not set ({cls._logfile} is None).")
+            return False
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Log file does not exist: {path}")
+            return False
 
-        SUBSTR_TO_KEY: Dict[str, str] = {
-            "initiating the model weight loading.": "START_LOAD",
-            "pytorch transforms applied to model": "LOAD_DONE",
-            "transformed onnx saved": "ONNX_SAVED",
-            "model compilation is finished and saved": "COMPILE_DONE",
-            "text generated finised": "TEXT_DONE",
-            "specialization_file_path": "TEXT_READY",
-        }
+        times = cls._extract_milestone_times(path)
+        if not times:
+            return False
 
-        def classify(msg: str) -> Optional[str]:
-            m = msg.lower()
-            for needle, key in SUBSTR_TO_KEY.items():
-                if needle in m:
-                    return key
-            return None
-
-        from datetime import timedelta
-
-        t_start: Optional[datetime] = None
-        last_ts: Optional[datetime] = None
-        times: Dict[str, datetime] = {}
-
-        with open(path, "r", encoding="utf-8") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line:
-                    continue
-                try:
-                    rec: Dict[str, Any] = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                date_str = rec.get("date")
-                time_str = rec.get("time")
-                msg = rec.get("message", "")
-                if not date_str or not time_str:
-                    continue
-
-                ts = cls._parse_dt(date_str, time_str)
-
-                # Enforce strictly increasing timestamps
-                if last_ts is not None and ts <= last_ts:
-                    ts = last_ts + timedelta(milliseconds=1)
-
-                key = classify(msg)
-                if key and key not in times:
-                    times[key] = ts
-                    if key == "START_LOAD" and t_start is None:
-                        t_start = ts
-
-                last_ts = ts
-
-        if t_start is None:
-            logging.warning(
-                "Missing required milestone: 'Initiating the model weight loading.' "
-                "Defaulting t_start to first available timestamp (0.0 baseline)."
-            )
-
-            if times:
-                # Use earliest recorded milestone as baseline
-                t_start = min(times.values())
-            else:
-                # Absolute fallback: zero baseline
-                t_start = datetime.min
-
+        t_start = times.get("START_LOAD", min(times.values()))
         t2 = times.get("LOAD_DONE", t_start)  # end of loading
-        t3 = times.get("ONNX_SAVED") or t2  # export end
-        t4 = times.get("COMPILE_DONE") or t3  # compile end
-        t5 = times.get("TEXT_DONE") or times.get("TEXT_READY") or t4  # text gen end
+        t3 = times.get("ONNX_SAVED", t2)  # export end
+        t4 = times.get("COMPILE_DONE", t3)  # compile end
+        t5 = times.get("TEXT_DONE", times.get("TEXT_READY", t4))  # text gen end
+
+        # Keep boundaries monotonic for stable table output.
+        if t2 < t_start:
+            t2 = t_start
+        if t3 < t2:
+            t3 = t2
+        if t4 < t3:
+            t4 = t3
+        if t5 < t4:
+            t5 = t4
 
         def offset_seconds(t: datetime) -> float:
             return (t - t_start).total_seconds()
@@ -315,3 +298,4 @@ class QEFFLogger:
         ]
         print("\n")
         print(tabulate(timing_data, headers=["Step", "Time (s)"], tablefmt="github", floatfmt=".3f"))
+        return True
