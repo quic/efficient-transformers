@@ -445,7 +445,7 @@ def ffn_configurator(
                     best_config.update(
                         {
                             "num_token_blocks": num_token_blocks,
-                            "num_weights_block": num_weight_blocks,
+                            "num_weight_blocks": num_weight_blocks,
                             "split_for_soc": "weights",
                             "split_for_nsp": "weights",
                             "vtcm_footprint": max(footprints.values()),
