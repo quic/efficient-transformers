@@ -257,7 +257,7 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3ForCausalLM,
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
-    #QEffPrefillOnlyDeepseekV3MoE,
+    QEffPrefillOnlyDeepseekV3MoE,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -1061,9 +1061,11 @@ class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
     _match_string_replace_method = {
         "DeepseekV3MoE": {
-            "forward": QEffDeepseekV3MoE.forward,
+            "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
             #"moe": QEffPrefillOnlyDeepseekV3MoE.moe,
             #"__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
+            "_forward_expert_blocked": QEffPrefillOnlyDeepseekV3MoE._forward_expert_blocked,
+            "_cumsum_scatter_gather_update_expert_blocked": QEffPrefillOnlyDeepseekV3MoE._cumsum_scatter_gather_update_expert_blocked,
         },
     }
 
