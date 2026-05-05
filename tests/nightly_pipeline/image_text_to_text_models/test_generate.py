@@ -142,6 +142,8 @@ def test_generate_image_text_to_text_model(
         image = Image.open(requests.get(img_url, stream=True).raw)
         if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
             image = image.resize((1540, 1540))
+        if model_name == "ibm-granite/granite-vision-3.2-2b":
+            image = image.resize((1610, 1109))
         conversation = [
             {
                 "role": "user",
