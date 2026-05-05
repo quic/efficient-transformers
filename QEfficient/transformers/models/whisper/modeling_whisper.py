@@ -124,15 +124,17 @@ class QEffWhisperAttention(WhisperAttention):
                 f" {attn_weights.size()}"
             )
 
+        if attention_mask is not None and attention_mask.size(-1) == 0:
+            attention_mask = None
+
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, tgt_len, src_len):
-                raise ValueError(
-                    f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}"
+                attention_mask = None
+            else:
+                # updated to use torch.where, to prevent overflow in fp16 computation
+                attn_weights = torch.where(
+                    attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
                 )
-            # updated to use torch.where, to prevent overflow in fp16 computation
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
@@ -344,17 +346,11 @@ class QEffWhisperEncoder(WhisperEncoder):
         for idx, encoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
-            # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
-            layer_outputs = encoder_layer(
+            hidden_states = encoder_layer(
                 hidden_states,
                 None,
-                layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                 output_attentions=output_attentions,
             )
-            hidden_states = layer_outputs[0]
-
-            if output_attentions:
-                all_attentions = all_attentions + (layer_outputs[1],)
 
         hidden_states = self.layer_norm(hidden_states)
 

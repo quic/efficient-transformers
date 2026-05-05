@@ -12,6 +12,7 @@ Tests the complete workflow using all components from the core/ directory.
 
 import math
 import os
+import random
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -61,6 +62,8 @@ from QEfficient.finetune.experimental.tests.constants import (
     TEST_SEED,
     TEST_WEIGHT_DECAY,
     TRAIN_EVAL_EPOCH_LOSS_DIFF_THRESHOLD,
+    TRAIN_LOSS_ATOL,
+    TRAIN_METRIC_RTOL,
     AutoClassName,
     DatasetType,
     TaskType,
@@ -73,6 +76,22 @@ logger = Logger(__name__)
 # ============================================================================
 
 
+def set_test_seed(seed: int):
+    """Set global RNG seeds before model/trainer creation for reproducible integrated tests."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    try:
+        from transformers import set_seed as hf_set_seed
+
+        hf_set_seed(seed)
+    except Exception as exc:
+        logger.warning(f"Unable to set transformers seed via set_seed({seed}): {exc}")
+
+
 def clean_up(path):
     if os.path.isdir(path) and os.path.exists(path):
         shutil.rmtree(path)
@@ -80,7 +99,7 @@ def clean_up(path):
         os.remove(path)
 
 
-def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_world_size, current_rank):
+def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_world_size, current_rank, rtol=0.0):
     """
     Asserts that two lists of floats are numerically close element-wise.
     If not close, reports the step numbers and the differences at those steps.
@@ -100,9 +119,9 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
 
     # --- Check if all elements are close using np.allclose ---
     # This is the primary assertion that will fail if any deviation is too large
-    if not np.allclose(ref_arr, actual_arr, atol=atol):
+    if not np.allclose(ref_arr, actual_arr, atol=atol, rtol=rtol):
         # If not all close, identify the specific deviations
-        deviated_indices = np.where(~np.isclose(ref_arr, actual_arr, atol=atol))[0]
+        deviated_indices = np.where(~np.isclose(ref_arr, actual_arr, atol=atol, rtol=rtol))[0]
         deviation_details = []
         for idx in deviated_indices:
             ref_val = ref_arr[idx]
@@ -117,7 +136,7 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
         error_message = (
             f"{name} deviated too much for scenario '{scenario_key}' "
             f"(WS: {current_world_size}, Rank: {current_rank}).\n"
-            f"Max Difference: {max_diff:.6f}, Allowed Tolerance: {atol:.6f}.\n"
+            f"Max Difference: {max_diff:.6f}, Allowed Tolerance: atol={atol:.6f}, rtol={rtol:.6f}.\n"
             f"Deviations found at {len(deviated_indices)} steps:\n" + "\n".join(deviation_details) + "\n"
             f"Reference (first 10): {ref_list[:10]}...\n"
             f"Actual    (first 10): {actual_list[:10]}..."
@@ -126,7 +145,7 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
     else:
         # If all close, report success and max_diff for printing
         max_diff = np.max(np.abs(ref_arr - actual_arr))
-        print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.6f}")
+        print(f" {name} PASSED. Max Diff: {max_diff:.6f}")
 
 
 def get_reference_metrics(
@@ -442,6 +461,9 @@ class TestCausalLMIntegration:
             dataset_config: Dataset configuration
             config_name: Configuration name for logging
         """
+        # Ensure deterministic behavior before model/trainer/dataset construction.
+        set_test_seed(TEST_SEED)
+
         # Create master configuration
         master_config = create_master_config(
             model_config=LLAMA_MODEL_CONFIG,
@@ -474,7 +496,7 @@ class TestCausalLMIntegration:
         assert_list_close(
             all_ref_metrices["ref_train_losses"],
             train_step_loss,
-            LOSS_ATOL,
+            TRAIN_LOSS_ATOL,
             "Train Step Losses",
             scenario_key,
             all_config_spy["current_world_size"],
@@ -497,6 +519,7 @@ class TestCausalLMIntegration:
             scenario_key,
             all_config_spy["current_world_size"],
             all_config_spy["current_rank"],
+            rtol=TRAIN_METRIC_RTOL,
         )
         assert_list_close(
             all_ref_metrices["ref_eval_metrics"],

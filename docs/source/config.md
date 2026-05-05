@@ -18,6 +18,7 @@ Model-related parameters for loading and fine-tuning.
 | `use_cache` | `false` | Uses the past key/values cache for faster decoding during generation. |
 | `attn_implementation` | `"sdpa"` | Attention implementation. Common values: `sdpa`, `eager`. |
 | `device_map` | `None` | Specifies how to distribute the model across devices. |
+| `torch_dtype` | `fp16` | Canonical model weight dtype (`fp16`, `bf16`, `fp32`) passed to `from_pretrained` (mapped to HF dtype strings). |
 | `use_peft` | `true` | Enables PEFT for parameter-efficient fine-tuning. |
 | `peft_config` | - | Defines LoRA parameters when `use_peft` is true. |
 
@@ -173,7 +174,8 @@ This section defines core parameters for fine-tuning and evaluation.
 | `do_eval` | `true` | Enables evaluation during training. |
 | `eval_strategy` | `epoch` | When to run evaluation. |
 | `gradient_accumulation_steps` | `1` | Accumulates gradients over multiple steps. |
-| `dtype` | `fp16` | Mixed precision setting. |
+| `fp16` | `false` | Enables fp16 AMP/autocast (GradScaler path). |
+| `bf16` | `false` | Enables bf16 AMP/autocast (mutually exclusive with `fp16`). |
 | `seed` | `42` | Random seed for reproducibility. |
 | `device` | `qaic` | Device to use for training. |
 | `per_device_train_batch_size` | `1` | Batch size per device during training. |

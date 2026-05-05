@@ -497,7 +497,9 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states[0]
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+        hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
 
@@ -640,27 +642,31 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         x = hidden_states.view(T, H)
         act = getattr(self.experts, "act_fn", F.silu)
 
-        router_logits = self.gate(x)  # [T, E]
-        prob = F.softmax(router_logits, dim=-1, dtype=hidden_states.dtype)
-        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
+        gate_out = self.gate(x)
+        router_logits, top_w, top_i = gate_out
         top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(hidden_states.dtype)
-        routing_weights = torch.zeros((T, self.num_experts), dtype=x.dtype)
+        num_experts = getattr(self, "num_experts", self.gate.num_experts)
+        routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)
         routing_weights.scatter_(1, top_i, top_w)
 
         expert_out = torch.zeros_like(x, dtype=x.dtype)
 
-        for e in range(self.num_experts):
+        for e in range(num_experts):
             routing_weight = routing_weights[:, e].unsqueeze(-1)
 
             W_gate_up_e = self.experts.gate_up_proj[e]  # [H, 2I]
             W_dn_e = self.experts.down_proj[e]  # [I, H]
+            if W_gate_up_e.shape[0] != H:
+                W_gate_up_e = W_gate_up_e.transpose(0, 1)
             gate_up = x @ W_gate_up_e  # [T, 2I]
 
             I2 = gate_up.shape[-1] // 2
             gate = gate_up[:, :I2]  # [T, I]
             up = gate_up[:, I2:]  # [T, I]
             intermediate = up * act(gate)
+            if W_dn_e.shape[0] != I2:
+                W_dn_e = W_dn_e.transpose(0, 1)
             down = intermediate @ W_dn_e
             masked_down = torch.where(
                 routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out, dtype=down.dtype)
@@ -725,7 +731,7 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
 class QEffQwen3VLEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
-        self.model = model
+        self.model = model.model
         self.model.vision_model = self.model.visual
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -822,24 +828,28 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         T = B * S
         x = hidden_states.view(T, H)
 
-        router_logits = self.gate(x)
-        prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
-        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
+        gate_out = self.gate(x)
+        router_logits, top_w, top_i = gate_out
         top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(x.dtype)
         idx = top_i.reshape(-1)
         w_up = self.experts.gate_up_proj.index_select(0, idx)
         w_dn = self.experts.down_proj.index_select(0, idx)
+        if w_up.shape[1] != H:
+            w_up = w_up.transpose(1, 2)
 
-        xk = x.unsqueeze(1).expand(-1, self.top_k, -1).contiguous()
+        top_k = top_i.shape[-1]
+        xk = x.unsqueeze(1).expand(-1, top_k, -1).contiguous()
         xk = xk.view(-1, 1, H)
         gate_up = torch.bmm(xk, w_up)
         I2 = gate_up.size(-1)
         half = I2 // 2
         gate, up = gate_up[..., :half], gate_up[..., half:]
         intermediate = up * self.experts.act_fn(gate)
+        if w_dn.shape[1] != half:
+            w_dn = w_dn.transpose(1, 2)
         experts_out = torch.bmm(intermediate, w_dn)
-        experts_out = experts_out.view(T, self.top_k, H) * top_w.unsqueeze(-1)
+        experts_out = experts_out.view(T, top_k, H) * top_w.unsqueeze(-1)
         experts_out = torch.einsum("bnd->bd", experts_out)
         return experts_out.view(B, S, H), router_logits
 
@@ -1183,12 +1193,23 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
         input_ids_length = inputs["input_ids"].shape[1]
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+
+        mm_token_type_ids = inputs.get("mm_token_type_ids")
+        if mm_token_type_ids is None:
+            # transformers>=5.5 get_rope_index expects modality token types (text=0, image=1, video=2).
+            mm_token_type_ids = torch.zeros_like(inputs["input_ids"], dtype=torch.int32)
+            mm_token_type_ids = mm_token_type_ids.masked_fill(inputs["input_ids"] == self.config.image_token_id, 1)
+            mm_token_type_ids = mm_token_type_ids.masked_fill(inputs["input_ids"] == self.config.video_token_id, 2)
+
         pos_ids, rope_deltas = self.model.get_rope_index(
-            inputs["input_ids"],
-            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
-            video_grid_thw=None,
+            input_ids=inputs["input_ids"],
+            mm_token_type_ids=mm_token_type_ids,
+            image_grid_thw=None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            video_grid_thw=None if "video_grid_thw" not in inputs else inputs["video_grid_thw"],
+            second_per_grid_ts=None if "second_per_grid_ts" not in inputs else inputs["second_per_grid_ts"],
             attention_mask=inputs["attention_mask"],
         )
+        self.model.rope_deltas = rope_deltas
 
         inputs["position_ids"] = torch.cat((inputs["position_ids"], pos_ids), dim=0)
 

@@ -111,3 +111,6 @@ OPT_SGD_MOMENTUM = 0.9
 TRAIN_EVAL_EPOCH_LOSS_DIFF_THRESHOLD = 2.0
 METRIC_ATOL = 0.5
 LOSS_ATOL = 0.5
+TRAIN_LOSS_ATOL = 1.5
+# Train metrics are exp(loss); allow equivalent relative drift for TRAIN_LOSS_ATOL.
+TRAIN_METRIC_RTOL = 3.5

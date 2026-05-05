@@ -266,7 +266,11 @@ class QEFFAutoModel(QEFFTransformersBase):
         if pooling:
             self.model, _ = PoolingTransform.apply(self.model, pooling)
 
-        self.model.base_model.config.use_cache = True
+        # Encoder-only models (e.g. BERT) should not be forced into cache mode.
+        if getattr(self.model.config, "is_decoder", False) or getattr(self.model.config, "is_encoder_decoder", False):
+            self.model.base_model.config.use_cache = True
+        else:
+            object.__setattr__(self.model.base_model.config, "use_cache", None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -3142,6 +3146,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if (
             hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
+            and hasattr(self.model, "get_dummy_pkv_cache")
         ):
             pkv_cache = self.model.get_dummy_pkv_cache(
                 self.model.config, fbs if self.continuous_batching else bs, seq_len
@@ -3197,6 +3202,54 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
+
+        # transformers>=5.3 Gemma3 models require Cache I/O internally; keep tensor/list
+        # inputs for tracing and bridge to cache objects inside a temporary wrapper.
+        if (
+            hasattr(self.model.config, "model_type")
+            and str(self.model.config.model_type).startswith("gemma3")
+            and not getattr(self.model, "_qeff_export_gemma3_cache_patch", False)
+        ):
+            import functools
+            import inspect
+
+            from transformers.cache_utils import Cache, DynamicCache
+
+            model_forward = self.model.forward
+            model_forward_sig = inspect.signature(model_forward)
+
+            @functools.wraps(model_forward)
+            def _qeff_patched_forward(*args, **kwargs):
+                def _legacyify_cache(obj):
+                    if hasattr(obj, "to_legacy_cache"):
+                        return obj.to_legacy_cache()
+                    if isinstance(obj, Cache):
+                        if hasattr(obj, "to_legacy_cache"):
+                            return obj.to_legacy_cache()
+                        if hasattr(obj, "layers"):
+                            legacy_cache = ()
+                            for layer in obj.layers:
+                                keys = getattr(layer, "keys", None)
+                                values = getattr(layer, "values", None)
+                                legacy_cache += ((keys, values),)
+                            return legacy_cache
+                    if isinstance(obj, (tuple, list)):
+                        return type(obj)(_legacyify_cache(x) for x in obj)
+                    return obj
+
+                bound_args = model_forward_sig.bind_partial(*args, **kwargs)
+                past_key_values = bound_args.arguments.get("past_key_values", None)
+                if past_key_values is not None and not isinstance(past_key_values, Cache):
+                    bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
+                outputs = model_forward(*bound_args.args, **bound_args.kwargs)
+                if torch.onnx.is_in_onnx_export():
+                    if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
+                        return outputs.logits, _legacyify_cache(outputs.past_key_values)
+                    return _legacyify_cache(outputs)
+                return outputs
+
+            self.model.forward = _qeff_patched_forward
+            self.model._qeff_export_gemma3_cache_patch = True
 
         return self._export(
             example_inputs,

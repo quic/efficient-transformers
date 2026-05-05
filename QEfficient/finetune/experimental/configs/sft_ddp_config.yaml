@@ -9,8 +9,9 @@
 model:
   model_type: "hf"  # Hugging Face model
   auto_class_name: "AutoModelForCausalLM" # Auto class to load the model with
-  model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
+  model_name: "meta-llama/Llama-3.2-1b"  # Pretrained model name
   use_peft: true # Enable PEFT (Parameter Efficient Fine-Tuning)
+  torch_dtype: "fp16"            # Weight dtype for model loading
   peft_config:
     lora_r: 8 # LoRA rank
     lora_alpha: 16
@@ -42,9 +43,14 @@ dataset:
 # Training configuration
 training:
   type: "sft"
+  output_dir: "./training_results_meta_llama_3.2_1b_tp1_dp4_gsm8k_fulldataset"
+  log_file_name: "log_meta_llama_3.2_1b_tp1_dp4_gsm8k_fulldataset.txt"
   gradient_accumulation_steps: 1  # Number of steps to accumulate gradients
   per_device_train_batch_size: 1  # Batch size per device during training
+  fp16: True                      # AMP/GradScaler flag
+  bf16: False                     # AMP autocast flag (mutually exclusive with fp16)
   torch_compile: False # Whether to use torch.compile
+  ddp_degree: 4
   ddp_config: # DDP configuration
     ddp_backend: "qccl"
     ddp_find_unused_parameters: False

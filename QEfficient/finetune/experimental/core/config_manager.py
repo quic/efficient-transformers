@@ -241,10 +241,6 @@ class ModelConfig:
         default="AutoModelForCausalLM",
         metadata={"help": "The AutoClass name to load the model (e.g., 'AutoModelForCausalLM')."},
     )
-    load_in_4bit: bool = field(
-        default=False,
-        metadata={"help": "Whether to load the model in 4-bit quantization."},
-    )
     use_peft: bool = field(
         default=True,
         metadata={"help": "Whether to use PEFT (Parameter-Efficient Fine-Tuning)."},
@@ -264,6 +260,10 @@ class ModelConfig:
     device_map: Optional[str] = field(
         default=None,
         metadata={"help": "The device map to use for model distribution (e.g., 'auto')."},
+    )
+    torch_dtype: str = field(
+        default="fp16",
+        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
     )
 
 
@@ -333,10 +333,10 @@ class TrainingConfig:
         default=None,
         metadata={"help": "The log_file output name."},
     )
-    overwrite_output_dir: bool = field(
-        default=False,
-        metadata={"help": "whether it is allowed to reuse and overwrite an existing output_dir."},
-    )
+    # overwrite_output_dir: bool = field(
+    #     default=False,
+    #     metadata={"help": "Whether to overwrite the output directory."},
+    # )
     seed: int = field(
         default=42,
         metadata={"help": "Random seed for reproducibility."},
@@ -418,9 +418,13 @@ class TrainingConfig:
         default="qaic",
         metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
     )
-    torch_dtype: str = field(
-        default="fp16",
-        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
+    fp16: bool = field(
+        default=False,
+        metadata={"help": "Enable fp16 mixed precision/autocast (GradScaler path)."},
+    )
+    bf16: bool = field(
+        default=False,
+        metadata={"help": "Enable bf16 mixed precision/autocast."},
     )
     torch_compile: bool = field(
         default=False,
@@ -478,6 +482,14 @@ class TrainingConfig:
     pp_degree: int = field(
         default=1,
         metadata={"help": "Pipeline parallelism degree (number of pipeline stages). Set > 1 to enable PP."},
+    )
+    tp_degree: int = field(
+        default=1,
+        metadata={"help": "Tensor parallelism degree (number of pipeline stages). Set > 1 to enable TP."},
+    )
+    ddp_degree: int = field(
+        default=1,
+        metadata={"help": "Data parallelism degree (number of pipeline stages). Set > 1 to enable DDP."},
     )
 
 
@@ -819,19 +831,24 @@ class ConfigManager:
         self._push(errors, not dataset.get("dataset_name"), "dataset.dataset_name is required.")
         self._push(errors, not dataset.get("tokenizer_name"), "dataset.tokenizer_name is required.")
 
-        # ---------- Training ----------
-        # torch_dtype validation
-        torch_dtype = training.get("torch_dtype")
+        # ---------- Model + Training ----------
+        # model.torch_dtype validation
+        torch_dtype = model.get("torch_dtype")
         valid_dtypes = {"fp16", "bf16", "fp32"}
         self._push(
             errors,
             not torch_dtype,
-            "training.torch_dtype is required.",
+            "model.torch_dtype is required.",
         )
         self._push(
             errors,
             torch_dtype and torch_dtype not in valid_dtypes,
-            f"training.torch_dtype must be one of {valid_dtypes}.",
+            f"model.torch_dtype must be one of {valid_dtypes}.",
+        )
+        self._push(
+            errors,
+            bool(training.get("fp16", False)) and bool(training.get("bf16", False)),
+            "At most one of training.fp16 and training.bf16 can be True.",
         )
 
         # Batch sizes
@@ -865,13 +882,115 @@ class ConfigManager:
         self._push(errors, training.get("logging_steps", 0) < 0, "training.logging_steps must be >= 0.")
         self._push(errors, training.get("save_total_limit", 0) < 0, "training.save_total_limit must be >= 0.")
 
-        # Pipeline Parallelism (PP) config
+        # Pipeline / Tensor / Data parallelism config
         pp_degree = training.get("pp_degree", 1)
+        tp_degree = training.get("tp_degree", 1)
+        ddp_degree = training.get("ddp_degree", 1)
+
         self._push(
             errors,
             not isinstance(pp_degree, int) or pp_degree < 1,
             "training.pp_degree must be a positive integer (default 1 = no PP; > 1 enables PP).",
         )
+        self._push(
+            errors,
+            not isinstance(tp_degree, int) or tp_degree < 1,
+            "training.tp_degree must be a positive integer (default 1 = no TP; > 1 enables TP).",
+        )
+        self._push(
+            errors,
+            not isinstance(ddp_degree, int) or ddp_degree < 1,
+            "training.ddp_degree must be a positive integer (default 1 = no DDP; > 1 enables DDP).",
+        )
+
+        # Supported modes:
+        #  - PP only
+        #  - DDP only (single-server / multi-server)
+        #  - TP only (single-server)
+        #  - TP + DDP (single-server)
+        if isinstance(pp_degree, int) and isinstance(tp_degree, int) and isinstance(ddp_degree, int):
+            self._push(
+                errors,
+                pp_degree > 1 and tp_degree > 1,
+                "Unsupported parallelism combination: TP cannot be combined with PP. "
+                "Supported modes are PP only, DDP only, TP only, or TP+DDP (single-server).",
+            )
+            self._push(
+                errors,
+                pp_degree > 1 and ddp_degree > 1,
+                "Unsupported parallelism combination: DDP cannot be combined with PP. "
+                "Supported modes are PP only, DDP only, TP only, or TP+DDP (single-server).",
+            )
+
+        # Launcher world-size metadata (if present in environment).
+        local_world_size = -1
+        if "LOCAL_WORLD_SIZE" in os.environ:
+            try:
+                local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
+            except ValueError:
+                local_world_size = -1
+            self._push(
+                errors,
+                local_world_size < 1,
+                f"Invalid LOCAL_WORLD_SIZE={os.environ.get('LOCAL_WORLD_SIZE')!r}; expected a positive integer.",
+            )
+
+        world_size = -1
+        if "WORLD_SIZE" in os.environ:
+            try:
+                world_size = int(os.environ["WORLD_SIZE"])
+            except ValueError:
+                world_size = -1
+            self._push(
+                errors,
+                world_size < 1,
+                f"Invalid WORLD_SIZE={os.environ.get('WORLD_SIZE')!r}; expected a positive integer.",
+            )
+
+        # LOCAL_WORLD_SIZE consistency checks (single-node process count).
+        # Only enforce degree product when TP/PP is active; for pure DDP we rely
+        # on launcher-provided world sizes and do not force ddp_degree matching.
+        if (
+            local_world_size > 0
+            and isinstance(pp_degree, int)
+            and isinstance(tp_degree, int)
+            and isinstance(ddp_degree, int)
+            and (pp_degree > 1 or tp_degree > 1)
+        ):
+            expected_world_size = pp_degree * tp_degree * ddp_degree
+            self._push(
+                errors,
+                expected_world_size != local_world_size,
+                "Parallelism degree mismatch: pp_degree * tp_degree * ddp_degree "
+                f"must equal LOCAL_WORLD_SIZE ({pp_degree} * {tp_degree} * {ddp_degree} = {expected_world_size}, "
+                f"LOCAL_WORLD_SIZE={local_world_size}).",
+            )
+
+        # WORLD_SIZE product checks are required only when TP/PP is active.
+        if (
+            world_size > 0
+            and isinstance(pp_degree, int)
+            and isinstance(tp_degree, int)
+            and isinstance(ddp_degree, int)
+            and (pp_degree > 1 or tp_degree > 1)
+        ):
+            expected_world_size = pp_degree * tp_degree * ddp_degree
+            self._push(
+                errors,
+                expected_world_size != world_size,
+                "Parallelism degree mismatch for TP/PP modes: pp_degree * tp_degree * ddp_degree "
+                f"must equal WORLD_SIZE ({pp_degree} * {tp_degree} * {ddp_degree} = {expected_world_size}, "
+                f"WORLD_SIZE={world_size}).",
+            )
+
+        if local_world_size > 0 and world_size > 0:
+            multi_server = world_size > local_world_size
+            self._push(
+                errors,
+                multi_server and tp_degree > 1,
+                "Unsupported parallelism combination: TP and TP+DDP are supported only on a single server. "
+                "Detected multi-server launch from WORLD_SIZE > LOCAL_WORLD_SIZE.",
+            )
 
         # DDP config
         ddp = training.get("ddp_config", {})
@@ -913,19 +1032,15 @@ class ConfigManager:
         """
         Get model configuration as dictionary.
 
-        Automatically handles torch_dtype conversion from training config if not set in model config.
+        Converts model.torch_dtype from config format (fp16/bf16/fp32)
+        to HF format (float16/bfloat16/float32) for from_pretrained kwargs.
         """
-        model_config = self.config.model
+        model_config = dict(self.config.model)
 
-        # Get torch_dtype from training config and convert
-        # To do: check if it can be moved from training config to model config instead
-        if model_config.get("torch_dtype") is None:
-            training_config = self.get_training_config()
-            training_dtype = training_config.get("torch_dtype")
-            if training_dtype:
-                # Convert from training format (fp16/bf16) to model format (float16/bfloat16)
-                dtype_mapping = dtype_mapping = constants.DTYPE_MAPPING
-                model_config["torch_dtype"] = dtype_mapping.get(training_dtype, "auto")
+        model_dtype = model_config.get("torch_dtype")
+        if model_dtype:
+            dtype_mapping = constants.DTYPE_MAPPING
+            model_config["torch_dtype"] = dtype_mapping.get(model_dtype, "auto")
 
         return model_config
 

@@ -137,9 +137,16 @@ class InputHandler:
             updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
             updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
 
-        updated_inputs["past_key_values"] = tuple(
-            [(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]]
-        )
+        pkv = pt_outputs["past_key_values"]
+        if isinstance(pkv, (list, tuple)):
+            normalized_pkv = []
+            for layer_cache in pkv:
+                if isinstance(layer_cache, (list, tuple)) and len(layer_cache) >= 2:
+                    key, value = layer_cache[0], layer_cache[1]
+                    normalized_pkv.append((key.detach(), value.detach()))
+            updated_inputs["past_key_values"] = tuple(normalized_pkv)
+        else:
+            updated_inputs["past_key_values"] = pkv
 
         return updated_inputs
 
@@ -203,7 +210,7 @@ class InputHandler:
         """
 
         updated_inputs = {}
-        updated_inputs["input_ids"] = ort_outputs["logits"].argmax(-1)
+        updated_inputs["input_ids"] = ort_outputs["logits"].argmax(-1).reshape(-1, 1)
         updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
         for i in range(self.n_layer):
             updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
