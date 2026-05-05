@@ -123,6 +123,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     copy_of_hash_params.update(
         {
             "config": config_val,
+            "external_data_layout_version": 10,
         }
     )
     # Generate hash from relevant parameters

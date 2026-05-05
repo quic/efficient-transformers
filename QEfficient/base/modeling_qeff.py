@@ -8,15 +8,18 @@
 import gc
 import inspect
 import logging
+import re
 import shutil
 import subprocess
 import warnings
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import onnx
 import torch
+from onnx import TensorProto
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
@@ -48,6 +51,54 @@ from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
 
+# @lru_cache(maxsize=1)
+# def _qaic_supported_options() -> set[str]:
+#     """Return supported qaic-compile options for the installed compiler binary."""
+#     compiler_bin = constants.COMPILER[0] if constants.COMPILER else "qaic-compile"
+#     try:
+#         result = subprocess.run([compiler_bin, "--help"], capture_output=True, text=True, check=False)
+#     except Exception as exc:
+#         logger.warning("Failed to query qaic-compile options: %s", exc)
+#         return set()
+
+#     options = set()
+#     help_text = f"{result.stdout}\n{result.stderr}"
+#     for line in help_text.splitlines():
+#         match = re.match(r"\s*(-[A-Za-z0-9][A-Za-z0-9-]*)", line)
+#         if match:
+#             options.add(match.group(1))
+#     return options
+
+
+def _get_model_external_data_files(onnx_path: Path) -> set[str]:
+    """Return the external tensor sidecar files currently referenced by an ONNX model."""
+
+    if not onnx_path.is_file():
+        return set()
+
+    model = onnx.load(onnx_path, load_external_data=False)
+    try:
+        return {
+            entry.value
+            for tensor in onnx.external_data_helper._get_all_tensors(model)
+            for entry in tensor.external_data
+            if entry.key == "location" and entry.value
+        }
+    finally:
+        del model
+
+
+def _cleanup_stale_external_tensor_files(export_dir: Path, keep_files: set[str]) -> None:
+    """Remove stale torch/onnx external-data sidecars that are not referenced by the final ONNX."""
+
+    uuid_like = re.compile(r"^[0-9a-f]{8}-[0-9a-f-]{27}$")
+    for path in export_dir.iterdir():
+        if not path.is_file():
+            continue
+        if path.name in keep_files:
+            continue
+        if uuid_like.fullmatch(path.name) or path.name.startswith("model.") or path.name.startswith("onnx__"):
+            path.unlink(missing_ok=True)
 
 class QEFFBaseModel(ABC):
     """
@@ -291,6 +342,10 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
+             _cleanup_stale_external_tensor_files(
+                export_dir,
+                keep_files={onnx_path.name, "hashed_export_params.json"} | _get_model_external_data_files(onnx_path),
+            )
             self.onnx_path = onnx_path
             return onnx_path
 
@@ -349,7 +404,10 @@ class QEFFBaseModel(ABC):
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
-
+            original_had_external_data = any(
+                tensor.data_location == TensorProto.EXTERNAL or len(tensor.external_data) > 0
+                for tensor in onnx.external_data_helper._get_all_tensors(model)
+            )
             needs_external_tensor_data = any(
                 transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
             )
@@ -368,10 +426,33 @@ class QEFFBaseModel(ABC):
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
+            has_external_tensors = any(
+                tensor.data_location == TensorProto.EXTERNAL or len(tensor.external_data) > 0
+                for tensor in onnx.external_data_helper._get_all_tensors(model)
+            )
+            save_with_external_data = (
+                original_had_external_data or has_external_tensors or SplitTensorsTransform in self._onnx_transforms
+            )
 
             onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
-            onnx.save(model, onnx_path_tmp)
+            if SplitTensorsTransform in self._onnx_transforms and has_external_tensors:
+                onnx.save_model(model, onnx_path_tmp)
+            elif save_with_external_data:
+                onnx.save_model(
+                    model,
+                    onnx_path_tmp,
+                    save_as_external_data=True,
+                    all_tensors_to_one_file=False,
+                    size_threshold=1024,
+                    convert_attribute=False,
+                )
+            else:
+                onnx.save(model, onnx_path_tmp)
             onnx_path_tmp.replace(onnx_path)
+            _cleanup_stale_external_tensor_files(
+                export_dir,
+                keep_files={onnx_path.name, "hashed_export_params.json"} | _get_model_external_data_files(onnx_path),
+            )
             del model
             gc.collect()
             logger.info("Transformed ONNX saved")
@@ -596,6 +677,17 @@ class QEFFBaseModel(ABC):
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
+        # supported_options = _qaic_supported_options()
+        # if supported_options:
+        #     filtered_compiler_options = {}
+        #     for key, value in compiler_options.items():
+        #         option = "-" + key.replace("_", "-")
+        #         if option not in supported_options:
+        #             logger.warning("Skipping unsupported qaic-compile option: %s", option)
+        #             continue
+        #         filtered_compiler_options[key] = value
+        #     compiler_options = filtered_compiler_options    
+
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
@@ -637,6 +729,7 @@ class QEFFBaseModel(ABC):
             specializations_json = compile_dir / "specializations.json"
             specializations_data = {
                 "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
+                #  "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
             }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")

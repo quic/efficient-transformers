@@ -9,7 +9,6 @@ from typing import List
 import numpy as np
 import torch
 
-from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.utils import (
     get_num_layers_from_config,
     get_padding_shape_from_config,
@@ -54,6 +53,34 @@ class InputHandler:
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
         )
 
+    def _get_layer_cache_shape(self, layer_idx):
+        if not hasattr(self.config, "layer_types") or self.config.layer_types is None:
+            if hasattr(self.config, "sliding_window") and hasattr(self.config, "sliding_window_pattern"):
+                is_sliding = bool((layer_idx + 1) % self.config.sliding_window_pattern)
+                if is_sliding:
+                    return self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
+            return self.padding_shape
+
+        layer_type = self.config.layer_types[layer_idx]
+        if layer_type == "sliding_attention":
+            n_heads = self.config.num_key_value_heads
+            d_head = self.config.head_dim
+            ctx_len = min(self.config.sliding_window, self.ctx_len)
+        else:
+            use_alternative_attention = getattr(self.config, "attention_k_eq_v", False)
+            n_heads = (
+                self.config.num_global_key_value_heads
+                if use_alternative_attention and getattr(self.config, "num_global_key_value_heads", None) is not None
+                else self.config.num_key_value_heads
+            )
+            d_head = (
+                self.config.global_head_dim if getattr(self.config, "global_head_dim", None) else self.config.head_dim
+            )
+            ctx_len = self.ctx_len
+
+        batch = self.full_batch_size if self.full_batch_size else self.padding_shape[0]
+        return [batch, n_heads, ctx_len, d_head]
+
     def prepare_pytorch_inputs(self):
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
@@ -96,13 +123,7 @@ class InputHandler:
 
         past_key_values = []
         for i in range(self.n_layer):
-            if (
-                all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
-                and self.config.layer_types[i] == "sliding_attention"
-            ):
-                pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
-            else:
-                pad_shape = self.padding_shape
+            pad_shape = self._get_layer_cache_shape(i)
             past_key = torch.zeros((pad_shape), dtype=self.dtype)
             past_value = torch.zeros((pad_shape), dtype=self.dtype)
             pkv = (past_key, past_value)
@@ -170,22 +191,10 @@ class InputHandler:
             axis=1,
         ).astype(np.int64)
 
-        if hasattr(self.config, "model_type") and self.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH:
-            for i in range(self.n_layer):
-                cache_shape = self.global_shape if not self.is_chunked_attention[i] else self.sliding_shape
-                inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
-                inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
-        else:
-            for i in range(self.n_layer):
-                if (
-                    all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
-                    and self.config.layer_types[i] == "sliding_attention"
-                ):
-                    pad_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
-                else:
-                    pad_shape = self.padding_shape
-                inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
-                inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
+        for i in range(self.n_layer):
+            pad_shape = self._get_layer_cache_shape(i)
+            inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
+            inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
         if self.full_batch_size:
             inputs["batch_index"] = np.arange(self.full_batch_size).reshape(-1, 1)
         return inputs
@@ -331,7 +340,9 @@ class InputHandlerVLM:
         inputs["image_idx"] = np.array([[0]])
 
         vision_inputs = {
-            k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
+            k: v
+            for k, v in inputs.items()
+            if k in {"pixel_values", "image_position_ids", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
         for i in range(num_hidden_layers):
@@ -380,6 +391,9 @@ class InputHandlerVLM:
         outputs["image_features_RetainedState"] = (
             ort_outputs["image_features_RetainedState"] if "image_features_RetainedState" in ort_outputs else None
         )
+        outputs["vision_embeds_RetainedState"] = (
+            ort_outputs["vision_embeds_RetainedState"] if "vision_embeds_RetainedState" in ort_outputs else None
+        )
         outputs["image_idx"] = ort_outputs["image_idx_output"]
         return outputs
 
@@ -404,7 +418,12 @@ class InputHandlerVLM:
             updated_inputs["pixel_values"] = ort_outputs["pixel_values_RetainedState"]
         if "image_features_RetainedState" in ort_outputs.keys():
             updated_inputs["image_features"] = ort_outputs["image_features_RetainedState"]
-
+        if "vision_embeds_RetainedState" in ort_outputs.keys():
+            updated_inputs["vision_embeds"] = ort_outputs["vision_embeds_RetainedState"]
+        if "mm_token_type_ids" in inputs.keys():
+            updated_inputs["mm_token_type_ids"] = np.zeros_like(
+                updated_inputs["input_ids"], dtype=inputs["mm_token_type_ids"].dtype
+            )
         if "cross_attention_mask" in inputs.keys():
             bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
             updated_inputs["cross_attention_mask"] = torch.ones(

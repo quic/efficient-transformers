@@ -235,21 +235,38 @@ class VisionHandler:
                     image = image.resize(
                         (constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH)
                     )
+            # Gemma4 expects the processor-rendered prompt with the image placeholder ahead of user text.
+            is_gemma4 = (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "gemma4"
+            )
 
             # Prepare conversation format
             conversation = [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": query},
-                        {"type": "image"},
-                    ],
+                    "content": (
+                        [{"type": "image"}, {"type": "text", "text": query}]
+                        if is_gemma4
+                        else [{"type": "text", "text": query}, {"type": "image"}]
+                    ),
                 },
             ]
 
             # Apply chat template
-            prompt = self._processor.apply_chat_template(conversation, add_generation_prompt=True)
-
+            if is_gemma4:
+                prompt = self._processor.apply_chat_template(
+                    conversation,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            else:
+                prompt = self._processor.apply_chat_template(
+                    conversation,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
             # Process image and text
             inputs = self._processor(images=image, text=prompt, return_tensors="pt")
             if hasattr(self._qeff_model.model.config, "model_type") and self._qeff_model.model.config.model_type in {
@@ -270,6 +287,7 @@ class VisionHandler:
             for k, v in inputs.items():
                 if k in {
                     "pixel_values",
+                    "image_position_ids",
                     "image_masks",
                     "image_input_idx",
                     "valid_idx",
@@ -386,9 +404,17 @@ class VisionHandler:
                 logger.warning(f"Could not derive vision output shapes from session: {e}")
 
         # Fallback to default shapes (these were hard-coded in original implementation)
-        default_shapes = {
-            "vision_embeds": (2448, 5120)  # This should be derived from model config
-        }
+        if (
+            hasattr(self._qeff_model.model.config, "model_type")
+            and self._qeff_model.model.config.model_type == "gemma4"
+        ):
+            text_config = self._qeff_model.model.config.text_config
+            mm_tokens = getattr(self._qeff_model.model.config, "mm_tokens_per_image", 256)
+            default_shapes = {"vision_embeds": (1, mm_tokens, text_config.hidden_size)}
+        else:
+            default_shapes = {
+                "vision_embeds": (2448, 5120)  # This should be derived from model config
+            }
 
         logger.warning("Using default vision output shapes. Consider providing shapes in config.")
         self._vision_output_shapes = default_shapes
@@ -492,6 +518,11 @@ class VisionHandler:
             lang_inputs["attention_mask"] = torch.nn.functional.pad(
                 lang_inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
             )
+
+            if "mm_token_type_ids" in lang_inputs:
+                lang_inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                    lang_inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
+                )
 
             if "cross_attention_mask" in lang_inputs:
                 lang_inputs["cross_attention_mask"] = torch.nn.functional.pad(
