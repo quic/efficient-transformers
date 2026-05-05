@@ -1062,8 +1062,8 @@ class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
         "DeepseekV3MoE": {
             "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
-            #"moe": QEffPrefillOnlyDeepseekV3MoE.moe,
-            #"__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
+            # "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
+            # "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
             "_forward_expert_blocked": QEffPrefillOnlyDeepseekV3MoE._forward_expert_blocked,
             "_cumsum_scatter_gather_update_expert_blocked": QEffPrefillOnlyDeepseekV3MoE._cumsum_scatter_gather_update_expert_blocked,
         },

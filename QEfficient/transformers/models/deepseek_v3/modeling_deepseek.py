@@ -25,9 +25,9 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatterFunc3DGeneralized,
     CtxScatterFunc3DInt,
 )
-from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
 from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
@@ -477,7 +477,6 @@ class QEffDeepseekV3Attention(nn.Module):
             k_pe_expanded = k_pe_expanded[:, :q_heads, :, :]
         else:
             kva_expanded = kva
-            #k_pe_expanded = k_pe
             num_heads_to_repeat = math.ceil(q_heads / k_heads)
             k_pe_expanded = (
                 k_pe.unsqueeze(2)
@@ -1127,15 +1126,14 @@ class QEffDeepseekV3MoE(nn.Module):
 
 
 class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
-
     def _cumsum_scatter_gather_update_expert_blocked(
         self,
         x: torch.Tensor,
         T2Ei: torch.Tensor,
         expert,
-#        W_g: torch.Tensor,
-#        W_u: torch.Tensor,
-#        W_d: torch.Tensor,
+        #        W_g: torch.Tensor,
+        #        W_u: torch.Tensor,
+        #        W_d: torch.Tensor,
         routing_weight: torch.Tensor,
         expert_out: torch.Tensor,
         act_fn,
@@ -1175,9 +1173,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             up_prime = expert.up_proj(x_chunk)
             down_chunk = expert.down_proj((up_prime * act_fn(gate_prime)))
 
-            #gate_prime = x_chunk @ W_g
-            #up_prime = x_chunk @ W_u
-            #down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
+            # gate_prime = x_chunk @ W_g
+            # up_prime = x_chunk @ W_u
+            # down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
 
             rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
             down_chunk = down_chunk * rw_chunk
@@ -1193,7 +1191,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         return expert_out
 
-
     def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
@@ -1203,9 +1200,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             )
         local_experts = len(self.experts) // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-#        W_g = self.gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-#        W_u = self.up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-#        W_d = self.down_proj_w.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        #        W_g = self.gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        #        W_u = self.up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        #        W_d = self.down_proj_w.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
         expert_out = x.new_zeros((num_nsp, T, H))
         for slot in range(local_experts):
             routing_weight = rw[:, slot, :]
@@ -1214,9 +1211,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 x=x,
                 T2Ei=T2Ei,
                 expert=self.experts[slot],
-#                W_g=W_g[:, slot],
-#                W_u=W_u[:, slot],
-#                W_d=W_d[:, slot],
+                #                W_g=W_g[:, slot],
+                #                W_u=W_u[:, slot],
+                #                W_d=W_d[:, slot],
                 routing_weight=routing_weight,
                 expert_out=expert_out,
                 act_fn=self.experts[0].act_fn,
@@ -1224,7 +1221,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
             )
         return expert_out.sum(dim=0)
-
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         topk_idx, topk_weight, router_probs, router_weights = self.gate(hidden_states)
