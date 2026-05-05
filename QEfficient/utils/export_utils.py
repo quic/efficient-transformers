@@ -166,7 +166,8 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     if "output_names" in kwargs:
         kwargs["output_names"] = [
             re.sub("_RetainedState", "_InternalRetainedState", name)
-            if name.endswith("_RetainedState") and ("key" in name or "value" in name)
+            if name.endswith("_RetainedState")
+            and ("key" in name or "value" in name or "compressed_kv" in name or "k_pe" in name)
             else name
             for name in kwargs["output_names"]
         ]
