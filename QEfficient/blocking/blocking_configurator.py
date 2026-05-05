@@ -85,12 +85,12 @@ def resolve_ffn_blocking_mode(ffn_cfg: Dict[str, Any], requested_mode: str) -> s
         return ""
 
     num_token_blocks = int(ffn_cfg.get("num_token_blocks") or 1)
-    num_weights_blocks = int(ffn_cfg.get("num_weights_blocks") or 1)
+    num_weight_blocks = int(ffn_cfg.get("num_weight_blocks") or 1)
 
     effective = ""
     if "t" in mode and num_token_blocks > 1:
         effective += "t"
-    if "w" in mode and num_weights_blocks > 1:
+    if "w" in mode and num_weight_blocks > 1:
         effective += "w"
     return effective
 
@@ -268,7 +268,7 @@ def attention_configurator(
 
 def check_ffn_block_config(
     num_token_blocks: int,
-    num_weights_blocks: int,
+    num_weight_blocks: int,
     *,
     model_config: Any,
     specializations: Optional[List[Dict[str, int]]],
@@ -283,7 +283,7 @@ def check_ffn_block_config(
 
     Args:
         num_token_blocks: number of token blocks (> 0)
-        num_weights_blocks: number of weight blocks (> 0)
+        num_weight_blocks: number of weight blocks (> 0)
         model_config: model config object/dict (for VLMs, pass text_config)
         specializations: specialization list; uses first entry for bs/seq_len
         compile_config: compile options dict (expects `mdp_ts_num_devices`, `aic_num_cores`,
@@ -312,7 +312,7 @@ def check_ffn_block_config(
     data_bytes = _infer_data_bytes(compile_config)
 
     sl_block = int(seq_len) / int(num_token_blocks)
-    i_block = int(intermediate) / int(num_weights_blocks)
+    i_block = int(intermediate) / int(num_weight_blocks)
 
     # 1) split weights across all (soc*nsp)
     footprints = _op_footprints(
@@ -410,11 +410,11 @@ def ffn_configurator(
     data_bytes: int,
 ) -> Dict[str, Any]:
     num_token_blocks_list = block_candidates_generator(seq_len)
-    num_weights_blocks_list = block_candidates_generator(intermediate)
+    num_weight_blocks_list = block_candidates_generator(intermediate)
 
     best_config = {
         "num_token_blocks": seq_len,
-        "num_weights_blocks": intermediate,
+        "num_weight_blocks": intermediate,
         "split_for_soc": None,
         "split_for_nsp": None,
         "vtcm_footprint": None,
@@ -423,8 +423,8 @@ def ffn_configurator(
     for num_token_blocks in num_token_blocks_list:
         sl_block = seq_len / num_token_blocks
 
-        for num_weights_blocks in num_weights_blocks_list:
-            i_block = intermediate / num_weights_blocks
+        for num_weight_blocks in num_weight_blocks_list:
+            i_block = intermediate / num_weight_blocks
 
             # Strategy 1: split weights across all (soc*nsp)
             footprints = _op_footprints(
@@ -439,13 +439,13 @@ def ffn_configurator(
             )
             if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
                 if (
-                    best_config["num_token_blocks"] * best_config["num_weights_blocks"]
-                    > num_token_blocks * num_weights_blocks
+                    best_config["num_token_blocks"] * best_config["num_weight_blocks"]
+                    > num_token_blocks * num_weight_blocks
                 ):
                     best_config.update(
                         {
                             "num_token_blocks": num_token_blocks,
-                            "num_weights_blocks": num_weights_blocks,
+                            "num_weights_block": num_weight_blocks,
                             "split_for_soc": "weights",
                             "split_for_nsp": "weights",
                             "vtcm_footprint": max(footprints.values()),
@@ -466,13 +466,13 @@ def ffn_configurator(
             )
             if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
                 if (
-                    best_config["num_token_blocks"] * best_config["num_weights_blocks"]
-                    > num_token_blocks * num_weights_blocks
+                    best_config["num_token_blocks"] * best_config["num_weight_blocks"]
+                    > num_token_blocks * num_weight_blocks
                 ):
                     best_config.update(
                         {
                             "num_token_blocks": num_token_blocks,
-                            "num_weights_blocks": num_weights_blocks,
+                            "num_weight_blocks": num_weight_blocks,
                             "split_for_soc": "activation",
                             "split_for_nsp": "weights",
                             "vtcm_footprint": max(footprints.values()),
@@ -493,13 +493,13 @@ def ffn_configurator(
             )
             if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
                 if (
-                    best_config["num_token_blocks"] * best_config["num_weights_blocks"]
-                    > num_token_blocks * num_weights_blocks
+                    best_config["num_token_blocks"] * best_config["num_weight_blocks"]
+                    > num_token_blocks * num_weight_blocks
                 ):
                     best_config.update(
                         {
                             "num_token_blocks": num_token_blocks,
-                            "num_weights_blocks": num_weights_blocks,
+                            "num_weight_blocks": num_weight_blocks,
                             "split_for_soc": "activation",
                             "split_for_nsp": "activation",
                             "vtcm_footprint": max(footprints.values()),
@@ -624,7 +624,7 @@ def build_ffn_blocking_config(
     if "t" in effective_mode:
         ffn_blocking_config.num_token_blocks = int(ffn_cfg["num_token_blocks"])
     if "w" in effective_mode:
-        ffn_blocking_config.num_weights_blocks = int(ffn_cfg["num_weights_blocks"])
+        ffn_blocking_config.num_weight_blocks = int(ffn_cfg["num_weight_blocks"])
 
     return ffn_blocking_config
 

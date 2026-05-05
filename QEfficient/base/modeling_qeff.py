@@ -582,16 +582,16 @@ class QEFFBaseModel(ABC):
             return self.qpc_path
 
         if "mdts_mos" not in compiler_options and "mos" not in compiler_options:
-            ffn_cfg = self.hash_params.get("ffn_blocking_kwargs")
+            ffn_cfg = self.hash_params.get("ffn_blocking_kwargs", None) if hasattr(self, "hash_params") else None
             if ffn_cfg is not None:
                 model_cfg = self.config.text_config if hasattr(self.config, "text_config") else self.config
 
                 num_token_blocks = ffn_cfg.num_token_blocks or 1
-                num_weights_blocks = ffn_cfg.num_weight_blocks or 1
+                num_weight_blocks = ffn_cfg.num_weight_blocks or 1
 
                 split_for_soc, split_for_nsp = check_ffn_block_config(
                     num_token_blocks,
-                    num_weights_blocks,
+                    num_weight_blocks,
                     model_config=model_cfg,
                     specializations=specializations,
                     compile_config={"mdp_ts_num_devices": mdp_ts_num_devices, **compiler_options},

@@ -88,6 +88,7 @@ def blocked_weights_ffn_forward(
     hidden_dim = w1.weight.shape[0]
 
     weight_block_size = math.ceil(hidden_dim / num_weight_blocks)
+    result_block = None  # Initialize before loop
 
     for weight_idx in range(num_weight_blocks):
         start_idx = weight_idx * weight_block_size
@@ -161,6 +162,7 @@ def blocked_tokens_weights_ffn_forward(
         t_end = t_start + token_len_block
 
         token_block = x[:, t_start:t_end, :]
+        result_block = None  # Initialize before loop
 
         for weight_idx in range(num_weight_blocks):
             w_start = weight_idx * weight_block_size
