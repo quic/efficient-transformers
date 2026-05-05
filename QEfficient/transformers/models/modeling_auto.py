@@ -1720,14 +1720,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
 
         # Apply compile-dependent transforms like blocking transform
-        self.transform(
-            ctx_len=ctx_len,
-            seq_len=prefill_seq_len,
-            batch_size=batch_size,
-            num_devices=num_devices,
-            qaic_config=qaic_config,
-            aic_num_cores=num_cores,
-        )
+        # self.transform(
+        #     ctx_len=ctx_len,
+        #     seq_len=prefill_seq_len,
+        #     batch_size=batch_size,
+        #     num_devices=num_devices,
+        #     qaic_config=qaic_config,
+        #     aic_num_cores=num_cores,
+        # )
 
         specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
@@ -4652,6 +4652,8 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         ]
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        convert_to_fp16 = CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"
+        print(convert_to_fp16)
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
