@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
-from ..nightly_utils import NIGHTLY_SKIPPED_MODELS, get_onnx_and_qpc_size
+from ..nightly_utils import get_onnx_and_qpc_size, pre_generate_utils
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -23,22 +23,11 @@ test_models = config["causal_lm_models"]
 
 
 @pytest.mark.parametrize("model_name", test_models)
-def test_generate_causal_lm(model_name, causal_model_artifacts, get_model_config):
+def test_generate_causal_lm(model_name, causal_model_artifacts, get_pipeline_config):
 
-    if model_name in NIGHTLY_SKIPPED_MODELS:
-        pytest.skip(f"Skipping {model_name} as it is in nightly skipped models list.")
-
-    config, pipeline_configs = get_model_config
-    compile_params = pipeline_configs["causal_pipeline_configs"][0].get("compile_params", {})
-    generate_params = pipeline_configs["causal_pipeline_configs"][0].get("generate_params", {"prompts": "My name is"})
-
-    # Retrieve onnx_path from previous stage
-    if model_name not in causal_model_artifacts or "onnx_path" not in causal_model_artifacts[model_name]:
-        pytest.skip(f"ONNX path not available for {model_name}. Run test_export.py first.")
-
-    # Retrieve qpc_path from previous stage
-    if model_name not in causal_model_artifacts or "qpc_path" not in causal_model_artifacts[model_name]:
-        pytest.skip(f"QPC path not available for {model_name}. Run test_compile.py first.")
+    compile_params, generate_params = pre_generate_utils(
+        model_name, "causal_pipeline_configs", get_pipeline_config, causal_model_artifacts
+    )
 
     onnx_path = causal_model_artifacts[model_name].get("onnx_path")
 

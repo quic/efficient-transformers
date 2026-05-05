@@ -13,7 +13,7 @@ import pytest
 
 from QEfficient import QEFFAutoModelForSpeechSeq2Seq
 
-from ..nightly_utils import NIGHTLY_SKIPPED_MODELS
+from ..nightly_utils import pre_export_compile_utils
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -23,15 +23,10 @@ test_models = config["audio_models"]
 
 
 @pytest.mark.parametrize("model_name", test_models)
-def test_export_compile_audio_model(model_name, get_model_config, audio_model_artifacts):
+def test_export_compile_audio_model(model_name, get_pipeline_config, audio_model_artifacts):
     """Test export and compile of audio model."""
 
-    if model_name in NIGHTLY_SKIPPED_MODELS:
-        pytest.skip(f"Skipping {model_name} as it is in nightly skipped models list.")
-
-    config, pipeline_configs = get_model_config
-    export_params = pipeline_configs["audio_model_configs"][0].get("export_params", {})
-    compile_params = pipeline_configs["audio_model_configs"][0].get("compile_params", {})
+    export_params, compile_params = pre_export_compile_utils(model_name, "audio_model_configs", get_pipeline_config)
 
     # Initialize model entry
     if model_name not in audio_model_artifacts:
@@ -42,20 +37,21 @@ def test_export_compile_audio_model(model_name, get_model_config, audio_model_ar
     export_load_start = time.time()
     qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(model_name)
     export_loading_time = time.time() - export_load_start
+    print(f"\nModel loading is done for model: {model_name} in {export_loading_time:.2f} seconds.")
 
     # Export time
     print(f"\nExporting for model: {model_name}")
     export_start = time.time()
     onnx_path = qeff_model.export(**export_params)
     export_time = time.time() - export_start
-    print(f"\nExport is done for model: {model_name} and onnx_path: {onnx_path}")
+    print(f"\nExport is done for model: {model_name} and onnx_path: {onnx_path} in {export_time:.2f} seconds.")
 
     # Compile
     print(f"\nCompiling for model: {model_name}")
     compile_start = time.time()
     qpc_path = qeff_model.compile(onnx_path=onnx_path, **compile_params)
     compile_time = time.time() - compile_start
-    print(f"\nCompilation is done for model: {model_name} and qpc path: {qpc_path}")
+    print(f"\nCompilation is done for model: {model_name} and qpc path: {qpc_path} in {compile_time:.2f} seconds.")
 
     audio_model_artifacts[model_name].update(
         {

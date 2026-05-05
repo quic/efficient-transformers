@@ -226,11 +226,7 @@ def image_text_to_text_model_artifacts(image_text_to_text_model_artifacts_file):
 
 
 @pytest.fixture
-def get_model_config():
-    """Load model and pipeline configs."""
-    model_config_path = PIPELINE_ROOT / "configs" / "validated_models.json"
-    with open(model_config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
+def get_pipeline_config():
+    """Load pipeline configs."""
     pipeline_configs = _load_pipeline_configs()
-    return config, pipeline_configs
+    return pipeline_configs

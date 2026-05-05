@@ -11,19 +11,10 @@ import os
 import time
 
 import pytest
-import torch
 
 from QEfficient import QEFFAutoModel as AutoModel
 
-from ..nightly_utils import NIGHTLY_SKIPPED_MODELS
-
-
-def max_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    """Apply max pooling to the last hidden states."""
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).float()
-    last_hidden_states[input_mask_expanded == 0] = -1e9
-    return torch.max(last_hidden_states, 1)[0]
-
+from ..nightly_utils import max_pooling, pre_export_compile_utils
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -34,15 +25,9 @@ test_models = config["embedding_models"]
 
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("pooling", [None])
-def test_export_compile_embedding_model(model_name, pooling, get_model_config, embedding_model_artifacts):
+def test_export_compile_embedding_model(model_name, pooling, get_pipeline_config, embedding_model_artifacts):
     """Test export and compile for embedding models."""
-    if model_name in NIGHTLY_SKIPPED_MODELS:
-        pytest.skip(f"Skipping {model_name} as it is in nightly skipped models list.")
-
-    config, pipeline_configs = get_model_config
-    export_params = pipeline_configs["embedding_model_configs"][0].get("export_params", {})
-    compile_params = pipeline_configs["embedding_model_configs"][0].get("compile_params", {})
-
+    export_params, compile_params = pre_export_compile_utils(model_name, "embedding_model_configs", get_pipeline_config)
     # Initialize model entry
     if model_name not in embedding_model_artifacts:
         embedding_model_artifacts[model_name] = {}
@@ -57,20 +42,21 @@ def test_export_compile_embedding_model(model_name, pooling, get_model_config, e
     else:
         qeff_model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
     export_loading_time = time.time() - export_load_start
+    print(f"\nModel loading is done for model: {model_name} in {export_loading_time:.2f} seconds.")
 
     # Export time
     print(f"\nExporting for model: {model_name}")
     export_start = time.time()
     onnx_path = qeff_model.export(**export_params)
     export_time = time.time() - export_start
-    print(f"\nExport is done for model: {model_name} and onnx_path: {onnx_path}")
+    print(f"\nExport is done for model: {model_name} and onnx_path: {onnx_path} in {export_time:.2f} seconds.")
 
     # Compile
     print(f"\nCompiling for model: {model_name}")
     compile_start = time.time()
     qpc_path = qeff_model.compile(onnx_path=onnx_path, **compile_params)
     compile_time = time.time() - compile_start
-    print(f"\nCompilation is done for model: {model_name} and qpc path: {qpc_path}")
+    print(f"\nCompilation is done for model: {model_name} and qpc path: {qpc_path} in {compile_time:.2f} seconds.")
 
     embedding_model_artifacts[model_name].update(
         {

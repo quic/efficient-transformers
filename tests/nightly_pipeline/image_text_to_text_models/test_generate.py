@@ -25,7 +25,7 @@ from transformers import (
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.test_utils import InternProcessor, ModelConfig
 
-from ..nightly_utils import NIGHTLY_SKIPPED_MODELS, get_onnx_and_qpc_size
+from ..nightly_utils import get_onnx_and_qpc_size, pre_generate_utils
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -37,34 +37,18 @@ test_models = config["image_text_to_text_models"]
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_generate_image_text_to_text_model(
-    model_name, kv_offload, image_text_to_text_model_artifacts, get_model_config
+    model_name, kv_offload, image_text_to_text_model_artifacts, get_pipeline_config
 ):
 
-    if model_name in NIGHTLY_SKIPPED_MODELS:
-        pytest.skip(f"Skipping {model_name} as it is in nightly skipped models list.")
+    compile_params, generate_params = pre_generate_utils(
+        model_name, "image_text_to_text_model_configs", get_pipeline_config, image_text_to_text_model_artifacts
+    )
 
-    config, pipeline_configs = get_model_config
-    compile_params = pipeline_configs["image_text_to_text_model_configs"][0].get("compile_params", {})
-    generate_params = pipeline_configs["image_text_to_text_model_configs"][0].get("generate_params", {})
     img_url = generate_params.pop("image_url", None)
     query = generate_params.pop("query", None)
     generation_len = generate_params.get("generation_len", 25)
     prompt_len = compile_params.get("prefill_seq_len", 1)
     batch_size = 1
-
-    # Retrieve onnx_path from previous stage
-    if (
-        model_name not in image_text_to_text_model_artifacts
-        or "onnx_path" not in image_text_to_text_model_artifacts[model_name]
-    ):
-        pytest.skip(f"ONNX path not available for {model_name}. Run test_export.py first.")
-
-    # Retrieve qpc_path from previous stage
-    if (
-        model_name not in image_text_to_text_model_artifacts
-        or "qpc_path" not in image_text_to_text_model_artifacts[model_name]
-    ):
-        pytest.skip(f"QPC path not available for {model_name}. Run test_compile.py first.")
 
     onnx_path = image_text_to_text_model_artifacts[model_name].get("onnx_path")
 
@@ -154,10 +138,6 @@ def test_generate_image_text_to_text_model(
             },
         ]
         prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
-
-        inputs = processor(images=image, text=prompt, return_tensors="pt")
-        if "pixel_values" in inputs:
-            inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in [
             "qwen2_5_vl",
