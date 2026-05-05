@@ -141,7 +141,7 @@ def test_tp_non_moe_full_pipeline_check(mocker, mock_config_manager, model_bundl
 def test_create_model_non_moe_tp_only_injects_tp_plan(mocker):
     """
     Unit test: non-MoE model creation under TP-only configuration
-    injects TP arguments and does not apply PEFT TP hooks when use_peft=False.
+    injects TP arguments and does not apply PEFT when use_peft=False.
     """
     pipe = FineTuningPipeline.__new__(FineTuningPipeline)
     pipe.config_manager = mocker.MagicMock(name="ConfigManager")
@@ -166,12 +166,12 @@ def test_create_model_non_moe_tp_only_injects_tp_plan(mocker):
 
     with patch(f"{MODULE}.ComponentFactory") as mock_factory:
         mock_factory.create_model.return_value = model_instance
-        mock_apply_peft = mocker.patch(f"{MODULE}.apply_peft_to_model", autospec=True)
+        mock_get_peft_model = mocker.patch(f"{MODULE}.get_peft_model", autospec=True)
 
         returned = pipe._create_model()
 
     assert returned is model_instance
-    mock_apply_peft.assert_not_called()
+    mock_get_peft_model.assert_not_called()
     assert model_instance.model.lm_head.weight is not original_weight
     assert isinstance(model_instance.model.lm_head.weight, torch.nn.Parameter)
 
@@ -216,3 +216,61 @@ def test_create_model_non_moe_tp_ddp_injects_tp_plan(mocker):
     assert kwargs["tp_plan"] == "auto"
     assert kwargs["tp_size"] == 2
     assert kwargs["device_mesh"] == "tp_mesh"
+
+
+@pytest.mark.finetune
+@pytest.mark.parametrize(
+    "scenario_name,ddp_degree",
+    [
+        ("tp_only", 1),
+        ("tp_ddp", 2),
+    ],
+)
+def test_create_model_non_moe_tp_peft_uses_get_peft_model(mocker, scenario_name, ddp_degree):
+    """
+    Under TP (TP-only and TP+DDP), PEFT must be applied via get_peft_model
+    instead of the legacy apply_peft_to_model pathway.
+    """
+    pipe = FineTuningPipeline.__new__(FineTuningPipeline)
+    pipe.config_manager = mocker.MagicMock(name="ConfigManager")
+
+    pc = ParallelismConfig(tp_size=2, dp_replicate_size=ddp_degree)
+    mesh = {"tp": "tp_mesh"}
+    if ddp_degree > 1:
+        mesh["dp"] = "dp_mesh"
+    mocker.patch.object(pc, "build_device_mesh", autospec=True, return_value=mesh)
+
+    pipe.training_config = {
+        "tp_degree": 2,
+        "ddp_degree": ddp_degree,
+        "device": "cpu",
+        "parallelism_config": pc,
+    }
+
+    peft_cfg_dataclass = mocker.MagicMock(name=f"peft_cfg_dataclass_{scenario_name}")
+    pipe.config_manager.get_model_config.return_value = {
+        "model_type": "hf",
+        "model_name": "non-moe-model",
+        "use_peft": True,
+        "peft_config": peft_cfg_dataclass,
+    }
+
+    model_instance = mocker.MagicMock(name=f"ModelInstance_{scenario_name}")
+    model_instance.model.lm_head.weight = torch.nn.Parameter(torch.randn(2, 2))
+    base_model_before_peft = model_instance.model
+
+    converted_peft_cfg = object()
+    mock_convert = mocker.patch(
+        f"{MODULE}.convert_peft_config_to_lora_config", autospec=True, return_value=converted_peft_cfg
+    )
+    peft_wrapped_model = mocker.MagicMock(name=f"PeftWrappedModel_{scenario_name}")
+    mock_get_peft_model = mocker.patch(f"{MODULE}.get_peft_model", autospec=True, return_value=peft_wrapped_model)
+
+    with patch(f"{MODULE}.ComponentFactory") as mock_factory:
+        mock_factory.create_model.return_value = model_instance
+        returned = pipe._create_model()
+
+    assert returned is model_instance
+    mock_convert.assert_called_once_with(peft_cfg_dataclass)
+    mock_get_peft_model.assert_called_once_with(base_model_before_peft, converted_peft_cfg)
+    assert model_instance.model is peft_wrapped_model
