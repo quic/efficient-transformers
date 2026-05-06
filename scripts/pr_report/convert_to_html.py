@@ -9,7 +9,6 @@
 
 import sys
 from pathlib import Path
-
 try:
     import markdown
 except ImportError:
