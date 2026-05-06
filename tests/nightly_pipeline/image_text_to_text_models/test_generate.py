@@ -157,6 +157,11 @@ def test_generate_image_text_to_text_model(
     generated_text = processor.tokenizer.batch_decode(exec_info.generated_ids, skip_special_tokens=True)
     cloud_ai_100_tokens = exec_info.generated_ids[:, :-1]
 
+    encoder_onnx_and_qpc_dir = None
+    encoder_onnx_and_qpc_dir_size = None
+    decoder_onnx_and_qpc_dir = None
+    decoder_onnx_and_qpc_dir_size = None
+
     if kv_offload:
         encoder_onnx_and_qpc_dir = os.path.dirname(onnx_path[0])
         encoder_onnx_and_qpc_dir_size = get_onnx_and_qpc_size(encoder_onnx_and_qpc_dir)
