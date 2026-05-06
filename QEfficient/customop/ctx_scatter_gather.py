@@ -44,7 +44,7 @@ class CtxScatterFunc(torch.autograd.Function):
         batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
         head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
         ctx_idx = position_ids.unsqueeze(1)
-        data[batch_idx, head_idx, ctx_idx] = updates
+        data[batch_idx, head_idx, ctx_idx] = updates.to(data.dtype)
         return data
 
     @staticmethod

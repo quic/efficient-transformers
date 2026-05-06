@@ -58,6 +58,14 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextModel,
     Gemma4TextRouter,
 )
+from transformers.models.glm4_moe_lite.modeling_glm4_moe_lite import (
+    Glm4MoeLiteAttention,
+    Glm4MoeLiteDecoderLayer,
+    Glm4MoeLiteForCausalLM,
+    Glm4MoeLiteMoE,
+    Glm4MoeLiteModel,
+    Glm4MoeLiteRotaryEmbedding,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -274,6 +282,14 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4TextExperts,
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
+)
+from QEfficient.transformers.models.glm4_moe_lite.modeling_glm4_moe_lite import (
+    QEffGlm4MoeLiteAttention,
+    QEffGlm4MoeLiteDecoderLayer,
+    QEffGlm4MoeLiteForCausalLM,
+    QEffGlm4MoeLiteMoE,
+    QEffGlm4MoeLiteModel,
+    QEffGlm4MoeLiteRotaryEmbedding,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -580,6 +596,13 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
         Gemma4TextExperts: QEffGemma4TextExperts,
         Gemma4TextRouter: QEffGemma4TextRouter,
+        # GLM4 MoE Lite
+        Glm4MoeLiteForCausalLM: QEffGlm4MoeLiteForCausalLM,
+        Glm4MoeLiteModel: QEffGlm4MoeLiteModel,
+        Glm4MoeLiteDecoderLayer: QEffGlm4MoeLiteDecoderLayer,
+        Glm4MoeLiteAttention: QEffGlm4MoeLiteAttention,
+        Glm4MoeLiteRotaryEmbedding: QEffGlm4MoeLiteRotaryEmbedding,
+        Glm4MoeLiteMoE: QEffGlm4MoeLiteMoE,
         # GPT_OSS
         GptOssAttention: QEffGptOssAttention,
         GptOssDecoderLayer: QEffGptOssDecoderLayer,
