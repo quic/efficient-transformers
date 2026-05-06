@@ -26,7 +26,7 @@ from QEfficient.finetune.experimental.core.dataset import SFTDataset  # noqa: F4
 from QEfficient.finetune.experimental.core.logger import Logger
 from QEfficient.finetune.experimental.core.model import HFModel  # noqa: F401
 from QEfficient.finetune.experimental.core.optimizer import prepare_optimizer
-from QEfficient.finetune.experimental.core.trainer import sft_trainer  # noqa: F401
+from QEfficient.finetune.experimental.core.trainer import dpo_trainer, sft_trainer  # noqa: F401
 from QEfficient.finetune.experimental.core.utils.device_map_utils import get_device_map
 from QEfficient.finetune.experimental.core.utils.peft_utils import convert_peft_config_to_lora_config
 from QEfficient.finetune.experimental.core.utils.training_config_utils import prepare_training_config
@@ -248,6 +248,12 @@ class FineTuningPipeline:
         """
         trainer_type = training_config.pop("type")
 
+        # Set this before the trainer is constructed so the data collator
+        # and tokenisation inside DPOTrainer.__init__ use the correct side.
+        if trainer_type == "dpo":
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.padding_side = "right"
         # Get PEFT config if enabled
         model_config_dict = self.config_manager.get_model_config()
         peft_config = None
@@ -260,6 +266,25 @@ class FineTuningPipeline:
         dependencies = {}
         if peft_config is not None:
             dependencies["peft_config"] = peft_config
+
+        # For DPO: load an explicit reference model if configured, then inject it
+        if trainer_type == "dpo":
+            dpo_config_dict = self.config_manager.get_dpo_config()
+            ref_model_name = dpo_config_dict.pop("reference_model_name", None)
+            # Strip fields removed in TRL 1.x that no longer exist in DPOConfig
+            for _removed in ("max_prompt_length", "generate_during_eval", "reference_free",
+                             "rpo_alpha", "dataset_num_proc"):
+                dpo_config_dict.pop(_removed, None)
+            if ref_model_name:
+                from QEfficient.finetune.experimental.core.component_registry import ComponentFactory as _CF
+                model_config_for_ref = self.config_manager.get_model_config()
+                ref_model_type = model_config_for_ref.get("model_type", "hf")
+                excluded_ref_keys = {"use_peft", "peft_config", "model_name", "model_type"}
+                ref_model_kwargs = {k: v for k, v in model_config_for_ref.items() if k not in excluded_ref_keys}
+                ref_model_instance = _CF.create_model(ref_model_type, ref_model_name, **ref_model_kwargs)
+                dependencies["ref_model"] = ref_model_instance.model
+            # Merge DPO-specific fields into training_config so DPOConfig receives them
+            training_config.update(dpo_config_dict)
             if getattr(self, "rank", 0) == 0:
                 model_configuration = get_peft_model(model, peft_config)
                 trainable_params, all_param = model_configuration.get_nb_trainable_parameters()
@@ -280,6 +305,9 @@ class FineTuningPipeline:
         training_config.pop("torch_dtype", None)
         # Remove PP-specific fields as they're handled via device_map in model loading
         training_config.pop("pp_degree", None)
+        # completion_only_loss is SFT-specific; DPOConfig does not accept it
+        if trainer_type == "dpo":
+            training_config.pop("completion_only_loss", None)
 
         # Create trainer arguments instance
         args = args_cls(**training_config)
