@@ -449,7 +449,6 @@ def run_merge_pipeline(exported_path: str, num_layers: int = 61, final_data_dir:
             decoder_output = list(decoder_nodes[1].output)
         else:
             decoder_output = list(decoder_nodes[0].output)
-        decoder_output = list(decoder_nodes[0].output)
         merged_model = merge_models(
             m1_pref,
             m2_pref,
