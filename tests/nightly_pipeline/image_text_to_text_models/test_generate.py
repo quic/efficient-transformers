@@ -154,6 +154,7 @@ def test_generate_image_text_to_text_model(
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(inputs=inputs, streamer=streamer, **generate_params)
     print(exec_info)
+    generated_text = processor.tokenizer.batch_decode(exec_info.generated_ids, skip_special_tokens=True)
     cloud_ai_100_tokens = exec_info.generated_ids[:, :-1]
 
     if kv_offload:
@@ -169,6 +170,7 @@ def test_generate_image_text_to_text_model(
     image_text_to_text_model_artifacts[model_name].update(
         {
             "batch_size": exec_info.batch_size,
+            "generated_text": generated_text,
             "generated_ids": cloud_ai_100_tokens,
             "encoder_onnx_and_qpc_dir": encoder_onnx_and_qpc_dir,
             "encoder_onnx_and_qpc_dir size": encoder_onnx_and_qpc_dir_size,
