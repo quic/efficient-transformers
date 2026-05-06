@@ -98,7 +98,6 @@ def test_infer_qnn_fbs(mocker):
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
-@pytest.mark.multimodal
 def test_infer_vlm(mocker):
     # testing infer for MM models
     check_infer(

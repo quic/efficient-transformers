@@ -343,6 +343,156 @@ class QEffDynamicLayer(CacheLayerMixin):
         return k_out, v_out
 
 
+class QEffDynamicCompressedKVRopeLayer:
+    def __init__(self, ckv, k_pe):
+        self.ckv = ckv
+        self.k_pe = k_pe
+
+    def update_ckv(self, compressed_kv, cache_kwargs):
+        position_ids = cache_kwargs.get("position_ids")
+
+        self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
+
+        ckv_out = self.ckv
+        ctx_len = ckv_out.shape[-2]
+        ctx_indices = torch.arange(ctx_len)[None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values
+        invalid_mask = ctx_indices > gather_limit
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        ckv_out = CtxGatherFunc.apply(ckv_out, ctx_indices, ctx_len)
+        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
+        return ckv_out
+
+    def update_k_pe(self, k_pe_cache, cache_kwargs):
+        position_ids = cache_kwargs.get("position_ids")
+
+        self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
+
+        k_pe_out = self.k_pe
+        ctx_len = k_pe_out.shape[-2]
+        ctx_indices = torch.arange(ctx_len)[None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values
+        invalid_mask = ctx_indices > gather_limit
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        k_pe_out = CtxGatherFunc.apply(k_pe_out, ctx_indices, ctx_len)
+        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), k_pe_out)
+        return k_pe_out
+
+    def read_only_blocked_ckv(self, start_index, end_index, cache_kwargs):
+        # Gather
+        ckv_out = self.ckv
+        position_ids = cache_kwargs.get("position_ids")
+        batch, num_kv_heads, _, _ = ckv_out.shape
+        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+        ckv_out = CtxGatherFuncBlockedKV.apply(ckv_out, ctx_indices)
+
+        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
+        return ckv_out
+
+    def read_only_blocked_k_pe(self, start_index, end_index, cache_kwargs):
+        # Gather
+        k_pe_out = self.k_pe
+        position_ids = cache_kwargs.get("position_ids")
+        batch, num_kv_heads, _, _ = k_pe_out.shape
+        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+        k_pe_out = CtxGatherFuncBlockedKV.apply(k_pe_out, ctx_indices)
+
+        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), k_pe_out)
+        return k_pe_out
+
+    def write_only_k_pe(self, k_pe_cache, cache_kwargs):
+        position_ids = cache_kwargs.get("position_ids")
+
+        self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
+        return self.k_pe
+
+    def write_only_ckv(self, compressed_kv, cache_kwargs):
+        position_ids = cache_kwargs.get("position_ids")
+
+        self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
+        return self.ckv
+
+
+class QEffDynamicCompressedKVRopeCache:
+    def __init__(
+        self,
+    ):
+        self.layers = []
+
+    def add_new(self, ckv, k_pe, layer_idx):
+        self.layers.append(QEffDynamicCompressedKVRopeLayer(ckv, k_pe))
+
+    def update_ckv(self, ckv, layer_idx, cache_kwargs):
+        return self.layers[layer_idx].update_ckv(ckv, cache_kwargs)
+
+    def update_k_pe(self, k_pe, layer_idx, cache_kwargs):
+        return self.layers[layer_idx].update_k_pe(k_pe, cache_kwargs)
+
+    def read_only_blocked_ckv(self, start_index, end_index, layer_idx, cache_kwargs):
+        return self.layers[layer_idx].read_only_blocked_ckv(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_k_pe(self, start_index, end_index, layer_idx, cache_kwargs):
+        return self.layers[layer_idx].read_only_blocked_k_pe(start_index, end_index, cache_kwargs)
+
+    def write_only_ckv(self, ckv, layer_idx, cache_kwargs):
+        # self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only_ckv(ckv, cache_kwargs)
+
+    def write_only_k_pe(self, k_pe, layer_idx, cache_kwargs):
+        # self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only_k_pe(k_pe, cache_kwargs)
+
+    @classmethod
+    def from_legacy_cache(cls, past_key_values):
+        cache = cls()
+        if past_key_values is not None:
+            for layer_idx in range(len(past_key_values)):
+                ckv, k_pe = past_key_values[layer_idx]
+                cache.add_new(ckv, k_pe, layer_idx)
+        return cache
+
+    def to_legacy_cache(
+        self,
+    ):
+        legacy_cache = ()
+        for layer in self.layers:
+            x = (layer.ckv, layer.k_pe)
+            legacy_cache += (x,)
+        return legacy_cache
+
+
 class QEffDynamicCache(Cache):
     """
     A cache that grows dynamically as more tokens are generated. This is the default for generative models.

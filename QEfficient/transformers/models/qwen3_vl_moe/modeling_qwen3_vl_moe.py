@@ -55,20 +55,26 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
     returns:
         x_t: (bs, seq_len, head_dim // 2)
     """
-    freqs_t = freqs[0]  # just overwrite the first dimension T
-    half_shape = freqs.shape[-1] // 2
+    freqs_t = freqs[0].clone()
     for dim, offset in enumerate((1, 2), start=1):  # H, W
         length = mrope_section[dim] * 3
-        idx = slice(offset, length, 3)
-        freqs_t[..., idx] = freqs[dim, ..., idx]
-        offset += half_shape
-        length += half_shape
         idx = slice(offset, length, 3)
         freqs_t[..., idx] = freqs[dim, ..., idx]
     return freqs_t
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqueeze_dim=1):
+def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
+    invalid_pos_mask = position_ids < 0
+    safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
+    flat_pos = safe_position_ids.reshape(-1)
+    cos = cos.index_select(0, flat_pos).reshape(*safe_position_ids.shape, cos.shape[-1])
+    sin = sin.index_select(0, flat_pos).reshape(*safe_position_ids.shape, sin.shape[-1])
+    cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
+    sin = qeff_apply_interleaved_mrope(sin, mrope_section).unsqueeze(1)
+    return cos, sin
+
+
+def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
@@ -85,27 +91,9 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
         k (`torch.Tensor`): The key tensor.
         cos (`torch.Tensor`): The cosine part of the rotary embedding.
         sin (`torch.Tensor`): The sine part of the rotary embedding.
-        position_ids (`torch.Tensor`):
-            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
-            used to pass offsetted position ids when working with a KV-cache.
-        mrope_section(`List(int)`):
-            Multimodal rope section is for channel dimension of temporal, height and width in rope calculation.
-        unsqueeze_dim (`int`, *optional*, defaults to 1):
-            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids]
-    sin = sin[position_ids]
-    cos = qeff_apply_interleaved_mrope(cos, mrope_section)
-    sin = qeff_apply_interleaved_mrope(sin, mrope_section)
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
@@ -396,14 +384,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states,
-            key_states,
-            cos_cached,
-            sin_cached,
-            position_ids[1:],
-            self.config.rope_scaling["mrope_section"],
-        )
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
@@ -579,6 +560,9 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
 
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
+        cos, sin = qeff_prepare_mrope_cos_sin(
+            self.cos_cached, self.sin_cached, position_ids[1:], self.config.rope_scaling["mrope_section"]
+        )
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -599,8 +583,8 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
-                sin_cached=self.sin_cached,
-                cos_cached=self.cos_cached,
+                sin_cached=sin,
+                cos_cached=cos,
                 **kwargs,
             )
 
