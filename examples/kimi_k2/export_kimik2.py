@@ -9,7 +9,6 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
-
 # parameters to be configured
 prompt = "Once upon a time,"
 num_hidden_layers = 2
