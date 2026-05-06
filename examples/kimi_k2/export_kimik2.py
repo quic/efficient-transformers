@@ -20,7 +20,7 @@ mla_absorption = {"cache_compressed": True, "absorption": False, "online": False
 # qaic_config = {"mla_absorption": mla_absorption, "num_kv_heads_repeat": TS}  # No blocking with kv head replication
 # qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
 # qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv",  "num_kv_heads_repeat":TS} # for KV blocking with kv head replication
-qaic_config = {
+qaic_config
     "mla_absorption": mla_absorption,
     "enable_blocking": True,
     "blocking_mode": "h",
