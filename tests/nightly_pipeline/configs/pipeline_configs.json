@@ -77,7 +77,7 @@
 
       },
       "generate_params": {
-        "generation_len": 20,
+        "generation_len": 25,
         "image_url": "https://picsum.photos/id/237/536/354",
         "query": "Can you describe the image in detail?"
       }
