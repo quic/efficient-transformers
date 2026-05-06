@@ -9,10 +9,8 @@ Utility helpers to suggest attention/FFN blocking configs for diffusers transfor
 
 This module adapts the standalone configurator script into a clean, importable API
 that can be fed model config + pipeline compile config to derive blocking settings.
-"""
-
+""
 from __future__ import annotations
-
 import math
 from typing import Any, Dict, List, Optional
 

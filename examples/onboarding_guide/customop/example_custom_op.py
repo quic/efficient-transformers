@@ -8,7 +8,6 @@
 """
 Custom op template - shows the 3-layer pattern we use for all custom ops.
 """
-
 import onnxscript
 import torch
 from torch import nn

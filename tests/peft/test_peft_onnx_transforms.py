@@ -10,8 +10,6 @@ import textwrap
 import onnx
 
 from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
-
-
 def test_adapter_weights_to_inputs_transform():
     external_tensors_file = "weight.raw"
     adapter_name = "testAdapter1"

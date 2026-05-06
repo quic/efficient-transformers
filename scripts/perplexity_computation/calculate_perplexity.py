@@ -8,7 +8,6 @@
 import argparse
 import logging
 import time
-
 import numpy as np
 import onnxruntime
 import torch
@@ -16,12 +15,8 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-
 logger = logging.getLogger(__name__)
-
-
 # 1. Data Loading
 class WikiTextDataset(Dataset):
     def __init__(self, dataset_name, tokenizer, ctx_len, stride=1024):
