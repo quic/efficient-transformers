@@ -12,7 +12,6 @@ that can be fed model config + pipeline compile config to derive blocking settin
 """
 
 from __future__ import annotations
-
 import math
 from typing import Any, Dict, List, Optional
 
