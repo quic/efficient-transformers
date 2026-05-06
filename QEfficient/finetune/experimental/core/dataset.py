@@ -529,3 +529,176 @@ class SFTDataset(BaseDataset):
             "prompt": example.get("prompt", ""),
             "completion": example.get("completion", ""),
         }
+
+
+@registry.dataset("dpo_dataset")
+class DPODataset(BaseDataset):
+    """
+    A preference dataset for Direct Preference Optimization (DPO) training.
+
+    Each sample must contain three text fields:
+    - ``prompt``   — the shared context / instruction
+    - ``chosen``   — the preferred response
+    - ``rejected`` — the dis-preferred response
+
+    The dataset can be loaded from the Hugging Face Hub or from a local JSON file.
+    Column names are configurable via ``prompt_column``, ``chosen_column``, and
+    ``rejected_column`` kwargs so the class works with any hub dataset that follows
+    the standard preference format (e.g. ``trl-lib/ultrafeedback_binarized``).
+
+    Args:
+        dataset_name (str): HF Hub dataset name or path. Ignored when ``json_file_path``
+            is provided.
+        split (str): Dataset split to load (``"train"``, ``"test"``, etc.).
+        split_ratio (float): Train/test ratio used when only one split is available.
+        seed (int): Random seed for shuffling.
+        prompt_column (str): Column name for the prompt field. Defaults to ``"prompt"``.
+        chosen_column (str): Column name for the chosen response. Defaults to ``"chosen"``.
+        rejected_column (str): Column name for the rejected response. Defaults to
+            ``"rejected"``.
+        json_file_path (str, optional): Path to a local JSON file. Each record must
+            contain the three columns described above.
+        config_name (str, optional): HF dataset configuration name (e.g. ``"main"``).
+    """
+
+    REQUIRED_COLUMNS = ("prompt", "chosen", "rejected")
+
+    def __init__(
+        self,
+        dataset_name: str,
+        split: str,
+        split_ratio: float = 0.8,
+        seed: int = 42,
+        **kwargs,
+    ):
+        self.split_ratio = split_ratio
+        self.json_file_path = kwargs.get("json_file_path", None)
+        self.prompt_column = kwargs.get("prompt_column", "prompt")
+        self.chosen_column = kwargs.get("chosen_column", "chosen")
+        self.rejected_column = kwargs.get("rejected_column", "rejected")
+        self.config_name = kwargs.get("config_name", None)
+
+        if self.json_file_path not in (None, ""):
+            if not os.path.isfile(self.json_file_path):
+                raise FileNotFoundError(f"JSON file not found or invalid: '{self.json_file_path}'")
+
+        super().__init__(dataset_name, split, seed, **kwargs)
+
+    def _initialize_dataset(self):
+        """Load and validate the preference dataset."""
+        if self.json_file_path:
+            validate_json_structure(self.json_file_path)
+            raw = load_dataset("json", data_files=self.json_file_path, split="train")
+            raw = raw.shuffle(seed=self.seed)
+            if self.split in ["train", "test"]:
+                raw = apply_train_test_split(raw, self.split_ratio, self.split, self.seed)
+        else:
+            load_kwargs = {}
+            if self.config_name is not None:
+                load_kwargs["name"] = self.config_name
+
+            try:
+                db = load_dataset_builder(self.dataset_name, **load_kwargs)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to load dataset builder for '{self.dataset_name}': {exc}. "
+                    "Please check the dataset name and your network connection."
+                ) from exc
+
+            available_splits = list(db.info.splits.keys()) if db.info.splits else []
+            load_split = self.split if self.split in available_splits else "train"
+
+            try:
+                raw = load_dataset(self.dataset_name, split=load_split, **load_kwargs)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to load dataset '{self.dataset_name}' with split '{load_split}': {exc}."
+                ) from exc
+
+            raw = raw.shuffle(seed=self.seed)
+            if len(available_splits) == 1:
+                raw = apply_train_test_split(raw, self.split_ratio, self.split, self.seed)
+
+        self._validate_columns(raw.column_names)
+        self.dataset = self._rename_columns(raw)
+        self.dataset = self._filter_invalid_samples(self.dataset)
+
+    def _validate_columns(self, column_names):
+        """Ensure the required source columns are present.
+
+        chosen and rejected are always required.  prompt is optional — when
+        absent, TRL's maybe_extract_prompt will derive it from the shared
+        prefix of the chosen/rejected message lists (e.g. trl-lib/ultrafeedback_binarized).
+        A non-default prompt_column name is still validated so misconfigured
+        column mappings surface early.
+        """
+        for col, attr in [
+            (self.chosen_column, "chosen_column"),
+            (self.rejected_column, "rejected_column"),
+        ]:
+            if col not in column_names:
+                raise RuntimeError(
+                    f"DPODataset: column '{col}' (configured via '{attr}') not found in dataset. "
+                    f"Available columns: {column_names}."
+                )
+        if self.prompt_column != "prompt" and self.prompt_column not in column_names:
+            raise RuntimeError(
+                f"DPODataset: column '{self.prompt_column}' (configured via 'prompt_column') not found in dataset. "
+                f"Available columns: {column_names}."
+            )
+
+    def _rename_columns(self, dataset):
+        """Normalise column names to the canonical DPO keys expected by TRL."""
+        rename_map = {}
+        if self.prompt_column != "prompt" and self.prompt_column in dataset.column_names:
+            rename_map[self.prompt_column] = "prompt"
+        if self.chosen_column != "chosen":
+            rename_map[self.chosen_column] = "chosen"
+        if self.rejected_column != "rejected":
+            rename_map[self.rejected_column] = "rejected"
+        if rename_map:
+            dataset = dataset.rename_columns(rename_map)
+        return dataset
+
+    def _filter_invalid_samples(self, dataset):
+        """Remove samples where chosen or rejected is empty, whitespace-only,
+        or an empty list — any of which would produce zero-length token sequences
+        """
+
+        def is_valid(example):
+            for col in ("chosen", "rejected"):
+                val = example.get(col)
+                if val is None:
+                    return False
+                if isinstance(val, str) and not val.strip():
+                    return False
+                if isinstance(val, list):
+                    if len(val) == 0:
+                        return False
+                    for turn in val:
+                        if isinstance(turn, dict):
+                            if turn.get("role") == "assistant" and not str(turn.get("content", "")).strip():
+                                return False
+            return True
+
+        before = len(dataset)
+        dataset = dataset.filter(is_valid, desc="Filtering invalid DPO samples")
+        removed = before - len(dataset)
+        if removed > 0:
+            logger.log_rank_zero(
+                f"DPODataset: removed {removed} samples with empty/whitespace chosen or rejected."
+            )
+        return dataset
+
+    def __len__(self) -> int:
+        return self.dataset.num_rows
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        example = self.dataset[int(idx)]
+        if not isinstance(example, dict):
+            example = dict(example)
+        return {
+            "prompt": example.get("prompt", ""),
+            "chosen": example.get("chosen", ""),
+            "rejected": example.get("rejected", ""),
+        }

@@ -1,0 +1,69 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+# DPO (Direct Preference Optimization) — single-device training config
+# Dataset: trl-lib/ultrafeedback_binarized (prompt / chosen / rejected columns)
+# Model:   HuggingFaceTB/SmolLM-135M with LoRA
+
+# Model configuration
+model:
+  model_type: "hf"
+  auto_class_name: "AutoModelForCausalLM"
+  model_name: "Qwen/Qwen2.5-0.5B-Instruct"
+  use_peft: true
+  peft_config:
+    lora_r: 16
+    lora_alpha: 16
+    lora_dropout: 0.05
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+    task_type: "CAUSAL_LM"
+    peft_type: "LORA"
+
+# Dataset configuration
+dataset:
+  dataset_type: "dpo_dataset"
+  dataset_name: "trl-lib/ultrafeedback_binarized"
+  # Column names in the hub dataset that map to prompt / chosen / rejected
+  prompt_column: "prompt"
+  chosen_column: "chosen"
+  rejected_column: "rejected"
+  data_seed: 42
+  group_by_length: false
+  split: 'train'
+
+# DPO-specific hyperparameters
+dpo:
+  beta: 0.1                      # KL-penalty coefficient
+  loss_type: ["sigmoid"]         # DPO loss variant (list in TRL 1.x)
+  label_smoothing: 0.0
+  max_prompt_length: 1024
+  max_length: 2048
+  truncation_mode: "keep_end"
+  disable_dropout: true
+  precompute_ref_log_probs: false
+  ref_model: None
+  # reference_model_name: null   # Uncomment to use a separate frozen reference model
+
+# Training configuration
+training:
+  type: "dpo"
+  output_dir: "./dpo_results"
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 4
+  torch_dtype: "fp16"
+  torch_compile: false
+  logging_steps: 10
+  save_strategy: "epoch"
+  eval_strategy: "epoch"
+  optim: adamw
+  learning_rate: 1e-5
+  fp16: True
+
+
+scheduler:
+  scheduler_name: "cosine"
+  warmup_ratio: 0.1

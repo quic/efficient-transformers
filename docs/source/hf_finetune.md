@@ -64,6 +64,10 @@ If QEfficient is already installed, install `torch_qaic`, `transformers`, and op
 # torch_qaic (example wheel path for Python 3.10; adjust to your environment)
 pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
 
+Install sdk with this flag --install-torch-qaic
+
+If whl files are absent from the above location, it can be copied from apps sdk files at apps/qaic-apps-1.22.0.xx/common/integration folder.
+
 # Install transformers with QAIC backend support
 # Note: Upstream changes to transformer library
 git clone https://github.com/quic-akuruvil/transformers.git
