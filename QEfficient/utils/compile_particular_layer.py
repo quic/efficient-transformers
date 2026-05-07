@@ -11,7 +11,7 @@ from pathlib import Path
 # =====================================================
 
 TIMEOUT = 500 * 60  # 90 minutes
-DEVICE_GROUP = ",".join(str(i) for i in range(1))  # 0..15
+DEVICE_GROUP = ",".join(str(i) for i in range(24))  # 0..15
 
 # =====================================================
 # CUSTOM IO YAML WRITER
