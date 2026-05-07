@@ -339,6 +339,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 "image_idx": chunk_image_idx if chunk_image_idx is not None else np.array([[0]], dtype=np.int64),
             }
 
+            if "mm_token_type_ids" in lang_inputs:
+                chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
+                    :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
+                ]
+
             if decode_batch_id is not None:
                 chunk_inputs["batch_index"] = decode_batch_id
 
@@ -371,6 +376,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             self._decode_cross_attention_mask = np.ones((bs, 1, num_images, img_tiles), dtype=np.int64)
         else:
             self._decode_cross_attention_mask = None
+
+        if "mm_token_type_ids" in lang_inputs:
+            self._decode_mm_token_type_ids = np.zeros(
+                (lang_inputs["mm_token_type_ids"].shape[0], 1), dtype=lang_inputs["mm_token_type_ids"].dtype
+            )
+        else:
+            self._decode_mm_token_type_ids = None
 
         return outputs
 
@@ -724,6 +736,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         if hasattr(self, "_decode_cross_attention_mask") and self._decode_cross_attention_mask is not None:
             # Decoder specialization expects a single mask (batch dim = 1)
             decode_inputs["cross_attention_mask"] = self._decode_cross_attention_mask
+
+        if hasattr(self, "_decode_mm_token_type_ids") and self._decode_mm_token_type_ids is not None:
+            decode_inputs["mm_token_type_ids"] = self._decode_mm_token_type_ids
 
         return decode_inputs
 

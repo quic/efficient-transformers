@@ -316,7 +316,11 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
 
 
 def get_sliding_window_layers(config):
-    return torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
+    if hasattr(config, "layer_types") and config.layer_types is not None:
+        return torch.tensor([layer_type == "sliding_attention" for layer_type in config.layer_types], dtype=torch.bool)
+
+    pattern = getattr(config, "sliding_window_pattern", 4)
+    return torch.tensor([bool((i + 1) % pattern) for i in range(config.num_hidden_layers)], dtype=torch.bool)
 
 
 def get_sliding_window_shapes(config, batch_size, seq_len):
