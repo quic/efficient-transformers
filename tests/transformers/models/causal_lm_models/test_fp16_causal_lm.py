@@ -127,7 +127,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ai100(
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_full_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name, manual_cleanup):
-
     torch.manual_seed(42)
     check_causal_lm_pytorch_vs_kv_vs_ai100(
         model_name=model_name, torch_dtype=torch.float16, manual_cleanup=manual_cleanup
@@ -139,7 +138,6 @@ def test_full_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_few_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name, manual_cleanup):
-
     torch.manual_seed(42)
     n_layer = get_custom_n_layers(model_name)
     check_causal_lm_pytorch_vs_kv_vs_ai100(
@@ -152,7 +150,6 @@ def test_few_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_dummy_fp16_causal_lm_pytorch_vs_kv_vs_ai100(model_name, manual_cleanup):
-
     torch.manual_seed(42)
     custom_config = model_config_dict[model_name]
     hf_config = AutoConfig.from_pretrained(
