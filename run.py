@@ -24,8 +24,8 @@ ctx_len = 128
 qaic_config = {"mla_absorption": mla_absorption, "num_kv_heads_repeat": TS}  # No blocking with kv head replication
 
 EXPORT_START = 1
-EXPORT_END = 3
-LAYERWISE_MODE = "multiple_qpc"
+EXPORT_END = 2
+LAYERWISE_MODE = "single_qpc"
 
 
 def _ensure_pretrained_window_attrs():
