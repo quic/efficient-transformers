@@ -3621,7 +3621,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
         result = {k: v for k, v in spec.items() if v is not None}
-        # result["_graph_name"] = "Prefill"
+        result["_graph_name"] = "Prefill"
         return result
 
     def build_decode_specialization(
@@ -3681,7 +3681,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             spec["batch_size"] = kv_cache_batch_size
         result = {k: v for k, v in spec.items() if v is not None}
-        # result["_graph_name"] = "Decode"
+        result["_graph_name"] = "Decode"
         return result
 
     def compile(
