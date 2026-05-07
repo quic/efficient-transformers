@@ -1123,10 +1123,10 @@ class QEffDeepseekV3MoE(nn.Module):
             hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.in_features_gate)
         )
         
-        gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2))
-        up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2))
+        gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2).to(expert_in.dtype))
+        up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2).to(expert_in.dtype))
         hidden = self.act_fn(gate_out) * up_out
-        down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2))
+        down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(expert_in.dtype))
 
         down_out = down_out.view(-1, self.gate.top_k, self.out_features_down)
 
