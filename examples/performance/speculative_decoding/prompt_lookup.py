@@ -196,9 +196,18 @@ def find_candidate_pred_tokens(
     return np.full(num_pred_tokens, fill_tok, dtype=np.int64), has_empty_tokens
 
 
+def _select_k(actual_proposals: np.ndarray, decode_ks: List[int]) -> int:
+    """Return the smallest K in decode_ks that covers the maximum proposal count in the batch."""
+    need = int(actual_proposals.max())
+    for k in decode_ks:
+        if k >= need:
+            return k
+    return decode_ks[-1]
+
+
 def pld_spec_decode_inference(
     prompts: List[str],
-    num_speculative_tokens: int,
+    num_speculative_tokens: Union[int, List[int]],
     prefill_seq_len: int,
     ctx_len: int,
     prefill_bsz: int,
@@ -212,7 +221,10 @@ def pld_spec_decode_inference(
 
     Args:
         prompts (List[str]): List of prompts to perform inference on.
-        num_speculative_tokens (int): Number of speculative tokens.
+        num_speculative_tokens (Union[int, List[int]]): Number of speculative tokens, or a list
+            of proposal lengths to compile specializations for. Each value K generates a
+            specialization with seq_len=K+1. Include 0 for a cheap single-token fallback
+            (e.g. [0, 3]).  A plain int is treated as a single-element list.
         prefill_seq_len (int): Prefill sequence length.
         ctx_len (int): Context length.
         prefill_bsz (int): Prefill batch size.
@@ -224,6 +236,8 @@ def pld_spec_decode_inference(
     Returns:
         SpDCloudAI100ExecInfo: Execution information, including performance metrics and generated text.
     """
+    decode_ks = sorted(set(num_speculative_tokens)) if isinstance(num_speculative_tokens, list) else [num_speculative_tokens]
+    max_k = decode_ks[-1]
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
@@ -245,7 +259,7 @@ def pld_spec_decode_inference(
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
         full_batch_size=full_batch_size,
-        num_speculative_tokens=num_speculative_tokens,
+        num_speculative_tokens=decode_ks,
     )
     # init qaic session
     target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
@@ -278,16 +292,18 @@ def pld_spec_decode_inference(
     # run prefill on both draft and target models
     # mock input key "logits" to store the first batch of output logits
     tlm_precode_inputs = dict(
-        input_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
-        position_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
+        input_ids=np.zeros((decode_batch_size, max_k + 1), dtype=np.int64),
+        position_ids=np.zeros((decode_batch_size, max_k + 1), dtype=np.int64),
         batch_index=np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1),
-        num_logits_to_keep=np.arange(num_speculative_tokens + 1, dtype=np.int64).reshape(-1, 1),
+        num_logits_to_keep=np.arange(max_k + 1, dtype=np.int64).reshape(-1, 1),
     )
-    num_logits_to_keep = num_speculative_tokens + 1
+    num_logits_to_keep = max_k + 1
     max_gen_len = [ctx_len] * decode_batch_size
     # setup buffers
     tlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
     precode_logits_ph = np.zeros((decode_batch_size, num_logits_to_keep, vocab_size), dtype=np.float32)
+    # Pre-allocate per-K logit buffers for smaller specializations
+    logit_buffers = {k: np.zeros((decode_batch_size, k + 1, vocab_size), dtype=np.float32) for k in decode_ks if k != max_k}
 
     target_model_session.set_buffers({"logits": tlm_prefill_logits_ph})
     e2e_start = perf_counter()
@@ -311,7 +327,7 @@ def pld_spec_decode_inference(
         tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
         input_len = prompts_tokenized[bi]["position_ids"].max(1).item() + 1
         tlm_precode_inputs["position_ids"][bi] = np.arange(
-            input_len, input_len + num_speculative_tokens + 1, dtype=np.int64
+            input_len, input_len + max_k + 1, dtype=np.int64
         )
         # assumes that prefill queue will always be popped from the front
         input_lengths[bi] = input_len
@@ -329,7 +345,7 @@ def pld_spec_decode_inference(
     decode_start = perf_counter()
     mean_num_accepted_tokens = 0
     all_accept = np.full(decode_batch_size, False, dtype=bool)
-    tlm_position_ids = np.arange(num_speculative_tokens + 1).reshape(1, -1).repeat(decode_batch_size, axis=0)
+    tlm_position_ids = np.arange(max_k + 1).reshape(1, -1).repeat(decode_batch_size, axis=0)
     empty_indices = np.zeros(decode_batch_size, dtype=bool)
     decode_draft_time = 0.0
     decode_target_time = 0.0
@@ -347,7 +363,7 @@ def pld_spec_decode_inference(
                 all_ids[bi : bi + 1, : prompt_plus_gen_idx[bi]],
                 fill_tok=-1,
                 max_ngram_size=max_ngram_size,
-                num_pred_tokens=num_speculative_tokens,
+                num_pred_tokens=max_k,
             )
             empty_indices[bi] = has_empty_tokens
             # prepare target model inputs
@@ -360,15 +376,33 @@ def pld_spec_decode_inference(
         decode_draft_time += draft_end
         # run precode on TLM to score the proposed tokens
         target_start = perf_counter()
-        tlm_outputs = target_model_session.run(tlm_precode_inputs)
-        target_logits = tlm_outputs["logits"]
+        # Pick the smallest K specialization that covers the actual proposal count
+        actual_proposals = np.where(empty_indices, 0, max_k)
+        selected_k = _select_k(actual_proposals[valid_batch_indices], decode_ks)
+        if selected_k == max_k:
+            tlm_outputs = target_model_session.run(tlm_precode_inputs)
+            target_logits = tlm_outputs["logits"]
+        else:
+            sel_inputs = {
+                "input_ids": tlm_precode_inputs["input_ids"][:, : selected_k + 1],
+                "position_ids": tlm_precode_inputs["position_ids"][:, : selected_k + 1],
+                "batch_index": tlm_precode_inputs["batch_index"],
+                "num_logits_to_keep": np.arange(selected_k + 1, dtype=np.int64).reshape(-1, 1),
+            }
+            target_model_session.set_buffers({"logits": logit_buffers[selected_k]})
+            tlm_outputs = target_model_session.run(sel_inputs)
+            raw_logits = tlm_outputs["logits"]  # [batch, selected_k+1, vocab]
+            target_model_session.set_buffers({"logits": precode_logits_ph})
+            # Pad to [batch, max_k+1] so downstream acceptance logic is unchanged
+            pad = np.zeros((decode_batch_size, max_k - selected_k, vocab_size), dtype=np.float32)
+            target_logits = np.concatenate([raw_logits, pad], axis=1)
         # greedy sampling from target model
         target_tokens = target_logits.argmax(-1)
         target_end = perf_counter() - target_start
         decode_target_time += target_end
         # exact matching between draft and target tokens
         num_tokens_selected = np.ones(decode_batch_size, dtype=np.int64)
-        tlm_precode_position_ids = np.full((decode_batch_size, num_speculative_tokens + 1), -1, dtype=np.int64)
+        tlm_precode_position_ids = np.full((decode_batch_size, max_k + 1), -1, dtype=np.int64)
         non_empty_valid_indices = ~empty_indices & valid_batch_indices
         matching = (
             tlm_precode_inputs["input_ids"][non_empty_valid_indices, 1:] == target_tokens[non_empty_valid_indices, :-1]
@@ -383,7 +417,7 @@ def pld_spec_decode_inference(
                 non_empty_valid_indices
             ] + num_tokens_selected[non_empty_valid_indices].reshape(-1, 1)
         # record accepted tokens
-        all_accept[valid_batch_indices] = num_tokens_selected[valid_batch_indices] == num_speculative_tokens + 1
+        all_accept[valid_batch_indices] = num_tokens_selected[valid_batch_indices] == max_k + 1
         mean_num_accepted_tokens += num_tokens_selected[valid_batch_indices].mean().item()
         # append selected tokens to the generated_ids
         for bi, valid in enumerate(valid_batch_indices):
@@ -439,7 +473,7 @@ def pld_spec_decode_inference(
         batch_decode,
         generated_ids,
         perf_metrics,
-        num_speculative_tokens,
+        max_k,
         prefill_seq_len,
         ctx_len,
         prefill_bsz,
@@ -457,7 +491,12 @@ def comma_separated_ints(x: str):
 def arg_parse():
     parser = ArgumentParser(description="Draft-based SpD Inference")
     parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
-    parser.add_argument("--num-speculative-tokens", type=int, default=3, help="Number of speculative tokens")
+    parser.add_argument(
+        "--num-speculative-tokens",
+        type=comma_separated_ints,
+        default="3",
+        help="Comma-separated list of proposal lengths (e.g. '0,3' or '3'). Each value K compiles a specialization with seq_len=K+1.",
+    )
     parser.add_argument("--prefill-seq-len", type=int, default=256, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=1024, help="Context length")
     parser.add_argument("--prefill-bsz", type=int, default=1, help="Prefill batch size")
