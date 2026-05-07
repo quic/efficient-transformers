@@ -17,7 +17,7 @@ from QEfficient.base.onnx_transforms import CustomOpTransform, RemovePrefix
 # ============================================================
 SAVE_WORKERS = 8
 DELETE_WORKERS = 8
-DELETE_SUFFIXES = ("onnx.data",)
+DELETE_SUFFIXES = ("all_down_proj", "all_gate_proj", "all_up_proj")
 _delete_pool = ThreadPoolExecutor(max_workers=DELETE_WORKERS)
 
 
@@ -244,9 +244,9 @@ def run_prefix_pipeline(
 
         print(f"[Chunk] saved in {time.time() - t0:.2f}s")
 
-        # deletables = collect_chunk_deletable_files(exported_path, chunk_windows)
-        # async_delete_files(deletables)
-        # print(f"[Chunk] scheduled deletion of {len(deletables)} files")
+        deletables = collect_chunk_deletable_files(exported_path, chunk_windows)
+        async_delete_files(deletables)
+        print(f"[Chunk] scheduled deletion of {len(deletables)} files")
 
     print("[DONE] prefix+deletion pipeline complete")
 
