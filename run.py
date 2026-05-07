@@ -1,3 +1,4 @@
+import argparse
 import copy
 import functools
 import json
@@ -22,10 +23,6 @@ mla_absorption = {"cache_compressed": True, "absorption": True, "online": False}
 prefill_seq_len = 1
 ctx_len = 128
 qaic_config = {"mla_absorption": mla_absorption, "num_kv_heads_repeat": TS}  # No blocking with kv head replication
-
-EXPORT_START = 1
-EXPORT_END = 2
-LAYERWISE_MODE = "single_qpc"
 
 
 def _ensure_pretrained_window_attrs():
@@ -177,13 +174,34 @@ def _resolve_export_root(onnx_path: Path) -> Path:
     return onnx_path.parent
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Compile Kimi text-only model layer windows with QEfficient.")
+    parser.add_argument("--model_path", dest="model_path", type=Path, default=MODEL_PATH)
+    parser.add_argument("--export_start", dest="export_start", type=int, default=1)
+    parser.add_argument("--export_end", dest="export_end", type=int, default=2)
+    parser.add_argument("--layerwise_mode", dest="layerwise_mode", type=str, default="single_qpc")
+    parser.add_argument("--total_layers", dest="total_layers", type=int, default=None)
+    return parser.parse_args()
+
+
 def main():
     _ensure_pretrained_window_attrs()
-    text_config = AutoConfig.from_pretrained(str(MODEL_PATH), trust_remote_code=True).text_config
-    total_layers = getattr(text_config, "num_hidden_layers", None)
-    if total_layers is None:
+    args = _parse_args()
+    model_path = args.model_path
+
+    text_config = AutoConfig.from_pretrained(str(model_path), trust_remote_code=True).text_config
+    resolved_total_layers = args.total_layers
+    if resolved_total_layers is None:
+        resolved_total_layers = getattr(text_config, "num_hidden_layers", None)
+    if resolved_total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from text_config.")
-    windows = _build_layer_windows(total_layers=total_layers, start=EXPORT_START, end=EXPORT_END)
+
+    export_start = args.export_start
+    export_end = args.export_end
+    layerwise_mode = args.layerwise_mode
+    total_layers = resolved_total_layers
+
+    windows = _build_layer_windows(total_layers=total_layers, start=export_start, end=export_end)
     first_onnx_path = None
     for start, end in windows:
         transformers.modeling_utils.PreTrainedModel._start = start
@@ -195,7 +213,7 @@ def main():
         QEfficient.base.modeling_qeff.QEFFBaseModel._start = start
         QEfficient.base.modeling_qeff.QEFFBaseModel._end = end
         QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers = total_layers
-        model, tokenizer = load_text_only_kimi(MODEL_PATH, num_hidden_layers=end - start)
+        model, tokenizer = load_text_only_kimi(model_path, num_hidden_layers=end - start)
         qeff_model = QEFFAutoModelForCausalLM(
             model, num_kv_heads_repeat=1, qaic_config=qaic_config, torch_dtype=torch.float16
         )
@@ -216,7 +234,7 @@ def main():
         raise RuntimeError("No ONNX path produced during compilation.")
     export_root = _resolve_export_root(first_onnx_path)
 
-    if LAYERWISE_MODE == "multiple_qpc":
+    if layerwise_mode == "multiple_qpc":
         QEfficient.utils.compile_layerwise(str(export_root))
         QEfficient.utils.inference_pipeline(str(export_root))
     else:
