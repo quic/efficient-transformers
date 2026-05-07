@@ -172,20 +172,22 @@ def test_generate_image_text_to_text_model(
         decoder_onnx_and_qpc_dir_size = get_onnx_and_qpc_size(decoder_onnx_and_qpc_dir)
 
     # Store all metrics and execution info
-    image_text_to_text_model_artifacts[model_name].update(
-        {
-            "batch_size": exec_info.batch_size,
-            "generated_text": generated_text,
-            "generated_ids": cloud_ai_100_tokens,
-            "encoder_onnx_and_qpc_dir": encoder_onnx_and_qpc_dir,
-            "encoder_onnx_and_qpc_dir size": encoder_onnx_and_qpc_dir_size,
-            "decoder_onnx_and_qpc_dir": decoder_onnx_and_qpc_dir,
-            "decoder_onnx_and_qpc_dir size": decoder_onnx_and_qpc_dir_size,
-            "perf_metrics": {
-                "prefill_time": exec_info.perf_metrics.prefill_time,
-                "decode_perf": exec_info.perf_metrics.decode_perf,
-                "total_perf": exec_info.perf_metrics.total_perf,
-                "total_time": exec_info.perf_metrics.total_time,
-            },
-        }
-    )
+    artifacts_update = {
+        "batch_size": exec_info.batch_size,
+        "generated_text": generated_text,
+        "generated_ids": cloud_ai_100_tokens,
+        "decoder_onnx_and_qpc_dir": decoder_onnx_and_qpc_dir,
+        "decoder_onnx_and_qpc_dir size": decoder_onnx_and_qpc_dir_size,
+        "perf_metrics": {
+            "prefill_time": exec_info.perf_metrics.prefill_time,
+            "decode_perf": exec_info.perf_metrics.decode_perf,
+            "total_perf": exec_info.perf_metrics.total_perf,
+            "total_time": exec_info.perf_metrics.total_time,
+        },
+    }
+
+    if kv_offload:
+        artifacts_update["encoder_onnx_and_qpc_dir"] = encoder_onnx_and_qpc_dir
+        artifacts_update["encoder_onnx_and_qpc_dir size"] = encoder_onnx_and_qpc_dir_size
+
+    image_text_to_text_model_artifacts[model_name].update(artifacts_update)
