@@ -13,7 +13,6 @@ import shutil
 import subprocess
 import warnings
 from abc import ABC, abstractmethod
-from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -45,29 +44,10 @@ from QEfficient.utils import (
     hash_dict_params,
     load_json,
     require_value,
-    to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
-
-# @lru_cache(maxsize=1)
-# def _qaic_supported_options() -> set[str]:
-#     """Return supported qaic-compile options for the installed compiler binary."""
-#     compiler_bin = constants.COMPILER[0] if constants.COMPILER else "qaic-compile"
-#     try:
-#         result = subprocess.run([compiler_bin, "--help"], capture_output=True, text=True, check=False)
-#     except Exception as exc:
-#         logger.warning("Failed to query qaic-compile options: %s", exc)
-#         return set()
-
-#     options = set()
-#     help_text = f"{result.stdout}\n{result.stderr}"
-#     for line in help_text.splitlines():
-#         match = re.match(r"\s*(-[A-Za-z0-9][A-Za-z0-9-]*)", line)
-#         if match:
-#             options.add(match.group(1))
-#     return options
 
 
 def _get_model_external_data_files(onnx_path: Path) -> set[str]:
@@ -99,6 +79,7 @@ def _cleanup_stale_external_tensor_files(export_dir: Path, keep_files: set[str])
             continue
         if uuid_like.fullmatch(path.name) or path.name.startswith("model.") or path.name.startswith("onnx__"):
             path.unlink(missing_ok=True)
+
 
 class QEFFBaseModel(ABC):
     """
@@ -342,7 +323,7 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-             _cleanup_stale_external_tensor_files(
+            _cleanup_stale_external_tensor_files(
                 export_dir,
                 keep_files={onnx_path.name, "hashed_export_params.json"} | _get_model_external_data_files(onnx_path),
             )
@@ -677,17 +658,6 @@ class QEFFBaseModel(ABC):
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
-        # supported_options = _qaic_supported_options()
-        # if supported_options:
-        #     filtered_compiler_options = {}
-        #     for key, value in compiler_options.items():
-        #         option = "-" + key.replace("_", "-")
-        #         if option not in supported_options:
-        #             logger.warning("Skipping unsupported qaic-compile option: %s", option)
-        #             continue
-        #         filtered_compiler_options[key] = value
-        #     compiler_options = filtered_compiler_options    
-
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
@@ -728,8 +698,8 @@ class QEFFBaseModel(ABC):
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
             specializations_data = {
-                "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
-                #  "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
+                # "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
+                "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
             }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
