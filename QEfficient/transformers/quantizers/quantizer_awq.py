@@ -7,7 +7,13 @@
 
 import torch
 from transformers.quantizers.quantizer_awq import AwqQuantizer
-from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
+from transformers.utils.quantization_config import AwqConfig
+
+try:
+    # transformers>=5
+    from transformers.utils.quantization_config import AwqBackend
+except ImportError:  # transformers<5
+    from transformers.utils.quantization_config import AwqBackendPackingMethod as AwqBackend
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.quantizer_utils import (
@@ -23,20 +29,21 @@ class QEffAwqConfig(AwqConfig):
         """
         Safety checker that arguments are correct
         """
+        super().post_init()
 
-        if self.backend not in [AwqBackendPackingMethod.AUTOAWQ]:
+        # Keep QEff limited to auto-awq style GEMM path while tolerating v5 enum renames.
+        allowed_backends = {getattr(AwqBackend, "AUTOAWQ", None), getattr(AwqBackend, "AUTO", None)}
+        if self.backend not in allowed_backends:
             raise ValueError(
-                f"Only quantization backend {AwqBackendPackingMethod.AUTOAWQ} is supported - not recognized backend {self.backend}"
+                f"Only quantization backend AUTO/AUTOAWQ is supported - not recognized backend {self.backend}"
             )
 
-        if isinstance(self.version, str):
-            self.version = AWQLinearVersion.from_str(self.version)
-        if self.version not in [AWQLinearVersion.GEMM]:
-            raise ValueError(
-                f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}"
-            )
+        awq_format = getattr(self, "format", None)
+        allowed_formats = {None, "gemm", getattr(type(awq_format), "GEMM", None)}
+        if awq_format not in allowed_formats:
+            raise ValueError(f"Only GEMM format is supported - not recognized format {awq_format}")
 
-        do_fuse = getattr(self, "do_fuse", None)
+        do_fuse = getattr(self, "do_fuse", False)
         fuse_max_seq_len = getattr(self, "fuse_max_seq_len", None)
         if do_fuse or fuse_max_seq_len is not None:
             raise ValueError(
@@ -61,13 +68,14 @@ class QEffAwqQuantizer(AwqQuantizer):
     def is_trainable(self):
         return False
 
-    def update_torch_dtype(self, torch_dtype):
+    def update_dtype(self, torch_dtype):
         if torch_dtype not in [None, torch.float32]:
             logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
         return None
 
-    def update_dtype(self, dtype):
-        return self.update_torch_dtype(dtype)
+    # transformers<5 compatibility
+    def update_torch_dtype(self, torch_dtype):
+        return self.update_dtype(torch_dtype)
 
     def _process_model_before_weight_loading(self, model, **kwargs):
         self.modules_to_not_convert = get_keys_to_not_convert(model)
@@ -88,3 +96,9 @@ class QEffAwqQuantizer(AwqQuantizer):
                 "You are loading an AWQ model but no linear modules were found in your model."
                 " Please double check your model architecture, or submit an issue on github if you think this is a bug."
             )
+
+    def _process_model_after_weight_loading(self, model, **kwargs):
+        """
+        Keep post-load processing independent from optional upstream extras (e.g. gptqmodel).
+        """
+        return model

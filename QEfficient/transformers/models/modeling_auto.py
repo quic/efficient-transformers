@@ -93,6 +93,35 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
 }
 
 
+def _resolve_torch_dtype(kwargs: dict) -> None:
+    """
+    Resolve torch_dtype in kwargs before calling from_pretrained.
+
+    Rules
+    -----
+    * If the caller already set torch_dtype to something other than
+      bfloat16 (e.g. float16 or float32), leave it untouched.
+    * If torch_dtype is bfloat16 **and** the target HW is ai100
+      (the default), override it to float32 because the ai100 compiler
+      does not support bfloat16.
+    * If torch_dtype is bfloat16 and the target HW is ai200,
+      leave it as-is (ai200 supports bfloat16).
+    * If torch_dtype is not set at all, default to float32 so that
+      models whose config.json declares bfloat16 are still loaded in
+      a dtype that the ai100 compiler accepts.
+    """
+    aic_hw_version = constants.DEFAULT_AIC_HW_VERSION
+    current_dtype = kwargs.get("torch_dtype", None)
+
+    if (current_dtype is None or current_dtype == torch.bfloat16) and aic_hw_version != "ai200":
+        if current_dtype == torch.bfloat16:
+            logger.warning(
+                "torch_dtype=bfloat16 is not supported on %s. Overriding to torch.float32.",
+                aic_hw_version,
+            )
+        kwargs["torch_dtype"] = torch.float32
+
+
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Base class for QEfficient wrappers around HuggingFace transformer models.
@@ -154,6 +183,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -269,7 +299,11 @@ class QEFFAutoModel(QEFFTransformersBase):
         if pooling:
             self.model, _ = PoolingTransform.apply(self.model, pooling)
 
-        self.model.base_model.config.use_cache = True
+        # Encoder-only models (e.g. BERT) should not be forced into cache mode.
+        if getattr(self.model.config, "is_decoder", False) or getattr(self.model.config, "is_encoder_decoder", False):
+            self.model.base_model.config.use_cache = True
+        else:
+            object.__setattr__(self.model.base_model.config, "use_cache", None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -317,6 +351,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
@@ -697,6 +732,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
@@ -1273,6 +1309,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2086,6 +2123,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2698,6 +2736,8 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2950,6 +2990,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_offload = kwargs.pop("kv_offload", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
@@ -3144,6 +3186,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if (
             hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
+            and hasattr(self.model, "get_dummy_pkv_cache")
         ):
             pkv_cache = self.model.get_dummy_pkv_cache(
                 self.model.config, fbs if self.continuous_batching else bs, seq_len
@@ -3234,6 +3277,54 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
+
+        # transformers>=5.3 Gemma3 models require Cache I/O internally; keep tensor/list
+        # inputs for tracing and bridge to cache objects inside a temporary wrapper.
+        if (
+            hasattr(self.model.config, "model_type")
+            and str(self.model.config.model_type).startswith("gemma3")
+            and not getattr(self.model, "_qeff_export_gemma3_cache_patch", False)
+        ):
+            import functools
+            import inspect
+
+            from transformers.cache_utils import Cache, DynamicCache
+
+            model_forward = self.model.forward
+            model_forward_sig = inspect.signature(model_forward)
+
+            @functools.wraps(model_forward)
+            def _qeff_patched_forward(*args, **kwargs):
+                def _legacyify_cache(obj):
+                    if hasattr(obj, "to_legacy_cache"):
+                        return obj.to_legacy_cache()
+                    if isinstance(obj, Cache):
+                        if hasattr(obj, "to_legacy_cache"):
+                            return obj.to_legacy_cache()
+                        if hasattr(obj, "layers"):
+                            legacy_cache = ()
+                            for layer in obj.layers:
+                                keys = getattr(layer, "keys", None)
+                                values = getattr(layer, "values", None)
+                                legacy_cache += ((keys, values),)
+                            return legacy_cache
+                    if isinstance(obj, (tuple, list)):
+                        return type(obj)(_legacyify_cache(x) for x in obj)
+                    return obj
+
+                bound_args = model_forward_sig.bind_partial(*args, **kwargs)
+                past_key_values = bound_args.arguments.get("past_key_values", None)
+                if past_key_values is not None and not isinstance(past_key_values, Cache):
+                    bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
+                outputs = model_forward(*bound_args.args, **bound_args.kwargs)
+                if torch.onnx.is_in_onnx_export():
+                    if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
+                        return outputs.logits, _legacyify_cache(outputs.past_key_values)
+                    return _legacyify_cache(outputs)
+                return outputs
+
+            self.model.forward = _qeff_patched_forward
+            self.model._qeff_export_gemma3_cache_patch = True
 
         return self._export(
             example_inputs,
@@ -4211,6 +4302,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class

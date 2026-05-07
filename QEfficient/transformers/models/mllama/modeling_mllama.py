@@ -736,7 +736,7 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
 class QEffMllamaVisionEncoder(nn.Module):
     def __init__(self, model):
         super().__init__()
-        self.model = model
+        self.model = model.model
         self.cross_attention_layers = self.model.config.get_text_config().cross_attention_layers
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -760,8 +760,8 @@ class QEffMllamaVisionEncoder(nn.Module):
             aspect_ratio_mask=aspect_ratio_mask,
         )
         cross_attention_states = vision_outputs[0]
-        cross_attention_states = self.model.model.multi_modal_projector(cross_attention_states).reshape(
-            -1, cross_attention_states.shape[-2], self.model.model.hidden_size
+        cross_attention_states = self.model.multi_modal_projector(cross_attention_states).reshape(
+            -1, cross_attention_states.shape[-2], self.model.hidden_size
         )
 
         bsz = pixel_values.shape[0]
@@ -807,7 +807,7 @@ class QEffMllamaModel(MllamaModel):
             if aspect_ratio_ids is None:
                 raise ValueError("`aspect_ratio_ids` must be provided if `pixel_values` is provided")
             # get vision tokens from vision model
-            vision_outputs = self.vision_model(
+            vision_outputs = self.model.vision_model(
                 pixel_values=pixel_values,
                 aspect_ratio_ids=aspect_ratio_ids,
                 aspect_ratio_mask=aspect_ratio_mask,

@@ -95,9 +95,6 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-        if self.config.torch_dtype == torch.bfloat16:
-            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
-
     def _normalize_torch_dtype(self):
         """
         Normalizes torch_dtype across all nested configs to match the top-level config.
@@ -299,15 +296,33 @@ class QEFFBaseModel(ABC):
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
+        def _resolve_pkv_layers(pkv_obj):
+            if isinstance(pkv_obj, (list, tuple)):
+                return pkv_obj
+            if hasattr(pkv_obj, "to_legacy_cache"):
+                return pkv_obj.to_legacy_cache()
+            if hasattr(pkv_obj, "layers"):
+                layers = []
+                for layer in pkv_obj.layers:
+                    keys = getattr(layer, "keys", None)
+                    values = getattr(layer, "values", None)
+                    layers.append((keys, values))
+                return tuple(layers)
+            return None
+
         # Create input_names from example_inputs
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
                 if param == "past_key_values":
-                    for i in range(len(example_inputs["past_key_values"])):
-                        if len(example_inputs["past_key_values"][0]) == 2:
+                    pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+                    if pkv_layers is None:
+                        input_names.append(param)
+                        continue
+                    for i in range(len(pkv_layers)):
+                        if len(pkv_layers[0]) == 2:
                             input_names.extend([f"past_key.{i}", f"past_value.{i}"])
-                        elif len(example_inputs["past_key_values"][0]) == 4:
+                        elif len(pkv_layers[0]) == 4:
                             input_names.extend(
                                 [
                                     f"past_key_self.{i}",
@@ -318,7 +333,7 @@ class QEFFBaseModel(ABC):
                             )
                         else:
                             raise ValueError(
-                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
+                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(pkv_layers[0])}"
                             )
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
@@ -338,8 +353,9 @@ class QEFFBaseModel(ABC):
         try:
             torch.onnx.export(
                 self.model,
-                (example_inputs,),
+                (),
                 str(onnx_path),
+                kwargs=example_inputs,
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
