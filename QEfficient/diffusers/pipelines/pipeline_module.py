@@ -265,19 +265,26 @@ class QEffVAE(QEFFBaseModel):
                 - output_names (List[str]): Names of model outputs
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-
-        # VAE decoder takes latent representation as input
-        example_inputs = {
-            "latent_sample": torch.randn(bs, 16, latent_height, latent_width),
-            "return_dict": False,
-        }
-
+        if self.model.__class__.__name__ == "AutoencoderKLQwenImage":
+            # for models with latent frame
+            example_inputs = {
+                "latent_sample": torch.randn(bs, 16, 1, latent_height, latent_width),
+                "return_dict": False,
+            }
+            dynamic_axes = {
+                "latent_sample": {0: "batch_size", 3: "latent_height", 4: "latent_width"},
+            }
+        else:
+            # VAE decoder takes latent representation as input
+            example_inputs = {
+                "latent_sample": torch.randn(bs, 16, latent_height, latent_width),
+                "return_dict": False,
+            }
+            # All dimensions except channels can be dynamic
+            dynamic_axes = {
+                "latent_sample": {0: "batch_size", 1: "channels", 2: "latent_height", 3: "latent_width"},
+            }
         output_names = ["sample"]
-
-        # All dimensions except channels can be dynamic
-        dynamic_axes = {
-            "latent_sample": {0: "batch_size", 1: "channels", 2: "latent_height", 3: "latent_width"},
-        }
 
         return example_inputs, dynamic_axes, output_names
 
@@ -686,3 +693,116 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
         self._compile(specializations=specializations, **compiler_options)
+
+
+class QEffQwenImageTransformer2DModel(QEFFBaseModel):
+    """
+    QEffQwenImageTransformer2DModel is a wrapper class for QwenImage Transformer2D models that provides ONNX export and compilation capabilities.
+
+    This class extends QEFFBaseModel to handle QwenImage Transformer2D models with specific transformations and optimizations
+    for efficient inference on Qualcomm AI hardware. It is designed for the QwenImage architecture that uses
+    transformer-based diffusion models with unique latent packing and attention mechanisms.
+    """
+
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
+    _onnx_transforms = [SplitTensorsTransform]  # No FP16 clip, to preserve scale factors changes in modeling
+
+    def __init__(self, model: nn.Module):
+        super().__init__(model)
+
+    def get_onnx_params(self):
+        """
+        Build representative inputs and dynamic-axis mappings for ONNX export.
+
+        Returns:
+            Tuple[Dict, Dict, List[str]]:
+                A tuple containing:
+                - example model inputs
+                - ONNX dynamic axis configuration
+                - ONNX output names
+        """
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+
+        # For testing purpose I have set this to constant values from the original models
+        cl = constants.QWEN_IMAGE_CL
+        seq_length = constants.QWEN_IMAGE_SL
+        rot_dim = sum(self.model.config.axes_dims_rope)
+        example_inputs = {
+            "hidden_states": torch.randn(bs, cl, self.model.config.in_channels, dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(
+                bs, seq_length, self.model.config.joint_attention_dim, dtype=torch.float32
+            ),
+            "encoder_hidden_states_mask": torch.ones(bs, seq_length, dtype=torch.int64),
+            "txt_seq_lens": torch.tensor([seq_length], dtype=torch.int64),
+            "img_rotary_emb": torch.randn(cl, rot_dim, dtype=torch.float32),
+            "txt_rotary_emb": torch.randn(seq_length, rot_dim, dtype=torch.float32),
+            "timestep": torch.tensor([1.0], dtype=torch.float32),
+        }
+
+        output_names = ["output"]
+
+        dynamic_axes = {
+            "hidden_states": {0: "batch_size", 1: "cl"},
+            "encoder_hidden_states": {0: "batch_size", 1: "seq_length"},
+            "encoder_hidden_states_mask": {0: "batch_size", 1: "seq_length"},
+            "img_rotary_emb": {0: "cl"},
+            "txt_rotary_emb": {0: "seq_length"},
+        }
+
+        return example_inputs, dynamic_axes, output_names
+
+    def export(
+        self,
+        inputs: Dict,
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_dir: str = None,
+        use_onnx_subfunctions: bool = False,
+    ) -> str:
+        """
+        Export the Qwen Image transformer to ONNX.
+
+        Args:
+            inputs (`Dict`):
+                Example input tensors used for tracing during export.
+            output_names (`List[str]`):
+                Ordered list of ONNX output tensor names.
+            dynamic_axes (`Dict`):
+                Dynamic axis configuration for ONNX inputs/outputs.
+            export_dir (`str`, *optional*):
+                Directory to write the ONNX model into.
+            use_onnx_subfunctions (`bool`, *optional*, defaults to `False`):
+                Enables exporting transformer blocks as ONNX subfunctions.
+
+        Returns:
+            `str`: Path to the exported ONNX model.
+        """
+
+        return self._export(
+            example_inputs=inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=True,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
+
+    def compile(self, specializations: List[Dict], **compiler_options) -> None:
+        """
+        Compile the ONNX model for Qualcomm AI hardware.
+
+        Args:
+            specializations (List[Dict]): Model specialization configurations
+            **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
+        """
+        self._compile(specializations=specializations, **compiler_options)
+
+    @property
+    def get_model_config(self) -> Dict:
+        """
+        Get the model configuration as a dictionary.
+
+        Returns:
+            Dict: The configuration dictionary of the underlying Qwen transformer model
+        """
+        return self.model.config.__dict__

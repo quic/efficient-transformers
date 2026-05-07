@@ -1,0 +1,76 @@
+{
+  "model_setup": {
+    "height": 64,
+    "width": 64,
+    "num_transformer_layers": 2,
+    "attention_head_dim": 8,
+    "num_attention_heads": 2,
+    "joint_attention_dim": 32,
+    "max_sequence_length": 128
+  },
+  "mad_validation": {
+    "tolerances": {
+      "transformer": 3.5,
+      "vae_decoder": 0.7
+    }
+  },
+  "pipeline_params": {
+    "test_prompt": "A cat holding a sign that says hello world",
+    "num_inference_steps": 2,
+    "guidance_scale": 1.0,
+    "true_cfg_scale": 1.0,
+    "validate_gen_img": true,
+    "min_image_variance": 1.0,
+    "use_onnx_subfunctions": true
+  },
+  "validation_checks": {
+    "image_generation": true,
+    "onnx_export": true,
+    "compilation": true
+  },
+  "modules": {
+    "transformer": {
+      "specializations": {
+        "batch_size": "1",
+        "seq_length": "128"
+      },
+      "compilation": {
+        "onnx_path": null,
+        "compile_dir": null,
+        "mdp_ts_num_devices": 1,
+        "mxfp6_matmul": true,
+        "convert_to_fp16": true,
+        "use_onnx_subfunctions": false,
+        "compile_only": true,
+        "aic_num_cores": 16,
+        "mos": 1,
+        "mdts_mos": 1
+      },
+      "execute": {
+        "device_ids": null,
+        "qpc_path": null
+      }
+    },
+    "vae_decoder": {
+      "specializations": {
+        "batch_size": "1",
+        "num_channels": "16"
+      },
+      "compilation": {
+        "onnx_path": null,
+        "compile_dir": null,
+        "mdp_ts_num_devices": 1,
+        "mxfp6_matmul": false,
+        "convert_to_fp16": true,
+        "compile_only": true,
+        "aic_num_cores": 16,
+        "mos": 1,
+        "mdts_mos": 1
+      },
+      "execute": {
+        "device_ids": null,
+        "qpc_path": null
+      }
+    }
+  }
+}
