@@ -180,7 +180,7 @@ def _resolve_export_root(onnx_path: Path) -> Path:
 def main():
     _ensure_pretrained_window_attrs()
     text_config = AutoConfig.from_pretrained(str(MODEL_PATH), trust_remote_code=True).text_config
-    total_layers = getattr(text_config, "num_hidden_layers", None)
+    total_layers = 3 # getattr(text_config, "num_hidden_layers", None)
     if total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from text_config.")
     windows = _build_layer_windows(total_layers=total_layers, start=EXPORT_START, end=EXPORT_END)

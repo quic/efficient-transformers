@@ -809,7 +809,7 @@ class QEffDeepseekMoEGate(nn.Module):
         bsz, seq_len, h = hidden_states.shape
         ### compute gating score
         hidden_states = hidden_states.view(-1, h)
-        logits = F.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32), None)
+        logits = F.linear(hidden_states.type(torch.float16), self.weight.type(torch.float16), None)
         if self.scoring_func == "sigmoid":
             scores = logits.sigmoid()
         else:
@@ -882,7 +882,8 @@ class QEffDeepseekV3MoE(nn.Module):
         self.all_gate_scales = torch.nn.Parameter(
             torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_gate, self.in_features_gate // self.group_size
-            ),
+            )
+            .to(torch.float16),
             requires_grad=False,
         )
         # TODO: Since we know qzeros is always 8 -> Just embed this once into the operator as parameter -> explore this later
@@ -905,7 +906,8 @@ class QEffDeepseekV3MoE(nn.Module):
         self.all_up_scales = torch.nn.Parameter(
             torch.stack([exp.up_proj.scales for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_up, self.in_features_up // self.group_size
-            ),
+                )
+                .to(torch.float16),
             requires_grad=False,
         )
         self.all_up_qzeros = torch.nn.Parameter(
@@ -927,7 +929,8 @@ class QEffDeepseekV3MoE(nn.Module):
         self.all_down_scales = torch.nn.Parameter(
             torch.stack([exp.down_proj.scales for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_down, self.in_features_down // self.group_size
-            ),
+                )
+                .to(torch.float16),
             requires_grad=False,
         )
         self.all_down_qzeros = torch.nn.Parameter(
@@ -1119,7 +1122,7 @@ class QEffDeepseekV3MoE(nn.Module):
         expert_in = (
             hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.in_features_gate)
         )
-
+        
         gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2))
         up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2))
         hidden = self.act_fn(gate_out) * up_out
