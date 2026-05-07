@@ -20,7 +20,6 @@ TIMEOUT = 90 * 60  # 90 minutes
 # =====================================================
 
 MAX_WORKERS = 8
-NUM_DEVICES = 1  # default, will be overridden by CLI
 
 
 # =====================================================
@@ -29,6 +28,7 @@ NUM_DEVICES = 1  # default, will be overridden by CLI
 
 
 def _discover_onnx_jobs(base_onnx_dir: str):
+    # agent: defer discovery to runtime and require explicit export path.
     onnx_jobs = []
     base_dir_path = Path(base_onnx_dir)
     layerwise_dir = base_dir_path / "onnx_layerwise_tmp"
@@ -56,12 +56,10 @@ def _discover_onnx_jobs(base_onnx_dir: str):
         layer_indices = [str(i) for i in range(layer_start, layer_end)]
         layer_window = (layer_start, layer_end)
 
-        # build device_group from NUM_DEVICES
-        device_group = ",".join(str(i) for i in range(NUM_DEVICES))
-
         for f in layer_dir.iterdir():
             if f.name.startswith("DeepseekV3ForCausalLM_layer_tmp_") and f.suffix == ".onnx":
-                onnx_jobs.append((f, layer_dir, layer_window, layer_indices, device_group))
+                # device_group fixed to single device "0"
+                onnx_jobs.append((f, layer_dir, layer_window, layer_indices, "0"))
 
     if not onnx_jobs:
         raise RuntimeError(f"No valid ONNX files found under: {scan_dir}")
@@ -76,6 +74,7 @@ def _discover_onnx_jobs(base_onnx_dir: str):
 
 def write_custom_io_yaml(path: Path, indices):
     with open(path, "w") as fp:
+        # agent: write cache entries for all layers in each discovered window.
         for idx in indices:
             fp.write(f" - IOName: k_pe.{idx}\n")
             fp.write("   Precision: mxint8\n\n")
@@ -192,9 +191,9 @@ def compile_one(job):
 
 
 def run_compile_layerwise(base_onnx_dir: str):
+    # agent: path is expected to be export root and is normalized in run.py.
     onnx_jobs = _discover_onnx_jobs(base_onnx_dir)
     print(f"MAX_WORKERS set to     : {MAX_WORKERS}")
-    print(f"NUM_DEVICES            : {NUM_DEVICES}")
     print(f"Found {len(onnx_jobs)} ONNX files\n")
 
     start_time = time.time()
@@ -232,12 +231,8 @@ def run_compile_layerwise(base_onnx_dir: str):
 
 
 if __name__ == "__main__":
+    # agent: CLI now takes exported path instead of embedded machine-local constant.
     parser = argparse.ArgumentParser(description="Compile layerwise ONNX windows into QPC artifacts.")
     parser.add_argument("--base-onnx-dir", required=True, help="Export root containing onnx_layerwise_tmp/")
-    parser.add_argument("--num-devices", type=int, default=1, help="Number of devices to use (e.g., 2 -> device_group=0,1)")
-
     args = parser.parse_args()
-
-    NUM_DEVICES = args.num_devices
-
     run_compile_layerwise(args.base_onnx_dir)
