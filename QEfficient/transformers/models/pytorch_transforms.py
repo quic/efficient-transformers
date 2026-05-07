@@ -1159,3 +1159,29 @@ class BlockingAttentionTransform:
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
         return model, transformed
+
+
+class BlockingFFNTransform:
+    """
+    Attach FFN blocking config to supported decoder layers.
+
+    Reference: QEffLlamaDecoderLayer.forward reads `self.ffn_blocking_config` and routes
+    through `generic_blocked_ffn_interface(...)` when enabled.
+    """
+
+    _skip_classes = {}
+
+    @classmethod
+    def apply(cls, model: nn.Module, ffn_blocking_config) -> Tuple[nn.Module, bool]:
+        transformed = False
+
+        for module in model.modules():
+            if type(module) in cls._skip_classes:
+                warnings.warn(f"FFN blocking is not yet supported for {type(module)}.")
+                continue
+
+            if module.__class__.__name__.endswith("DecoderLayer"):
+                module.ffn_blocking_config = ffn_blocking_config
+                transformed = True
+
+        return model, transformed

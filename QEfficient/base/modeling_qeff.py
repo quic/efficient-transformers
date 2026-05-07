@@ -25,11 +25,15 @@ from QEfficient.base.onnx_transforms import (
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
-from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+from QEfficient.blocking.blocking_configurator import (
+    build_transformer_blocking_config_for_transform,
+    check_ffn_block_config,
+)
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    BlockingFFNTransform,
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
@@ -474,8 +478,15 @@ class QEFFBaseModel(ABC):
             blocking_config = None
 
         if blocking_config is not None:
-            self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
-            self.hash_params["blocking_kwargs"] = blocking_config
+            if blocking_config.get("attention", None) is not None:
+                self.model, _ = BlockingAttentionTransform.apply(
+                    self.model, attn_blocking_config=blocking_config["attention"]
+                )
+                self.hash_params["attention_blocking_kwargs"] = blocking_config["attention"]
+
+            if blocking_config.get("ffn", None) is not None:
+                self.model, _ = BlockingFFNTransform.apply(self.model, ffn_blocking_config=blocking_config["ffn"])
+                self.hash_params["ffn_blocking_kwargs"] = blocking_config["ffn"]
 
     @dump_qconfig
     def _compile(
@@ -564,6 +575,27 @@ class QEFFBaseModel(ABC):
             )
 
             return self.qpc_path
+
+        if "mdts_mos" not in compiler_options and "mos" not in compiler_options:
+            ffn_cfg = self.hash_params.get("ffn_blocking_kwargs", None) if hasattr(self, "hash_params") else None
+            if ffn_cfg is not None:
+                model_cfg = self.config.text_config if hasattr(self.config, "text_config") else self.config
+
+                num_token_blocks = ffn_cfg.num_token_blocks or 1
+                num_weight_blocks = ffn_cfg.num_weight_blocks or 1
+
+                split_for_soc, split_for_nsp = check_ffn_block_config(
+                    num_token_blocks,
+                    num_weight_blocks,
+                    model_config=model_cfg,
+                    specializations=specializations,
+                    compile_config={"mdp_ts_num_devices": mdp_ts_num_devices, **compiler_options},
+                )
+
+                if split_for_soc == "activation":
+                    compiler_options["mdts_mos"] = 1
+                if split_for_nsp == "activation":
+                    compiler_options["mos"] = 1
 
         command = (
             constants.COMPILER

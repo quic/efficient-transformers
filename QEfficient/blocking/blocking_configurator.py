@@ -14,9 +14,10 @@ that can be fed model config + pipeline compile config to derive blocking settin
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
+from QEfficient.blocking.ffn_blocking import FFNBlockingConfig, FFNBlockingMode
 from QEfficient.utils import get_attr_or_key, require_value
 from QEfficient.utils.constants import DEFAULT_NUM_HEADS, FP16_BYTES, KV_LORA_RANK, ROPE_DIM, VTCM_SIZE_THRESHOLD
 
@@ -70,6 +71,28 @@ def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mo
     if num_kv_blocks > 1:
         return "kv"
     return ""
+
+
+def resolve_ffn_blocking_mode(ffn_cfg: Dict[str, Any], requested_mode: str) -> str:
+    """
+    Resolve effective FFN mode string ("", "t", "w", "tw") based on whether auto-config
+    actually selected >1 blocks for tokens/weights.
+
+    This mirrors `_resolve_effective_blocking_mode` for attention.
+    """
+    mode = (requested_mode or "").lower()
+    if mode == "":
+        return ""
+
+    num_token_blocks = int(ffn_cfg.get("num_token_blocks") or 1)
+    num_weight_blocks = int(ffn_cfg.get("num_weight_blocks") or 1)
+
+    effective = ""
+    if "t" in mode and num_token_blocks > 1:
+        effective += "t"
+    if "w" in mode and num_weight_blocks > 1:
+        effective += "w"
+    return effective
 
 
 def _get_valid_num_blocks(config: Dict, requested_key: str) -> int:
@@ -243,6 +266,250 @@ def attention_configurator(
     return best_config
 
 
+def check_ffn_block_config(
+    num_token_blocks: int,
+    num_weight_blocks: int,
+    *,
+    model_config: Any,
+    specializations: Optional[List[Dict[str, int]]],
+    compile_config: Dict[str, Any],
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Decide (split_for_soc, split_for_nsp) for a given FFN block configuration by running
+    the VTCM-threshold checks (same 3 strategies as `ffn_configurator`).
+
+    This keeps call-sites simple: they only need block counts + specialization + compile options,
+    and we derive the rest (bs/seq_len/dims/devices/dtype size) here.
+
+    Args:
+        num_token_blocks: number of token blocks (> 0)
+        num_weight_blocks: number of weight blocks (> 0)
+        model_config: model config object/dict (for VLMs, pass text_config)
+        specializations: specialization list; uses first entry for bs/seq_len
+        compile_config: compile options dict (expects `mdp_ts_num_devices`, `aic_num_cores`,
+            and dtype info via `data_bytes` or `convert_to_fp16`)
+
+    Returns:
+        (split_for_soc, split_for_nsp) where each is:
+          - "weights"     : shard weights across that dimension
+          - "activation"  : shard activations across that dimension
+          - None          : no strategy fits VTCM threshold for the given block sizes
+    """
+    if specializations is None or len(specializations) == 0:
+        return None, None
+
+    bs = get_attr_or_key(specializations[0], ("batch_size", "batch"))
+    seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
+
+    d_model = get_attr_or_key(model_config, ("hidden_size", "d_model", "model_dim"))
+    intermediate = get_attr_or_key(model_config, ("intermediate_size", "ffn_dim", "mlp_dim"))
+
+    if bs is None or seq_len is None or d_model is None or intermediate is None:
+        return None, None
+
+    num_socs = int(compile_config.get("mdp_ts_num_devices", 1))
+    num_nsps = int(compile_config.get("aic_num_cores", 1))
+    data_bytes = _infer_data_bytes(compile_config)
+
+    sl_block = int(seq_len) / int(num_token_blocks)
+    i_block = int(intermediate) / int(num_weight_blocks)
+
+    # 1) split weights across all (soc*nsp)
+    footprints = _op_footprints(
+        bs=int(bs),
+        d_model=int(d_model),
+        data_bytes=int(data_bytes),
+        sl_block=sl_block,
+        i_block=i_block,
+        split_act=1,
+        split_w_up_gate=num_socs * num_nsps,
+        split_w_down=num_socs * num_nsps,
+    )
+    if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
+        return "weights", "weights"
+
+    # 2) split weights across NSP, activations across SOC
+    footprints = _op_footprints(
+        bs=int(bs),
+        d_model=int(d_model),
+        data_bytes=int(data_bytes),
+        sl_block=sl_block,
+        i_block=i_block,
+        split_act=num_socs,
+        split_w_up_gate=num_nsps,
+        split_w_down=num_nsps,
+    )
+    if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
+        return "activation", "weights"
+
+    # 3) split activations across all (soc*nsp)
+    footprints = _op_footprints(
+        bs=int(bs),
+        d_model=int(d_model),
+        data_bytes=int(data_bytes),
+        sl_block=sl_block,
+        i_block=i_block,
+        split_act=num_socs * num_nsps,
+        split_w_up_gate=1,
+        split_w_down=1,
+    )
+    if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
+        return "activation", "activation"
+
+    return None, None
+
+
+def _weights_vtcm(dim1: float, dim2: float, *, data_bytes: int, split_weights: int) -> float:
+    # weights tensor is [dim1, dim2], scaled by min(1, 32 / dim2)
+    w_size = dim1 * (dim2 / split_weights) * data_bytes
+    cache_factor = min(1.0, 32.0 / (dim2 / split_weights))
+    return w_size * cache_factor
+
+
+def _op_footprints(
+    *,
+    bs: int,
+    d_model: int,
+    data_bytes: int,
+    sl_block: float,
+    i_block: float,
+    split_act: int,
+    split_w_up_gate: int,
+    split_w_down: int,
+) -> Dict[str, float]:
+    # activations split on dim0 (token dimension)
+    t = (bs * sl_block) / split_act
+
+    # up/gate input: [t, d_model], output: [t, i_block]
+    up_in = t * d_model * data_bytes
+    up_out = t * i_block * data_bytes
+    up_w = _weights_vtcm(d_model, i_block, data_bytes=data_bytes, split_weights=split_w_up_gate)
+    up = up_in + up_out + up_w
+
+    gate_in = up_in
+    gate_out = up_out
+    gate_w = up_w
+    gate = gate_in + gate_out + gate_w
+
+    # down input: [t, i_block], output: [t, d_model]
+    down_in = t * i_block * data_bytes
+    down_out = t * d_model * data_bytes
+    down_w = _weights_vtcm(i_block, d_model, data_bytes=data_bytes, split_weights=split_w_down)
+    down = down_in + down_out + down_w
+
+    return {"up_proj": up, "gate_proj": gate, "down_proj": down}
+
+
+def ffn_configurator(
+    bs: int,
+    seq_len: int,
+    d_model: int,
+    intermediate: int,
+    num_socs: int,
+    num_nsps: int,
+    data_bytes: int,
+) -> Dict[str, Any]:
+    num_token_blocks_list = block_candidates_generator(seq_len)
+    num_weight_blocks_list = block_candidates_generator(intermediate)
+
+    best_config = {
+        "num_token_blocks": seq_len,
+        "num_weight_blocks": intermediate,
+        "split_for_soc": None,
+        "split_for_nsp": None,
+        "vtcm_footprint": None,
+    }
+
+    for num_token_blocks in num_token_blocks_list:
+        sl_block = seq_len / num_token_blocks
+
+        for num_weight_blocks in num_weight_blocks_list:
+            i_block = intermediate / num_weight_blocks
+
+            # Strategy 1: split weights across all (soc*nsp)
+            footprints = _op_footprints(
+                bs=bs,
+                d_model=d_model,
+                data_bytes=data_bytes,
+                sl_block=sl_block,
+                i_block=i_block,
+                split_act=1,
+                split_w_up_gate=num_socs * num_nsps,
+                split_w_down=num_socs * num_nsps,
+            )
+            if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
+                if (
+                    best_config["num_token_blocks"] * best_config["num_weight_blocks"]
+                    > num_token_blocks * num_weight_blocks
+                ):
+                    best_config.update(
+                        {
+                            "num_token_blocks": num_token_blocks,
+                            "num_weight_blocks": num_weight_blocks,
+                            "split_for_soc": "weights",
+                            "split_for_nsp": "weights",
+                            "vtcm_footprint": max(footprints.values()),
+                        }
+                    )
+                    break
+
+            # Strategy 2: split weights across NSP, activations across SOC
+            footprints = _op_footprints(
+                bs=bs,
+                d_model=d_model,
+                data_bytes=data_bytes,
+                sl_block=sl_block,
+                i_block=i_block,
+                split_act=num_socs,
+                split_w_up_gate=num_nsps,
+                split_w_down=num_nsps,
+            )
+            if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
+                if (
+                    best_config["num_token_blocks"] * best_config["num_weight_blocks"]
+                    > num_token_blocks * num_weight_blocks
+                ):
+                    best_config.update(
+                        {
+                            "num_token_blocks": num_token_blocks,
+                            "num_weight_blocks": num_weight_blocks,
+                            "split_for_soc": "activation",
+                            "split_for_nsp": "weights",
+                            "vtcm_footprint": max(footprints.values()),
+                        }
+                    )
+                    break
+
+            # Strategy 3: split activations across all (soc*nsp)
+            footprints = _op_footprints(
+                bs=bs,
+                d_model=d_model,
+                data_bytes=data_bytes,
+                sl_block=sl_block,
+                i_block=i_block,
+                split_act=num_socs * num_nsps,
+                split_w_up_gate=1,
+                split_w_down=1,
+            )
+            if all(v < VTCM_SIZE_THRESHOLD for v in footprints.values()):
+                if (
+                    best_config["num_token_blocks"] * best_config["num_weight_blocks"]
+                    > num_token_blocks * num_weight_blocks
+                ):
+                    best_config.update(
+                        {
+                            "num_token_blocks": num_token_blocks,
+                            "num_weight_blocks": num_weight_blocks,
+                            "split_for_soc": "activation",
+                            "split_for_nsp": "activation",
+                            "vtcm_footprint": max(footprints.values()),
+                        }
+                    )
+                    break
+
+    return best_config
+
+
 def build_transformer_blocking_config(
     model_config: Any,
     pipeline_config: Optional[Any] = None,
@@ -252,9 +519,9 @@ def build_transformer_blocking_config(
     seq_len: Optional[int] = None,
     bs: Optional[int] = 1,
     compile_config: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+) -> AttentionBlockingConfig:
     """
-    Build blocking configuration based on model config + pipeline compile config.
+    Build attention blocking configuration based on model config + pipeline compile config.
     """
     if ctx_len is None:
         ctx_len = seq_len
@@ -302,6 +569,66 @@ def build_transformer_blocking_config(
     )
 
 
+def build_ffn_blocking_config(
+    model_config: Any,
+    pipeline_config: Optional[Any] = None,
+    module_name: str = "transformer",
+    blocking_mode: Optional[str] = None,
+    ctx_len: Optional[int] = None,
+    seq_len: Optional[int] = None,
+    bs: Optional[int] = 1,
+    compile_config: Optional[Dict[str, Any]] = None,
+) -> Tuple[FFNBlockingConfig, Dict[str, Any]]:
+    """
+    Auto-derive FFN blocking config (and any required compiler flags) from model + compile config.
+
+    Returns:
+        (FFNBlockingConfig, compiler_flags)
+    """
+    if ctx_len is None:
+        ctx_len = seq_len
+
+    if seq_len is None and ctx_len is None:
+        return FFNBlockingConfig(mode=FFNBlockingMode.NONE), {}
+
+    # we only block on text configs in the case of VLMs
+    if hasattr(model_config, "text_config"):
+        model_config = model_config.text_config
+
+    d_model = require_value(get_attr_or_key(model_config, ("hidden_size", "d_model", "model_dim")), "hidden size")
+    intermediate = require_value(
+        get_attr_or_key(model_config, ("intermediate_size", "ffn_dim", "mlp_dim")), "intermediate size"
+    )
+
+    num_socs = int(compile_config.get("mdp_ts_num_devices", 1))
+    num_nsps = int(compile_config.get("aic_num_cores", 1))
+    data_bytes = _infer_data_bytes(compile_config)
+
+    ffn_cfg = ffn_configurator(
+        bs=int(bs),
+        seq_len=int(seq_len),
+        d_model=int(d_model),
+        intermediate=int(intermediate),
+        num_socs=int(num_socs),
+        num_nsps=int(num_nsps),
+        data_bytes=int(data_bytes),
+    )
+
+    requested_mode = str(blocking_mode or "tw").lower()
+    effective_mode = resolve_ffn_blocking_mode(ffn_cfg, requested_mode)
+
+    ffn_blocking_config = FFNBlockingConfig(
+        mode=FFNBlockingMode(effective_mode) if effective_mode != "" else FFNBlockingMode.NONE
+    )
+
+    if "t" in effective_mode:
+        ffn_blocking_config.num_token_blocks = int(ffn_cfg["num_token_blocks"])
+    if "w" in effective_mode:
+        ffn_blocking_config.num_weight_blocks = int(ffn_cfg["num_weight_blocks"])
+
+    return ffn_blocking_config
+
+
 def build_transformer_blocking_config_for_transform(
     model_config: Any,
     ctx_len: Optional[int] = None,
@@ -317,6 +644,7 @@ def build_transformer_blocking_config_for_transform(
         blocking_mode = BlockingMode.HQKV
     enable_blocking = False if not qaic_config else qaic_config.get("enable_blocking", False)
 
+    # ---------------- Attention blocking ----------------
     if qaic_config is None and enable_blocking:
         blocking_config = build_transformer_blocking_config(
             model_config,
@@ -360,4 +688,38 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get("skip_kv", False) and enable_blocking:
             blocking_config.skip_kv = qaic_config.get("skip_kv")
 
-    return blocking_config
+    # ---------------- FFN blocking ----------------
+    if qaic_config:
+        ffn_blocking_mode = FFNBlockingMode(qaic_config.get("ffn_blocking_mode", "tw"))
+    else:
+        ffn_blocking_mode = FFNBlockingMode.TW
+    enable_ffn_blocking = False if not qaic_config else qaic_config.get("enable_ffn_blocking", False)
+
+    if not enable_ffn_blocking:
+        ffn_blocking_config = None
+    else:
+        ffn_blocking_config = FFNBlockingConfig()
+        mode_from_config = ""
+
+        if qaic_config is not None:
+            if qaic_config.get("num_token_blocks", False) and enable_ffn_blocking and "t" in ffn_blocking_mode:
+                ffn_blocking_config.num_token_blocks = _get_valid_num_blocks(qaic_config, "num_token_blocks")
+                mode_from_config += "t"
+            if qaic_config.get("num_weight_blocks", False) and enable_ffn_blocking and "w" in ffn_blocking_mode:
+                ffn_blocking_config.num_weight_blocks = _get_valid_num_blocks(qaic_config, "num_weight_blocks")
+                mode_from_config += "w"
+            # check if qaic config did not provide any blocking details
+            if mode_from_config == "":
+                # Auto derive from constraints (and collect compiler flags)
+                ffn_blocking_config = build_ffn_blocking_config(
+                    model_config,
+                    blocking_mode=str(ffn_blocking_mode).lower(),
+                    ctx_len=ctx_len,
+                    seq_len=seq_len,
+                    bs=bs,
+                    compile_config={"mdp_ts_num_devices": num_devices, **compile_options},
+                )
+            else:
+                ffn_blocking_config.mode = FFNBlockingMode(mode_from_config)
+
+    return {"attention": blocking_config, "ffn": ffn_blocking_config}
