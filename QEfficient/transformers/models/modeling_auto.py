@@ -1719,14 +1719,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
 
         # Apply compile-dependent transforms like blocking transform
-        # self.transform(
-        #     ctx_len=ctx_len,
-        #     seq_len=prefill_seq_len,
-        #     batch_size=batch_size,
-        #     num_devices=num_devices,
-        #     qaic_config=qaic_config,
-        #     aic_num_cores=num_cores,
-        # )
+        self.transform(
+            ctx_len=ctx_len,
+            seq_len=prefill_seq_len,
+            batch_size=batch_size,
+            num_devices=num_devices,
+            qaic_config=qaic_config,
+            aic_num_cores=num_cores,
+        )
 
         specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
