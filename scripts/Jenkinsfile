@@ -81,6 +81,8 @@ pipeline {
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_cli_qaic &&
+                           mkdir -p $PWD/Qeff_logs &&
+                           export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic &&
                            pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
@@ -99,6 +101,7 @@ pipeline {
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_qaic_llm &&
+                           export QEFF_LOG_PATH=$PWD/Non_qaic_llm &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
                            pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log2.xml --durations=10 &&
@@ -120,6 +123,8 @@ pipeline {
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_qaic_feature &&
+                    mkdir -p $PWD/Qeff_logs &&
+                    export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_qaic_feature &&
                     pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log2_feature.xml --durations=10 &&
@@ -138,6 +143,8 @@ pipeline {
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_multimodal &&
+                    mkdir -p $PWD/Qeff_logs &&
+                    export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
                     pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log6.xml --durations=10 &&
@@ -157,6 +164,8 @@ pipeline {
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_diffusion &&
+                    mkdir -p $PWD/Qeff_logs &&
+                    export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
                     export HF_HUB_CACHE=/huggingface_hub &&
@@ -179,6 +188,8 @@ pipeline {
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/cli &&
+                    mkdir -p $PWD/Qeff_logs &&
+                    export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli &&
                     pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log3.xml --durations=10 &&
@@ -202,6 +213,8 @@ pipeline {
                     # pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
                     pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
                     mkdir -p $PWD/cli_qaic_finetuning &&
+                    mkdir -p $PWD/Qeff_logs &&
+                    export QEFF_LOG_PATH=$PWD/Qeff_logs &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli_qaic_finetuning &&
                     pytest tests -m '(finetune)' --ignore tests/vllm --ignore tests/unit_test --junitxml=tests/tests_log_finetune.xml --durations=10 &&
