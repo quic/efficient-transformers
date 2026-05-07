@@ -60,6 +60,7 @@ class QEFFBaseModel(ABC):
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
+        self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
@@ -77,10 +78,50 @@ class QEFFBaseModel(ABC):
             self.model, transformed = transform.apply(self.model)
             any_transformed = any_transformed or transformed
 
+        self._normalize_torch_dtype()
+
         if not any_transformed:
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+
+        if self.config.torch_dtype == torch.bfloat16:
+            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
+
+    def _normalize_torch_dtype(self):
+        """
+        Normalizes torch_dtype across all nested configs to match the top-level config.
+
+        This method ensures consistency by propagating the top-level torch_dtype
+        to all nested configs (llm_config, vision_config, etc.) that may exist in
+        multimodal models.
+        """
+        top_level_dtype = getattr(self.config, "torch_dtype", torch.float32)
+
+        if top_level_dtype is None:
+            top_level_dtype = torch.float32
+        elif isinstance(top_level_dtype, str):
+            top_level_dtype = getattr(torch, top_level_dtype, torch.float32)
+
+        self.config.torch_dtype = top_level_dtype
+
+        # Normalize llm_config if it exists
+        if hasattr(self.config, "llm_config"):
+            self.config.llm_config.torch_dtype = top_level_dtype
+            if hasattr(self.config.llm_config, "use_bfloat16"):
+                self.config.llm_config.use_bfloat16 = top_level_dtype == torch.bfloat16
+
+        # Normalize vision_config if it exists
+        if hasattr(self.config, "vision_config"):
+            self.config.vision_config.torch_dtype = top_level_dtype
+            if hasattr(self.config.vision_config, "use_bfloat16"):
+                self.config.vision_config.use_bfloat16 = top_level_dtype == torch.bfloat16
+
+        # Normalize text_config if it exists (for models like Qwen2.5-VL)
+        if hasattr(self.config, "text_config"):
+            self.config.text_config.torch_dtype = top_level_dtype
+
+        logger.info(f"Normalized all config torch_dtype to: {top_level_dtype}")
 
     def _offload_model_weights(self, offload_pt_weights: bool) -> bool:
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
@@ -506,12 +547,21 @@ class QEFFBaseModel(ABC):
             command.append(f"-network-specialization-config={specializations_json}")
 
         # Write custom_io.yaml file
+        model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
+        pkv_in_bfloat16 = (custom_io is not None) and any(
+            "past_" in key and "bfloat16" in value for key, value in custom_io.items()
+        )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
             with open(custom_io_yaml, "w") as fp:
                 for io_name, dtype in custom_io.items():
                     fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
-            command.append(f"-custom-IO-list-file={custom_io_yaml}")
+            if model_in_bfloat16 and pkv_in_bfloat16:
+                logger.warning(
+                    "Model and Past KV types are both bfloat16. Custom IO list file will be ignored during compile."
+                )
+            else:
+                command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
