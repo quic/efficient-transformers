@@ -698,8 +698,7 @@ class QEFFBaseModel(ABC):
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
             specializations_data = {
-                # "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
-                "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
+                "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
             }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
