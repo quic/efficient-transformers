@@ -860,8 +860,8 @@ def blocked_kv_mla_attention_forward(
     )
     skip_kv = True
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device, dtype=query.dtype)
-    window_cache_layer_idx = layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
-    ctx_len = compressed_kvs.layers[window_cache_layer_idx].ckv.shape[2]
+
+    ctx_len = compressed_kvs.layers[layer_idx].ckv.shape[2]
     kv_block_size = -(-ctx_len // num_kv_blocks)
 
     position_ids = cache_kwargs.get("position_ids")
@@ -883,8 +883,8 @@ def blocked_kv_mla_attention_forward(
                 if skip_future.item():
                     break
 
-        compressed_kv_block = compressed_kvs.read_only_blocked_ckv(start_index, end_index, window_cache_layer_idx, cache_kwargs)
-        k_pe_block = compressed_kvs.read_only_blocked_k_pe(start_index, end_index, window_cache_layer_idx, cache_kwargs)
+        compressed_kv_block = compressed_kvs.read_only_blocked_ckv(start_index, end_index, layer_idx, cache_kwargs)
+        k_pe_block = compressed_kvs.read_only_blocked_k_pe(start_index, end_index, layer_idx, cache_kwargs)
 
         causal_mask_block = _create_causal_mask(
             position_ids=position_ids,
@@ -931,6 +931,12 @@ def blocked_kv_mla_attention_forward(
             )  # [1, 64, q_len, kv_block_size] X [1, 1, kv_block_size, 512] -> [1, 64, q_len, 512]
         else:
             knope = torch.matmul(compressed_kv_block, per_head_k_up_normal)
+            if k_heads == 1:
+                k_pe_block = (
+                    k_pe_block.unsqueeze(2)
+                    .expand(-1, -1, num_heads, -1, -1)
+                    .reshape(batch_size, num_heads * k_heads, -1, module.config.qk_rope_head_dim)
+                )
             krope_nope = torch.cat((knope, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
