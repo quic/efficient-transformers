@@ -1,6 +1,7 @@
 import argparse
 import copy
 import functools
+import inspect
 import json
 import tempfile
 from pathlib import Path
@@ -15,7 +16,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 from compile_full_model import run_full_model_compile
 
 MODEL_PATH = Path(
-    "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/54383e83fa343a1331754112fb9e3410c55efa2f"
+    "/home/ubuntu/.cache/huggingface/hub/models--moonshotai--Kimi-K2.5/snapshots/54383e83fa343a1331754112fb9e3410c55efa2f"
 )
 
 enable_mla = True
@@ -24,13 +25,21 @@ prefill_seq_len = 1
 ctx_len = 128
 
 
-def _build_qaic_config(num_kv_heads_repeat: int):
+def _build_qaic_config(
+    mla_absorption_cfg: dict,
+    enable_blocking: bool,
+    blocking_mode: str,
+    num_kv_heads_repeat: int,
+    num_kv_blocks: int,
+    head_block_size: int,
+):
     return {
-        "mla_absorption": mla_absorption,
-        "enable_blocking": True,
-        "blocking_mode": "kv",
+        "mla_absorption": mla_absorption_cfg,
+        "enable_blocking": enable_blocking,
+        "blocking_mode": blocking_mode,
         "num_kv_heads_repeat": num_kv_heads_repeat,
-        "num_kv_blocks": 4,
+        "num_kv_blocks": num_kv_blocks,
+        "head_block_size": head_block_size,
     }
 
 
@@ -189,21 +198,70 @@ def _parse_args():
     parser.add_argument("--seq_len", type=int, default=prefill_seq_len, help="Prefill/compile sequence length.")
     parser.add_argument("--ctx_len", type=int, default=ctx_len, help="Context length for compile stages.")
     parser.add_argument("--num_cores", type=int, default=16, help="Number of accelerator cores.")
-    parser.add_argument("--num_layers", type=int, default=None, help="Override layers used by compile_full_model.")
-    parser.add_argument("--mxfp6", dest="mxfp6", action="store_true", default=True, help="Enable mxfp6 compile flag.")
-    parser.add_argument("--no-mxfp6", dest="mxfp6", action="store_false", help="Disable mxfp6 compile flag.")
+    parser.add_argument("--mxfp6", dest="mxfp6", action="store_true", default=True, help="Enable mxfp6 compile flag (default: True)")
+    parser.add_argument("--no-mxfp6", dest="mxfp6", action="store_false", help="Disable mxfp6 compile flag")
+    parser.add_argument(
+        "--enable_blocking",
+        dest="enable_blocking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable or disable blocking.",
+    )
+    parser.add_argument("--blocking_mode", dest="blocking_mode", type=str, default="kv", help="Blocking mode.")
+    parser.add_argument(
+        "--num_kv_heads_repeat",
+        dest="num_kv_heads_repeat",
+        type=int,
+        default=1,
+        help="Number of KV heads to repeat.",
+    )
+    parser.add_argument(
+        "--num_kv_blocks",
+        dest="num_kv_blocks",
+        type=int,
+        default=4,
+        help="Number of KV blocks.",
+    )
+    parser.add_argument(
+        "--head_block_size",
+        dest="head_block_size",
+        type=int,
+        default=4,
+        help="Head block size.",
+    )
+    parser.add_argument(
+        "--absorption",
+        dest="absorption",
+        action="store_true",
+        default=False,
+        help="Enable or disable MLA absorption.",
+    )
+    parser.add_argument(
+        "--online",
+        dest="online",
+        action="store_true",
+        default=False,
+        help="Enable or disable MLA online mode.",
+    )
     parser.add_argument(
         "--mxint8_kv_cache",
         dest="mxint8_kv_cache",
         action="store_true",
         default=True,
-        help="Enable mxint8 kv-cache compile flag.",
+        help="Enable mxint8 kv-cache compile flag (default: True)",
     )
     parser.add_argument(
         "--no-mxint8_kv_cache",
         dest="mxint8_kv_cache",
         action="store_false",
-        help="Disable mxint8 kv-cache compile flag.",
+        help="Disable mxint8 kv-cache compile flag",
+    )
+    parser.add_argument(
+        "--prefill_only",
+        dest="prefill_only",
+        action="store_true",
+        default=False,
+        help="Enable or disable MLA online mode.",
     )
     return parser.parse_args()
 
@@ -212,7 +270,17 @@ def main():
     _ensure_pretrained_window_attrs()
     args = _parse_args()
     model_path = args.model_path
-    qaic_config = _build_qaic_config(num_kv_heads_repeat=args.num_devices)
+    enable_blocking = args.enable_blocking
+    blocking_mode = args.blocking_mode
+    num_kv_heads_repeat = args.num_kv_heads_repeat
+    num_kv_blocks = args.num_kv_blocks
+    head_block_size = args.head_block_size
+    
+    mla_absorption_cfg = {
+        "cache_compressed": True,
+        "absorption": args.absorption,
+        "online": args.online,
+    }
 
     text_config = AutoConfig.from_pretrained(str(model_path), trust_remote_code=True).text_config
     resolved_total_layers = args.total_layers
@@ -238,8 +306,17 @@ def main():
         QEfficient.base.modeling_qeff.QEFFBaseModel._end = end
         QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers = total_layers
         model, tokenizer = load_text_only_kimi(model_path, num_hidden_layers=end - start)
+        
+        qaic_config = _build_qaic_config(
+            mla_absorption_cfg=mla_absorption_cfg,
+            enable_blocking=enable_blocking,
+            blocking_mode=blocking_mode,
+            num_kv_heads_repeat=num_kv_heads_repeat,
+            num_kv_blocks=num_kv_blocks,
+            head_block_size=head_block_size,
+        )
         qeff_model = QEFFAutoModelForCausalLM(
-            model, num_kv_heads_repeat=1, qaic_config=qaic_config, torch_dtype=torch.float16
+            model, num_kv_heads_repeat=num_kv_heads_repeat, qaic_config=qaic_config, torch_dtype=torch.float16
         )
         onnx_path = qeff_model.compile(
             prefill_seq_len=args.seq_len,
@@ -249,6 +326,7 @@ def main():
             num_devices=args.num_devices,
             num_cores=args.num_cores,
             qaic_config=qaic_config,
+            prefill_only=args.prefill_only,
             use_onnx_subfunctions=True,
         )
         if first_onnx_path is None:
@@ -266,17 +344,34 @@ def main():
         if final_onnx_path is None:
             raise RuntimeError("QEfficient.utils.layerwise_pipeline returned an empty ONNX path.")
         compile_num_layers = args.num_layers if args.num_layers is not None else total_layers
-        run_full_model_compile(
-            onnx_path=Path(final_onnx_path),
-            num_devices=args.num_devices,
-            batch_size=args.batch_size,
-            seq_len=args.seq_len,
-            ctx_len=args.ctx_len,
-            num_cores=args.num_cores,
-            num_layers=compile_num_layers,
-            mxfp6=args.mxfp6,
-            mxint8_kv_cache=args.mxint8_kv_cache,
-        )
+        compile_kwargs = {
+            "onnx_path": Path(final_onnx_path),
+            "num_devices": args.num_devices,
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "ctx_len": args.ctx_len,
+            "num_cores": args.num_cores,
+            "num_layers": compile_num_layers,
+            "mxfp6": args.mxfp6,
+            "mxint8_kv_cache": args.mxint8_kv_cache,
+        }
+        optional_compile_kwargs = {
+            "qaic_config": qaic_config,
+            "enable_blocking": enable_blocking,
+            "blocking_mode": blocking_mode,
+            "num_kv_heads_repeat": num_kv_heads_repeat,
+            "num_kv_blocks": num_kv_blocks,
+            "head_block_size": head_block_size,
+            "cache_compressed": args.cache_compressed,
+            "absorption": args.absorption,
+            "online": args.online,
+        }
+        compile_signature = inspect.signature(run_full_model_compile)
+        for key, value in optional_compile_kwargs.items():
+            if key in compile_signature.parameters:
+                compile_kwargs[key] = value
+
+        run_full_model_compile(**compile_kwargs)
 
 
 if __name__ == "__main__":
