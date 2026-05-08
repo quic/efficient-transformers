@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Optional
 
 import torch
 from transformers.cache_utils import Cache
-
+import QEfficient
 from QEfficient.blocking.blocked_attention_forwards import (
     blocked_bhqkv_attention_forward,
     blocked_h_attention_forward,

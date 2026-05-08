@@ -14,7 +14,10 @@ from torch import nn
 class QuantLinearTorchFunction(torch.autograd.Function):
     @staticmethod
     def symbolic(g, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
-        input_tuple = (x, qself_qweight, qself_scales, qself_qzeros)
+        if qself_qzeros is None:
+            input_tuple = (x, qself_qweight, qself_scales)
+        else:
+            input_tuple = (x, qself_qweight, qself_scales, qself_qzeros)
         input_tuple += (g_idx,) if g_idx is not None else ()
         return g.op(
             "com.microsoft::MatMulNBits",
@@ -28,7 +31,10 @@ class QuantLinearTorchFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
+        if qself_qzeros is None:
+            qself_qzeros = 2 ^ (bits - 1)
         if torch.onnx.is_in_onnx_export():
+            # For faster export
             return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype).float()
         fp_weight = dequantize_blockwise_bits(
             qself_qweight, qself_scales, qself_qzeros, bits, group_size, g_idx, in_features, out_features
@@ -40,8 +46,7 @@ class QuantLinearTorchFunction(torch.autograd.Function):
 def dequantize_blockwise_bits(quant_values, scale, zero_point, bits, group_size, g_idx, rows, cols):
     if bits != 4:
         raise ValueError("Only bits=4 is supported for executing quantized model")
-    if group_size != 128:
-        raise ValueError("Only group_size=128 is supported for executing quantized model")
+
     expand_quant_value = (quant_values.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32)) & 0x0F
     expand_quant_value = expand_quant_value.reshape(*quant_values.shape[:-1], -1)
     aligned_scale = scale.reshape(*quant_values.shape[:-1], 1)
@@ -88,20 +93,20 @@ class QuantLinearORT(nn.Module):
         q_rows = in_features // self.group_size
         self.register_buffer(
             "qweight",
-            torch.zeros((out_features, q_rows, self.group_size // (8 // bits)), dtype=torch.uint8),
+            torch.empty((out_features, q_rows, self.group_size // (8 // bits)), dtype=torch.uint8),
         )
         self.register_buffer(
             "qzeros",
-            torch.zeros((q_rows + (q_rows & 1)) * (out_features // 8 * self.bits), dtype=torch.uint8),
+            torch.empty((q_rows + (q_rows & 1)) * (out_features // 8 * self.bits), dtype=torch.uint8),
         )
         self.register_buffer(
-            "scales", torch.zeros((math.ceil(in_features / self.group_size) * out_features), dtype=torch.float16)
+            "scales", torch.empty((math.ceil(in_features / self.group_size) * out_features), dtype=torch.float16)
         )
         self.register_buffer(
             "g_idx", torch.tensor([i // self.group_size for i in range(in_features)], dtype=torch.int32)
         )
         if bias:
-            self.register_buffer("bias", torch.zeros((out_features), dtype=torch.float16))
+            self.register_buffer("bias", torch.empty((out_features), dtype=torch.float16))
         else:
             self.bias = None
 
@@ -180,3 +185,72 @@ class QuantLinearORT(nn.Module):
         )
         out = out + self.bias if self.bias is not None else out
         return out
+
+
+class QMOE(torch.autograd.Function):
+    @staticmethod
+    def symbolic(
+        g,
+        x,
+        router_weights,
+        fc1_experts_weights,
+        fc1_scales,
+        fc2_experts_weights,
+        fc2_scales,
+        fc3_experts_weights,
+        fc3_scales,
+        router_probs,
+        activation_type,
+        block_size,
+        expert_weight_bits,
+        k,
+    ):
+        qmoe_out = g.op(
+            "com.microsoft::QMoE",
+            x,
+            router_weights,
+            router_probs,
+            fc1_experts_weights,
+            fc1_scales,
+            fc2_experts_weights,
+            fc2_scales,
+            fc3_experts_weights,
+            fc3_scales,
+            outputs=1,
+            activation_type_s=activation_type,  # <-- _s suffix for string
+            block_size_i=block_size,
+            expert_weight_bits_i=expert_weight_bits,
+            k_i=k,
+        )
+
+        # # Create axes=-1 as an explicit int64 constant tensor
+        # axes = g.op("Constant", value_t=torch.tensor([-1], dtype=torch.int64))
+
+        # # Compute mean of router_probs along the last axis, keepdims for broadcasting
+        # router_probs_mean = g.op("ReduceMean", router_probs, axes, keepdims_i=1)
+
+        # Multiply qmoe_out with the averaged router_probs
+        return qmoe_out
+        # return g.op("Mul", qmoe_out, router_probs_mean))
+
+    @staticmethod
+    def forward(
+        ctx,
+        x,
+        router_weights,
+        fc1_experts_weights,
+        fc1_scales,
+        fc2_experts_weights,
+        fc2_scales,
+        fc3_experts_weights,
+        fc3_scales,
+        router_probs,
+        activation_type,
+        block_size,
+        expert_weight_bits,
+        k,
+    ):
+        # Dummy forward: simulate qmoe_out as zeros_like(x), then apply ReduceMean * Mul
+        qmoe_out = torch.zeros_like(x)
+        router_probs_mean = router_probs.mean(dim=-1, keepdim=True)
+        return qmoe_out * router_probs_mean

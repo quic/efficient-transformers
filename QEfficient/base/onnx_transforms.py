@@ -39,6 +39,7 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
+from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, ONNX_EXPORT_OPSET, SIZE_THRESHOLD_DEFAULT
 
@@ -100,6 +101,7 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
         "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
+        "CastToUInt4": (CastToUInt4Func, CastToUInt4),
     }
 
     @classmethod
@@ -129,17 +131,80 @@ class CustomOpTransform(BaseOnnxTransform):
         return op_applied
 
 
+class RemovePrefix(BaseOnnxTransform):
+    @classmethod
+    def apply(cls, model: ModelProto) -> bool:
+        graph = model.graph
+        renamed = False
+
+        def strip_prefix(name: str) -> str:
+            parts = name.rsplit("/", 1)
+            return parts[1] if len(parts) == 2 else parts[0]
+
+        input_names = []
+        for i, inputs in enumerate(graph.input):
+            original = inputs.name
+            new = strip_prefix(original)
+            if new != original:
+                renamed = True
+            inputs.name = new
+            graph.input[i].name = new
+            input_names.append(new)
+
+        input_name_set = set(input_names)
+        output_rename_map = {}
+
+        # Rename model graph outputs and keep mapping so producer/consumer edges can be fixed.
+        for out in graph.output:
+            original = out.name
+            new = strip_prefix(original)
+            if new != original:
+                out.name = new
+                output_rename_map[original] = new
+                renamed = True
+
+        for node in graph.node:
+            for i, out in enumerate(node.output):
+                if out in output_rename_map and output_rename_map[out] != out:
+                    node.output[i] = output_rename_map[out]
+                    renamed = True
+
+            new_inputs = []
+            for s in node.input:
+                # Keep node inputs in sync for renamed model outputs.
+                if s in output_rename_map:
+                    new_inputs.append(output_rename_map[s])
+                    continue
+
+                if s in input_name_set:
+                    new_inputs.append(s)
+                    continue
+
+                replaced = s
+                if "/" in s:
+                    tail = s.rsplit("/", 1)[1]
+                    if tail in input_name_set:
+                        replaced = tail
+                new_inputs.append(replaced)
+
+            for idx in range(len(node.input)):
+                if node.input[idx] != new_inputs[idx]:
+                    node.input[idx] = new_inputs[idx]
+                    renamed = True
+
+        return renamed
+
+
 class RenameFunctionOutputsTransform(BaseOnnxTransform):
     """Rename outputs of decoder-related functions for better clarity."""
 
     @classmethod
-    def apply(cls, model: ModelProto) -> bool:
+    def apply(cls, model: ModelProto, layer_idx=0) -> bool:
         graph = model.graph
         op_type_to_func = {f.name: f for f in model.functions}
         decoder_patterns = ["DecoderLayer", "Block", "Layer"]
         renamed = False
         model_out_map = {v.name: i for i, v in enumerate(graph.output)}
-        layer_idx = 0
 
         for node in graph.node:
             if any(p in node.name or p in node.op_type for p in decoder_patterns):
@@ -278,7 +343,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
             applied[CustomOpTransform] = CustomOpTransform.apply(model)
 
         if RenameFunctionOutputsTransform in requested:
-            applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(model)
+            applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(
+                model, layer_idx=kwargs.get("layer_idx", 0)
+            )
 
         if AdapterWeightsToInputsTransform in requested:
             applied[AdapterWeightsToInputsTransform] = AdapterWeightsToInputsTransform.apply(model, **kwargs)

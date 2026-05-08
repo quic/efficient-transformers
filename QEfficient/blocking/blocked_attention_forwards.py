@@ -16,7 +16,7 @@ from transformers.cache_utils import Cache
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-
+import QEfficient
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -153,7 +153,7 @@ def blocked_kv_attention_forward(
             if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                 if skip_future.item():
                     break
-
+                
         k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
         k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
@@ -280,7 +280,6 @@ def blocked_qkv_attention_forward(
                 if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                     if skip_future.item():
                         break
-
             k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
             k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
@@ -433,7 +432,7 @@ def blocked_hqkv_attention_forward(
                     if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                         if skip_future.item():
                             break
-
+                        
                 k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
                 k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
@@ -610,7 +609,7 @@ def blocked_bhqkv_attention_forward(
                         if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                             if skip_future.item():
                                 break
-
+                            
                     k_block, v_block = past_key_value.read_only_blockedKV(
                         start_index, end_index, layer_idx, cache_kwargs
                     )
@@ -860,7 +859,6 @@ def blocked_kv_mla_attention_forward(
     )
     skip_kv = True
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device, dtype=query.dtype)
-
     ctx_len = compressed_kvs.layers[layer_idx].ckv.shape[2]
     kv_block_size = -(-ctx_len // num_kv_blocks)
 
@@ -931,6 +929,12 @@ def blocked_kv_mla_attention_forward(
             )  # [1, 64, q_len, kv_block_size] X [1, 1, kv_block_size, 512] -> [1, 64, q_len, 512]
         else:
             knope = torch.matmul(compressed_kv_block, per_head_k_up_normal)
+            if k_heads == 1:
+                k_pe_block = (
+                    k_pe_block.unsqueeze(1)
+                    .expand(-1, num_heads, -1, -1, -1)
+                    .reshape(batch_size, num_heads, -1, module.config.qk_rope_head_dim)
+                )
             krope_nope = torch.cat((knope, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
