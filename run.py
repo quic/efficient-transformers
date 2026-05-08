@@ -343,7 +343,7 @@ def main():
         final_onnx_path = QEfficient.utils.layerwise_pipeline(str(export_root))
         if final_onnx_path is None:
             raise RuntimeError("QEfficient.utils.layerwise_pipeline returned an empty ONNX path.")
-        compile_num_layers = args.num_layers if args.num_layers is not None else total_layers
+        compile_num_layers = total_layers
         compile_kwargs = {
             "onnx_path": Path(final_onnx_path),
             "num_devices": args.num_devices,
