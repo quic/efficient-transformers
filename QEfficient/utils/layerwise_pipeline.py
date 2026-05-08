@@ -67,7 +67,6 @@ def split_layer_graph(
     base_dir, onnx_path, out_path = _window_paths(exported_path, layer_start, layer_end)
 
     if not os.path.exists(onnx_path):
-        print(f"[SKIP] ONNX not found: {onnx_path}")
         return False
 
     model = onnx.load(onnx_path, load_external_data=False)
@@ -109,20 +108,15 @@ def split_layer_graph(
     onnx_ir.save(model_ir, out_path)
     onnx.load(out_path, load_external_data=False)
 
-    print(f"[DONE] Layer window {layer_start}_{layer_end}: saved split graph -> {out_path}")
     return True
 
 
-def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: int = 0) -> None:
+def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: int = 0, verbose: bool = False) -> None:
     windows = _discover_layer_windows(exported_path, start_layer=start_layer)
-    print(
-        f"[START] split pipeline | exported_path={exported_path}, "
-        f"start_layer={start_layer}, discovered_shards={len(windows)}"
-    )
     for shard_idx, (layer_start, layer_end) in enumerate(windows):
-        print(f"[PROCESS] Layer window {layer_start}_{layer_end}")
         split_layer_graph(shard_idx, len(windows), exported_path, layer_start, layer_end)
-    print("[DONE] split pipeline complete")
+    if verbose:
+        print(f"[DONE] split pipeline complete ({len(windows)} windows)")
 
 
 # ============================================================
@@ -134,8 +128,8 @@ def async_delete_files(paths: List[str]) -> None:
             os.remove(p)
         except FileNotFoundError:
             pass
-        except Exception as e:
-            print(f"[delete] failed {p}: {e}")
+        except Exception:
+            pass
 
     for p in paths:
         _delete_pool.submit(_delete, p)
@@ -214,18 +208,13 @@ def run_prefix_pipeline(
     num_layers: int = 61,
     chunk_size: int = 8,
     final_data_dir: str = "final_data",
+    verbose: bool = False,
 ) -> None:
     windows = _discover_layer_windows(exported_path, start_layer=0)
-    print(
-        f"[START] prefix+deletion pipeline | exported_path={exported_path}, "
-        f"discovered_shards={len(windows)}, chunk_size={chunk_size}"
-    )
 
     for chunk_start in range(0, len(windows), chunk_size):
         chunk_end = min(chunk_start + chunk_size, len(windows))
         chunk_windows = windows[chunk_start:chunk_end]
-
-        print(f"\\n[Chunk] {chunk_start} -> {chunk_end - 1} (window count)")
         t0 = time.time()
 
         with ThreadPoolExecutor(max_workers=SAVE_WORKERS) as pool:
@@ -235,14 +224,12 @@ def run_prefix_pipeline(
             ]
             for f in as_completed(futures):
                 f.result()
-
-        print(f"[Chunk] saved in {time.time() - t0:.2f}s")
+        _ = time.time() - t0
 
         deletables = collect_chunk_deletable_files(exported_path, chunk_windows)
         async_delete_files(deletables)
-        print(f"[Chunk] scheduled deletion of {len(deletables)} files")
-
-    print("[DONE] prefix+deletion pipeline complete")
+    if verbose:
+        print(f"[DONE] prefix+deletion pipeline complete ({len(windows)} windows)")
 
 
 # ============================================================
@@ -396,17 +383,15 @@ def merge_models(m1, m2, io_map):
     return model
 
 
-def run_merge_pipeline(exported_path: str, num_layers: int = 61, final_data_dir: str = "final_data") -> str:
+def run_merge_pipeline(
+    exported_path: str, num_layers: int = 61, final_data_dir: str = "final_data", verbose: bool = False
+) -> str:
     windows = _discover_layer_windows(exported_path, start_layer=0)
     if len(windows) < 1:
         raise ValueError("Need at least one discovered shard to merge")
 
     base_dir = f"{exported_path}/{final_data_dir}"
     start = time.time()
-    print(
-        f"[START] merge pipeline | exported_path={exported_path}, "
-        f"discovered_shards={len(windows)}, final_data_dir={final_data_dir}"
-    )
 
     shard_starts = [layer_start for (layer_start, _) in windows]
     first_start = windows[0][0]
@@ -416,11 +401,6 @@ def run_merge_pipeline(exported_path: str, num_layers: int = 61, final_data_dir:
         only_model = f"{base_dir}/pref_{first_start}.onnx"
         if not os.path.exists(only_model):
             raise FileNotFoundError(f"Missing input model: {only_model}")
-        print(f"[DONE] merge pipeline skipped (single layer): {only_model}")
-        sep = "#" * 80
-        print(sep)
-        print(f"FINAL MERGED MODEL PATH: {only_model}")
-        print(sep)
         return only_model
 
     for idx in range(len(shard_starts) - 1):
@@ -435,7 +415,6 @@ def run_merge_pipeline(exported_path: str, num_layers: int = 61, final_data_dir:
         if not os.path.exists(m2_path):
             raise FileNotFoundError(f"Missing input model: {m2_path}")
 
-        print(f"[MERGE] {left}-{last_end}")
         m1_pref = onnx.load(m1_path, load_external_data=False)
         m2_pref = onnx.load(m2_path, load_external_data=False)
 
@@ -457,17 +436,13 @@ def run_merge_pipeline(exported_path: str, num_layers: int = 61, final_data_dir:
 
         out_path = f"{base_dir}/merged_{left}-{last_end}.onnx"
         onnx.save(merged_model, out_path)
-        print(f"[SAVED] {out_path}")
 
     final_path = f"{base_dir}/merged_{first_start}-{last_end}.onnx"
     model = onnx.load(final_path, load_external_data=False)
     RemovePrefix.apply(model)
     onnx.save(model, final_path)
-    print(f"[DONE] merge pipeline complete in {time.time() - start:.2f}s")
-    sep = "#" * 80
-    print(sep)
-    print(f"FINAL MERGED MODEL PATH: {final_path}")
-    print(sep)
+    if verbose:
+        print(f"[DONE] merge pipeline complete in {time.time() - start:.2f}s")
     return final_path
 
 
@@ -480,30 +455,29 @@ def run_sequential_pipeline(
     start_layer: int = 0,
     chunk_size: int = 8,
     final_data_dir: str = "final_data",
+    verbose: bool = False,
 ) -> str:
-    print("\\n=== Stage 1/3: Splitting ===")
     run_split_pipeline(
         exported_path=exported_path,
         num_layers=num_layers,
         start_layer=start_layer,
+        verbose=verbose,
     )
 
-    print("\\n=== Stage 2/3: Prefix + Deletion ===")
     run_prefix_pipeline(
         exported_path=exported_path,
         num_layers=num_layers,
         chunk_size=chunk_size,
         final_data_dir=final_data_dir,
+        verbose=verbose,
     )
 
-    print("\\n=== Stage 3/3: Merging ===")
     final_path = run_merge_pipeline(
         exported_path=exported_path,
         num_layers=num_layers,
         final_data_dir=final_data_dir,
+        verbose=verbose,
     )
-
-    print(f"\\n[PIPELINE DONE] Final merged model: {final_path}")
     return final_path
 
 
@@ -513,6 +487,7 @@ def layerwise_pipeline(
     start_layer: int = 0,
     chunk_size: int = 8,
     final_data_dir: str = "final_data",
+    verbose: bool = False,
 ) -> str:
     return run_sequential_pipeline(
         exported_path=exported_path,
@@ -520,6 +495,7 @@ def layerwise_pipeline(
         start_layer=start_layer,
         chunk_size=chunk_size,
         final_data_dir=final_data_dir,
+        verbose=verbose,
     )
 
 
@@ -532,12 +508,15 @@ if __name__ == "__main__":
     parser.add_argument("--start-layer", type=int, default=0)
     parser.add_argument("--chunk-size", type=int, default=8)
     parser.add_argument("--final-data-dir", default="final_data")
+    parser.add_argument("--verbose", action="store_true", help="Enable progress logs")
     args = parser.parse_args()
 
-    run_sequential_pipeline(
+    final_path = run_sequential_pipeline(
         exported_path=args.exported_path,
         num_layers=args.num_layers,
         start_layer=args.start_layer,
         chunk_size=args.chunk_size,
         final_data_dir=args.final_data_dir,
+        verbose=args.verbose,
     )
+    print(final_path)

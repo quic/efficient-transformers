@@ -28,7 +28,6 @@ DEFAULT_AIC_HW_VERSION = "ai100"
 
 
 
-
 def write_custom_io_yaml(path: Path, indices):
     with open(path, "w") as fp:
         # agent: write cache entries for all layers in each discovered window.
@@ -69,12 +68,12 @@ def create_mdp_ts_json(path: Path, device_ids: list[int], num_cores: int) -> Pat
 
 
 def create_custom_io_yaml(path: Path, kv_cache_dtype: str, num_layers: int):
-    custom_io={}
+    custom_io = {}
     for suffix in ["", "_RetainedState"]:
         for i in range(num_layers):
             custom_io[f"compressed_kv.{i}{suffix}"] = kv_cache_dtype
             custom_io[f"k_pe.{i}{suffix}"] = kv_cache_dtype
-    
+
     with open(path, "w") as fp:
         for io_name, dtype in custom_io.items():
             fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
@@ -90,8 +89,6 @@ def build_compile_command(
     mdp_ts_json: Path | None,
     custom_io_yaml: str,
 ) -> list[str]:
-
-
     command = [
         COMPILER[0],
         COMPILER[1],
@@ -103,7 +100,7 @@ def build_compile_command(
         "-compile-only",
         f"-aic-binary-dir={qpc_dir}",
         f"-custom-IO-list-file={custom_io_yaml}",
-        "-retained-state"
+        "-retained-state",
     ]
     if mdp_ts_json is not None:
         command.append(f"-mdp-load-partition-config={mdp_ts_json}")
@@ -112,8 +109,54 @@ def build_compile_command(
     return command
 
 
+def run_full_model_compile(
+    onnx_path: Path | str,
+    num_devices: int = 1,
+    batch_size: int = 1,
+    seq_len: int = 1,
+    ctx_len: int = 128,
+    num_cores: int = 16,
+    num_layers: int = 61,
+    mxfp6: bool = True,
+    mxint8_kv_cache: bool = True,
+):
+    onnx_path = Path(onnx_path)
+    qpc_binaries_dir = onnx_path.parent / "qpc_binaries"
+    qpc_binaries_dir.mkdir(exist_ok=True)
 
-if __name__ == "__main__":
+    specialization_json = create_specializations_json(
+        qpc_binaries_dir / "specializations.json",
+        batch_size=batch_size,
+        seq_len=seq_len,
+        ctx_len=ctx_len,
+    )
+    custom_io_file = create_custom_io_yaml(
+        qpc_binaries_dir / "custom_io_fp16.yaml",
+        kv_cache_dtype="mxint8" if mxint8_kv_cache else "float16",
+        num_layers=num_layers,
+    )
+    mdp_ts_json = create_mdp_ts_json(
+        qpc_binaries_dir / "mdp_ts.json",
+        device_ids=list(range(num_devices)),
+        num_cores=num_cores,
+    )
+    command = build_compile_command(
+        onnx_path=onnx_path,
+        qpc_dir=qpc_binaries_dir / "qpc",
+        specialization_json=specialization_json,
+        num_cores=num_cores,
+        enable_mxfp6=mxfp6,
+        mdp_ts_json=mdp_ts_json,
+        custom_io_yaml=custom_io_file,
+    )
+    print(" ".join(command))
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Compilation Failed!!\n\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}")
+    return qpc_binaries_dir / "qpc"
+
+
+def _parse_args():
     parser = argparse.ArgumentParser(description="Compile layerwise ONNX windows into QPC artifacts.")
     parser.add_argument("--onnx_path", required=True, help="Path to .onnx file")
     parser.add_argument("--num-devices", type=int, default=1, help="Number of devices to use (e.g., 2 -> device_group=0,1)")
@@ -137,31 +180,19 @@ if __name__ == "__main__":
         action="store_false",
         help="Disable mxint8 kv-cache compile flag",
     )
-    args = parser.parse_args()
-    qpc_binaries_dir = Path(args.onnx_path).parent / "qpc_binaries"
-    qpc_binaries_dir.mkdir(exist_ok=True)
-    specialization_json = create_specializations_json(
-        qpc_binaries_dir / "specializations.json",
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = _parse_args()
+    run_full_model_compile(
+        onnx_path=args.onnx_path,
+        num_devices=args.num_devices,
         batch_size=args.batch_size,
         seq_len=args.seq_len,
         ctx_len=args.ctx_len,
-    )
-    custom_io_file = create_custom_io_yaml(qpc_binaries_dir / "custom_io_fp16.yaml", kv_cache_dtype="mxint8" if args.mxint8_kv_cache else "float16", num_layers= args.num_layers)
-    mdp_ts_json = create_mdp_ts_json(
-        qpc_binaries_dir / "mdp_ts.json",
-        device_ids=list(range(args.num_devices)),
         num_cores=args.num_cores,
+        num_layers=args.num_layers,
+        mxfp6=args.mxfp6,
+        mxint8_kv_cache=args.mxint8_kv_cache,
     )
-    command = build_compile_command(
-        onnx_path=args.onnx_path,
-        qpc_dir=qpc_binaries_dir / "qpc",
-        specialization_json=specialization_json,
-        num_cores=args.num_cores,
-        enable_mxfp6=args.mxfp6,
-        mdp_ts_json=mdp_ts_json,
-        custom_io_yaml=custom_io_file
-    )
-    print(" ".join(command))
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"Compilation Failed!!\n\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}")

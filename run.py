@@ -12,23 +12,26 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM
+from compile_full_model import run_full_model_compile
 
 MODEL_PATH = Path(
     "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/54383e83fa343a1331754112fb9e3410c55efa2f"
 )
 
-TS = 1
 enable_mla = True
 mla_absorption = {"cache_compressed": True, "absorption": True, "online": False}
 prefill_seq_len = 1
 ctx_len = 128
-qaic_config = {
-    "mla_absorption": mla_absorption,
-    "enable_blocking": True,
-    "blocking_mode": "kv",
-    "num_kv_heads_repeat": TS,
-    "num_kv_blocks": 4
-}
+
+
+def _build_qaic_config(num_kv_heads_repeat: int):
+    return {
+        "mla_absorption": mla_absorption,
+        "enable_blocking": True,
+        "blocking_mode": "kv",
+        "num_kv_heads_repeat": num_kv_heads_repeat,
+        "num_kv_blocks": 4,
+    }
 
 
 def _ensure_pretrained_window_attrs():
@@ -181,6 +184,27 @@ def _parse_args():
     parser.add_argument("--window_size", dest="window_size", type=int, default=1)
     parser.add_argument("--layerwise_mode", dest="layerwise_mode", type=str, default="single_qpc")
     parser.add_argument("--total_layers", dest="total_layers", type=int, default=None)
+    parser.add_argument("--num-devices", type=int, default=1, help="Number of devices for compile stages.")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size for specialization config.")
+    parser.add_argument("--seq_len", type=int, default=prefill_seq_len, help="Prefill/compile sequence length.")
+    parser.add_argument("--ctx_len", type=int, default=ctx_len, help="Context length for compile stages.")
+    parser.add_argument("--num_cores", type=int, default=16, help="Number of accelerator cores.")
+    parser.add_argument("--num_layers", type=int, default=None, help="Override layers used by compile_full_model.")
+    parser.add_argument("--mxfp6", dest="mxfp6", action="store_true", default=True, help="Enable mxfp6 compile flag.")
+    parser.add_argument("--no-mxfp6", dest="mxfp6", action="store_false", help="Disable mxfp6 compile flag.")
+    parser.add_argument(
+        "--mxint8_kv_cache",
+        dest="mxint8_kv_cache",
+        action="store_true",
+        default=True,
+        help="Enable mxint8 kv-cache compile flag.",
+    )
+    parser.add_argument(
+        "--no-mxint8_kv_cache",
+        dest="mxint8_kv_cache",
+        action="store_false",
+        help="Disable mxint8 kv-cache compile flag.",
+    )
     return parser.parse_args()
 
 
@@ -188,6 +212,7 @@ def main():
     _ensure_pretrained_window_attrs()
     args = _parse_args()
     model_path = args.model_path
+    qaic_config = _build_qaic_config(num_kv_heads_repeat=args.num_devices)
 
     text_config = AutoConfig.from_pretrained(str(model_path), trust_remote_code=True).text_config
     resolved_total_layers = args.total_layers
@@ -217,12 +242,12 @@ def main():
             model, num_kv_heads_repeat=1, qaic_config=qaic_config, torch_dtype=torch.float16
         )
         onnx_path = qeff_model.compile(
-            prefill_seq_len=prefill_seq_len,
-            ctx_len=ctx_len,
-            mxfp6_matmul=True,
-            mxint8_kv_cache=False,
-            num_devices=TS,
-            num_cores=16,
+            prefill_seq_len=args.seq_len,
+            ctx_len=args.ctx_len,
+            mxfp6_matmul=args.mxfp6,
+            mxint8_kv_cache=args.mxint8_kv_cache,
+            num_devices=args.num_devices,
+            num_cores=args.num_cores,
             qaic_config=qaic_config,
             use_onnx_subfunctions=True,
         )
@@ -237,7 +262,21 @@ def main():
         QEfficient.utils.compile_layerwise(str(export_root))
         QEfficient.utils.inference_pipeline(str(export_root))
     else:
-        QEfficient.utils.layerwise_pipeline(str(export_root))
+        final_onnx_path = QEfficient.utils.layerwise_pipeline(str(export_root))
+        if final_onnx_path is None:
+            raise RuntimeError("QEfficient.utils.layerwise_pipeline returned an empty ONNX path.")
+        compile_num_layers = args.num_layers if args.num_layers is not None else total_layers
+        run_full_model_compile(
+            onnx_path=Path(final_onnx_path),
+            num_devices=args.num_devices,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            ctx_len=args.ctx_len,
+            num_cores=args.num_cores,
+            num_layers=compile_num_layers,
+            mxfp6=args.mxfp6,
+            mxint8_kv_cache=args.mxint8_kv_cache,
+        )
 
 
 if __name__ == "__main__":
