@@ -153,8 +153,8 @@ def blocked_kv_attention_forward(
             if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                 if skip_future.item():
                     break
-        window_cache_layer_idx = layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
-        k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, window_cache_layer_idx, cache_kwargs)
+                
+        k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
         k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
         attn_weights_block = torch.matmul(query, k_block_states.transpose(2, 3)) * scaling
@@ -280,8 +280,7 @@ def blocked_qkv_attention_forward(
                 if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                     if skip_future.item():
                         break
-            window_cache_layer_idx = layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
-            k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, window_cache_layer_idx, cache_kwargs)
+            k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
             k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
             attn_weights_block = torch.matmul(q_block, k_block_states.transpose(2, 3)) * scaling
@@ -433,8 +432,8 @@ def blocked_hqkv_attention_forward(
                     if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                         if skip_future.item():
                             break
-                window_cache_layer_idx = layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
-                k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, window_cache_layer_idx, cache_kwargs)
+                        
+                k_block, v_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
                 k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
                 k_g = k_block_states[:, h_start:h_end, :, :]
@@ -610,9 +609,9 @@ def blocked_bhqkv_attention_forward(
                         if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
                             if skip_future.item():
                                 break
-                    window_cache_layer_idx = layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
+                            
                     k_block, v_block = past_key_value.read_only_blockedKV(
-                        start_index, end_index, window_cache_layer_idx, cache_kwargs
+                        start_index, end_index, layer_idx, cache_kwargs
                     )
                     k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
@@ -860,7 +859,6 @@ def blocked_kv_mla_attention_forward(
     )
     skip_kv = True
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device, dtype=query.dtype)
-
     ctx_len = compressed_kvs.layers[layer_idx].ckv.shape[2]
     kv_block_size = -(-ctx_len // num_kv_blocks)
 

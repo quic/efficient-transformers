@@ -89,8 +89,7 @@ def past_key_value_update(
         if comp_ctx_lengths is not None:
             attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             cache_kwargs["CCL"] = attention_mask.shape[-1]
-        window_cache_layer_idx = module.layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
-        key, value = past_key_value.update(key, value, window_cache_layer_idx, cache_kwargs)
+        key, value = past_key_value.update(key, value, module.layer_idx, cache_kwargs)
     return key, value, cache_kwargs
 
 
@@ -133,8 +132,7 @@ def generic_blocked_attention_interface(
                         "sliding_window": past_key_value.sliding_window_len,
                     }
                 )
-            window_cache_layer_idx = module.layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
-            past_key_value.write_only(key, value, window_cache_layer_idx, cache_kwargs)
+            past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         else:
             key, value, cache_kwargs = past_key_value_update(
                 module=module,
@@ -149,7 +147,6 @@ def generic_blocked_attention_interface(
             )
 
     strategy = _STRATEGIES.get(blocking_config.mode)
-    window_cache_layer_idx = layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
     attn_output, attn_weights = strategy(
         module=module,
         query=query,
@@ -158,7 +155,7 @@ def generic_blocked_attention_interface(
         attention_mask=attention_mask,
         scaling=scaling,
         cache_kwargs=cache_kwargs,
-        layer_idx=window_cache_layer_idx,
+        layer_idx=layer_idx,
         past_key_value=past_key_value,
         num_kv_blocks=blocking_config.num_kv_blocks,
         num_q_blocks=blocking_config.num_q_blocks,
@@ -204,7 +201,6 @@ def generic_blocked_mla_attention_interface(
 ):
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
     mla_blocking_strategy = _STRATEGIES_MLA.get(blocking_config.mode)
-    window_cache_layer_idx = layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
     attn_output, attn_weights = mla_blocking_strategy(
         module=module,
         query=query,
@@ -221,7 +217,7 @@ def generic_blocked_mla_attention_interface(
         attention_mask=attention_mask,
         scaling=scaling,
         cache_kwargs=cache_kwargs,
-        layer_idx=window_cache_layer_idx,
+        layer_idx=layer_idx,
         compressed_kvs=compressed_kvs,
         mla_absorption=mla_absorption,
         num_kv_blocks=blocking_config.num_kv_blocks,
