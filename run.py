@@ -20,10 +20,6 @@ MODEL_PATH = Path(
 )
 
 enable_mla = True
-mla_absorption = {"cache_compressed": True, "absorption": True, "online": False}
-prefill_seq_len = 1
-ctx_len = 128
-
 
 def _build_qaic_config(
     mla_absorption_cfg: dict,
@@ -189,14 +185,14 @@ def _resolve_export_root(onnx_path: Path) -> Path:
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="Compile Kimi text-only model layer windows with QEfficient.")
-    parser.add_argument("--model_path", dest="model_path", type=Path, default=MODEL_PATH)
+    parser.add_argument("--model_path", dest="model_path", type=Path, required=True, help="Path to the downloaded Kimi model")
     parser.add_argument("--window_size", dest="window_size", type=int, default=1)
     parser.add_argument("--layerwise_mode", dest="layerwise_mode", type=str, default="single_qpc")
     parser.add_argument("--total_layers", dest="total_layers", type=int, default=None)
     parser.add_argument("--num-devices", type=int, default=1, help="Number of devices for compile stages.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for specialization config.")
-    parser.add_argument("--seq_len", type=int, default=prefill_seq_len, help="Prefill/compile sequence length.")
-    parser.add_argument("--ctx_len", type=int, default=ctx_len, help="Context length for compile stages.")
+    parser.add_argument("--seq_len", type=int, default=1, help="Prefill/compile sequence length.")
+    parser.add_argument("--ctx_len", type=int, default=128, help="Context length for compile stages.")
     parser.add_argument("--num_cores", type=int, default=16, help="Number of accelerator cores.")
     parser.add_argument("--mxfp6", dest="mxfp6", action="store_true", default=True, help="Enable mxfp6 compile flag (default: True)")
     parser.add_argument("--no-mxfp6", dest="mxfp6", action="store_false", help="Disable mxfp6 compile flag")
