@@ -1304,10 +1304,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 down_proj_unpacked, slot_down_scales, down_zeros_unpacked, self.group_size
             )
 
-            gate_out = torch.bmm(x_chunk, gate_proj_dq)
-            up_out = torch.bmm(x_chunk, up_proj_dq)
+            gate_out = torch.bmm(x_chunk, gate_proj_dq.to(expert_out.dtype))
+            up_out = torch.bmm(x_chunk, up_proj_dq.to(expert_out.dtype))
             hidden = self.act_fn(gate_out) * up_out
-            down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2))
+            down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(expert_out.dtype))
 
             rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
             down_chunk = down_out * rw_chunk
@@ -1374,7 +1374,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         T = B * S
         x = hidden_states.view(T, H)
 
-        routing_weights = torch.zeros(T, self.config.n_routed_experts)
+        routing_weights = torch.zeros(T, self.config.n_routed_experts, dtype=topk_weight.dtype)
         routing_weights.scatter_(1, topk_idx, topk_weight)
 
         if len(self.experts) % EXPERT_BLOCKING_NUM_NSP == 0:
