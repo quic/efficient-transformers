@@ -3964,6 +3964,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
+        self.supports_paged_attention = False
+        # increase seq_len if using a larger number of blocks and set PagedAttention params if required
+        if self.hash_params.get("blocking_kwargs", None):
+            max_blocks = -1
+            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
+                if isinstance(num_blocks, int):
+                    max_blocks = max(max_blocks, num_blocks)
+            block_size = -(-seq_len // max_blocks)
+            seq_len = block_size * max_blocks
+            num_kv_blocks = self.hash_params["blocking_config"].num_kv_blocks
+            self.supports_paged_attention = "paged" in self.hash_params["blocking_config"].mode
+
         # TODO: Remove this hack ##################
         if dynamo:
             # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
@@ -4034,6 +4046,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
+
         if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (seq_len,), dtype=torch.int64)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
@@ -4055,6 +4068,21 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names.append("next_tokens")
         else:
             output_names.append("logits")
+
+        if self.supports_paged_attention:
+            batch, num_kv_heads, CL, dh = kv_cache_shape
+            total_num_kv_blocks = batch * num_kv_blocks
+            kv_block_size = (-CL) // (-num_kv_blocks)
+            kv_cache_shape = [total_num_kv_blocks, num_kv_heads, kv_block_size, dh]
+            example_inputs["block_table"] = torch.arange((bs * num_kv_blocks), dtype=torch.int64).view(bs, num_kv_blocks)
+            example_inputs["slot_id"] = torch.zeros(bs, dtype=torch.int64)
+            dynamic_axes["block_table"] = {0: "batch_size", 1: "num_kv_blocks"}
+            dynamic_axes["slot_id"] = {0: "batch_size"}
+            # Assuming 4d pkv, might have to recheck for GPTBigCode with 3d pkv
+            pkv_dynamic_axes = {
+                0: "total_num_kv_blocks",
+                2: "kv_block_size",
+            }
 
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
         if (
@@ -4240,7 +4268,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 dynamo=dynamo,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
             )
-
     def build_prefill_specialization(
         self,
         prefill_seq_len: int = 32,
@@ -4302,6 +4329,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: remove this; not required
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
+        if self.hash_params.get("blocking_kwargs", None):
+            if "paged" in self.hash_params["blocking_config"].mode 
+                num_kv_blocks = self.hash_params["blocking_config"].num_kv_blocks
+                spec["num_kv_blocks"] = num_kv_blocks
+                spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
+                spec["kv_block_size"] = (-ctx_len) // (-num_kv_blocks)
         result = {k: v for k, v in spec.items() if v is not None}
         result["_graph_name"] = "Decode" if prefill_seq_len == 1 and kwargs.get("prefill_only") is False else "Prefill"
         return result
@@ -4365,6 +4398,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
+        if self.hash_params.get("blocking_kwargs", None):
+            if "paged" in self.hash_params["blocking_config"].mode 
+                num_kv_blocks = self.hash_params["blocking_config"].num_kv_blocks
+                spec["num_kv_blocks"] = num_kv_blocks
+                spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
+                spec["kv_block_size"] = (-ctx_len) // (-num_kv_blocks)
         result = {k: v for k, v in spec.items() if v is not None}
         result["_graph_name"] = "Decode"
         return result

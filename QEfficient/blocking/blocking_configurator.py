@@ -51,15 +51,56 @@ def _infer_data_bytes(compile_config: Dict[str, Any]) -> int:
     return 4
 
 
+def _normalize_attention_mode(raw_mode: str) -> str:
+    mode = raw_mode.lower()
+    if "h" in mode and "q" in mode and "kv" in mode and "paged" in mode:
+        return "hqkv_paged"
+    if "h" in mode and "q" in mode and "kv" in mode and "paged" not in mode:
+        return "hqkv"
+    if "h" in mode and "q" in mode:
+        return "hq"
+    if "h" in mode and "kv" in mode and "paged" in mode:
+        return "hkv_paged"
+    if "h" in mode and "kv" in mode and "paged" not in mode:
+        return "hkv"
+    if "h" in mode:
+        return "h"
+    if "q" in mode and "kv" in mode and "paged" in mode:
+        return "qkv_paged"
+    if "q" in mode and "kv" in mode and "paged" not in mode:
+        return "qkv"
+    if "kv" in mode and "paged" in mode:
+        return "kv_paged"
+    if "kv" in mode and "paged" not in mode:
+        return "kv"
+    if "q" in mode:
+        return "q"
+    return ""
+
+
 def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mode: str) -> str:
+    mode = _normalize_attention_mode(requested_mode)
+    #if mode == "":	#this should not be here since it will prevent 'h' and 'b' modes
+        #return ""
+    num_q_blocks = attention_cfg.get("num_q_blocks") or 1
+    num_kv_blocks = attention_cfg.get("num_kv_blocks") or 1
     head_block_size = (attention_cfg.get("head_block_size") or 1) if attention_cfg.get("head_blocking_enabled") else 1
-    active = {
-        "h": head_block_size > 1,
-        "q": (attention_cfg.get("num_q_blocks") or 1) > 1,
-        "kv": (attention_cfg.get("num_kv_blocks") or 1) > 1,
-    }
-    mode = requested_mode.lower()
-    return "".join(dim for dim in ("h", "q", "kv") if dim in mode and active[dim])
+
+    if head_block_size > 1 and num_q_blocks == 1 and num_kv_blocks == 1:
+        return "h"
+    if head_block_size > 1 and num_q_blocks > 1:
+        return "hq"
+    if head_block_size > 1 and num_kv_blocks > 1:
+        return "hkv"
+    if head_block_size > 1:
+        return "h" + mode
+    if num_q_blocks > 1 and num_kv_blocks > 1:
+        return mode
+    if num_q_blocks > 1:
+        return mode
+    if num_kv_blocks > 1:
+        return mode
+    return ""
 
 
 def _get_valid_num_blocks(config: Dict, requested_key: str) -> int:
@@ -217,8 +258,9 @@ def attention_configurator(
 
         for num_kv_blocks, kv_cl_per_nsp, kv_size_per_nsp in kv_metrics:
             qk_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * kv_cl_per_nsp * data_bytes
-            vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp
-
+            qkv_size_per_nsp = q_size_per_nsp
+            # For KV Blocking for loop, q input and qkv output should be persistent in VTCM
+            vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp + qkv_size_per_nsp
             q_kv_ratio = max(q_size_per_nsp / kv_size_per_nsp, kv_size_per_nsp / q_size_per_nsp)
             num_total_blocks = num_q_blocks * num_kv_blocks
 
