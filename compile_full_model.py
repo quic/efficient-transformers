@@ -21,7 +21,6 @@ MXFP6 = True
 MXINT8_KV_CACHE = True
 
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
-DEFAULT_AIC_HW_VERSION = "ai100"
 # =====================================================
 # DISCOVERY
 # =====================================================
@@ -88,11 +87,12 @@ def build_compile_command(
     enable_mxfp6: bool,
     mdp_ts_json: Path | None,
     custom_io_yaml: str,
+    aic_version: str,
 ) -> list[str]:
     command = [
         COMPILER[0],
         COMPILER[1],
-        f"-aic-hw-version={DEFAULT_AIC_HW_VERSION}",
+        f"-aic-hw-version={aic_version}",
         f"-m={onnx_path}",
         f"-network-specialization-config={specialization_json}",
         "-convert-to-fp16",
@@ -119,6 +119,7 @@ def run_full_model_compile(
     num_layers: int = 61,
     mxfp6: bool = True,
     mxint8_kv_cache: bool = True,
+    aic_version: str = "ai100",
 ):
     onnx_path = Path(onnx_path)
     qpc_binaries_dir = onnx_path.parent / "qpc_binaries"
@@ -148,6 +149,7 @@ def run_full_model_compile(
         enable_mxfp6=mxfp6,
         mdp_ts_json=mdp_ts_json,
         custom_io_yaml=custom_io_file,
+        aic_version=aic_version,
     )
     print(" ".join(command))
     result = subprocess.run(command, capture_output=True, text=True)
@@ -159,6 +161,7 @@ def run_full_model_compile(
 def _parse_args():
     parser = argparse.ArgumentParser(description="Compile layerwise ONNX windows into QPC artifacts.")
     parser.add_argument("--onnx_path", required=True, help="Path to .onnx file")
+    parser.add_argument("--aic_hw_version", dest="aic_hw_version", type=str, default="ai100")
     parser.add_argument("--num-devices", type=int, default=1, help="Number of devices to use (e.g., 2 -> device_group=0,1)")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for specialization config (default: 1)")
     parser.add_argument("--seq_len", type=int, default=1, help="Sequence length for specialization config (default: 1)")
@@ -195,4 +198,5 @@ if __name__ == "__main__":
         num_layers=args.num_layers,
         mxfp6=args.mxfp6,
         mxint8_kv_cache=args.mxint8_kv_cache,
+        aic_version=args.aic_hw_version,
     )

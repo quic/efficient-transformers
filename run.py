@@ -15,12 +15,6 @@ import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM
 from compile_full_model import run_full_model_compile
 
-MODEL_PATH = Path(
-    "/home/ubuntu/.cache/huggingface/hub/models--moonshotai--Kimi-K2.5/snapshots/54383e83fa343a1331754112fb9e3410c55efa2f"
-)
-
-enable_mla = True
-
 def _build_qaic_config(
     mla_absorption_cfg: dict,
     enable_blocking: bool,
@@ -186,6 +180,7 @@ def _resolve_export_root(onnx_path: Path) -> Path:
 def _parse_args():
     parser = argparse.ArgumentParser(description="Compile Kimi text-only model layer windows with QEfficient.")
     parser.add_argument("--model_path", dest="model_path", type=Path, required=True, help="Path to the downloaded Kimi model")
+    parser.add_argument("--aic_hw_version", dest="aic_hw_version", type=str, default="ai100")
     parser.add_argument("--window_size", dest="window_size", type=int, default=1)
     parser.add_argument("--layerwise_mode", dest="layerwise_mode", type=str, default="single_qpc")
     parser.add_argument("--total_layers", dest="total_layers", type=int, default=None)
@@ -350,6 +345,7 @@ def main():
             "num_layers": compile_num_layers,
             "mxfp6": args.mxfp6,
             "mxint8_kv_cache": args.mxint8_kv_cache,
+            "aic_version": args.aic_hw_version,
         }
         optional_compile_kwargs = {
             "qaic_config": qaic_config,
