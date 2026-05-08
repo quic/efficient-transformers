@@ -6,6 +6,8 @@
 # -----------------------------------------------------------------------------
 
 import torch
+from compressed_tensors.compressors import PackedQuantizationCompressor
+from compressed_tensors.linear.compressed_linear import CompressedLinear
 from torch import nn
 from transformers import AutoConfig
 from transformers.models.gpt_oss.modeling_gpt_oss import GptOssExperts
@@ -53,7 +55,6 @@ class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
             original_module.bits,
             original_module.group_size,
         )
-
         original_module.weight = fp16_weight
         new_module = QuantLinearORT(
             original_module.bits,
@@ -64,6 +65,43 @@ class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
         )
         new_module.bias = original_module.bias if original_module.bias is not None else None
         new_module.pack(original_module, scales.T, zeros.T, original_module.g_idx)
+        return new_module
+
+
+class PackQuantizedInt4ToMatMulNBitsTransform(ModuleMutatorTransform):
+    """
+    This transform is used to pack the quantized int4 weights into a format that can be used by the MatMulNBits kernel.
+    It is used for the ONNX export of the quantized model.
+    """
+
+    _match_class = CompressedLinear
+
+    @classmethod
+    def mutate(cls, original_module, parent_module):
+        # add compressor.decompress to get the decompressed weight
+        # and then package into matmulnbit
+        assert isinstance(original_module.compressor, PackedQuantizationCompressor), (
+            f"Only {PackedQuantizationCompressor} supported for now"
+        )
+        fp_weight = original_module.compressor.decompress_module(original_module)
+        scales = original_module.weight_scale
+        # assuming symmetric quantization
+        quantization_args = original_module.quantization_scheme.weights
+        zeros = (torch.zeros_like(scales) + pow(2, (quantization_args.num_bits - 1))).to(torch.uint8)
+        g_idx = torch.arange(original_module.in_features // quantization_args.group_size).repeat_interleave(
+            quantization_args.group_size
+        )
+        original_module.weight = torch.nn.Parameter(fp_weight)
+        assert quantization_args.type == "int", "uint is not tested yet"
+        new_module = QuantLinearORT(
+            quantization_args.num_bits,
+            quantization_args.group_size,
+            original_module.in_features,
+            original_module.out_features,
+            original_module.bias is not None,
+        )
+        new_module.bias = original_module.bias if original_module.bias is not None else None
+        new_module.pack(original_module, scales, zeros, g_idx)
         return new_module
 
 
