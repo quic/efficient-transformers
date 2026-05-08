@@ -194,8 +194,8 @@ def _parse_args():
     parser.add_argument(
         "--enable_blocking",
         dest="enable_blocking",
-        action=argparse.BooleanOptionalAction,
-        default=True,
+        action="store_true",
+        default=False,
         help="Enable or disable blocking.",
     )
     parser.add_argument("--blocking_mode", dest="blocking_mode", type=str, default="kv", help="Blocking mode.")
@@ -272,7 +272,6 @@ def main():
         "absorption": args.absorption,
         "online": args.online,
     }
-
     text_config = AutoConfig.from_pretrained(str(model_path), trust_remote_code=True).text_config
     resolved_total_layers = args.total_layers
     if resolved_total_layers is None:
