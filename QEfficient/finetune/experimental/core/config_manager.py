@@ -481,6 +481,53 @@ class TrainingConfig:
     )
 
 
+
+@dataclass
+class DPOTrainingConfig:
+    """DPO-specific hyperparameters passed directly to trl.DPOConfig."""
+
+    beta: float = field(
+        default=0.1,
+        metadata={"help": "KL-penalty coefficient β for the DPO loss."},
+    )
+    loss_type: List[str] = field(
+        default_factory=lambda: ["sigmoid"],
+        metadata={"help": "DPO loss variant(s). One or more of: 'sigmoid', 'hinge', 'ipo', 'robust', 'bco_pair', 'sppo_hard', 'aot', 'aot_pair', 'apo_zero', 'apo_down'."},
+    )
+    label_smoothing: float = field(
+        default=0.0,
+        metadata={"help": "Label smoothing factor for the DPO loss (only used with 'sigmoid' loss_type)."},
+    )
+    max_length: Optional[int] = field(
+        default=2048,
+        metadata={"help": "Maximum total token length (prompt + response) for each sample."},
+    )
+    truncation_mode: str = field(
+        default="keep_end",
+        metadata={"help": "How to truncate sequences that exceed max_length. One of: 'keep_end', 'keep_start'."},
+    )
+    disable_dropout: bool = field(
+        default=True,
+        metadata={"help": "Whether to disable dropout in the policy and reference models during training."},
+    )
+    precompute_ref_log_probs: bool = field(
+        default=False,
+        metadata={"help": "Whether to precompute reference model log-probabilities before training starts."},
+    )
+    sync_ref_model: bool = field(
+        default=False,
+        metadata={"help": "Whether to periodically sync the reference model with the policy model."},
+    )
+    ref_model_sync_steps: int = field(
+        default=512,
+        metadata={"help": "Number of steps between reference model syncs (requires sync_ref_model=True)."},
+    )
+    reference_model_name: Optional[str] = field(
+        default=None,
+        metadata={"help": "Name or path of an explicit reference model. When None the policy model is copied."},
+    )
+
+
 @dataclass
 class MasterConfig:
     """Main training configuration."""
@@ -501,6 +548,11 @@ class MasterConfig:
 
     training: TrainingConfig = field(
         default_factory=TrainingConfig, metadata={"help": "Configuration for training parameters."}
+    )
+
+    dpo: Optional[DPOTrainingConfig] = field(
+        default=None,
+        metadata={"help": "DPO-specific hyperparameters. Only used when training.type is 'dpo'."},
     )
 
     extra_params: Dict[str, Any] = field(
@@ -560,6 +612,7 @@ class ConfigManager:
                 PeftConfig,
                 DdpConfig,
                 GradientCheckpointingKwargs,
+                DPOTrainingConfig,
             )
         )
 
@@ -607,7 +660,7 @@ class ConfigManager:
 
     def _apply_cli_overrides(self, cli_args: List[str]) -> None:
         parser = self._build_cli_parser()
-        train_args, model_args, data_args, opt_args, schd_args, call_args, peft_args, ddp_args, gck_args, extra = (
+        train_args, model_args, data_args, opt_args, schd_args, call_args, peft_args, ddp_args, gck_args, dpo_args, extra = (
             parser.parse_args_into_dataclasses(args=cli_args, return_remaining_strings=True, look_for_args_file=False)
         )
 
@@ -646,6 +699,10 @@ class ConfigManager:
         if gck_updates:
             updates.setdefault("training", {})
             updates["training"]["gradient_checkpointing_kwargs"] = gck_updates
+
+        dpo_updates = {f.name: getattr(dpo_args, f.name) for f in fields(dpo_args) if f.name in provided_keys}
+        if dpo_updates:
+            updates["dpo"] = dpo_updates
 
         if updates:
             self.update_config(updates)
@@ -737,6 +794,26 @@ class ConfigManager:
                     else:
                         self._stash_top_level_extra(key, "__all__", value)
                     continue
+                # Handle Optional[SomeDataclass] fields whose current value is None:
+                # instantiate the dataclass from the incoming dict, then merge into it.
+                if target is None and isinstance(value, dict):
+                    dc_type = None
+                    for f in fields(self.config):
+                        if f.name == key:
+                            type_args = getattr(f.type, "__args__", None)
+                            if type_args:
+                                for arg in type_args:
+                                    if arg is not type(None) and is_dataclass(arg):
+                                        dc_type = arg
+                                        break
+                            elif is_dataclass(f.type):
+                                dc_type = f.type
+                            break
+                    if dc_type is not None:
+                        instance = dc_type()
+                        self._merge_dataclass_inplace(instance, value, parent_path=key)
+                        setattr(self.config, key, instance)
+                        continue
                 self._merge_dataclass_inplace(target, value, parent_path=key)
             else:
                 ep = self._ensure_extra_params(self.config)
@@ -884,6 +961,43 @@ class ConfigManager:
                 "training.ddp_config.ddp_backend must be one of {'qccl','nccl','gloo'} or omitted.",
             )
 
+        # ---------- DPO ----------
+        training_type = training.get("type", "sft")
+        if training_type == "dpo":
+            dpo = getattr(cfg, "dpo", None)
+            dpo_dict = dpo if isinstance(dpo, dict) else (vars(dpo) if dpo is not None else {})
+            beta = dpo_dict.get("beta", 0.1)
+            self._push(
+                errors,
+                not isinstance(beta, (int, float)) or beta <= 0,
+                "dpo.beta must be a positive number.",
+            )
+            valid_loss_types = {
+                "sigmoid", "hinge", "ipo", "robust",
+                "bco_pair", "sppo_hard", "aot", "aot_pair", "apo_zero", "apo_down",
+            }
+            loss_type = dpo_dict.get("loss_type", ["sigmoid"])
+            if isinstance(loss_type, str):
+                loss_type = [loss_type]
+            invalid = [lt for lt in loss_type if lt not in valid_loss_types]
+            self._push(
+                errors,
+                bool(invalid),
+                f"dpo.loss_type contains invalid values {invalid}. Each must be one of {sorted(valid_loss_types)}.",
+            )
+            label_smoothing = dpo_dict.get("label_smoothing", 0.0)
+            self._push(
+                errors,
+                not (0.0 <= float(label_smoothing) < 1.0),
+                "dpo.label_smoothing must be in [0, 1).",
+            )
+            truncation_mode = dpo_dict.get("truncation_mode", "keep_end")
+            self._push(
+                errors,
+                truncation_mode not in {"keep_end", "keep_start"},
+                "dpo.truncation_mode must be one of {'keep_end', 'keep_start'}.",
+            )
+
         # ---------- Final ----------
         if errors:
             # Join messages with bullet points for readability
@@ -908,6 +1022,23 @@ class ConfigManager:
     def get_dataset_config(self) -> Dict[str, Any]:
         """Get dataset configuration as dictionary."""
         return self.config.dataset
+
+    def get_dpo_config(self) -> Dict[str, Any]:
+        """Get DPO-specific configuration as a plain dictionary.
+
+        Returns an empty dict when no ``dpo:`` section is present in the config,
+        so callers can safely call ``dict.update()`` without branching.
+        """
+        from dataclasses import asdict, is_dataclass
+
+        dpo = getattr(self.config, "dpo", None)
+        if dpo is None:
+            return {}
+        if is_dataclass(dpo):
+            return asdict(dpo)
+        if isinstance(dpo, dict):
+            return dict(dpo)
+        return {}
 
     def get_model_config(self) -> Dict[str, Any]:
         """
