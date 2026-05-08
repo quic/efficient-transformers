@@ -122,6 +122,8 @@ def blocked_kv_attention_forward(
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device)
 
     past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    if past_seen_tokens is None:
+        past_seen_tokens = 0
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True

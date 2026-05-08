@@ -118,6 +118,7 @@ def generic_blocked_attention_interface(
         blocking_config is not None and "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
     )
 
+    cache_kwargs = {}
     if past_key_value is not None:
         if use_kv_blocked and sliding_window is None:
             cache_kwargs = {
@@ -145,6 +146,12 @@ def generic_blocked_attention_interface(
                 position_ids=position_ids,
                 sliding_window=sliding_window,
             )
+    else:
+        cache_kwargs = {
+            "batch_index": batch_index,
+            "position_ids": position_ids,
+            "past_seen_tokens": past_seen_tokens or 0,
+        }
 
     strategy = _STRATEGIES.get(blocking_config.mode)
     attn_output, attn_weights = strategy(
