@@ -883,8 +883,8 @@ def blocked_kv_mla_attention_forward(
                 if skip_future.item():
                     break
 
-        compressed_kv_block = compressed_kvs.read_only_blocked_ckv(start_index, end_index, layer_idx, cache_kwargs)
-        k_pe_block = compressed_kvs.read_only_blocked_k_pe(start_index, end_index, layer_idx, cache_kwargs)
+        compressed_kv_block = compressed_kvs.read_only_blocked_ckv(start_index, end_index, window_cache_layer_idx, cache_kwargs)
+        k_pe_block = compressed_kvs.read_only_blocked_k_pe(start_index, end_index, window_cache_layer_idx, cache_kwargs)
 
         causal_mask_block = _create_causal_mask(
             position_ids=position_ids,

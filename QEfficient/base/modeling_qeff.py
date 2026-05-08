@@ -559,6 +559,7 @@ class QEFFBaseModel(ABC):
                 **compiler_options,
             )
         )
+        self.qpc_path = onnx_path
         return onnx_path
         # compile_dir = Path(compile_dir or onnx_path.parent)
         # qpc_path = compile_dir / "qpc"
