@@ -80,7 +80,7 @@ NIGHTLY_SKIPPED_MODELS = {
     "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
     "allenai/Molmo-7B-D-0924",
     "OpenGVLab/InternVL2_5-1B",
-    "OpenGVLab/InternVL3_5-1B"
+    "OpenGVLab/InternVL3_5-1B",
     # Causal Models
     "openai-community/gpt2",
     "allenai/OLMo-2-0425-1B",
@@ -128,7 +128,7 @@ NIGHTLY_SKIPPED_MODELS = {
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
     "Qwen/Qwen2-1.5B-Instruct",
     "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
-    "hpcai-tech/grok-1"
+    "hpcai-tech/grok-1",
     # Embedding Models
     "intfloat/multilingual-e5-large",
     # Audio Embedding Models
