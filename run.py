@@ -362,7 +362,7 @@ def main():
             "num_kv_heads_repeat": num_kv_heads_repeat,
             "num_kv_blocks": num_kv_blocks,
             "head_block_size": head_block_size,
-            "cache_compressed": args.cache_compressed,
+            "cache_compressed": True,
             "absorption": args.absorption,
             "online": args.online,
         }
