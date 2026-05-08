@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Optional
 
 import torch
 from transformers.cache_utils import Cache
-
+import QEfficient
 from QEfficient.blocking.blocked_attention_forwards import (
     blocked_bhqkv_attention_forward,
     blocked_h_attention_forward,
@@ -89,7 +89,8 @@ def past_key_value_update(
         if comp_ctx_lengths is not None:
             attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             cache_kwargs["CCL"] = attention_mask.shape[-1]
-        key, value = past_key_value.update(key, value, module.layer_idx, cache_kwargs)
+        window_cache_layer_idx = module.layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
+        key, value = past_key_value.update(key, value, window_cache_layer_idx, cache_kwargs)
     return key, value, cache_kwargs
 
 
@@ -132,7 +133,8 @@ def generic_blocked_attention_interface(
                         "sliding_window": past_key_value.sliding_window_len,
                     }
                 )
-            past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
+            window_cache_layer_idx = module.layer_idx - getattr(QEfficient.transformers.models.deepseek_v3.modeling_deepseek.QEffDeepseekV3Model, "_start", 0)
+            past_key_value.write_only(key, value, window_cache_layer_idx, cache_kwargs)
         else:
             key, value, cache_kwargs = past_key_value_update(
                 module=module,

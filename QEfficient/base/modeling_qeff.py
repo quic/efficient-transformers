@@ -284,7 +284,6 @@ class QEFFBaseModel(ABC):
         """
 
         idx = int(QEFFBaseModel._start)
-        # agent change start: generalized layerwise window
         end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
         if end_idx <= idx:
             raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
@@ -309,7 +308,6 @@ class QEFFBaseModel(ABC):
 
         output_name = []
         output_name.append("logits")
-        # agent change start: emit retained states for all layers in current export window
         for layer_idx in range(idx, end_idx):
             output_name.append(f"compressed_kv.{layer_idx}_InternalRetainedState")
             output_name.append(f"k_pe.{layer_idx}_InternalRetainedState")
@@ -357,22 +355,9 @@ class QEFFBaseModel(ABC):
                                 f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
                             )
                 elif param == "compressed_kvs":
-                    if len(example_inputs["compressed_kvs"][0]) == 2:
-                        for layer_offset in range(len(example_inputs["compressed_kvs"])):
-                            layer_idx = idx + layer_offset
-                            input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
-                    else:
-                        for i in range(len(example_inputs["compressed_kvs"])):
-                            input_names.extend(
-                                [
-                                    f"compressed_kv.{i}",
-                                ]
-                            )
-                            input_names.extend(
-                                [
-                                    f"k_pe.{i}",
-                                ]
-                            )
+                    for layer_offset in range(len(example_inputs["compressed_kvs"])):
+                        layer_idx = idx + layer_offset
+                        input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
                 else:
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}

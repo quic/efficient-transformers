@@ -21,7 +21,6 @@ DELETE_SUFFIXES = ("all_down_proj", "all_gate_proj", "all_up_proj")
 _delete_pool = ThreadPoolExecutor(max_workers=DELETE_WORKERS)
 
 
-# agent change start: generalized layer-window discovery
 def _discover_layer_windows(exported_path: str, start_layer: int = 0) -> List[Tuple[int, int]]:
     base_path = f"{exported_path}/onnx_layerwise_tmp"
     if not os.path.isdir(base_path):
@@ -55,9 +54,6 @@ def _window_paths(exported_path: str, layer_start: int, layer_end: int) -> Tuple
     return base_dir, onnx_tmp, split_graph
 
 
-# agent change end: generalized layer-window discovery
-
-
 # ============================================================
 # STAGE 1: SPLITTING
 # ============================================================
@@ -89,7 +85,6 @@ def split_layer_graph(
 
     model_ir = onnx_ir.load(onnx_path)
 
-    # agent change start: generalized shard io selection (works for 1-layer and multi-layer windows)
     graph_inputs = [v.name for v in model.graph.input]
     graph_outputs = [v.name for v in model.graph.output]
 
@@ -104,7 +99,6 @@ def split_layer_graph(
     output_names = list(graph_outputs)
     if shard_idx != total_shards - 1 and "position_ids" in graph_inputs and "position_ids" not in output_names:
         output_names.append("position_ids")
-    # agent change end: generalized shard io selection (works for 1-layer and multi-layer windows)
 
     model_ir.graph = onnx_ir.convenience.extract(
         model_ir.graph,
@@ -414,16 +408,19 @@ def run_merge_pipeline(exported_path: str, num_layers: int = 61, final_data_dir:
         f"discovered_shards={len(windows)}, final_data_dir={final_data_dir}"
     )
 
-    # agent change start: generalized merge over discovered shard starts
     shard_starts = [layer_start for (layer_start, _) in windows]
-    first_start = shard_starts[0]
-    last_start = shard_starts[-1]
+    first_start = windows[0][0]
+    last_end = windows[-1][1]
 
     if len(shard_starts) == 1:
         only_model = f"{base_dir}/pref_{first_start}.onnx"
         if not os.path.exists(only_model):
             raise FileNotFoundError(f"Missing input model: {only_model}")
         print(f"[DONE] merge pipeline skipped (single layer): {only_model}")
+        sep = "#" * 80
+        print(sep)
+        print(f"FINAL MERGED MODEL PATH: {only_model}")
+        print(sep)
         return only_model
 
     for idx in range(len(shard_starts) - 1):
@@ -431,14 +428,14 @@ def run_merge_pipeline(exported_path: str, num_layers: int = 61, final_data_dir:
         right = shard_starts[len(shard_starts) - idx - 1]
 
         m1_path = f"{base_dir}/pref_{left}.onnx"
-        m2_path = f"{base_dir}/pref_{right}.onnx" if idx == 0 else f"{base_dir}/merged_{right}-{last_start}.onnx"
+        m2_path = f"{base_dir}/pref_{right}.onnx" if idx == 0 else f"{base_dir}/merged_{right}-{last_end}.onnx"
 
         if not os.path.exists(m1_path):
             raise FileNotFoundError(f"Missing input model: {m1_path}")
         if not os.path.exists(m2_path):
             raise FileNotFoundError(f"Missing input model: {m2_path}")
 
-        print(f"[MERGE] {left}-{last_start}")
+        print(f"[MERGE] {left}-{last_end}")
         m1_pref = onnx.load(m1_path, load_external_data=False)
         m2_pref = onnx.load(m2_path, load_external_data=False)
 
@@ -458,15 +455,19 @@ def run_merge_pipeline(exported_path: str, num_layers: int = 61, final_data_dir:
         if idx == len(shard_starts) - 2:
             CustomOpTransform.apply(merged_model)
 
-        out_path = f"{base_dir}/merged_{left}-{last_start}.onnx"
+        out_path = f"{base_dir}/merged_{left}-{last_end}.onnx"
         onnx.save(merged_model, out_path)
         print(f"[SAVED] {out_path}")
 
-    final_path = f"{base_dir}/merged_{first_start}-{last_start}.onnx"
+    final_path = f"{base_dir}/merged_{first_start}-{last_end}.onnx"
     model = onnx.load(final_path, load_external_data=False)
     RemovePrefix.apply(model)
     onnx.save(model, final_path)
     print(f"[DONE] merge pipeline complete in {time.time() - start:.2f}s")
+    sep = "#" * 80
+    print(sep)
+    print(f"FINAL MERGED MODEL PATH: {final_path}")
+    print(sep)
     return final_path
 
 

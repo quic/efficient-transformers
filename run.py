@@ -22,7 +22,13 @@ enable_mla = True
 mla_absorption = {"cache_compressed": True, "absorption": True, "online": False}
 prefill_seq_len = 1
 ctx_len = 128
-qaic_config = {"mla_absorption": mla_absorption, "num_kv_heads_repeat": TS}  # No blocking with kv head replication
+qaic_config = {
+    "mla_absorption": mla_absorption,
+    "enable_blocking": True,
+    "blocking_mode": "kv",
+    "num_kv_heads_repeat": TS,
+    "num_kv_blocks": 4
+}
 
 
 def _ensure_pretrained_window_attrs():
@@ -145,23 +151,18 @@ def load_text_only_kimi(model_path: Path, num_hidden_layers: int):
     return model, tokenizer
 
 
-def _build_layer_windows(total_layers: int, start: int, end: int):
-    if not (0 <= start < end <= total_layers):
-        raise ValueError(
-            f"Invalid export window start={start}, end={end} for total_layers={total_layers}. "
-            "Expected: 0 <= start < end <= total_layers."
-        )
+def _build_layer_windows(total_layers: int, window_size: int):
+    if total_layers <= 0:
+        raise ValueError(f"Invalid total_layers={total_layers}. Expected: total_layers > 0.")
+    if window_size <= 0:
+        raise ValueError(f"Invalid window_size={window_size}. Expected: window_size > 0.")
 
     windows = []
-    if start > 0:
-        windows.append((0, start))
-
-    step = end - start
-    current = start
-    while current < total_layers:
-        current_end = min(current + step, total_layers)
-        windows.append((current, current_end))
-        current = current_end
+    end = total_layers
+    while end > 0:
+        start = max(0, end - window_size)
+        windows.append((start, end))
+        end = start
 
     return windows
 
@@ -177,8 +178,7 @@ def _resolve_export_root(onnx_path: Path) -> Path:
 def _parse_args():
     parser = argparse.ArgumentParser(description="Compile Kimi text-only model layer windows with QEfficient.")
     parser.add_argument("--model_path", dest="model_path", type=Path, default=MODEL_PATH)
-    parser.add_argument("--export_start", dest="export_start", type=int, default=1)
-    parser.add_argument("--export_end", dest="export_end", type=int, default=2)
+    parser.add_argument("--window_size", dest="window_size", type=int, default=1)
     parser.add_argument("--layerwise_mode", dest="layerwise_mode", type=str, default="single_qpc")
     parser.add_argument("--total_layers", dest="total_layers", type=int, default=None)
     return parser.parse_args()
@@ -196,12 +196,11 @@ def main():
     if resolved_total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from text_config.")
 
-    export_start = args.export_start
-    export_end = args.export_end
+    window_size = args.window_size
     layerwise_mode = args.layerwise_mode
     total_layers = resolved_total_layers
-
-    windows = _build_layer_windows(total_layers=total_layers, start=export_start, end=export_end)
+    
+    windows = _build_layer_windows(total_layers=total_layers, window_size=window_size)
     first_onnx_path = None
     for start, end in windows:
         transformers.modeling_utils.PreTrainedModel._start = start

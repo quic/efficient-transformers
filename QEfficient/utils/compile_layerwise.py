@@ -28,7 +28,6 @@ MAX_WORKERS = 8
 
 
 def _discover_onnx_jobs(base_onnx_dir: str):
-    # agent: defer discovery to runtime and require explicit export path.
     onnx_jobs = []
     base_dir_path = Path(base_onnx_dir)
     layerwise_dir = base_dir_path / "onnx_layerwise_tmp"
@@ -74,7 +73,6 @@ def _discover_onnx_jobs(base_onnx_dir: str):
 
 def write_custom_io_yaml(path: Path, indices):
     with open(path, "w") as fp:
-        # agent: write cache entries for all layers in each discovered window.
         for idx in indices:
             fp.write(f" - IOName: k_pe.{idx}\n")
             fp.write("   Precision: mxint8\n\n")
@@ -191,7 +189,6 @@ def compile_one(job):
 
 
 def run_compile_layerwise(base_onnx_dir: str):
-    # agent: path is expected to be export root and is normalized in run.py.
     onnx_jobs = _discover_onnx_jobs(base_onnx_dir)
     print(f"MAX_WORKERS set to     : {MAX_WORKERS}")
     print(f"Found {len(onnx_jobs)} ONNX files\n")
@@ -231,7 +228,6 @@ def run_compile_layerwise(base_onnx_dir: str):
 
 
 if __name__ == "__main__":
-    # agent: CLI now takes exported path instead of embedded machine-local constant.
     parser = argparse.ArgumentParser(description="Compile layerwise ONNX windows into QPC artifacts.")
     parser.add_argument("--base-onnx-dir", required=True, help="Export root containing onnx_layerwise_tmp/")
     args = parser.parse_args()
