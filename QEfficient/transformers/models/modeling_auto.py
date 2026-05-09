@@ -4119,7 +4119,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: remove this; not required
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
-        if "paged" in self.model.qaic_config["blocking_mode"]:
+        if self.model.qaic_config is not None and "paged" in self.model.qaic_config.get("blocking_mode", None):
             num_kv_blocks = self.model.qaic_config["num_kv_blocks"]
             spec["num_kv_blocks"] = num_kv_blocks
             spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
@@ -4187,7 +4187,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
-        if "paged" in self.model.qaic_config["blocking_mode"]:
+        if self.model.qaic_config is not None and "paged" in self.model.qaic_config.get("blocking_mode", None):
             num_kv_blocks = self.model.qaic_config["num_kv_blocks"]
             spec["num_kv_blocks"] = num_kv_blocks
             spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
