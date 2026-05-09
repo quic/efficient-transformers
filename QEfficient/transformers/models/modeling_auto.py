@@ -3973,8 +3973,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
-            num_kv_blocks = self.hash_params["blocking_config"].num_kv_blocks
-            self.supports_paged_attention = "paged" in self.hash_params["blocking_config"].mode
+            num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
+            self.supports_paged_attention = "paged" in self.hash_params["blocking_kwargs"].mode
 
         # TODO: Remove this hack ##################
         if dynamo:
@@ -4330,8 +4330,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
         if self.hash_params.get("blocking_kwargs", None):
-            if "paged" in self.hash_params["blocking_config"].mode 
-                num_kv_blocks = self.hash_params["blocking_config"].num_kv_blocks
+            if "paged" in self.hash_params["blocking_kwargs"].mode:
+                num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
                 spec["num_kv_blocks"] = num_kv_blocks
                 spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
                 spec["kv_block_size"] = (-ctx_len) // (-num_kv_blocks)
@@ -4399,8 +4399,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             spec["batch_size"] = kv_cache_batch_size
         if self.hash_params.get("blocking_kwargs", None):
-            if "paged" in self.hash_params["blocking_config"].mode 
-                num_kv_blocks = self.hash_params["blocking_config"].num_kv_blocks
+            if "paged" in self.hash_params["blocking_kwargs"].mode:
+                num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
                 spec["num_kv_blocks"] = num_kv_blocks
                 spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
                 spec["kv_block_size"] = (-ctx_len) // (-num_kv_blocks)
