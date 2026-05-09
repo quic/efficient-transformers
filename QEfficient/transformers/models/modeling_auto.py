@@ -3757,6 +3757,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             seq_len = block_size * max_blocks
             num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks 
             self.supports_paged_attention = "paged" in self.hash_params["blocking_kwargs"].mode 
+            seq_len = kv_block_size = -(-seq_len // num_kv_blocks) if self.supports_paged_attention else seq_len
 
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
@@ -3844,7 +3845,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.supports_paged_attention:
             batch, num_kv_heads, CL, dh = kv_cache_shape
             total_num_kv_blocks = batch * num_kv_blocks
-            kv_block_size = (-CL) // (-num_kv_blocks)
             kv_cache_shape = [total_num_kv_blocks, num_kv_heads, kv_block_size, dh]
             example_inputs["block_table"] = torch.arange((bs * num_kv_blocks), dtype=torch.int64).view(bs, num_kv_blocks)
             example_inputs["slot_id"] = torch.zeros(bs, dtype=torch.int64)
@@ -4090,12 +4090,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: remove this; not required
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
-        if self.hash_params.get("blocking_kwargs", None):
-            if "paged" in self.hash_params["blocking_kwargs"].mode:
-                num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
-                spec["num_kv_blocks"] = num_kv_blocks
-                spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
-                spec["kv_block_size"] = (-ctx_len) // (-num_kv_blocks)
+        if "paged" in self.model.qaic_config["blocking_mode"]:
+            num_kv_blocks = self.model.qaic_config["num_kv_blocks"]
+            spec["num_kv_blocks"] = num_kv_blocks
+            spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
+            spec["kv_block_size"] = -(-ctx_len // num_kv_blocks)
         result = {k: v for k, v in spec.items() if v is not None}
         result["_graph_name"] = "Decode" if prefill_seq_len == 1 and kwargs.get("prefill_only") is False else "Prefill"
         return result
@@ -4159,12 +4158,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
-        if self.hash_params.get("blocking_kwargs", None):
-            if "paged" in self.hash_params["blocking_kwargs"].mode:
-                num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
-                spec["num_kv_blocks"] = num_kv_blocks
-                spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
-                spec["kv_block_size"] = (-ctx_len) // (-num_kv_blocks)
+        if "paged" in self.model.qaic_config["blocking_mode"]:
+            num_kv_blocks = self.model.qaic_config["num_kv_blocks"]
+            spec["num_kv_blocks"] = num_kv_blocks
+            spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
+            spec["kv_block_size"] = -(-ctx_len // num_kv_blocks)
         result = {k: v for k, v in spec.items() if v is not None}
         result["_graph_name"] = "Decode"
         return result

@@ -267,6 +267,8 @@ class QEffDynamicLayer(CacheLayerMixin):
         """
         # Gather
         k_out, v_out = self.keys, self.values
+        if k_out is not None:
+            self._mark_initialized(k_out)
         position_ids = cache_kwargs.get("position_ids")
         batch, seq_len = position_ids.shape
         slot_id = cache_kwargs.get("slot_id", None)
@@ -306,7 +308,9 @@ class QEffDynamicLayer(CacheLayerMixin):
         if self.keys is None:
             self.keys = key_states
             self.values = value_states
+            self._mark_initialized(self.keys)
         else:
+            self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
             block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks/BS] -> each entry is block_id value
             slot_id = cache_kwargs.get("slot_id")
