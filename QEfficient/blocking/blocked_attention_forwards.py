@@ -1085,8 +1085,8 @@ def blocked_kv_paged_attention_forward(
                 if skip_future.item():
                     break
 
-        block_index = block_table[:, i]
-        updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == i
+        block_index = block_table[:, j]
+        updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
         k_block, v_block = past_key_value.read_only_pagedAttention(block_index, updated, layer_idx, cache_kwargs)
         k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
@@ -1359,8 +1359,8 @@ def blocked_qkv_paged_attention_forward(
                     if skip_future.item():
                         break
 
-            block_index = block_table[:, i]
-            updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == i
+            block_index = block_table[:, j]
+            updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
             k_block, v_block = past_key_value.read_only_pagedAttention(block_index, updated, layer_idx, cache_kwargs)
             k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
@@ -1673,8 +1673,8 @@ def blocked_hqkv_paged_attention_forward(
                         if skip_future.item():
                             break
 
-                block_index = block_table[:, i]
-                updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == i
+                block_index = block_table[:, j]
+                updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
                 k_block, v_block = past_key_value.read_only_pagedAttention(block_index, updated, layer_idx, cache_kwargs)
                 k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
@@ -2039,8 +2039,8 @@ def blocked_bhqkv_paged_attention_forward(
                             if skip_future.item():
                                 break
 
-                    block_index = block_table[:, i]
-                    updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == i
+                    block_index = block_table[:, j]
+                    updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
                     k_block, v_block = past_key_value.read_only_pagedAttention(block_index, updated, layer_idx, cache_kwargs)
                     k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
