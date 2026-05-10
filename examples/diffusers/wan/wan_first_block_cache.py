@@ -48,7 +48,6 @@ output = pipeline(
     custom_config_path="examples/diffusers/wan/wan_non_unified_config.json",
     height=96,
     width=160,
-    use_onnx_subfunctions=False,
     parallel_compile=True,
     cache_threshold_high=0.1,
     cache_threshold_low=0.065,

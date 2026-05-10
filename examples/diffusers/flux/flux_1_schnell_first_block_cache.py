@@ -29,7 +29,6 @@ output = pipeline(
     max_sequence_length=256,
     generator=torch.Generator("cpu").manual_seed(42),
     parallel_compile=True,
-    use_onnx_subfunctions=False,
     cache_threshold=0.045,
 )
 
