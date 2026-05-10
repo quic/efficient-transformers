@@ -124,8 +124,6 @@ model, tokenizer = load_text_only_kimi(MODEL_PATH, NUM_HIDDEN_LAYERS)
 
 qeff_model = QEFFAutoModelForCausalLM(model, qaic_config=qaic_config)
 
-onnx_path = qeff_model.export(prefill_seq_len=1, qaic_config=qaic_config)
-
 prefill_seq_len = 1
 ctx_len = 1024
 
