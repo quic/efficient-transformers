@@ -218,7 +218,6 @@ class TestQEFFBaseModelTransformBlocking:
 
     @pytest.mark.parametrize("blocking_mode", ["kv", "q", "qkv", "hqkv"])
     def test_transform_enable_blocking_runs_auto_configurator(self, blocking_mode):
-        # Create a small llama; keep make_tiny_llama() unchanged per requirement.
         # Use a slightly larger head count here to make it possible for "h" mode to result in head blocking
         # when num_devices > 1.
         cfg = LlamaConfig(
