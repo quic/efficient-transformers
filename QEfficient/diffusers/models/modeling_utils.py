@@ -11,6 +11,9 @@ from typing import Optional
 
 import torch
 
+# TODO(perf): Optimize online-softmax loops by reducing clone() usage in
+# apply_kv_blocking/apply_qkv_blocking after numerical parity validation.
+
 
 def get_attention_blocking_config():
     """
@@ -77,7 +80,8 @@ def apply_head_blocking(
         out = torch.matmul(probs, v)
         return out
 
-    else:  # self attention
+    else:
+        # Self-attention here is over fixed-shape latent tokens; no padding tokens are present.
         outputs = []
 
         # Process each head block independently
@@ -150,7 +154,8 @@ def apply_kv_blocking(
         out = torch.matmul(probs, v)
         return out
 
-    else:  # self attention
+    else:
+        # Self-attention here is over fixed-shape latent tokens; no padding tokens are present.
         head_outputs = []
 
         # Process each head block
@@ -198,6 +203,7 @@ def apply_kv_blocking(
                 running_exp_sum = prev_exp_sum * torch.exp(delta_max) + curr_exp_sum
 
                 # Compute normalized attention weights
+                assert torch.all(running_exp_sum > 0), "running_exp_sum must be > 0"
                 inv_running_exp_sum = 1.0 / running_exp_sum
                 softmax_qkblock = curr_exp * inv_running_exp_sum.unsqueeze(-1)
 
@@ -256,7 +262,8 @@ def apply_q_blocking(
         out = torch.matmul(probs, v)
         return out
 
-    else:  # self attention
+    else:
+        # Self-attention here is over fixed-shape latent tokens; no padding tokens are present.
         head_outputs = []
 
         # Process each head block
@@ -345,7 +352,8 @@ def apply_qkv_blocking(
         out = torch.matmul(probs, v)
         return out
 
-    else:  # self attention
+    else:
+        # Self-attention here is over fixed-shape latent tokens; no padding tokens are present.
         head_outputs = []
 
         # Process attention heads in blocks to reduce memory usage
@@ -410,6 +418,7 @@ def apply_qkv_blocking(
                     running_exp_sum = prev_exp_sum * torch.exp(delta_max) + curr_exp_sum
 
                     # Compute normalized attention weights for this block
+                    assert torch.all(running_exp_sum > 0), "running_exp_sum must be > 0"
                     inv_running_exp_sum = 1.0 / running_exp_sum
                     softmax_qkblock = curr_exp * inv_running_exp_sum.unsqueeze(-1)
 
