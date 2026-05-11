@@ -25,30 +25,25 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 import torch
 from diffusers import WanPipeline
-from tqdm import tqdm
 
 from QEfficient.diffusers.first_block_cache.wan import (
     enable_wan_first_block_cache,
     run_wan_non_unified_first_block_cache_denoise,
 )
 from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper
+from QEfficient.diffusers.pipelines.pipeline_diffusion import QEffDiffusionPipeline
 from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanTransformer, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
-    ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
     calculate_latent_dimensions_with_frames,
-    compile_modules_parallel,
-    compile_modules_sequential,
-    config_manager,
-    set_execute_params,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
 
 
-class QEffWanPipeline:
+class QEffWanPipeline(QEffDiffusionPipeline):
     """
     QEfficient-optimized WAN pipeline for high-performance text-to-video generation on Qualcomm AI hardware.
 
@@ -303,25 +298,10 @@ class QEffWanPipeline:
             ... )
         """
 
-        # Export each module with video-specific parameters
-        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
-            # Get ONNX export configuration with video dimensions
-            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
-
-            # Prepare export parameters
-            export_params = {
-                "inputs": example_inputs,
-                "output_names": output_names,
-                "dynamic_axes": dynamic_axes,
-                "export_dir": export_dir,
-            }
-
-            # Enable ONNX subfunctions for supported modules if requested
-            if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
-                export_params["use_onnx_subfunctions"] = True
-
-            if module_obj.qpc_path is None:
-                module_obj.export(**export_params)
+        self._export_modules(
+            export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+        )
 
     def get_default_config_path(self):
         """
@@ -381,17 +361,6 @@ class QEffWanPipeline:
             ...     num_frames=81
             ... )
         """
-        # Load compilation configuration
-        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
-
-        # Set device IDs, qpc path if precompiled qpc exist
-        set_execute_params(self)
-
-        # Ensure all modules are exported to ONNX before compilation
-        onnx_paths = [module.onnx_path for module in self.modules.values()]
-        if any(path is None for path in onnx_paths):
-            self.export(use_onnx_subfunctions=use_onnx_subfunctions)
-
         # Configure pipeline dimensions and calculate compressed latent parameters
         cl, latent_height, latent_width, latent_frames = calculate_latent_dimensions_with_frames(
             height,
@@ -443,11 +412,12 @@ class QEffWanPipeline:
                 },
             }
 
-        # Use generic utility functions for compilation
-        if parallel:
-            compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
-        else:
-            compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
+        self._compile_modules(
+            compile_config=compile_config,
+            parallel=parallel,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            specialization_updates=specialization_updates,
+        )
 
     def _get_transformer_dtype(self) -> torch.dtype:
         if self.use_unified:

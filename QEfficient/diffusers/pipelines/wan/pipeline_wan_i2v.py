@@ -24,19 +24,14 @@ import torch
 from diffusers import WanImageToVideoPipeline
 from diffusers.image_processor import PipelineImageInput
 from diffusers.utils.torch_utils import randn_tensor
-from tqdm import tqdm
 
 from QEfficient.diffusers.models.transformers.transformer_wan import QEffWanUnifiedWrapper
+from QEfficient.diffusers.pipelines.pipeline_diffusion import QEffDiffusionPipeline
 from QEfficient.diffusers.pipelines.pipeline_module import QEffVAE, QEffWanUnifiedTransformer
 from QEfficient.diffusers.pipelines.pipeline_utils import (
-    ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
     calculate_latent_dimensions_with_frames,
-    compile_modules_parallel,
-    compile_modules_sequential,
-    config_manager,
-    set_execute_params,
     update_npi_path,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -44,7 +39,7 @@ from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
 
 
-class QEffWanImageToVideoPipeline:
+class QEffWanImageToVideoPipeline(QEffDiffusionPipeline):
     """
     QEfficient-optimized WAN image-to-video pipeline for high-performance video generation on Qualcomm AI hardware.
 
@@ -246,24 +241,11 @@ class QEffWanImageToVideoPipeline:
             >>> print(f"Models exported to: {export_path}")
         """
 
-        # Export each module with corresponding parameters
-        for module_name, module_obj in tqdm(self.modules.items(), desc="Exporting modules", unit="module"):
-            # Get ONNX export configuration with video dimensions
-            example_inputs, dynamic_axes, output_names = module_obj.get_onnx_params()
-
-            # Prepare export parameters
-            export_params = {
-                "inputs": example_inputs,
-                "output_names": output_names,
-                "dynamic_axes": dynamic_axes,
-                "export_dir": export_dir,
-            }
-
-            # Enable ONNX subfunctions for supported modules if requested
-            if use_onnx_subfunctions and module_name in ONNX_SUBFUNCTION_MODULE:
-                export_params["use_onnx_subfunctions"] = True
-
-            module_obj.export(**export_params)
+        self._export_modules(
+            export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            skip_if_qpc_exists=False,
+        )
 
     @staticmethod
     def get_default_config_path():
@@ -333,23 +315,6 @@ class QEffWanImageToVideoPipeline:
             ...     num_frames=81
             ... )
         """
-        # Load compilation configuration
-        config_manager(self, config_source=compile_config, use_onnx_subfunctions=use_onnx_subfunctions)
-
-        # Set device IDs, qpc path if precompiled qpc exist
-        set_execute_params(self)
-
-        # Ensure all modules are exported to ONNX before compilation
-        if any(
-            path is None
-            for path in [
-                self.vae_encoder.onnx_path,
-                self.transformer.onnx_path,
-                self.vae_decoder.onnx_path,
-            ]
-        ):
-            self.export(use_onnx_subfunctions=use_onnx_subfunctions)
-
         # Configure pipeline dimensions and calculate compressed latent parameters
         cl, latent_height, latent_width, latent_frames = calculate_latent_dimensions_with_frames(
             height,
@@ -360,10 +325,6 @@ class QEffWanImageToVideoPipeline:
             self.patch_height,
             self.patch_width,
         )
-
-        # # Update NPI path for vae encoder
-        vae_npi_full_path = self.get_vae_encoder_npi_path()
-        update_npi_path(self, vae_npi_full_path, module_name="vae_encoder")
 
         # Prepare dynamic specialization updates based on video dimensions
         specialization_updates = {
@@ -395,11 +356,18 @@ class QEffWanImageToVideoPipeline:
             },
         }
 
-        # Use generic utility functions for compilation
-        if parallel:
-            compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
-        else:
-            compile_modules_sequential(self.modules, self.custom_config, specialization_updates)
+        def _update_vae_encoder_npi_path() -> None:
+            vae_npi_full_path = self.get_vae_encoder_npi_path()
+            update_npi_path(self, vae_npi_full_path, module_name="vae_encoder")
+
+        self._compile_modules(
+            compile_config=compile_config,
+            parallel=parallel,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            specialization_updates=specialization_updates,
+            required_module_names=["vae_encoder", "transformer", "vae_decoder"],
+            pre_compile_hook=_update_vae_encoder_npi_path,
+        )
 
     def prepare_latents(
         self,

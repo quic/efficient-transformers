@@ -4,3 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
+
+from QEfficient.diffusers.pipelines.pipeline_diffusion import QEffDiffusionPipeline
+
+__all__ = ["QEffDiffusionPipeline"]

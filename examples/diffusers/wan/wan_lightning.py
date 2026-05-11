@@ -10,10 +10,11 @@ from diffusers.loaders.lora_conversion_utils import _convert_non_diffusers_wan_l
 from diffusers.utils import export_to_video
 from huggingface_hub import hf_hub_download
 
-from QEfficient import QEffWanPipeline
+from QEfficient import QEffDiffusionPipeline
 
 # Load the pipeline
-pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
+# Auto-dispatch resolves this model id to QEffWanPipeline.
+pipeline = QEffDiffusionPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
 
 # Download the LoRAs
 high_noise_lora_path = hf_hub_download(
