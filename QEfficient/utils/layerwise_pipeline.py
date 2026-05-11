@@ -422,11 +422,18 @@ def run_merge_pipeline(
         if not decoder_nodes:
             raise RuntimeError(f"DecoderLayer node not found in {m1_path}")
         decoder_output = list(decoder_nodes[-1].output)
+        selected_output = next(
+            (x for x in decoder_output if "RetainedState" not in x),
+            None
+        )
+        if selected_output is None:
+            raise RuntimeError(f"No decoder output found without 'RetainedState'. Outputs: {decoder_output}")
+        
         merged_model = merge_models(
             m1_pref,
             m2_pref,
             io_map=[
-                (f"{decoder_output[2]}", f"layer_{right}/inputs_embeds"),
+                (selected_output, f"layer_{right}/inputs_embeds"),
                 (f"layer_{left}/position_ids", f"layer_{right}/position_ids"),
             ],
         )

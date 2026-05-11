@@ -296,6 +296,7 @@ def main():
         QEfficient.base.modeling_qeff.QEFFBaseModel._end = end
         QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers = total_layers
         model, tokenizer = load_text_only_kimi(model_path, num_hidden_layers=end - start)
+        model.config.num_hidden_layers = total_layers
         
         qaic_config = _build_qaic_config(
             mla_absorption_cfg=mla_absorption_cfg,
