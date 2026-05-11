@@ -383,11 +383,7 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        # cos, sin = position_embeddings
-        # kv_seq_len = key_states.shape[-2]
-        # kv_seq_len = past_key_value.get_seq_length()
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
-        # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -502,7 +498,7 @@ class QEffQwen3VLTextDecoderLayer(Qwen3VLTextDecoderLayer):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states[0]
+        hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
 
@@ -669,7 +665,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.language_model = self.model.model
+        self.language_model = self.model.model.language_model
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
