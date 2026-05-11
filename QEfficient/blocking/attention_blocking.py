@@ -42,7 +42,7 @@ class AttentionBlockingConfig:
     num_kv_blocks: Optional[int] = None
     num_q_blocks: Optional[int] = None
     head_block_size: Optional[int] = None
-    skip_kv: Optional[bool] = False
+    skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
 
 

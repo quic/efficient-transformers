@@ -42,6 +42,10 @@ def _infer_data_bytes(compile_config: Dict[str, Any]) -> int:
 
 def _normalize_attention_mode(raw_mode: str) -> str:
     mode = raw_mode.lower()
+    if "h" in mode and ("q" in mode or "kv" in mode):
+        return "hqkv"
+    if "h" in mode:
+        return "h"
     if "q" in mode and "kv" in mode:
         return "qkv"
     if "kv" in mode:
@@ -295,7 +299,7 @@ def build_transformer_blocking_config(
     effective_mode = _resolve_effective_blocking_mode(attention_cfg, resolved_mode)
 
     return AttentionBlockingConfig(
-        mode=effective_mode,
+        mode=BlockingMode(effective_mode),
         num_kv_blocks=attention_cfg["num_kv_blocks"],
         num_q_blocks=attention_cfg["num_q_blocks"],
         head_block_size=attention_cfg["head_block_size"],
