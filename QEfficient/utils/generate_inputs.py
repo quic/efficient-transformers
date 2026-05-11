@@ -217,7 +217,7 @@ class InputHandler:
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
         if self.full_batch_size:
             updated_inputs["batch_index"] = inputs["batch_index"]
-        return updated_inputsgit 
+        return updated_inputs
 
     def update_ort_outputs(self, ort_outputs):
         """
