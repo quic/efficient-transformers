@@ -137,48 +137,59 @@ def _manual_cache_intermediates(
     adaln_emb,
     adaln_single_emb,
 ):
-    hidden_states = model.x_embedder(hidden_states)
-    encoder_hidden_states = model.context_embedder(encoder_hidden_states)
-    ids = torch.cat((txt_ids, img_ids), dim=0)
-    image_rotary_emb = model.pos_embed(ids)
+    try:
+        hidden_states = model.x_embedder(hidden_states)
+        encoder_hidden_states = model.context_embedder(encoder_hidden_states)
+        ids = torch.cat((txt_ids, img_ids), dim=0)
+        image_rotary_emb = model.pos_embed(ids)
 
-    original_hidden_states = hidden_states
-    encoder_hidden_states, hidden_states = model.transformer_blocks[0](
-        hidden_states=hidden_states,
-        encoder_hidden_states=encoder_hidden_states,
-        temb=adaln_emb[0],
-        image_rotary_emb=image_rotary_emb,
-        joint_attention_kwargs=None,
-    )
-    current_first_hidden_states_residuals = hidden_states - original_hidden_states
-
-    downsample_factor = model._qeff_first_block_cache_downsample_factor
-    downsampled_first_hidden_states_residuals = current_first_hidden_states_residuals[
-        ..., ::downsample_factor
-    ].contiguous()
-
-    remaining_hidden_states = hidden_states
-    remaining_encoder_hidden_states = encoder_hidden_states
-    for index_block, block in enumerate(model.transformer_blocks[1:], start=1):
-        remaining_encoder_hidden_states, remaining_hidden_states = block(
-            hidden_states=remaining_hidden_states,
-            encoder_hidden_states=remaining_encoder_hidden_states,
-            temb=adaln_emb[index_block],
+        original_hidden_states = hidden_states
+        encoder_hidden_states, hidden_states = model.transformer_blocks[0](
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            temb=adaln_emb[0],
             image_rotary_emb=image_rotary_emb,
             joint_attention_kwargs=None,
         )
+        current_first_hidden_states_residuals = hidden_states - original_hidden_states
 
-    for index_block, block in enumerate(model.single_transformer_blocks):
-        remaining_encoder_hidden_states, remaining_hidden_states = block(
-            hidden_states=remaining_hidden_states,
-            encoder_hidden_states=remaining_encoder_hidden_states,
-            temb=adaln_single_emb[index_block],
-            image_rotary_emb=image_rotary_emb,
-            joint_attention_kwargs=None,
-        )
+        downsample_factor = model._qeff_first_block_cache_downsample_factor
+        if downsample_factor <= 0:
+            raise ValueError(f"downsample_factor must be > 0, got {downsample_factor}")
+        if current_first_hidden_states_residuals.shape[-1] % downsample_factor != 0:
+            raise ValueError(
+                "downsample_factor must divide hidden dimension exactly, "
+                f"got hidden_size={current_first_hidden_states_residuals.shape[-1]}, "
+                f"downsample_factor={downsample_factor}"
+            )
+        downsampled_first_hidden_states_residuals = current_first_hidden_states_residuals[
+            ..., ::downsample_factor
+        ].contiguous()
 
-    current_hidden_states_residuals = remaining_hidden_states - hidden_states
-    return hidden_states, downsampled_first_hidden_states_residuals, current_hidden_states_residuals
+        remaining_hidden_states = hidden_states
+        remaining_encoder_hidden_states = encoder_hidden_states
+        for index_block, block in enumerate(model.transformer_blocks[1:], start=1):
+            remaining_encoder_hidden_states, remaining_hidden_states = block(
+                hidden_states=remaining_hidden_states,
+                encoder_hidden_states=remaining_encoder_hidden_states,
+                temb=adaln_emb[index_block],
+                image_rotary_emb=image_rotary_emb,
+                joint_attention_kwargs=None,
+            )
+
+        for index_block, block in enumerate(model.single_transformer_blocks):
+            remaining_encoder_hidden_states, remaining_hidden_states = block(
+                hidden_states=remaining_hidden_states,
+                encoder_hidden_states=remaining_encoder_hidden_states,
+                temb=adaln_single_emb[index_block],
+                image_rotary_emb=image_rotary_emb,
+                joint_attention_kwargs=None,
+            )
+
+        current_hidden_states_residuals = remaining_hidden_states - hidden_states
+        return hidden_states, downsampled_first_hidden_states_residuals, current_hidden_states_residuals
+    except (IndexError, RuntimeError, TypeError, ValueError) as exc:
+        raise AssertionError(f"Failed to compute FLUX cache intermediates: {exc}") from exc
 
 
 @pytest.mark.diffusers
