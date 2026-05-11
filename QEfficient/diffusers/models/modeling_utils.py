@@ -143,7 +143,6 @@ def apply_kv_blocking(
     num_head_blocks = math.ceil(NH / head_block_size)
     block_positions = [(i * CL) // num_kv_blocks for i in range(num_kv_blocks)]
 
-    # Handling small sequences with standard attention
     # Note: blocking is only needed for self attention where CL = K_CL
     # Handling cross attention with standard attention and self attention with blocked attention
     if is_cross_attention:
