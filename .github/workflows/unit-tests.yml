@@ -4,7 +4,44 @@ on:
   pull_request:
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      diffusers: ${{ steps.filter.outputs.diffusers }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            diffusers:
+              - "QEfficient/diffusers/**"
+              - "QEfficient/base/modeling_qeff.py"
+              - "QEfficient/base/onnx_transforms.py"
+              - "QEfficient/base/pytorch_transforms.py"
+              - "QEfficient/generation/cloud_infer.py"
+              - "QEfficient/customop/rms_norm.py"
+              - "QEfficient/utils/__init__.py"
+              - "QEfficient/utils/_utils.py"
+              - "QEfficient/utils/constants.py"
+              - "QEfficient/utils/logging_utils.py"
+              - "QEfficient/transformers/models/pytorch_transforms.py"
+              - "QEfficient/compile/qnn_compiler.py"
+              - "QEfficient/compile/compile_helper.py"
+              - "QEfficient/blocking/blocking_configurator.py"
+              - "QEfficient/blocking/attention_blocking.py"
+              - "QEfficient/blocking/blocked_attention_forwards.py"
+              - "QEfficient/__init__.py"
+              - "tests/diffusers/**"
+              - "tests/unit_test/utils/test_diffusers.py"
+              - "tests/unit_test/utils/test_diffusion_pipeline_infra.py"
+              - "tests/unit_test/utils/test_flux_first_block_cache_blocking.py"
+              - "tests/unit_test/utils/test_wan_first_block_cache_blocking.py"
+              - "examples/diffusers/**"
+              - ".github/workflows/unit-tests.yml"
+
   unit-tests:
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,4 +57,34 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: pytest tests/unit_test/ -n auto -v
+        run: |
+          pytest tests/unit_test/ -n auto -v \
+            --ignore=tests/unit_test/utils/test_diffusers.py \
+            --ignore=tests/unit_test/utils/test_diffusion_pipeline_infra.py \
+            --ignore=tests/unit_test/utils/test_flux_first_block_cache_blocking.py \
+            --ignore=tests/unit_test/utils/test_wan_first_block_cache_blocking.py
+
+  unit-tests-diffusers:
+    needs: changes
+    if: needs.changes.outputs.diffusers == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and test dependencies
+        run: pip install -e ".[test]"
+
+      - name: Run diffusers unit tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pytest -n auto -v \
+            tests/unit_test/utils/test_diffusers.py \
+            tests/unit_test/utils/test_diffusion_pipeline_infra.py \
+            tests/unit_test/utils/test_flux_first_block_cache_blocking.py \
+            tests/unit_test/utils/test_wan_first_block_cache_blocking.py
