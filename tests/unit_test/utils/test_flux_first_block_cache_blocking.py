@@ -137,6 +137,10 @@ def _manual_cache_intermediates(
     adaln_emb,
     adaln_single_emb,
 ):
+    downsample_factor = model._qeff_first_block_cache_downsample_factor
+    if downsample_factor <= 0:
+        raise ValueError(f"downsample_factor must be > 0, got {downsample_factor}")
+
     try:
         hidden_states = model.x_embedder(hidden_states)
         encoder_hidden_states = model.context_embedder(encoder_hidden_states)
@@ -152,20 +156,20 @@ def _manual_cache_intermediates(
             joint_attention_kwargs=None,
         )
         current_first_hidden_states_residuals = hidden_states - original_hidden_states
+    except (IndexError, RuntimeError, TypeError) as exc:
+        raise AssertionError(f"Failed to compute FLUX cache intermediates: {exc}") from exc
 
-        downsample_factor = model._qeff_first_block_cache_downsample_factor
-        if downsample_factor <= 0:
-            raise ValueError(f"downsample_factor must be > 0, got {downsample_factor}")
-        if current_first_hidden_states_residuals.shape[-1] % downsample_factor != 0:
-            raise ValueError(
-                "downsample_factor must divide hidden dimension exactly, "
-                f"got hidden_size={current_first_hidden_states_residuals.shape[-1]}, "
-                f"downsample_factor={downsample_factor}"
-            )
-        downsampled_first_hidden_states_residuals = current_first_hidden_states_residuals[
-            ..., ::downsample_factor
-        ].contiguous()
+    if current_first_hidden_states_residuals.shape[-1] % downsample_factor != 0:
+        raise ValueError(
+            "downsample_factor must divide hidden dimension exactly, "
+            f"got hidden_size={current_first_hidden_states_residuals.shape[-1]}, "
+            f"downsample_factor={downsample_factor}"
+        )
+    downsampled_first_hidden_states_residuals = current_first_hidden_states_residuals[
+        ..., ::downsample_factor
+    ].contiguous()
 
+    try:
         remaining_hidden_states = hidden_states
         remaining_encoder_hidden_states = encoder_hidden_states
         for index_block, block in enumerate(model.transformer_blocks[1:], start=1):
@@ -188,7 +192,7 @@ def _manual_cache_intermediates(
 
         current_hidden_states_residuals = remaining_hidden_states - hidden_states
         return hidden_states, downsampled_first_hidden_states_residuals, current_hidden_states_residuals
-    except (IndexError, RuntimeError, TypeError, ValueError) as exc:
+    except (IndexError, RuntimeError, TypeError) as exc:
         raise AssertionError(f"Failed to compute FLUX cache intermediates: {exc}") from exc
 
 

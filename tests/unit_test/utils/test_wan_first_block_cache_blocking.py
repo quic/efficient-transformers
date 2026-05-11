@@ -115,31 +115,35 @@ def _make_forward_inputs():
 
 
 def _manual_cache_intermediates(model, hidden_states, encoder_hidden_states, rotary_emb, timestep_proj):
+    downsample_factor = model._qeff_first_block_cache_downsample_factor
+    if downsample_factor <= 0:
+        raise ValueError(f"downsample_factor must be > 0, got {downsample_factor}")
+
     try:
         rotary_chunks = torch.split(rotary_emb, 1, dim=0)
         flattened = model.patch_embedding(hidden_states).flatten(2).transpose(1, 2)
 
         first_block_out = model.blocks[0](flattened, encoder_hidden_states, timestep_proj, rotary_chunks)
         first_block_residual = first_block_out - flattened
+    except (IndexError, RuntimeError, TypeError) as exc:
+        raise AssertionError(f"Failed to compute WAN cache intermediates: {exc}") from exc
 
-        downsample_factor = model._qeff_first_block_cache_downsample_factor
-        if downsample_factor <= 0:
-            raise ValueError(f"downsample_factor must be > 0, got {downsample_factor}")
-        if first_block_residual.shape[-1] % downsample_factor != 0:
-            raise ValueError(
-                "downsample_factor must divide hidden dimension exactly, "
-                f"got hidden_size={first_block_residual.shape[-1]}, downsample_factor={downsample_factor}"
-            )
+    if first_block_residual.shape[-1] % downsample_factor != 0:
+        raise ValueError(
+            "downsample_factor must divide hidden dimension exactly, "
+            f"got hidden_size={first_block_residual.shape[-1]}, downsample_factor={downsample_factor}"
+        )
 
-        downsampled_first_block_residual = first_block_residual[..., ::downsample_factor].contiguous()
+    downsampled_first_block_residual = first_block_residual[..., ::downsample_factor].contiguous()
 
+    try:
         remain_hidden = first_block_out
         for block in model.blocks[1:]:
             remain_hidden = block(remain_hidden, encoder_hidden_states, timestep_proj, rotary_chunks)
         current_remain_block_residual = remain_hidden - first_block_out
 
         return first_block_out, downsampled_first_block_residual, current_remain_block_residual
-    except (IndexError, RuntimeError, TypeError, ValueError) as exc:
+    except (IndexError, RuntimeError, TypeError) as exc:
         raise AssertionError(f"Failed to compute WAN cache intermediates: {exc}") from exc
 
 
