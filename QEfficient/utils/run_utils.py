@@ -13,7 +13,7 @@ import onnx
 import onnxruntime
 import torch
 from transformers import TextStreamer
-from transformers.cache_utils import EncoderDecoderCache
+from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 
 from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.transformers.cache_utils import QEffDynamicCache
@@ -149,6 +149,8 @@ class ApiRunner:
                 model_type = getattr(getattr(model, "config", None), "model_type", "")
                 if model_type.startswith("gpt_oss"):
                     return past_key_values
+                if model_type.startswith("gemma3"):
+                    return DynamicCache(past_key_values)
                 return QEffDynamicCache.from_legacy_cache(past_key_values)
 
             return past_key_values

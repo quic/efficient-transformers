@@ -192,7 +192,7 @@ def _count_decoder_block_subfunctions(onnx_model, qeff_model) -> int:
         submodules = [submodules]
 
     block_names = {module.__name__ for module in submodules if hasattr(module, "__name__")}
-    return sum(any(block_name in node.op_type for block_name in block_names) for node in onnx_model.graph.node)
+    return sum(any(block_name in func.name for block_name in block_names) for func in onnx_model.functions)
 
 
 def _assert_has_retained_state_outputs(onnx_path: Path) -> None:
