@@ -210,14 +210,14 @@ class InputHandler:
         """
 
         updated_inputs = {}
-        updated_inputs["input_ids"] = ort_outputs["logits"].argmax(-1).reshape(-1, 1)
+        updated_inputs["input_ids"] = ort_outputs["logits"][:, -1, :].argmax(-1).reshape(-1, 1)
         updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
         for i in range(self.n_layer):
             updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
         if self.full_batch_size:
             updated_inputs["batch_index"] = inputs["batch_index"]
-        return updated_inputs
+        return updated_inputsgit 
 
     def update_ort_outputs(self, ort_outputs):
         """

@@ -242,7 +242,7 @@ class QEffGemma3Attention(Gemma3Attention):
                 "position_ids": position_ids,
                 "is_sliding": self.is_sliding,
                 "sliding_window_pattern": self.config._sliding_window_pattern,
-                "sliding_window": past_key_values.sliding_window_len,
+                "sliding_window": getattr(past_key_values, "sliding_window_len", self.config.sliding_window),
             }
             if comp_ctx_lengths is not None:
                 attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
@@ -302,17 +302,20 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
         # past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-        if self.self_attn.is_sliding:
-            attention_mask = _create_causal_mask(
-                position_ids=position_ids,
-                target_length=past_key_value.sliding_window_len,
-                sliding_window=past_key_value.sliding_window_len,
-            )
-        else:
-            attention_mask = _create_causal_mask(
-                position_ids=position_ids,
-                target_length=past_key_value.key_cache[self.config._sliding_window_pattern - 1].shape[-2],
-            )
+        # Only create QEff-specific attention mask when using a QEff cache (has sliding_window_len).
+        # For standard DynamicCache (e.g. during model.generate()), use the passed-in attention_mask.
+        if past_key_value is not None and hasattr(past_key_value, "sliding_window_len"):
+            if self.self_attn.is_sliding:
+                attention_mask = _create_causal_mask(
+                    position_ids=position_ids,
+                    target_length=past_key_value.sliding_window_len,
+                    sliding_window=past_key_value.sliding_window_len,
+                )
+            else:
+                attention_mask = _create_causal_mask(
+                    position_ids=position_ids,
+                    target_length=past_key_value.key_cache[self.config._sliding_window_pattern - 1].shape[-2],
+                )
 
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
@@ -391,12 +394,16 @@ class QEffGemma3TextModel(Gemma3TextModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        # Convert legacy list cache to QEffSlidingWindowCache BEFORE any masking logic
-        if use_cache and not isinstance(past_key_values, Cache):
+        # Convert legacy tuple cache to QEffSlidingWindowCache (QEff ONNX export path).
+        # Standard Cache subclasses (e.g. DynamicCache from model.generate()) are left as-is.
+        if (
+            use_cache
+            and past_key_values is not None
+            and not isinstance(past_key_values, (Cache, QEffSlidingWindowCache))
+        ):
             past_key_values = QEffSlidingWindowCache.from_legacy_cache(
                 config=self.config, past_key_values=past_key_values
             )
-        if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens,
@@ -422,6 +429,27 @@ class QEffGemma3TextModel(Gemma3TextModel):
         for layer_type in set(self.config.layer_types):
             position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
 
+        # Build per-layer-type causal masks using _create_causal_mask for the model.generate() path
+        # (DynamicCache from model.generate(), or None on first prefill).
+        # For QEffSlidingWindowCache the masks are created per-layer inside QEffGemma3DecoderLayer.
+        if not isinstance(past_key_values, QEffSlidingWindowCache):
+            sliding_window = self.config.sliding_window
+            past_seen = past_key_values.get_seq_length() if past_key_values is not None else 0
+            full_ctx_len = past_seen + inputs_embeds.shape[1]
+            _causal_mask_mapping = {
+                "full_attention": _create_causal_mask(
+                    position_ids=position_ids,
+                    target_length=full_ctx_len,
+                ),
+                "sliding_attention": _create_causal_mask(
+                    position_ids=position_ids,
+                    target_length=min(sliding_window, full_ctx_len),
+                    sliding_window=min(sliding_window, full_ctx_len),
+                ),
+            }
+        else:
+            _causal_mask_mapping = None
+
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -433,7 +461,7 @@ class QEffGemma3TextModel(Gemma3TextModel):
             layer_outputs = decoder_layer(
                 hidden_states,
                 position_embeddings=position_embeddings[layer_type],
-                attention_mask=None,
+                attention_mask=_causal_mask_mapping[layer_type] if _causal_mask_mapping is not None else None,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
@@ -455,7 +483,15 @@ class QEffGemma3TextModel(Gemma3TextModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        next_cache = past_key_values.to_legacy_cache() if use_cache else None
+        if use_cache:
+            # DynamicCache (model.generate() path) is returned as-is.
+            # QEffSlidingWindowCache (ONNX export path) is converted back to legacy tuple format.
+            if isinstance(past_key_values, Cache):
+                next_cache = past_key_values
+            else:
+                next_cache = past_key_values.to_legacy_cache()
+        else:
+            next_cache = None
 
         output = BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
@@ -702,7 +738,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         image_features_expanded = image_features.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        if past_key_values is not None and not isinstance(past_key_values, Cache):
+        if past_key_values is not None and not isinstance(past_key_values, (Cache, QEffSlidingWindowCache)):
             past_key_values = QEffSlidingWindowCache.from_legacy_cache(
                 config=self.language_model.config, past_key_values=past_key_values
             )

@@ -12,19 +12,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 
-try:
-    # transformers<5.3 had these hybrid cache classes
-    from transformers.cache_utils import HybridCache, HybridChunkedCache
-except ImportError:
-    # transformers>=5.3 removed/relocated hybrid cache types.
-    # Keep lightweight local bases so downstream hybrid wrappers still import.
-    class HybridCache:  # type: ignore[no-redef]
-        pass
-
-    class HybridChunkedCache:  # type: ignore[no-redef]
-        pass
-
-
 from QEfficient.customop import (
     CtxGatherFunc,
     CtxGatherFunc3D,
@@ -37,6 +24,16 @@ from QEfficient.customop import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
+
+
+# HybridCache and HybridChunkedCache were removed from transformers in 5.3+.
+# Define lightweight local stubs so downstream QEff wrappers can still inherit from them.
+class HybridCache:  # type: ignore[no-redef]
+    pass
+
+
+class HybridChunkedCache:  # type: ignore[no-redef]
+    pass
 
 
 class InvalidIndexProvider:
@@ -865,6 +862,14 @@ class QEffHybridCache(HybridCache):
 
 # TODO:This function will be depercated in future.
 class QEffHybridChunkedCache(HybridChunkedCache):
+    def __init__(self, config, max_batch_size: int = 1, max_cache_len: int = 2048):
+        self.config = config
+        sliding_window_pattern = config.sliding_window_pattern
+        num_layers = config.num_hidden_layers
+        self.is_sliding = [bool((i + 1) % sliding_window_pattern) for i in range(num_layers)]
+        self.key_cache: List[torch.Tensor] = [None] * num_layers
+        self.value_cache: List[torch.Tensor] = [None] * num_layers
+
     def __len__(self):
         """
         Support for backwards-compatible `past_key_value` length, e.g. `len(past_key_value)`. This value corresponds

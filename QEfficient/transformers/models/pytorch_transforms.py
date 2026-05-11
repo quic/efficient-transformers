@@ -43,6 +43,7 @@ from transformers.models.gemma2.modeling_gemma2 import (
 from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3Attention,
     Gemma3DecoderLayer,
+    Gemma3ForCausalLM,
     Gemma3ForConditionalGeneration,
     Gemma3RMSNorm,
     Gemma3TextModel,
@@ -296,6 +297,7 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3CustomRMSNormAIC,
     QEffGemma3DecoderLayer,
     QEffGemma3DecoderWrapper,
+    QEffGemma3ForCausalLMModel,
     QEffGemma3ForConditionalGeneration,
     QEffGemma3TextModel,
 )
@@ -650,6 +652,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma3DecoderLayer: QEffGemma3DecoderLayer,
         Gemma3TextModel: QEffGemma3TextModel,
         Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
+        Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
         # GPT_OSS
         GptOssAttention: QEffGptOssAttention,
         GptOssDecoderLayer: QEffGptOssDecoderLayer,
