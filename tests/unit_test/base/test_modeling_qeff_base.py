@@ -216,7 +216,7 @@ class TestQEFFBaseModelHashParams:
 class TestQEFFBaseModelTransformBlocking:
     """Tests for QEFFBaseModel.transform() attention blocking behavior."""
 
-    @pytest.mark.parametrize("blocking_mode", ["kv", "q", "qkv", "hqkv"])
+    @pytest.mark.parametrize("blocking_mode", ["kv", "q", "qkv", "hq", "hkv", "hqkv"])
     def test_transform_enable_blocking_runs_auto_configurator(self, blocking_mode):
         # Use a slightly larger head count here to make it possible for "h" mode to result in head blocking
         # when num_devices > 1.
