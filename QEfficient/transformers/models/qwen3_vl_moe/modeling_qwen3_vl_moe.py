@@ -384,7 +384,6 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        breakpoint()
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
