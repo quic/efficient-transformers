@@ -2097,10 +2097,31 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **kwargs,
         )
 
+    def __update_prefill_transform(
+        self,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
+    ):
+        if enable:
+            if enable_chunking:
+                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+            else:
+                self.model, tf = PrefillOnlyTransform.apply(self.model)
+
+        else:
+            if retain_full_kv:
+                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
+            else:
+                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+
     def export(
         self,
         export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        prefill_seq_len: Optional[int] = None,
+        prefill_only: bool = False,
+        enable_chunking: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -2118,6 +2139,18 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         str
             Path to the generated ONNX graph file.
         """
+        if prefill_only:
+            assert prefill_seq_len > 1
+            if not enable_chunking and self.continuous_batching:
+                raise NotImplementedError(
+                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                )
+            self.hash_params["prefill_only"] = True
+            self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
+        else:
+            self.hash_params["prefill_only"] = False
+            self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         output_names = self.model.get_output_names()
