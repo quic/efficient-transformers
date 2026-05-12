@@ -43,8 +43,14 @@ class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
 
         # int_weight: [in, out]  int_zeros: [in/group, out]  (AWQ column order restored)
         int_weight, int_zeros = unpack_weights_and_zeros(original_module.qweight, original_module.qzeros, bits, "awq")
-        int_weight = torch.bitwise_and(int_weight, (2**bits) - 1)
-        int_zeros = torch.bitwise_and(int_zeros, (2**bits) - 1)
+
+        # Validate unpacked values are within expected range
+        max_val = (2**bits) - 1
+        if torch.any(int_weight > max_val) or torch.any(int_zeros > max_val):
+            logger.warning(f"AWQ unpacked values exceed {bits}-bit range, applying mask to correct")
+
+        int_weight = torch.bitwise_and(int_weight, max_val)
+        int_zeros = torch.bitwise_and(int_zeros, max_val)
 
         new_module = QuantLinearORT(
             original_module.bits,

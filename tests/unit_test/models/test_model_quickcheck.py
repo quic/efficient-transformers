@@ -77,11 +77,18 @@ CAUSAL_RUNTIME_MODEL_IDS = {
     "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
     "gpt_oss": "tiny-random/gpt-oss-bf16",
 }
+
+#   In PyTorch ≤2.3 (used with transformers v4.57.3), torch.onnx.export with
+#   export_modules_as_functions created one ONNX function definition per module instance — so a Mixtral
+#   model with 2 decoder layers produced 2 separate QeffMixtralDecoderLayer function definitions in the
+#   ONNX.
+#   In PyTorch 2.7 (used with transformers v5.5.4), the same export creates one shared function
+#   definition per module class, called once per instance. So 2 decoder layers → 1 function definition
+#   called 2 times.
 CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
     "codegen",
     "phi",
     "starcoder2",
-    "mixtral",
     "gpt_oss",
     # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
 }
