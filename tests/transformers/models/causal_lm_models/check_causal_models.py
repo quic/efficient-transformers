@@ -10,6 +10,7 @@ import os
 from typing import Optional
 
 import numpy as np
+import pytest
 import torch
 from transformers import AutoConfig
 
@@ -57,6 +58,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     retain_full_kv: Optional[bool] = None,
     compare_results: bool = False,
 ):
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
 
     torch.manual_seed(42)
     replace_transformers_quantizers()

@@ -70,8 +70,8 @@ class QEffAwqQuantizer(AwqQuantizer):
 
     def update_dtype(self, torch_dtype):
         if torch_dtype not in [None, torch.float32]:
-            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
-        return None
+            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to float32")
+        return torch.float32
 
     # transformers<5 compatibility
     def update_torch_dtype(self, torch_dtype):

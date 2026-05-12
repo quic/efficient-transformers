@@ -25,36 +25,27 @@ from QEfficient.transformers.quantizers.quantizer_utils import (
     blockwise_dequantize,
     convert_moe_packed_tensors,
     dequantize_gptq,
-    unpack_weights,
+    unpack_weights_and_zeros,
 )
 
 
 class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
     _match_class = WQLinear_GEMM
 
-    @staticmethod
-    def unpack_and_dequantize_awq(qweight, qzeros, scales, bits, group_size):
-        # Unpack the qweight and qzeros tensors
-        scales, int_weight, int_zeros = unpack_weights(qweight, qzeros, scales, bits, "awq")
-
-        # fp16 weights
-        scales_expand = scales.repeat_interleave(group_size, dim=0)
-        int_zeros_expand = int_zeros.repeat_interleave(group_size, dim=0)
-        int_weight = (int_weight - int_zeros_expand) * scales_expand
-
-        return int_weight.T, scales, int_zeros.to(torch.int32)
-
     @classmethod
     def mutate(cls, original_module: nn.Module, parent_module: nn.Module):
-        fp16_weight, scales, zeros = cls.unpack_and_dequantize_awq(
-            original_module.qweight,
-            original_module.qzeros,
-            original_module.scales,
-            original_module.bits,
-            original_module.group_size,
-        )
+        # Unpack AWQ packed int4 weights and zeros to logical integer tensors,
+        # then hand them directly to pack_on_device — bypassing quant_weight() so
+        # we never go through a dequant->requant cycle (which introduced large
+        # numerical errors because re-quantising the dequantised floats loses
+        # precision and changes the packed values).
+        bits = original_module.bits
 
-        original_module.weight = fp16_weight
+        # int_weight: [in, out]  int_zeros: [in/group, out]  (AWQ column order restored)
+        int_weight, int_zeros = unpack_weights_and_zeros(original_module.qweight, original_module.qzeros, bits, "awq")
+        int_weight = torch.bitwise_and(int_weight, (2**bits) - 1)
+        int_zeros = torch.bitwise_and(int_zeros, (2**bits) - 1)
+
         new_module = QuantLinearORT(
             original_module.bits,
             original_module.group_size,
@@ -63,7 +54,11 @@ class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
             original_module.bias is not None,
         )
         new_module.bias = original_module.bias if original_module.bias is not None else None
-        new_module.pack(original_module, scales.T, zeros.T, original_module.g_idx)
+        # Set scales before calling pack_on_device (it reads self.scales internally).
+        # AWQ scales are [in/group, out]; pack_on_device expects self.scales = [in/group, out]
+        # and transposes it internally, so assign directly without transposing.
+        new_module.scales = original_module.scales.float()
+        new_module.pack_on_device(int_weight, int_zeros)
         return new_module
 
 
