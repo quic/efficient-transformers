@@ -53,6 +53,10 @@ count 0; items with a full match have count `max_k`; items with a partial n-gram
 (continuation shorter than `max_k`, e.g. near the end of the prompt history) have a count
 between 1 and `max_k − 1`.
 
+**Empty-batch safety:** when all items in the batch have finished generating,
+`actual_proposals` is an empty array. The function returns `decode_ks[-1]` (max K) rather
+than raising `ValueError: zero-size array to reduction operation maximum`.
+
 ### 4. Multi-spec runtime dispatch (`prompt_lookup.py`)
 
 `pld_spec_decode_inference()` now accepts `num_speculative_tokens: Union[int, List[int]]`.
@@ -66,9 +70,9 @@ the downstream token acceptance logic is unchanged.
 
 | File | Change |
 |------|--------|
-| `QEfficient/transformers/models/modeling_auto.py` | `num_speculative_tokens: Optional[List[int]]`, added `_build_decode_spec_for_k()`, replaced decode/fallback block with K-loop, removed `enable_fallback_decode_spec` |
-| `QEfficient/base/modeling_qeff.py` | `_compile()`: write flat-format specializations.json for qaic-compile; strip `_graph_name` tag; convert values to strings |
-| `examples/performance/speculative_decoding/prompt_lookup.py` | `_select_k()` helper, per-K buffer allocation, multi-spec dispatch, updated arg parser |
+| `QEfficient/transformers/models/modeling_auto.py` | `num_speculative_tokens: Optional[List[int]]`, added `_build_decode_spec_for_k()`, replaced decode/fallback block with K-loop, removed `enable_fallback_decode_spec`; **review:** `speculative_config` override warning, TLM+CCL early rejection, remove unused `**kwargs` |
+| `QEfficient/base/modeling_qeff.py` | `_compile()`: write flat-format specializations.json for qaic-compile; strip `_graph_name` tag; convert values to strings; **review:** fix `Optional[Union[int, List[int]]]` annotation, rename `k/v` → `key/val` |
+| `examples/performance/speculative_decoding/prompt_lookup.py` | `_select_k()` helper, per-K buffer allocation, multi-spec dispatch, updated arg parser; **review:** empty-batch guard in `_select_k`, `try/finally` for `set_buffers` state leak, remove dead `has_empty_tokens` |
 | `tests/transformers/spd/test_pld_inference.py` | `test_multi_spec_structure` (4 parametrized cases), `test_select_k` (5 parametrized cases) |
 | `tests/unit_test/models/test_modeling_auto_cpu.py` | `TestTLMMultiSpecSpecializations` (8 tests) |
 
@@ -504,9 +508,119 @@ flat_specs = [{k: str(v) for k, v in spec.items() if k != "_graph_name"}
 
 ---
 
-## `modeling_qeff.py` — Flat-Format specializations.json
+## Post-Review Fixes
 
-The multi-spec feature in `modeling_auto.py` exposed a latent issue in `_compile()` inside
+A code review of the `spd_specs` branch identified 5 correctness bugs (2 critical, 3 major)
+that were addressed in commit `5bf8ff1`. The findings and fixes are summarised below.
+The full review is at `docs/spd_varK/code_review.md`.
+
+### 8. `_select_k` crashes on empty batch (Critical)
+
+**File:** `prompt_lookup.py`
+
+When all batch items finish generating, `valid_batch_indices` is all-False and
+`actual_proposals[valid_batch_indices]` is an empty array. Calling `.max()` on an empty
+array raises `ValueError: zero-size array to reduction operation maximum which has no
+identity`.
+
+**Fix:** Return `decode_ks[-1]` immediately for empty input:
+
+```python
+if len(actual_proposals) == 0:
+    return decode_ks[-1]
+```
+
+---
+
+### 9. Silent discard of user-supplied Ks when `speculative_config` overrides (Critical)
+
+**File:** `modeling_auto.py`
+
+When `model.config.speculative_config` overrides `num_speculative_tokens`, `_decode_ks` was
+silently replaced by `[validated_k]`. A user passing `[0, 1, 3]` would get a single-K
+compile with no indication that `[0, 1]` were discarded.
+
+**Fix:** Emit a `logger.warning` naming the discarded values:
+
+```python
+if validated_k is not None and validated_k != _max_k:
+    if _decode_ks is not None and len(_decode_ks) > 1:
+        discarded = [k for k in _decode_ks if k != validated_k]
+        logger.warning(
+            f"speculative_config in model.config fixes num_speculative_tokens={validated_k}. "
+            f"Ignoring user-supplied values {discarded}."
+        )
+    _decode_ks = [validated_k]
+```
+
+---
+
+### 10. TLM + CCL combination produces wrong specializations (Major)
+
+**File:** `modeling_auto.py`
+
+`_build_decode_spec_for_k` accepts a `comp_ctx_lengths` parameter, but the TLM multi-spec
+loop never passed it. When TLM and CCL (`comp_ctx_lengths_decode`) are both enabled, each
+decode specialization is silently missing `comp_ctx_lengths` and will fail at runtime on
+CCL-enabled hardware.
+
+**Fix (option B — early rejection):** Raise `NotImplementedError` before the loop so the
+user gets a clear error rather than a silently wrong QPC:
+
+```python
+if self.comp_ctx_lengths_decode is not None:
+    raise NotImplementedError(
+        "TLM multi-spec + CCL is not yet supported. "
+        "Pass a plain int for num_speculative_tokens when using CCL."
+    )
+```
+
+---
+
+### 11. `set_buffers` state leak on exception in smaller-K path (Major)
+
+**File:** `prompt_lookup.py`
+
+```python
+target_model_session.set_buffers({"logits": logit_buffers[selected_k]})
+tlm_outputs = target_model_session.run(sel_inputs)   # ← may raise
+target_model_session.set_buffers({"logits": precode_logits_ph})  # restore
+```
+
+If `session.run()` raises, the session's logit buffer is left pointing at the small
+`logit_buffers[selected_k]` (shape `[batch, selected_k+1, vocab]`). The next decode
+iteration's max-K path writes `max_k+1` rows into it → buffer overwrite or silent truncation.
+
+**Fix:** `try/finally` to guarantee restoration:
+
+```python
+target_model_session.set_buffers({"logits": logit_buffers[selected_k]})
+try:
+    tlm_outputs = target_model_session.run(sel_inputs)
+    raw_logits = tlm_outputs["logits"]
+finally:
+    target_model_session.set_buffers({"logits": precode_logits_ph})
+```
+
+---
+
+### 12. `_compile()` parameter typed `Optional[int]` instead of `Optional[Union[int, List[int]]]` (Major)
+
+**File:** `modeling_qeff.py`
+
+`_compile()` declared `num_speculative_tokens: Optional[int]` but the public `compile()`
+interface now passes `Optional[List[int]]`. The docstring also said "int". The hash in
+`compile_hash_params` was computed over a list, inconsistently with the annotation.
+
+**Fix:** Update annotation and docstring:
+
+```python
+num_speculative_tokens: Optional[Union[int, List[int]]] = None,
+```
+
+---
+
+## `modeling_qeff.py` — Flat-Format specializations.json in `_compile()` inside
 `QEfficient/base/modeling_qeff.py`: the method was calling `to_named_specializations()` when
 writing `specializations.json` for qaic-compile.  This had been harmless for 2-spec QPCs
 (the converter produced valid output that qaic-compile accepted), but the 3-spec format
@@ -559,12 +673,17 @@ and `f51c4a3e527ccff9`).
 
 | Hash | Message |
 |------|---------|
+| `767a98a` | Variable decode specializations for ngram/suffix SpD |
 | `5f1b6c5` | Fix: write flat-format specializations.json for qaic-compile |
 | `82f2d6c` | Fix: convert specialization values to strings for qaic-compile |
+| `7331df7` | Docs: update variable_spd_specializations with modeling_qeff fixes |
+| `5bf8ff1` | Fix review findings — correctness bugs and annotation |
 
 ---
 
 ## Hardware Test Results (New SDK — 2026-05-08)
+
+After upgrading the QAIC SDK, all hardware compile+inference tests pass.
 Tests were run on devices 5 and 6 using the `QAIC_TEST_DEVICE_ID` fixture.
 
 | Test | Device | Result | Duration |
