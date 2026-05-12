@@ -1,0 +1,12 @@
+name: QEFF Status Placeholder
+
+on:
+  pull_request:
+
+jobs:
+  qeff-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create QEFF check placeholder
+        run: |
+          echo "QEFF CI status pending"
