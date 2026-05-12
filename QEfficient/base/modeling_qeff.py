@@ -13,7 +13,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import onnx
 import torch
@@ -486,7 +486,7 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         custom_io: Optional[Dict[str, str]] = None,
         mdp_ts_num_devices: int = 1,
-        num_speculative_tokens: Optional[int] = None,
+        num_speculative_tokens: Optional[Union[int, List[int]]] = None,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
@@ -508,7 +508,7 @@ class QEFFBaseModel(ABC):
             :specializations (list): List of specializations to compile for
             :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
-            :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
+            :num_speculative_tokens (int | List[int], optional): Number of speculative tokens for TLM decode. A plain int K compiles one decode specialization (seq_len=K+1). A list [K0, K1, ...] compiles one specialization per value, enabling per-step dispatch to the cheapest kernel.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
             :compiler_options: Pass any compiler option as input.
@@ -642,7 +642,9 @@ class QEFFBaseModel(ABC):
             # Using named format for MDP QPCs causes a RuntimeError at ExecObj
             # creation time ("Failed to create ExecObj") on 4-device tensor-parallel.
             # All values must be strings — qaic-compile rejects integer values.
-            flat_specs = [{k: str(v) for k, v in spec.items() if k != "_graph_name"} for spec in specializations]
+            flat_specs = [
+                {key: str(val) for key, val in spec.items() if key != "_graph_name"} for spec in specializations
+            ]
             specializations_data = {"specializations": flat_specs}
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")

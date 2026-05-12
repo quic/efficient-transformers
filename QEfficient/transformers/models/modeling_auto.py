@@ -3379,7 +3379,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         full_batch_size: Optional[int] = None,
         prefill_seq_len: int = 32,
         comp_ctx_lengths: Optional[int] = None,
-        **kwargs,
     ):
         """
         Builds a TLM decode specialization for proposal length *k* (``seq_len = k+1``).
@@ -3599,7 +3598,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             _max_k = _decode_ks[-1] if _decode_ks else None
             validated_k = self.check_and_get_num_speculative_tokens(_max_k, prefill_seq_len)
             if validated_k is not None and validated_k != _max_k:
-                # speculative_config in model.config overrides num_speculative_tokens
+                # speculative_config in model.config overrides num_speculative_tokens.
+                # Warn if the user passed a list — the extra values are discarded.
+                if _decode_ks is not None and len(_decode_ks) > 1:
+                    discarded = [k for k in _decode_ks if k != validated_k]
+                    logger.warning(
+                        f"speculative_config in model.config fixes num_speculative_tokens={validated_k}. "
+                        f"Ignoring user-supplied values {discarded}. "
+                        f"Pass num_speculative_tokens={validated_k} (or [{validated_k}]) to suppress this warning."
+                    )
                 _decode_ks = [validated_k]
 
         if (
@@ -3644,7 +3651,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if (prefill_only is None or not prefill_only) and prefill_seq_len != 1:
             if _decode_ks is not None and self.is_tlm:
-                # TLM multi-spec path: one decode specialization per K in num_speculative_tokens
+                # TLM multi-spec path: one decode specialization per K in num_speculative_tokens.
+                # CCL (comp_ctx_lengths) + multi-spec TLM is not yet supported: the per-K call
+                # to _build_decode_spec_for_k would need to iterate over CCL values, producing
+                # len(decode_ks) × len(comp_ctx_lengths_decode) decode specializations whose
+                # naming and ordering is untested.  Reject early so users get a clear error
+                # instead of a silently wrong QPC.
+                if self.comp_ctx_lengths_decode is not None:
+                    raise NotImplementedError(
+                        "TLM multi-spec (num_speculative_tokens as a list) combined with "
+                        "comp_ctx_lengths_decode is not yet supported. Pass a plain int for "
+                        "num_speculative_tokens when using CCL."
+                    )
                 for k in _decode_ks:
                     spec = self._build_decode_spec_for_k(
                         k=k,

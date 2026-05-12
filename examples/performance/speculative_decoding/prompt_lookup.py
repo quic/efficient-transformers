@@ -168,7 +168,6 @@ def find_candidate_pred_tokens(
     if max_ngram_size <= 0 or num_pred_tokens <= 0 or max_ngram_size > input_length:
         raise ValueError("Invalid max_ngram_size or num_pred_tokens")
 
-    has_empty_tokens = False
     best_result = np.full(num_pred_tokens, fill_tok, dtype=np.int64)
     best_count = 0
 
@@ -206,7 +205,13 @@ def find_candidate_pred_tokens(
 
 
 def _select_k(actual_proposals: np.ndarray, decode_ks: List[int]) -> int:
-    """Return the smallest K in decode_ks that covers the maximum proposal count in the batch."""
+    """Return the smallest K in decode_ks that covers the maximum proposal count in the batch.
+
+    Returns ``decode_ks[-1]`` (max K) when the array is empty — all batch items
+    have finished generating and no valid proposals remain.
+    """
+    if len(actual_proposals) == 0:
+        return decode_ks[-1]
     need = int(actual_proposals.max())
     for k in decode_ks:
         if k >= need:
@@ -245,7 +250,9 @@ def pld_spec_decode_inference(
     Returns:
         SpDCloudAI100ExecInfo: Execution information, including performance metrics and generated text.
     """
-    decode_ks = sorted(set(num_speculative_tokens)) if isinstance(num_speculative_tokens, list) else [num_speculative_tokens]
+    decode_ks = (
+        sorted(set(num_speculative_tokens)) if isinstance(num_speculative_tokens, list) else [num_speculative_tokens]
+    )
     max_k = decode_ks[-1]
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
@@ -312,7 +319,9 @@ def pld_spec_decode_inference(
     tlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
     precode_logits_ph = np.zeros((decode_batch_size, num_logits_to_keep, vocab_size), dtype=np.float32)
     # Pre-allocate per-K logit buffers for smaller specializations
-    logit_buffers = {k: np.zeros((decode_batch_size, k + 1, vocab_size), dtype=np.float32) for k in decode_ks if k != max_k}
+    logit_buffers = {
+        k: np.zeros((decode_batch_size, k + 1, vocab_size), dtype=np.float32) for k in decode_ks if k != max_k
+    }
 
     target_model_session.set_buffers({"logits": tlm_prefill_logits_ph})
     e2e_start = perf_counter()
@@ -335,9 +344,7 @@ def pld_spec_decode_inference(
         generated_ids[bi].append(input_ids.item())
         tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
         input_len = prompts_tokenized[bi]["position_ids"].max(1).item() + 1
-        tlm_precode_inputs["position_ids"][bi] = np.arange(
-            input_len, input_len + max_k + 1, dtype=np.int64
-        )
+        tlm_precode_inputs["position_ids"][bi] = np.arange(input_len, input_len + max_k + 1, dtype=np.int64)
         # assumes that prefill queue will always be popped from the front
         input_lengths[bi] = input_len
         max_gen_len[bi] -= input_lengths[bi]
@@ -404,9 +411,13 @@ def pld_spec_decode_inference(
                 "num_logits_to_keep": np.arange(selected_k + 1, dtype=np.int64).reshape(-1, 1),
             }
             target_model_session.set_buffers({"logits": logit_buffers[selected_k]})
-            tlm_outputs = target_model_session.run(sel_inputs)
-            raw_logits = tlm_outputs["logits"]  # [batch, selected_k+1, vocab]
-            target_model_session.set_buffers({"logits": precode_logits_ph})
+            try:
+                tlm_outputs = target_model_session.run(sel_inputs)
+                raw_logits = tlm_outputs["logits"]  # [batch, selected_k+1, vocab]
+            finally:
+                # Always restore the max-K placeholder so the next iteration's
+                # full-K path does not write into an undersized buffer.
+                target_model_session.set_buffers({"logits": precode_logits_ph})
             # Pad to [batch, max_k+1] so downstream acceptance logic is unchanged
             pad = np.zeros((decode_batch_size, max_k - selected_k, vocab_size), dtype=np.float32)
             target_logits = np.concatenate([raw_logits, pad], axis=1)
