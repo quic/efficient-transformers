@@ -1043,16 +1043,13 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
         captured = {}
 
-        with patch.object(type(qeff), "_compile", side_effect=lambda self, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
-            try:
-                qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[0, 3])
-            except Exception:
-                pass  # _compile may raise; we only care about specializations
+        with patch.object(type(qeff), "_compile", side_effect=lambda *args, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[0, 3])
 
-        if captured.get("specializations") is not None:
-            specs = captured["specializations"]
-            decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
-            assert len(decode_specs) == 2, f"Expected 2 decode specs, got {len(decode_specs)}: {specs}"
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 2, f"Expected 2 decode specs, got {len(decode_specs)}: {specs}"
 
     def test_compile_deduplication(self):
         """compile(num_speculative_tokens=[3, 3, 3]) → only one decode spec for K=3."""
@@ -1062,17 +1059,14 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
         captured = {}
 
-        with patch.object(type(qeff), "_compile", side_effect=lambda self, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
-            try:
-                qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 3, 3])
-            except Exception:
-                pass
+        with patch.object(type(qeff), "_compile", side_effect=lambda *args, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 3, 3])
 
-        if captured.get("specializations") is not None:
-            specs = captured["specializations"]
-            decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
-            assert len(decode_specs) == 1, f"Expected 1 decode spec (deduplicated), got: {decode_specs}"
-            assert decode_specs[0]["seq_len"] == 4
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 1, f"Expected 1 decode spec (deduplicated), got: {decode_specs}"
+        assert decode_specs[0]["seq_len"] == 4
 
     def test_compile_sorting(self):
         """compile(num_speculative_tokens=[3, 1, 2]) → decode specs in ascending seq_len order."""
@@ -1082,18 +1076,15 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
         captured = {}
 
-        with patch.object(type(qeff), "_compile", side_effect=lambda self, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
-            try:
-                qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 1, 2])
-            except Exception:
-                pass
+        with patch.object(type(qeff), "_compile", side_effect=lambda *args, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 1, 2])
 
-        if captured.get("specializations") is not None:
-            specs = captured["specializations"]
-            decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
-            assert len(decode_specs) == 3
-            seq_lens = [s["seq_len"] for s in decode_specs]
-            assert seq_lens == sorted(seq_lens), f"Decode specs not in sorted order: {seq_lens}"
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 3
+        seq_lens = [s["seq_len"] for s in decode_specs]
+        assert seq_lens == sorted(seq_lens), f"Decode specs not in sorted order: {seq_lens}"
 
     def test_compile_int_backward_compat(self):
         """compile(num_speculative_tokens=3) as plain int still works (treated as [3])."""
@@ -1103,15 +1094,12 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
         captured = {}
 
-        with patch.object(type(qeff), "_compile", side_effect=lambda self, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
-            try:
-                qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=3)
-            except Exception:
-                pass
+        with patch.object(type(qeff), "_compile", side_effect=lambda *args, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=3)
 
-        if captured.get("specializations") is not None:
-            specs = captured["specializations"]
-            decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
-            assert len(decode_specs) == 1, f"Expected 1 decode spec for int input, got: {decode_specs}"
-            assert decode_specs[0]["seq_len"] == 4  # k=3 → seq_len=4
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 1, f"Expected 1 decode spec for int input, got: {decode_specs}"
+        assert decode_specs[0]["seq_len"] == 4  # k=3 → seq_len=4
 
