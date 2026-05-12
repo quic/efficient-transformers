@@ -1,0 +1,31 @@
+name: QEFF Jenkins Status (Initialize)
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  statuses: write
+  pull-requests: read
+  contents: read
+
+jobs:
+  init-qeff-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set QEFF Jenkins Status to pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA:  ${{ github.event.pull_request.head.sha }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/statuses/${SHA}" \
+            -d '{
+              "state": "pending",
+              "context": "QEFF Jenkins Status",
+              "description": "Awaiting QEFF CI status update.",
+              "target_url": ""
+            }'
