@@ -1048,6 +1048,11 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
+        # Below is to pass qaic_config downstream
+        if hasattr(self.model, "model"):
+            self.model.model.qaic_config = qaic_config
+            if hasattr(self.model.model, "model"):
+                self.model.model.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def __update_prefill_transform(
@@ -1785,7 +1790,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if self.vision_model.qpc_path:
             vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
 
-        batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
+        batch_size, ctx_len, fbs, num_kv_blocks = get_compilation_dims(self.lang_model.qpc_path)
 
         pad_token_id = 1
 
@@ -1877,6 +1882,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
+        if num_kv_blocks:
+            kv_block_size = -(-ctx_len // num_kv_blocks) 
+            lang_inputs["block_table"] = np.arange(batch_size * num_kv_blocks, dtype=np.int64).reshape(
+                batch_size, num_kv_blocks
+            )
+            lang_inputs["slot_id"] = np.zeros(batch_size, dtype=np.int64)
+
         lang_start = perf_counter()
         # Run prefill
         chunk_inputs = lang_inputs.copy()
@@ -1950,6 +1962,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             # Prepare inputs for next iteration
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
+            if num_kv_blocks:
+                lang_inputs["slot_id"] += 1
+                lang_inputs["slot_id"] %= kv_block_size
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
