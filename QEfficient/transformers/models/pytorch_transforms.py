@@ -211,6 +211,19 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5RMSNormGated,
     Qwen3_5TextModel,
 )
+from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+    Qwen3_5MoeAttention,
+    Qwen3_5MoeDecoderLayer,
+    Qwen3_5MoeDynamicCache,
+    Qwen3_5MoeForCausalLM,
+    Qwen3_5MoeForConditionalGeneration,
+    Qwen3_5MoeGatedDeltaNet,
+    Qwen3_5MoeModel,
+    Qwen3_5MoeRMSNorm,
+    Qwen3_5MoeRMSNormGated,
+    Qwen3_5MoeSparseMoeBlock,
+    Qwen3_5MoeTextModel,
+)
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
     Qwen3MoeDecoderLayer,
@@ -516,6 +529,19 @@ from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5Model,
     QEffQwen3_5TextModel,
 )
+from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+    QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
+    QEffQwen3_5MoeAttention,
+    QEffQwen3_5MoeDecoderLayer,
+    QEffQwen3_5MoeDynamicCache,
+    QEffQwen3_5MoeForCausalLM,
+    QEffQwen3_5MoeForConditionalGeneration,
+    QEffQwen3_5MoeGatedDeltaNet,
+    QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC,
+    QEffQwen3_5MoeModel,
+    QEffQwen3_5MoeSparseMoeBlock,
+    QEffQwen3_5MoeTextModel,
+)
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     QEffQwen3MoeAttention,
@@ -611,7 +637,9 @@ class CustomOpsTransform(ModuleMappingTransform):
         RobertaModel: QEffRobertaModel,
         XLMRobertaModel: QEffXLMRobertaModel,
         Qwen3_5RMSNorm: GemmaCustomRMSNormAIC,
+        Qwen3_5MoeRMSNorm: GemmaCustomRMSNormAIC,
         Qwen3_5RMSNormGated: QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
+        Qwen3_5MoeRMSNormGated: QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC,
     }
 
 
@@ -788,6 +816,16 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5Model: QEffQwen3_5Model,
         Qwen3_5ForConditionalGeneration: QEffQwen3_5ForConditionalGeneration,
         Qwen3_5Attention: QEffQwen3_5Attention,
+        # Qwen3_5_Moe
+        Qwen3_5MoeDynamicCache: QEffQwen3_5MoeDynamicCache,
+        Qwen3_5MoeGatedDeltaNet: QEffQwen3_5MoeGatedDeltaNet,
+        Qwen3_5MoeDecoderLayer: QEffQwen3_5MoeDecoderLayer,
+        Qwen3_5MoeTextModel: QEffQwen3_5MoeTextModel,
+        Qwen3_5MoeModel: QEffQwen3_5MoeModel,
+        Qwen3_5MoeForConditionalGeneration: QEffQwen3_5MoeForConditionalGeneration,
+        Qwen3_5MoeForCausalLM: QEffQwen3_5MoeForCausalLM,
+        Qwen3_5MoeAttention: QEffQwen3_5MoeAttention,
+        Qwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
         # Qwen2.5 VL
         Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
         Qwen2_5_VLModel: QEffQwen2_5_VLModel,
@@ -848,6 +886,8 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         # GLM4 Moe
         QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
+        # Qwen3_5Moe
+        QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
     }
 
 
@@ -863,6 +903,8 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
         # GLM4 Moe
         QEffPrefillChunkedGlm4MoeMoE: QEffGlm4MoeMoE,
+        # Qwen3_5Moe
+        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
     }
 
 

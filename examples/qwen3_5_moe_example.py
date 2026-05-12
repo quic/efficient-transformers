@@ -10,16 +10,12 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-# from QEfficient import QEFFAutoModelForCausalLM
-
-## For AWQ model update pytorch version to 2.8.*
-model_id = "Qwen/Qwen3.6-27B"
+model_id = "Qwen/Qwen3.6-35B-A3B"
+# model_id = "Qwen/Qwen3.5-122B-A10B"
 config = AutoConfig.from_pretrained(model_id)
 config.torch_dtype = "float32"
 # config.text_config.num_hidden_layers = 4
-# hf_model = AutoModelForImageTextToText.from_pretrained(
-#     model_id, attn_implementation="eager", config=config
-# )
+
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=False, config=config
 )
@@ -28,20 +24,19 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 
 ## Only Text ##
-
 ## Set Batch_Size ##
 batch_size = 1
 qeff_model.compile(
     batch_size=batch_size,
-    prefill_seq_len=64,
-    ctx_len=4096,
+    prefill_seq_len=32,
+    ctx_len=4 * 1024,
     num_cores=16,
-    num_devices=1,
-    mxfp6_matmul=False,
+    num_devices=16,
+    mxfp6_matmul=True,
     mxint8_kv_cache=False,
     aic_enable_depth_first=True,
-    # prefill_only=True,
-    # enable_chunking=True,
+    prefill_only=True,
+    enable_chunking=True,
     # convert_to_fp16=False,
     # skip_vision=True,
     mos=1,
@@ -67,8 +62,6 @@ inputs = processor.apply_chat_template(
     return_dict=True,
     return_tensors="pt",
 )
-
-# inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
 
 inputs.pop("mm_token_type_ids")
 streamer = TextStreamer(tokenizer)
