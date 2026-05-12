@@ -42,7 +42,6 @@ from QEfficient.utils import (
     hash_dict_params,
     load_json,
     require_value,
-    to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
 
@@ -670,9 +669,15 @@ class QEFFBaseModel(ABC):
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
-            specializations_data = {
-                "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
-            }
+            # Strip internal _graph_name tags and write flat format for qaic-compile.
+            # Named format ({"name": ..., "symbols": {...}}) is only required for the
+            # QNN path (already branched off above).  The qaic-compile binary and its
+            # MDP (multi-device partition) firmware support only the flat format:
+            #   {"batch_size": "4", "seq_len": "5", ...}
+            # Using named format for MDP QPCs causes a RuntimeError at ExecObj
+            # creation time ("Failed to create ExecObj") on 4-device tensor-parallel.
+            flat_specs = [{k: v for k, v in spec.items() if k != "_graph_name"} for spec in specializations]
+            specializations_data = {"specializations": flat_specs}
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
 
