@@ -676,7 +676,8 @@ class QEFFBaseModel(ABC):
             #   {"batch_size": "4", "seq_len": "5", ...}
             # Using named format for MDP QPCs causes a RuntimeError at ExecObj
             # creation time ("Failed to create ExecObj") on 4-device tensor-parallel.
-            flat_specs = [{k: v for k, v in spec.items() if k != "_graph_name"} for spec in specializations]
+            # All values must be strings — qaic-compile rejects integer values.
+            flat_specs = [{k: str(v) for k, v in spec.items() if k != "_graph_name"} for spec in specializations]
             specializations_data = {"specializations": flat_specs}
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
