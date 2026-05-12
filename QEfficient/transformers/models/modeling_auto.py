@@ -3542,7 +3542,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if seq_len == prefill_seq_len and not self.continuous_batching:
             return None
         spec = {
-            "batch_size": full_batch_size if self.continuous_batching else batch_size,
             "seq_len": seq_len,
             "ctx_len": ctx_len,
             "num_logits_to_keep": seq_len,
@@ -3550,6 +3549,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if comp_ctx_lengths is not None:
             spec["comp_ctx_lengths"] = comp_ctx_lengths
         if self.continuous_batching:
+            spec["batch_size"] = full_batch_size
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
@@ -3730,7 +3730,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if self.is_tlm:
             _max_k = _decode_ks[-1] if _decode_ks else None
-            self.check_and_get_num_speculative_tokens(_max_k, prefill_seq_len)
+            validated_k = self.check_and_get_num_speculative_tokens(_max_k, prefill_seq_len)
+            if validated_k is not None and validated_k != _max_k:
+                # speculative_config in model.config overrides num_speculative_tokens
+                _decode_ks = [validated_k]
 
         if (
             self.model.qaic_config is not None

@@ -169,6 +169,9 @@ def find_candidate_pred_tokens(
         raise ValueError("Invalid max_ngram_size or num_pred_tokens")
 
     has_empty_tokens = False
+    best_result = np.full(num_pred_tokens, fill_tok, dtype=np.int64)
+    best_count = 0
+
     for ngram_size in range(max_ngram_size, 0, -1):
         # Extract the last n tokens as our search ngram
         ngram = input_ids[0, -ngram_size:]
@@ -182,18 +185,24 @@ def find_candidate_pred_tokens(
         # Get the indices of matches
         match_indices = np.where(matches)[0]
 
-        # Iterate through match indices to find a valid continuation
+        # Iterate through match indices to find the longest available continuation
         for idx in match_indices:
             start_idx = idx + ngram_size
-            end_idx = start_idx + num_pred_tokens
 
-            # Ensure we don't go beyond the length of input_ids and avoid self-match
-            if end_idx <= input_length and start_idx < input_length - ngram_size:
-                return input_ids[0, start_idx:end_idx], has_empty_tokens
+            # Avoid self-match
+            if start_idx >= input_length - ngram_size:
+                continue
 
-    # If no match is found, return invalid array
-    has_empty_tokens = True
-    return np.full(num_pred_tokens, fill_tok, dtype=np.int64), has_empty_tokens
+            available = min(input_length - start_idx, num_pred_tokens)
+            if available > best_count:
+                best_result = np.full(num_pred_tokens, fill_tok, dtype=np.int64)
+                best_result[:available] = input_ids[0, start_idx : start_idx + available]
+                best_count = available
+                if best_count == num_pred_tokens:
+                    return best_result, False  # full match found
+
+    # has_empty_tokens is True only when zero proposals were found
+    return best_result, (best_count == 0)
 
 
 def _select_k(actual_proposals: np.ndarray, decode_ks: List[int]) -> int:
@@ -366,18 +375,23 @@ def pld_spec_decode_inference(
                 num_pred_tokens=max_k,
             )
             empty_indices[bi] = has_empty_tokens
-            # prepare target model inputs
+            # prepare target model inputs — always write spec_tokens (fill_tok for empty slots)
+            tlm_precode_inputs["input_ids"][bi, 1:] = spec_tokens
             if has_empty_tokens:
                 # avoid read/write of KV$ for meaningless tokens
                 tlm_precode_inputs["position_ids"][bi, 1:] = -1
             else:
-                tlm_precode_inputs["input_ids"][bi, 1:] = spec_tokens
+                # For partial matches: mask position_ids for unfilled proposal slots
+                fill_mask = spec_tokens == -1
+                if fill_mask.any():
+                    tlm_precode_inputs["position_ids"][bi, 1:][fill_mask] = -1
         draft_end = perf_counter() - draft_start
         decode_draft_time += draft_end
         # run precode on TLM to score the proposed tokens
         target_start = perf_counter()
-        # Pick the smallest K specialization that covers the actual proposal count
-        actual_proposals = np.where(empty_indices, 0, max_k)
+        # Count actual proposal tokens per batch item (fill_tok=-1 marks unfilled positions)
+        actual_proposals = (tlm_precode_inputs["input_ids"][:, 1:] != -1).sum(axis=1).astype(np.int64)
+        actual_proposals[~valid_batch_indices] = 0
         selected_k = _select_k(actual_proposals[valid_batch_indices], decode_ks)
         if selected_k == max_k:
             tlm_outputs = target_model_session.run(tlm_precode_inputs)
