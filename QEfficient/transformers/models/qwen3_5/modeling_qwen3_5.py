@@ -5,9 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 
+<<<<<<< HEAD
 import math
 from typing import List, Optional, Tuple, Type, Union
+=======
+>>>>>>> 253c6544 (Made changes to modeling_qwen3.py to make input changes dynamic( needed to export and compile Qwen-3.6 series).)
 import math
+from typing import List, Optional, Tuple, Type, Union
+
 import torch
 import torch.nn.functional as F
 from torch import nn
