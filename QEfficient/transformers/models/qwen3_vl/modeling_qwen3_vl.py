@@ -857,10 +857,14 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros(
+            (inputs_shapes["pixel_values"]), dtype=self.model.config.torch_dtype
+        )
         vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros(
+            (inputs_shapes["vision_embeds"]), dtype=self.model.config.torch_dtype
+        )
         lang_inputs["position_ids"] = (
             (
                 torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
@@ -871,7 +875,9 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             .repeat(4, 1, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
-        lang_inputs["deepstack_features"] = torch.zeros((inputs_shapes["deepstack_features"]), dtype=torch.float32)
+        lang_inputs["deepstack_features"] = torch.zeros(
+            (inputs_shapes["deepstack_features"]), dtype=self.model.config.torch_dtype
+        )
         # Add data for KV
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -886,7 +892,9 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(
+                    torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                )
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
