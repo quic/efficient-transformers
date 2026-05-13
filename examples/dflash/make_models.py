@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 """
 Build and compile TLM + DLM QPC packages for DFlash speculative decoding.
 
@@ -41,7 +48,7 @@ COMPILE_KWARGS = dict(
     mxint8_kv_cache=True,
     num_devices=4,
     mos=1,
-    prefill_only=True,
+    
 )
 
 TLM_NUM_CORES = 8
@@ -72,8 +79,9 @@ def build_tlm():
 
     tlm_qeff = QEFFAutoModelForCausalLM(base_model, qaic_config={"target_layer_ids": tlm_target_ids})
     tlm_qpc_path = tlm_qeff.compile(
-        prefill_seq_len=block_size,
+        prefill_seq_len=128,
         num_cores=TLM_NUM_CORES,
+        dflash_block_size=block_size,
         **COMPILE_KWARGS,
     )
     print(f"tlm_qpc_path: {tlm_qpc_path}")
@@ -96,7 +104,9 @@ def build_dlm():
     dlm_qpc_path = dlm_qeff.compile(
         prefill_seq_len=block_size,
         num_cores=DLM_NUM_CORES,
+        prefill_only=True,
         **COMPILE_KWARGS,
+        
     )
     print(f"dlm_qpc_path: {dlm_qpc_path}")
     return dlm_qpc_path
