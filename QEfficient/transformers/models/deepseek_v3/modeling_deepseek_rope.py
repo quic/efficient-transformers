@@ -115,16 +115,6 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if self.max_seq_len_cached is None or seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
-        )
-
 
 class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
     def __init__(
@@ -183,7 +173,7 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
 
 
 # Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
-def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def orig_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -204,8 +194,6 @@ def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
     b, h, s, d = q.shape
     q = q.view(b, h, s, d // 2, 2).transpose(4, 3).reshape(b, h, s, d)
@@ -271,6 +259,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -292,8 +282,7 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             kva = compressed_kvs.update_ckv(kva, self.layer_idx, cache_kwargs)
 
-        cos, sin = self.rotary_emb(kva, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
@@ -338,6 +327,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -359,8 +350,7 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             compressed_kvs.write_only_ckv(kva, self.layer_idx, cache_kwargs)
 
-        cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         if compressed_kvs is not None:
             compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
@@ -420,6 +410,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -451,8 +443,7 @@ class QEffDeepseekV3Attention(nn.Module):
             absorption = False
 
         # ---- Rotary ----
-        cos, sin = self.rotary_emb(q_pe, seq_len=32 * 1024)  # Doesn't need q_pe as head_dim is initialized
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
@@ -539,6 +530,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -556,6 +549,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         elif getattr(blocking_config, "mode", None) == "kv":
@@ -571,6 +566,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         else:
@@ -586,6 +583,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
 
@@ -600,6 +599,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -627,8 +628,7 @@ class QEffDeepseekV3Attention(nn.Module):
         k_nope = kv[:, :, :, : self.qk_nope_head_dim]
         value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         query_states = torch.cat((q_nope, q_pe), -1)
         k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
@@ -636,7 +636,7 @@ class QEffDeepseekV3Attention(nn.Module):
         window_cache_layer_idx = self.layer_idx - getattr(QEffDeepseekV3Model, "_start", 0)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {"sin": sin_cached, "cos": cos_cached, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(
                 key_states, value_states, window_cache_layer_idx, cache_kwargs
             )
@@ -668,6 +668,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -698,8 +700,7 @@ class QEffDeepseekV3Attention(nn.Module):
         k_nope = kv[:, :, :, : self.qk_nope_head_dim]
         value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         query_states = torch.cat((q_nope, q_pe), -1)
         k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
@@ -736,6 +737,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -750,6 +753,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 output_attentions,
                 use_cache,
                 cache_position,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         else:
@@ -763,11 +768,13 @@ class QEffDeepseekV3Attention(nn.Module):
                 output_attentions,
                 use_cache,
                 cache_position,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
 
 
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "4"))
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
 EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 
 
@@ -1242,7 +1249,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         routing_weight: torch.Tensor,
         expert_out: torch.Tensor,
         packed_chunk_size: int,
-        num_q_ffn_blocks: Optional[int] = None,
     ) -> torch.Tensor:
         """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
 
@@ -1261,26 +1267,13 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         batch_size, seq_len = T2Ei.shape
         packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
-        if num_q_ffn_blocks is not None:
-            assert seq_len % num_q_ffn_blocks == 0, "Something went wrong"
-            packed_chunk_size = seq_len // num_q_ffn_blocks
-        else:
-            num_q_ffn_blocks = seq_len // packed_chunk_size
-
         matched_idx = _build_matched_idx_from_cumsum(T2Ei)
         valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
         row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
         rw_expanded = routing_weight.unsqueeze(-1)
-
-        for chunk_idx in range(num_q_ffn_blocks):
-            print("executing chunk", chunk_idx)
-            packed_start = chunk_idx * packed_chunk_size
-            if chunk_idx == num_q_ffn_blocks - 1:
-                packed_stop = seq_len
-            else:
-                packed_stop = packed_start + packed_chunk_size
-
+        for packed_start in range(0, seq_len, packed_chunk_size):
+            packed_stop = packed_start + packed_chunk_size
             chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
             x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
@@ -1323,9 +1316,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         return expert_out
 
-    def _forward_expert_blocked(
-        self, x: torch.Tensor, routing_weights: torch.Tensor, num_q_ffn_blocks: Optional[int] = None
-    ) -> torch.Tensor:
+    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
         if len(self.experts) % num_nsp != 0:
@@ -1337,68 +1328,19 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         expert_out = x.new_zeros((num_nsp, T, H))
 
-        local_gate_qweight = (
-            self.all_gate_qweight.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // 2)
-            .transpose(0, 1)
-            .contiguous()
-        )
-        local_gate_scales = (
-            self.all_gate_scales.view(
-                local_experts, num_nsp, self.out_features_gate, self.in_features_gate // self.group_size
-            )
-            .transpose(0, 1)
-            .contiguous()
-        )
-        local_gate_qzeros = (
-            self.all_gate_qzeros.view(
-                local_experts, num_nsp, self.out_features_gate, self.in_features_gate // (self.group_size * 2)
-            )
-            .transpose(0, 1)
-            .contiguous()
-        )
+        local_gate_qweight = self.all_gate_qweight.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // 2).transpose(0, 1).contiguous()
+        local_gate_scales = self.all_gate_scales.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // self.group_size).transpose(0, 1).contiguous()
+        local_gate_qzeros = self.all_gate_qzeros.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // (self.group_size * 2)).transpose(0, 1).contiguous()
 
-        local_up_qweight = (
-            self.all_up_qweight.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // 2)
-            .transpose(0, 1)
-            .contiguous()
-        )
-        local_up_scales = (
-            self.all_up_scales.view(
-                local_experts, num_nsp, self.out_features_up, self.in_features_up // self.group_size
-            )
-            .transpose(0, 1)
-            .contiguous()
-        )
-        local_up_qzeros = (
-            self.all_up_qzeros.view(
-                local_experts, num_nsp, self.out_features_up, self.in_features_up // (self.group_size * 2)
-            )
-            .transpose(0, 1)
-            .contiguous()
-        )
+        local_up_qweight = self.all_up_qweight.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // 2).transpose(0, 1).contiguous()
+        local_up_scales = self.all_up_scales.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // self.group_size).transpose(0, 1).contiguous()
+        local_up_qzeros = self.all_up_qzeros.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // (self.group_size * 2)).transpose(0, 1).contiguous()
 
-        local_down_qweight = (
-            self.all_down_qweight.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // 2)
-            .transpose(0, 1)
-            .contiguous()
-        )
-        local_down_scales = (
-            self.all_down_scales.view(
-                local_experts, num_nsp, self.out_features_down, self.in_features_down // self.group_size
-            )
-            .transpose(0, 1)
-            .contiguous()
-        )
-        local_down_qzeros = (
-            self.all_down_qzeros.view(
-                local_experts, num_nsp, self.out_features_down, self.in_features_down // (self.group_size * 2)
-            )
-            .transpose(0, 1)
-            .contiguous()
-        )
+        local_down_qweight = self.all_down_qweight.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // 2).transpose(0, 1).contiguous()
+        local_down_scales = self.all_down_scales.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // self.group_size).transpose(0, 1).contiguous()
+        local_down_qzeros = self.all_down_qzeros.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // (self.group_size * 2)).transpose(0, 1).contiguous()
 
         for slot in range(local_experts):
-            print(f"executing slot {slot}")
             routing_weight = rw[:, slot, :]
             T2Ei = routing_weight > 0
             expert_out = self._cumsum_scatter_gather_update_expert_blocked(
@@ -1416,13 +1358,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 routing_weight=routing_weight,
                 expert_out=expert_out,
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
-                num_q_ffn_blocks=num_q_ffn_blocks,
             )
         return expert_out.sum(dim=0)
 
-    def forward(
-        self, hidden_states: torch.Tensor, num_q_ffn_blocks: Optional[int] = None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         topk_idx, topk_weight, _, _ = self.gate(hidden_states)
         B, S, H = hidden_states.shape
         T = B * S
@@ -1432,10 +1371,8 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         routing_weights.scatter_(1, topk_idx, topk_weight)
 
         if len(self.experts) % EXPERT_BLOCKING_NUM_NSP == 0:
-            expert_out = self._forward_expert_blocked(
-                x=x, routing_weights=routing_weights, num_q_ffn_blocks=num_q_ffn_blocks
-            ) + self.shared_experts(hidden_states)
-            return expert_out.view(B, S, H)
+            expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
+            return expert_out.view(B, S, H) + self.shared_experts(hidden_states)
 
         final_hidden_states = x.new_zeros((T, H))
         for expert_idx in range(self.config.n_routed_experts):
@@ -1467,12 +1404,12 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
-        num_q_ffn_blocks: Optional[int] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         orig_hidden_states = self.input_layernorm(hidden_states)
-        # setattr(self.mlp, "num_q_ffn_blocks", num_q_ffn_blocks)
         if mla_absorption is not None:
             cache_compressed = mla_absorption.get("cache_compressed", False)
         else:
@@ -1490,6 +1427,8 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 mla_absorption=mla_absorption,
+                sin_cached=sin_cached,
+                cos_cached=cos_cached,
                 **kwargs,
             )
         else:
@@ -1503,17 +1442,15 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=sin_cached,
+                cos_cached=cos_cached,
                 **kwargs,
             )
         hidden_states = residual + hidden_states
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-
-        if num_q_ffn_blocks is not None and self.mlp.__class__.__name__ == "DeepseekV3MoE":
-            self.mlp(hidden_states, num_q_ffn_blocks)
-        else:
-            hidden_states = self.mlp(hidden_states)
+        hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -1555,6 +1492,8 @@ class QEffDeepseekV3Model(nn.Module):
             base=self.config.rope_theta,
             **kwargs,
         )
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
 
     def forward(
         self,
@@ -1622,8 +1561,9 @@ class QEffDeepseekV3Model(nn.Module):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
-
-        num_q_ffn_blocks = getattr(self, "num_q_blocks_ffn", None)
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
+        
         for layer_idx, decoder_layer in enumerate(self.layers):
             if layer_idx < start or layer_idx >= end:
                 continue
@@ -1644,7 +1584,8 @@ class QEffDeepseekV3Model(nn.Module):
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
                 mla_absorption=mla_absorption,
-                num_q_ffn_blocks=num_q_ffn_blocks,
+                sin_cached=sin,
+                cos_cached=cos,
                 **kwargs,
             )
 

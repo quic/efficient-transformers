@@ -22,6 +22,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 # parameters to be configured
 prompt = "Once upon a time,"
+num_hidden_layers = 2
 TS = 1
 mla_absorption = {"cache_compressed": True, "absorption": False, "online": False}
 # qaic_config = None # Full PKV Cache
@@ -33,7 +34,7 @@ qaic_config = {
     "mla_absorption": mla_absorption,
     "enable_blocking": True,
     "blocking_mode": "kv",
-    "num_kv_heads_repeat": 1,
+    "num_kv_heads_repeat": TS,
 }  # for KV blocking with kv head replication
 # qaic_config = { "mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "h", "num_kv_heads_repeat": TS}
 # for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
