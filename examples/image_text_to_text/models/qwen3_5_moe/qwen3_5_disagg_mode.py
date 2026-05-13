@@ -38,7 +38,7 @@ BS = 1
 
 generation_len = 128
 
-skip_vision = True
+skip_vision = False
 
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
@@ -193,7 +193,6 @@ lang_inputs["image_idx"] = np.array([[0]])
 
 if not skip_vision:
     lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
-    lang_inputs["deepstack_features"] = vision_outputs["deepstack_features"]
 
 # RUN prefill
 lang_start = perf_counter()
