@@ -143,22 +143,39 @@ class Results:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Subprocess wrapper — run, capture, tee output, return (rc, combined output).
+# Subprocess wrapper — stream output line-by-line so the user sees progress
+# during long runs. Returns (rc, combined output, duration_s).
 # ─────────────────────────────────────────────────────────────────────────────
 def run_cmd(cmd, env=None, timeout=None):
     log(f"$ {' '.join(str(c) for c in cmd)}")
     t0 = time.time()
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         [str(c) for c in cmd],
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
-        timeout=timeout,
+        bufsize=1,
     )
+    chunks = []
+    last_heartbeat = t0
+    try:
+        for line in proc.stdout:
+            chunks.append(line)
+            sys.stdout.write(line)
+            now = time.time()
+            if now - last_heartbeat > 60:
+                log(f"[heartbeat] still running ({int(now - t0)}s elapsed)")
+                last_heartbeat = now
+            if timeout is not None and (now - t0) > timeout:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd, timeout)
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.kill()
+        raise
     dt = time.time() - t0
-    out = proc.stdout + proc.stderr
-    print(out, end="" if out.endswith("\n") else "\n", flush=True)
-    return proc.returncode, out, dt
+    return proc.returncode, "".join(chunks), dt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -224,7 +241,7 @@ def phase_static(args, results):
 # Phase 2/3 — compile + dataset run via benchmark.py
 # Returns (tlm_qpc, dlm_qpc, acceptance_rate_avg) on success, or None.
 # ─────────────────────────────────────────────────────────────────────────────
-def run_benchmark(args, model, dataset, results, tlm_qpc=None, dlm_qpc=None):
+def run_benchmark(args, model, dataset, results, tlm_qpc=None, dlm_qpc=None, phase="dataset"):
     cmd = [
         sys.executable,
         str(THIS_DIR / "benchmark.py"),
@@ -258,11 +275,11 @@ def run_benchmark(args, model, dataset, results, tlm_qpc=None, dlm_qpc=None):
     if dlm_qpc:
         cmd += ["--dlm_qpc", dlm_qpc]
 
-    label = f"{model}.{dataset}" + (".reuse" if (tlm_qpc and dlm_qpc) else "")
+    label = f"{phase}.{model}.{dataset}"
     rc, out, dt = run_cmd(cmd, timeout=args.dataset_timeout_s)
 
     if rc != 0:
-        results.add(f"benchmark.{label}", "FAIL", f"rc={rc}", duration_s=dt)
+        results.add(label, "FAIL", f"rc={rc}", duration_s=dt)
         return None
 
     # capture qpc paths if compile happened
@@ -274,7 +291,7 @@ def run_benchmark(args, model, dataset, results, tlm_qpc=None, dlm_qpc=None):
     accept = ACCEPT_RE.search(out)
     if accept is None:
         results.add(
-            f"benchmark.{label}",
+            label,
             "FAIL",
             "no acceptance-rate line in output",
             duration_s=dt,
@@ -285,7 +302,7 @@ def run_benchmark(args, model, dataset, results, tlm_qpc=None, dlm_qpc=None):
     expected = REFERENCE_RATES.get(model, {}).get(dataset)
     if expected is None:
         results.add(
-            f"benchmark.{label}",
+            label,
             "PASS",
             f"avg={avg:.2f} (no reference)",
             duration_s=dt,
@@ -294,7 +311,7 @@ def run_benchmark(args, model, dataset, results, tlm_qpc=None, dlm_qpc=None):
         delta_pct = abs(avg - expected) / expected * 100
         ok = delta_pct <= args.tolerance_pct
         results.add(
-            f"benchmark.{label}",
+            label,
             "PASS" if ok else "FAIL",
             f"avg={avg:.2f} expected={expected:.2f} Δ={delta_pct:.1f}% tol={args.tolerance_pct:.1f}%",
             duration_s=dt,
@@ -412,7 +429,7 @@ def main():
             tlm_qpc = prebuilt.get(model, {}).get("tlm")
             dlm_qpc = prebuilt.get(model, {}).get("dlm")
             for dataset in args.datasets:
-                res = run_benchmark(args, model, dataset, results, tlm_qpc, dlm_qpc)
+                res = run_benchmark(args, model, dataset, results, tlm_qpc, dlm_qpc, phase="dataset")
                 if res is None:
                     continue
                 tlm_qpc, dlm_qpc, _ = res  # reuse compiled qpcs across datasets
@@ -426,7 +443,7 @@ def main():
             if not (tlm_qpc and dlm_qpc):
                 results.add(f"reuse.{model}", "SKIP", "no qpcs available")
                 continue
-            run_benchmark(args, model, args.datasets[0], results, tlm_qpc, dlm_qpc)
+            run_benchmark(args, model, args.datasets[0], results, tlm_qpc, dlm_qpc, phase="reuse")
 
     if "prompt" in enabled:
         section("Phase 5 / single-prompt (basic_inference.py)")
