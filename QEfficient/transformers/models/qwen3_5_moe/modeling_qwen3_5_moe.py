@@ -1977,7 +1977,7 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
             shared_expert_output = self.shared_expert(x)
             shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
             expert_output = experts_out + shared_expert_output
-            return experts_out.view(B, S, H)
+            return expert_output.view(B, S, H)
 
         experts_out = torch.zeros_like(x, dtype=x.dtype)
         # breakpoint()
