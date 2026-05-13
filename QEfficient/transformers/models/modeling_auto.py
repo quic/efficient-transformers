@@ -4020,6 +4020,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 prefill_only=prefill_only,
             )
 
+        if prefill_only:
+            assert prefill_seq_len is not None, "prefill_seq_len must be provided when prefill_only is True"
+            num_q_blocks_ffn = prefill_seq_len // constants.EXPERT_BLOCKING_PACKED_CHUNK_SIZE
+            num_q_blocks_ffn = num_q_blocks_ffn if num_q_blocks_ffn > 0 else 1
+            setattr(self.model.model, "num_q_blocks_ffn", num_q_blocks_ffn)
+
+        return self._export(
+            example_inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            offload_pt_weights=kwargs.get("offload_pt_weights", True),
+            prefill_only=prefill_only,
+        )
+
     def build_prefill_specialization(
         self,
         prefill_seq_len: int = 32,

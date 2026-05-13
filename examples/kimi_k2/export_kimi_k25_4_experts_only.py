@@ -23,7 +23,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 # parameters to be configured
 prompt = "Once upon a time,"
 num_hidden_layers = 2
-TS = 4
+TS = 1
 mla_absorption = {"cache_compressed": True, "absorption": False, "online": False}
 # qaic_config = None # Full PKV Cache
 # qaic_config = {"enable_blocking": True, "blocking_mode": "h"} # Full PKV Cache with Head Blocking
@@ -220,7 +220,7 @@ model, tokenizer = load_text_only_kimi(
 
 qeff_model = QEFFAutoModelForCausalLM(model, qaic_config=qaic_config)
 
-prefill_seq_len = 1
+prefill_seq_len = 32
 ctx_len = 1024
 
 qpc_path = qeff_model.compile(
@@ -231,6 +231,7 @@ qpc_path = qeff_model.compile(
     num_devices=TS,
     num_cores=16,
     qaic_config=qaic_config,
+    prefill_only=True
 )
 
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)
