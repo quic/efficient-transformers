@@ -548,3 +548,4 @@ def test_select_k(actual_proposals, decode_ks, expected_k):
 
     result = _select_k(actual_proposals, decode_ks)
     assert result == expected_k, f"Expected {expected_k}, got {result} for proposals={actual_proposals}, ks={decode_ks}"
+
