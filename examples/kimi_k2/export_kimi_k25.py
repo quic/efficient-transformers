@@ -135,7 +135,8 @@ qpc_path = qeff_model.compile(
     num_devices=TS,
     num_cores=16,
     qaic_config=qaic_config,
-    prefill_only=True
+    prefill_only=True,
+    use_onnx_subfunctions=True,
 )
 
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)
