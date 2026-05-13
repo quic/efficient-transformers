@@ -3399,7 +3399,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["comp_ctx_lengths"] = comp_ctx_lengths
 
         spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
-        spec["seq_len"]=dflash_block_size if self.dflash_tlm else spec["prefill_seq_len"]
+        if self.dflash_tlm:
+            spec["seq_len"] = dflash_block_size
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
