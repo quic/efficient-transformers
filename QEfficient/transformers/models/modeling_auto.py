@@ -47,8 +47,8 @@ from QEfficient.transformers.modeling_utils import (
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
-    DFlashTransform,
     DFlashTLMTransform,
+    DFlashTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
@@ -3421,7 +3421,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         batch_size: int = 1,
         full_batch_size: Optional[int] = None,
         kv_cache_batch_size: Optional[int] = None,
-        dflash_block_size:Optional[int] = None,
+        dflash_block_size: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
@@ -3432,7 +3432,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        
         **compiler_options,
     ) -> str:
         """

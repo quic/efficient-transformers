@@ -46,26 +46,26 @@ sys.path.insert(0, THIS_DIR)
 # supplied via --tlm_hf_path on the command line.
 # ─────────────────────────────────────────────────────────────────────────────
 MODEL_MAP = {
-    "gemma-4-31B-it":          (None,                                "z-lab/gemma-4-31B-it-DFlash"),
-    "gemma-4-26B-A4B-it":      (None,                                "z-lab/gemma-4-26B-A4B-it-DFlash"),
-    "MiniMax-M2.7":            (None,                                "z-lab/MiniMax-M2.7-DFlash"),
-    "MiniMax-M2.5":            (None,                                "z-lab/MiniMax-M2.5-DFlash"),
-    "Kimi-K2.6":               (None,                                "z-lab/Kimi-K2.6-DFlash"),
-    "Kimi-K2.5":               (None,                                "z-lab/Kimi-K2.5-DFlash"),
-    "Qwen3.6-27B":             (None,                                "z-lab/Qwen3.6-27B-DFlash"),
-    "Qwen3.6-35B-A3B":         (None,                                "z-lab/Qwen3.6-35B-A3B-DFlash"),
-    "Qwen3.5-4B":              (None,                                "z-lab/Qwen3.5-4B-DFlash"),
-    "Qwen3.5-9B":              (None,                                "z-lab/Qwen3.5-9B-DFlash"),
-    "Qwen3.5-27B":             (None,                                "z-lab/Qwen3.5-27B-DFlash"),
-    "Qwen3.5-35B-A3B":         (None,                                "z-lab/Qwen3.5-35B-A3B-DFlash"),
-    "Qwen3.5-122B-A10B":       (None,                                "z-lab/Qwen3.5-122B-A10B-DFlash"),
-    "gpt-oss-20b":             ("openai/gpt-oss-20b",                "z-lab/gpt-oss-20b-DFlash"),
-    "gpt-oss-120b":            ("openai/gpt-oss-120b",               "z-lab/gpt-oss-120b-DFlash"),
-    "Qwen3-Coder-Next":        (None,                                "z-lab/Qwen3-Coder-Next-DFlash"),
-    "Qwen3-4B":                ("Qwen/Qwen3-4B",                     "z-lab/Qwen3-4B-DFlash-b16"),
-    "Qwen3-8B":                ("Qwen/Qwen3-8B",                     "z-lab/Qwen3-8B-DFlash-b16"),
-    "Qwen3-Coder-30B-A3B":     ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "z-lab/Qwen3-Coder-30B-A3B-DFlash"),
-    "Llama-3.1-8B-Instruct":   ("meta-llama/Llama-3.1-8B-Instruct",  "z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat"),
+    "gemma-4-31B-it": (None, "z-lab/gemma-4-31B-it-DFlash"),
+    "gemma-4-26B-A4B-it": (None, "z-lab/gemma-4-26B-A4B-it-DFlash"),
+    "MiniMax-M2.7": (None, "z-lab/MiniMax-M2.7-DFlash"),
+    "MiniMax-M2.5": (None, "z-lab/MiniMax-M2.5-DFlash"),
+    "Kimi-K2.6": (None, "z-lab/Kimi-K2.6-DFlash"),
+    "Kimi-K2.5": (None, "z-lab/Kimi-K2.5-DFlash"),
+    "Qwen3.6-27B": (None, "z-lab/Qwen3.6-27B-DFlash"),
+    "Qwen3.6-35B-A3B": (None, "z-lab/Qwen3.6-35B-A3B-DFlash"),
+    "Qwen3.5-4B": (None, "z-lab/Qwen3.5-4B-DFlash"),
+    "Qwen3.5-9B": (None, "z-lab/Qwen3.5-9B-DFlash"),
+    "Qwen3.5-27B": (None, "z-lab/Qwen3.5-27B-DFlash"),
+    "Qwen3.5-35B-A3B": (None, "z-lab/Qwen3.5-35B-A3B-DFlash"),
+    "Qwen3.5-122B-A10B": (None, "z-lab/Qwen3.5-122B-A10B-DFlash"),
+    "gpt-oss-20b": ("openai/gpt-oss-20b", "z-lab/gpt-oss-20b-DFlash"),
+    "gpt-oss-120b": ("openai/gpt-oss-120b", "z-lab/gpt-oss-120b-DFlash"),
+    "Qwen3-Coder-Next": (None, "z-lab/Qwen3-Coder-Next-DFlash"),
+    "Qwen3-4B": ("Qwen/Qwen3-4B", "z-lab/Qwen3-4B-DFlash-b16"),
+    "Qwen3-8B": ("Qwen/Qwen3-8B", "z-lab/Qwen3-8B-DFlash-b16"),
+    "Qwen3-Coder-30B-A3B": ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "z-lab/Qwen3-Coder-30B-A3B-DFlash"),
+    "Llama-3.1-8B-Instruct": ("meta-llama/Llama-3.1-8B-Instruct", "z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat"),
 }
 
 
@@ -90,8 +90,7 @@ def resolve_model_name(name):
     canonical = MODEL_ALIASES.get(name.lower())
     if canonical is None:
         raise argparse.ArgumentTypeError(
-            f"unknown model_name '{name}'. Supported: "
-            + ", ".join(sorted(MODEL_MAP.keys()))
+            f"unknown model_name '{name}'. Supported: " + ", ".join(sorted(MODEL_MAP.keys()))
         )
     return canonical
 
@@ -101,12 +100,15 @@ def resolve_model_name(name):
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model_name", required=True, type=resolve_model_name,
-                   help="TLM name — either the short key (e.g. 'Qwen3-4B') or "
-                        "the full HF repo path (e.g. 'Qwen/Qwen3-4B'). "
-                        f"Supported: {', '.join(MODEL_MAP.keys())}")
-    p.add_argument("--tlm_hf_path", default=None,
-                   help="Override TLM HF repo (required if mapping has None).")
+    p.add_argument(
+        "--model_name",
+        required=True,
+        type=resolve_model_name,
+        help="TLM name — either the short key (e.g. 'Qwen3-4B') or "
+        "the full HF repo path (e.g. 'Qwen/Qwen3-4B'). "
+        f"Supported: {', '.join(MODEL_MAP.keys())}",
+    )
+    p.add_argument("--tlm_hf_path", default=None, help="Override TLM HF repo (required if mapping has None).")
 
     # Optional pre-built QPCs (skip compilation)
     p.add_argument("--tlm_qpc", default=None, help="Pre-compiled TLM qpc dir (skip TLM compile).")
@@ -119,22 +121,20 @@ def parse_args():
     p.add_argument("--dlm_cores", type=int, default=8)
 
     # Compile / run knobs
-    p.add_argument("--ctx_len",         type=int, default=4096)
+    p.add_argument("--ctx_len", type=int, default=4096)
     p.add_argument("--prefill_seq_len", type=int, default=128)
-    p.add_argument("--generation_len",  type=int, default=1024)
-    p.add_argument("--iteration",       type=int, default=300)
+    p.add_argument("--generation_len", type=int, default=1024)
+    p.add_argument("--iteration", type=int, default=300)
 
     # Dataset / output
     p.add_argument("--dataset", default="humaneval", choices=["humaneval", "gsm8k", "math500"])
     p.add_argument("--num_samples", type=int, default=0, help="0 = all samples")
-    p.add_argument("--output_dir",  default=None, help="Default: ./results-<model_name>")
-    p.add_argument("--noise_embed_path", default=None,
-                   help="Defaults to noise_embedding/<model_name>_noise_embeds.npy")
+    p.add_argument("--output_dir", default=None, help="Default: ./results-<model_name>")
+    p.add_argument("--noise_embed_path", default=None, help="Defaults to noise_embedding/<model_name>_noise_embeds.npy")
     p.add_argument("--hf_token", default=os.environ.get("HF_TOKEN"))
 
     # Internal modes used by self-spawned compile subprocesses
-    p.add_argument("--_build", choices=["tlm", "dlm"], default=None,
-                   help=argparse.SUPPRESS)
+    p.add_argument("--_build", choices=["tlm", "dlm"], default=None, help=argparse.SUPPRESS)
     return p.parse_args()
 
 
@@ -143,6 +143,7 @@ def parse_args():
 # ─────────────────────────────────────────────────────────────────────────────
 def _read_dlm_meta(dlm_repo, hf_token):
     from utils import load_dflash_checkpoint
+
     state_dict, cfg = load_dflash_checkpoint(dlm_repo)
     target_layer_ids = cfg.get("dflash_config", {}).get("target_layer_ids", [])
     block_size = cfg.get("block_size", None)
@@ -152,8 +153,9 @@ def _read_dlm_meta(dlm_repo, hf_token):
 def _build_tlm(args, tlm_repo, dlm_repo):
     import torch
     from transformers import AutoModelForCausalLM
-    from QEfficient import QEFFAutoModelForCausalLM
     from utils import build_tlm_model
+
+    from QEfficient import QEFFAutoModelForCausalLM
 
     state_dict, target_layer_ids, block_size = _read_dlm_meta(dlm_repo, args.hf_token)
     tlm_target_ids = [i + 1 for i in target_layer_ids]
@@ -180,8 +182,9 @@ def _build_tlm(args, tlm_repo, dlm_repo):
 def _build_dlm(args, tlm_repo, dlm_repo):
     import torch
     from transformers import AutoModelForCausalLM
-    from QEfficient import QEFFAutoModelForCausalLM
     from utils import build_dlm_model, extract_lm_head
+
+    from QEfficient import QEFFAutoModelForCausalLM
 
     _, _, block_size = _read_dlm_meta(dlm_repo, args.hf_token)
 
@@ -233,9 +236,7 @@ def main():
     tlm_repo_default, dlm_repo = MODEL_MAP[args.model_name]
     tlm_repo = args.tlm_hf_path or tlm_repo_default
     if tlm_repo is None:
-        raise SystemExit(
-            f"No default TLM HF path for '{args.model_name}'. Pass --tlm_hf_path."
-        )
+        raise SystemExit(f"No default TLM HF path for '{args.model_name}'. Pass --tlm_hf_path.")
 
     # ── Sub-mode: this process exists only to compile one model ─────────────
     if args._build == "tlm":
@@ -247,9 +248,8 @@ def main():
 
     # ── Resolve / discover hidden_size + block_size from DLM config ────────
     import transformers
-    config = transformers.AutoConfig.from_pretrained(
-        dlm_repo, token=args.hf_token, trust_remote_code=True
-    )
+
+    config = transformers.AutoConfig.from_pretrained(dlm_repo, token=args.hf_token, trust_remote_code=True)
     hidden_size = config.hidden_size
     block_size = getattr(config, "block_size", None)
     print(f"DLM repo       : {dlm_repo}")
@@ -258,13 +258,20 @@ def main():
 
     # ── Resolve QPC paths (compile only the side that wasn't pre-supplied) ─
     forwarded = [
-        "--model_name", args.model_name,
-        "--ctx_len", str(args.ctx_len),
-        "--prefill_seq_len", str(args.prefill_seq_len),
-        "--tlm_cores", str(args.tlm_cores),
-        "--dlm_cores", str(args.dlm_cores),
-        "--tlm_devices", *[str(d) for d in args.tlm_devices],
-        "--dlm_devices", *[str(d) for d in args.dlm_devices],
+        "--model_name",
+        args.model_name,
+        "--ctx_len",
+        str(args.ctx_len),
+        "--prefill_seq_len",
+        str(args.prefill_seq_len),
+        "--tlm_cores",
+        str(args.tlm_cores),
+        "--dlm_cores",
+        str(args.dlm_cores),
+        "--tlm_devices",
+        *[str(d) for d in args.tlm_devices],
+        "--dlm_devices",
+        *[str(d) for d in args.dlm_devices],
     ]
     if args.tlm_hf_path:
         forwarded += ["--tlm_hf_path", args.tlm_hf_path]
@@ -290,29 +297,39 @@ def main():
         THIS_DIR, "noise_embedding", f"{args.model_name}_noise_embeds.npy"
     )
     if not os.path.exists(noise_embed):
-        raise SystemExit(
-            f"noise embedding not found: {noise_embed}\n"
-            f"Pass --noise_embed_path explicitly."
-        )
+        raise SystemExit(f"noise embedding not found: {noise_embed}\nPass --noise_embed_path explicitly.")
 
     output_dir = args.output_dir or os.path.join(THIS_DIR, f"results-{args.model_name}")
 
     # ── Run the existing SPD eval script ───────────────────────────────────
     eval_script = os.path.join(THIS_DIR, "dflash_spd_benchmark.py")
     cmd = [
-        sys.executable, eval_script,
-        "--dataset",          args.dataset,
-        "--tlm_qpc",          tlm_qpc,
-        "--dlm_qpc",          dlm_qpc,
-        "--tlm_model_name",   tlm_repo,
-        "--dlm_model_name",   dlm_repo,
-        "--noise_embed_path", noise_embed,
-        "--iteration",        str(args.iteration),
-        "--ctx_len",          str(args.ctx_len),
-        "--generation_len",   str(args.generation_len),
-        "--tlm_devices",      *[str(d) for d in args.tlm_devices],
-        "--dlm_devices",      *[str(d) for d in args.dlm_devices],
-        "--output_dir",       output_dir,
+        sys.executable,
+        eval_script,
+        "--dataset",
+        args.dataset,
+        "--tlm_qpc",
+        tlm_qpc,
+        "--dlm_qpc",
+        dlm_qpc,
+        "--tlm_model_name",
+        tlm_repo,
+        "--dlm_model_name",
+        dlm_repo,
+        "--noise_embed_path",
+        noise_embed,
+        "--iteration",
+        str(args.iteration),
+        "--ctx_len",
+        str(args.ctx_len),
+        "--generation_len",
+        str(args.generation_len),
+        "--tlm_devices",
+        *[str(d) for d in args.tlm_devices],
+        "--dlm_devices",
+        *[str(d) for d in args.dlm_devices],
+        "--output_dir",
+        output_dir,
     ]
     if args.hf_token:
         cmd += ["--hf_token", args.hf_token]

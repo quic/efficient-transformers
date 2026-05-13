@@ -29,14 +29,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
-from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-
-from dataclasses import dataclass
-
-import numpy as np
-
-
 
 
 def _create_mask(
@@ -59,34 +52,26 @@ def _create_mask(
     """
 
     device = position_ids.device
-    dtype = torch.bool
 
-    batch_size = position_ids.shape[0]          # should be 1
-    num_queries = position_ids.shape[1]   # = block_size (B)
+    num_queries = position_ids.shape[1]  # = block_size (B)
 
     # ---- Step 1: Create base KV validity mask ----
     # Shape: [target_length]
-    
-    kv_positions = torch.arange(
-        start_index,
-        start_index + target_length,
-        device=device
-    ) 
-    valid_kv_mask = kv_positions > (start_index + position_ids.max() )# [position_max is 32( input query podtion_ids), 0 to 31]
-    
-   
+
+    kv_positions = torch.arange(start_index, start_index + target_length, device=device)
+    valid_kv_mask = kv_positions > (
+        start_index + position_ids.max()
+    )  # [position_max is 32( input query podtion_ids), 0 to 31]
 
     # ---- Step 2: Expand to [num_queries, target_length] ----
-    attention_mask = valid_kv_mask.unsqueeze(0).expand(
-        num_queries,
-        target_length
-    )
+    attention_mask = valid_kv_mask.unsqueeze(0).expand(num_queries, target_length)
 
     # ---- Step 4: Add batch & head dimensions ----
     # Final shape: [1, 1, B, 3B]
     attention_mask = attention_mask.unsqueeze(0).unsqueeze(0)
 
     return attention_mask
+
 
 #  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
 class QEffQwen3RotaryEmbedding(Qwen3RotaryEmbedding):
@@ -108,12 +93,12 @@ class QEffQwen3RotaryEmbedding(Qwen3RotaryEmbedding):
         t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
 
         freqs = torch.outer(t, self.inv_freq)
-       
+
         emb = torch.cat((freqs, freqs), dim=-1)
-        #print_stats(emb, "RotaryEmbedding/emb")
+        # print_stats(emb, "RotaryEmbedding/emb")
         cos_cached = emb.cos().to(dtype)
         sin_cached = emb.sin().to(dtype)
-       
+
         self.register_buffer("cos_cached", cos_cached, persistent=False)
         self.register_buffer("sin_cached", sin_cached, persistent=False)
 
@@ -124,7 +109,7 @@ class QEffQwen3RotaryEmbedding(Qwen3RotaryEmbedding):
 
         cos_out = self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling
         sin_out = self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling
-       
+
         return (cos_out, sin_out)
 
 
@@ -165,17 +150,14 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
     q_len = q.size(-2)
-    
-    q_embed = (q * cos[...,: q_len, :]) + (rotate_half(q) * sin[..., : q_len, :])
+
+    q_embed = (q * cos[..., :q_len, :]) + (rotate_half(q) * sin[..., :q_len, :])
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
-def qeff_apply_rope_two_streams( q_noise, k_ctx, k_noise,
-    cos, sin,
-    pos_ctx, pos_noise,
-    unsqueeze_dim=1
-):
+
+def qeff_apply_rope_two_streams(q_noise, k_ctx, k_noise, cos, sin, pos_ctx, pos_noise, unsqueeze_dim=1):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
@@ -214,21 +196,19 @@ def qeff_apply_rope_two_streams( q_noise, k_ctx, k_noise,
     rotate_half_k_ctx = rotate_half(k_ctx)
 
     k_t_embed = k_ctx * cos_t + rotate_half_k_ctx * sin_t
-    
 
     # ---- NOISE ----
     cos_n = cos[pos_noise].unsqueeze(unsqueeze_dim)
     sin_n = sin[pos_noise].unsqueeze(unsqueeze_dim)
-   
+
     rotate_half_q_noise = rotate_half(q_noise)
     q_n_embed = q_noise * cos_n + rotate_half_q_noise * sin_n
 
     rotate_half_k_noise = rotate_half(k_noise)
-    
+
     k_n_embed = k_noise * cos_n + rotate_half_k_noise * sin_n
 
     return q_n_embed, k_t_embed, k_n_embed
-
 
 
 def eager_attention_forward(
@@ -241,10 +221,8 @@ def eager_attention_forward(
     **kwargs,
 ):
 
-
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
-
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
 
@@ -253,13 +231,10 @@ def eager_attention_forward(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
         )
 
-
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-
 
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
-
 
     return attn_output, attn_weights
 
@@ -279,8 +254,8 @@ class QEffQwen3Attention(Qwen3Attention):
         self,
         hidden_states: torch.Tensor,
         target_hidden: torch.Tensor,
-        position_ids_target:Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor]=None,
+        position_ids_target: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
@@ -288,8 +263,7 @@ class QEffQwen3Attention(Qwen3Attention):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        
-        
+
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         bsz, q_len = hidden_states.shape[:-1]
@@ -298,31 +272,28 @@ class QEffQwen3Attention(Qwen3Attention):
         kwargs.pop("output_attentions", None)
         kwargs.pop("return_dict", None)
         kwargs.pop("labels", None)
-        
+
         query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-      
+
         k_ctx = self.k_proj(target_hidden)
         k_noise = self.k_proj(hidden_states)
 
-
         v_ctx = self.v_proj(target_hidden)
         v_noise = self.v_proj(hidden_states)
-      
 
-        k_ctx=self.k_norm(k_ctx.view(bsz, ctx_len, -1, self.head_dim)).transpose(1, 2)
-        k_noise=self.k_norm(k_noise.view(bsz, q_len, -1, self.head_dim)).transpose(1, 2)
+        k_ctx = self.k_norm(k_ctx.view(bsz, ctx_len, -1, self.head_dim)).transpose(1, 2)
+        k_noise = self.k_norm(k_noise.view(bsz, q_len, -1, self.head_dim)).transpose(1, 2)
 
         v_ctx = (v_ctx.view(bsz, ctx_len, -1, self.head_dim)).transpose(1, 2)
-        v_noise =  (v_noise.view(bsz, q_len, -1, self.head_dim)).transpose(1, 2)
-
+        v_noise = (v_noise.view(bsz, q_len, -1, self.head_dim)).transpose(1, 2)
 
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
-       # Assuming position_id [77,78,79,80, 75,76,-1,-1] first 4 pos id of noise next four position_id for target
+        # Assuming position_id [77,78,79,80, 75,76,-1,-1] first 4 pos id of noise next four position_id for target
 
         cos, sin = self.rotary_emb(v_ctx, seq_len=kv_seq_len)
-        query_states, k_ctx, k_noise = qeff_apply_rope_two_streams( query_states, k_ctx, k_noise ,cos, sin,position_ids_target, position_ids)
-
-    
+        query_states, k_ctx, k_noise = qeff_apply_rope_two_streams(
+            query_states, k_ctx, k_noise, cos, sin, position_ids_target, position_ids
+        )
 
         if past_key_value is not None:
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids_target}
@@ -336,7 +307,6 @@ class QEffQwen3Attention(Qwen3Attention):
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(k_noise, v_noise, self.layer_idx, cache_kwargs)
 
-        
         attention_interface = eager_attention_forward
         attn_output, attn_weights = attention_interface(
             self,
@@ -349,9 +319,9 @@ class QEffQwen3Attention(Qwen3Attention):
         )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-      
+
         attn_output = self.o_proj(attn_output)
-    
+
         return attn_output, attn_weights
 
 
@@ -366,8 +336,8 @@ class QEffQwen3DecoderLayer(Qwen3DecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        target_hidden: torch.Tensor= None,
-        position_ids_target:Optional[torch.LongTensor] = None,
+        target_hidden: torch.Tensor = None,
+        position_ids_target: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
@@ -396,7 +366,7 @@ class QEffQwen3DecoderLayer(Qwen3DecoderLayer):
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
-        
+
         # Self Attention
         hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
@@ -418,7 +388,7 @@ class QEffQwen3DecoderLayer(Qwen3DecoderLayer):
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
-        
+
         return hidden_states
 
 
@@ -432,10 +402,10 @@ class QEffQwen3Model(Qwen3Model):
 
     def forward(
         self,
-        target_hidden: torch.Tensor =None,
+        target_hidden: torch.Tensor = None,
         noise_embeds: torch.FloatTensor = None,
-        position_ids_target:Optional[ torch.LongTensor] = None,
-        input_ids:Optional[ torch.LongTensor] = None,
+        position_ids_target: Optional[torch.LongTensor] = None,
+        input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
@@ -462,15 +432,15 @@ class QEffQwen3Model(Qwen3Model):
             return_legacy_cache = True
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
-       
-
-        if cache_position is None:####? 
+        if cache_position is None:  ####?
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + noise_embeds.shape[1], device=noise_embeds.device
             )
         if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)###? no need for this because we input it  ( where the tokens will be filled )
+            position_ids = cache_position.unsqueeze(
+                0
+            )  ###? no need for this because we input it  ( where the tokens will be filled )
 
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
         causal_mask = _create_mask(
@@ -478,7 +448,6 @@ class QEffQwen3Model(Qwen3Model):
         )
 
         hidden_states = noise_embeds
-       
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -501,7 +470,7 @@ class QEffQwen3Model(Qwen3Model):
             )
 
         hidden_states = self.norm(hidden_states)
-        
+
         # add hidden states from the last decoder layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -526,10 +495,10 @@ class QEffQwen3ForCausalLM(Qwen3ForCausalLM):
 
     def forward(
         self,
-        target_hidden: torch.Tensor =None,
+        target_hidden: torch.Tensor = None,
         noise_embeds: torch.FloatTensor = None,
-        position_ids_target:Optional[ torch.LongTensor] = None,
-        input_ids:Optional[ torch.LongTensor] = None,
+        position_ids_target: Optional[torch.LongTensor] = None,
+        input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
@@ -561,13 +530,11 @@ class QEffQwen3ForCausalLM(Qwen3ForCausalLM):
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             # block_size=block_size,
-            output_hidden_states=output_hidden_states
+            output_hidden_states=output_hidden_states,
         )
 
         # Cast to INT32 to avoid issue while running in ONNXRT
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-       
-        hidden_states = outputs.last_hidden_state    
+        hidden_states = outputs.last_hidden_state
         logits = self.lm_head(hidden_states).float()
 
         return CausalLMOutputWithPast(

@@ -15,13 +15,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-
-
-@dataclass
-class QEffCausalLMOutputWithPast(CausalLMOutputWithPast):
-    output_embeds: Optional[torch.FloatTensor] = None
-
-
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaConfig,
@@ -42,6 +35,11 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+
+@dataclass
+class QEffCausalLMOutputWithPast(CausalLMOutputWithPast):
+    output_embeds: Optional[torch.FloatTensor] = None
 
 
 class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
@@ -318,7 +316,6 @@ class QEffLlamaModel(LlamaModel):
                 cos_cached=cos,
                 **kwargs,
             )
-
 
         hidden_states = self.norm(hidden_states)
 

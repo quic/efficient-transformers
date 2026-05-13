@@ -7,13 +7,14 @@
 
 import argparse
 import time
+
 import numpy as np
-import transformers
 import torch
+import transformers
 from qaic_infer import QAICInferenceSession
-from utils import format_prompt
 from rich.console import Console
 from rich.markup import escape
+from utils import format_prompt
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -22,6 +23,7 @@ console = Console()
 
 
 # ===== METRICS =====
+
 
 class SpecDecodingMetrics:
     def __init__(self, block_size: int = 10):
@@ -62,6 +64,7 @@ class SpecDecodingMetrics:
 
 
 # ===== INFERENCE =====
+
 
 def run_spd_inference_single(
     prompt_text: str,
@@ -115,35 +118,39 @@ def run_spd_inference_single(
 
     for pi in range(num_chunks - 1):
         chunk_inputs = {
-            "input_ids": tlm_inputs["input_ids"][:, tlm_cache_index[0]:tlm_cache_index[0] + prompt_chunk_size],
-            "position_ids": tlm_inputs["position_ids"][:, tlm_cache_index[0]:tlm_cache_index[0] + prompt_chunk_size],
+            "input_ids": tlm_inputs["input_ids"][:, tlm_cache_index[0] : tlm_cache_index[0] + prompt_chunk_size],
+            "position_ids": tlm_inputs["position_ids"][:, tlm_cache_index[0] : tlm_cache_index[0] + prompt_chunk_size],
         }
         tlm_prefill_outputs = tlm_session.run(chunk_inputs)
         for sub_i in range(num_sub_blocks):
             sub_start = sub_i * block_size
-            dlm_inputs["target_hidden"]       = tlm_prefill_outputs["hidden_states"][:, sub_start:sub_start + block_size, :]
-            dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + block_size]
-            dlm_inputs["position_ids"]        = dlm_inputs["position_ids_target"] + block_size
-            dlm_inputs["noise_embeds"]        = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
+            dlm_inputs["target_hidden"] = tlm_prefill_outputs["hidden_states"][:, sub_start : sub_start + block_size, :]
+            dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][
+                :, tlm_cache_index[0] + sub_start : tlm_cache_index[0] + sub_start + block_size
+            ]
+            dlm_inputs["position_ids"] = dlm_inputs["position_ids_target"] + block_size
+            dlm_inputs["noise_embeds"] = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
             dlm_session.run(dlm_inputs)
         if remainder > 0:
             sub_start = num_sub_blocks * block_size
             target_hidden_rem = np.zeros((1, block_size, hidden_size), dtype=np.float32)
             target_hidden_rem[:, :remainder, :] = tlm_prefill_outputs["hidden_states"][:, sub_start:, :]
             pos_ids_target_rem = np.full((1, block_size), -1, dtype=tlm_inputs["position_ids"].dtype)
-            pos_ids_target_rem[:, :remainder] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + remainder]
-            dlm_inputs["target_hidden"]       = target_hidden_rem
+            pos_ids_target_rem[:, :remainder] = tlm_inputs["position_ids"][
+                :, tlm_cache_index[0] + sub_start : tlm_cache_index[0] + sub_start + remainder
+            ]
+            dlm_inputs["target_hidden"] = target_hidden_rem
             dlm_inputs["position_ids_target"] = pos_ids_target_rem
-            dlm_inputs["position_ids"]        = pos_ids_target_rem + block_size
-            dlm_inputs["noise_embeds"]        = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
+            dlm_inputs["position_ids"] = pos_ids_target_rem + block_size
+            dlm_inputs["noise_embeds"] = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
             dlm_session.run(dlm_inputs)
         tlm_cache_index[0] += prompt_chunk_size
         dlm_cache_index[0] += prompt_chunk_size
 
     # Last prefill chunk
     chunk_inputs = {
-        "input_ids": tlm_inputs["input_ids"][:, tlm_cache_index[0]:tlm_cache_index[0] + prompt_chunk_size],
-        "position_ids": tlm_inputs["position_ids"][:, tlm_cache_index[0]:tlm_cache_index[0] + prompt_chunk_size],
+        "input_ids": tlm_inputs["input_ids"][:, tlm_cache_index[0] : tlm_cache_index[0] + prompt_chunk_size],
+        "position_ids": tlm_inputs["position_ids"][:, tlm_cache_index[0] : tlm_cache_index[0] + prompt_chunk_size],
     }
     tlm_last_prefill_outputs = tlm_session.run(chunk_inputs)
     last_prefill_pos_in_chunk = chunk_inputs["position_ids"].argmax()
@@ -152,29 +159,37 @@ def run_spd_inference_single(
     last_sub = last_prefill_pos_in_chunk // block_size
     for sub_i in range(last_sub):
         sub_start = sub_i * block_size
-        dlm_inputs["target_hidden"]       = tlm_last_prefill_outputs["hidden_states"][:, sub_start:sub_start + block_size, :]
-        dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + block_size]
-        dlm_inputs["position_ids"]        = dlm_inputs["position_ids_target"] + block_size
-        dlm_inputs["noise_embeds"]        = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
+        dlm_inputs["target_hidden"] = tlm_last_prefill_outputs["hidden_states"][
+            :, sub_start : sub_start + block_size, :
+        ]
+        dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][
+            :, tlm_cache_index[0] + sub_start : tlm_cache_index[0] + sub_start + block_size
+        ]
+        dlm_inputs["position_ids"] = dlm_inputs["position_ids_target"] + block_size
+        dlm_inputs["noise_embeds"] = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
         dlm_session.run(dlm_inputs)
 
     noise_embeds = np.tile(mask_token_embed, (1, block_size, 1))
     noise_embeds[:, 0, :] = tlm_last_prefill_outputs["output_embeds"][:, last_prefill_pos_in_chunk, :]
     sub_start = last_sub * block_size
     if last_sub < num_sub_blocks:
-        target_hidden = tlm_last_prefill_outputs["hidden_states"][:, sub_start:sub_start + block_size, :]
-        dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + block_size]
+        target_hidden = tlm_last_prefill_outputs["hidden_states"][:, sub_start : sub_start + block_size, :]
+        dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][
+            :, tlm_cache_index[0] + sub_start : tlm_cache_index[0] + sub_start + block_size
+        ]
     else:
         target_hidden = np.zeros((1, block_size, hidden_size), dtype=np.float32)
         target_hidden[:, :remainder, :] = tlm_last_prefill_outputs["hidden_states"][:, sub_start:, :]
         pos_ids_target = np.full((1, block_size), -1, dtype=tlm_inputs["position_ids"].dtype)
-        pos_ids_target[:, :remainder] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + remainder]
+        pos_ids_target[:, :remainder] = tlm_inputs["position_ids"][
+            :, tlm_cache_index[0] + sub_start : tlm_cache_index[0] + sub_start + remainder
+        ]
         dlm_inputs["position_ids_target"] = pos_ids_target
     dlm_inputs["position_ids"] = np.arange(
         tlm_cache_index[0] + last_prefill_pos_in_chunk + 1,
         tlm_cache_index[0] + last_prefill_pos_in_chunk + 1 + block_size,
     ).reshape(1, -1)
-    dlm_inputs["noise_embeds"]  = noise_embeds
+    dlm_inputs["noise_embeds"] = noise_embeds
     dlm_inputs["target_hidden"] = target_hidden
     dlm_outputs = dlm_session.run(dlm_inputs)
 
@@ -196,10 +211,12 @@ def run_spd_inference_single(
         dlm_candidates[:, 0] = new_tlm_token
 
         tlm_decode_start = time.time()
-        tlm_decode_outputs = tlm_session.run({
-            "input_ids": dlm_candidates,
-            "position_ids": dlm_inputs["position_ids"],
-        })
+        tlm_decode_outputs = tlm_session.run(
+            {
+                "input_ids": dlm_candidates,
+                "position_ids": dlm_inputs["position_ids"],
+            }
+        )
         metrics.tlm_decode_time += time.time() - tlm_decode_start
 
         tlm_logits = tlm_decode_outputs["logits"]
@@ -211,7 +228,7 @@ def run_spd_inference_single(
         for spec_idx in range(block_size - 1):
             tlm_token = tlm_logits[:, spec_idx]
             dlm_token = dlm_candidates[:, spec_idx + 1]
-            if (tlm_token == dlm_token):
+            if tlm_token == dlm_token:
                 accepted_length += 1
                 metrics.total_accepted_tokens += 1
                 if gen_idx < len(generated_ids[0]):
@@ -220,7 +237,7 @@ def run_spd_inference_single(
                     metrics.generated_ids.append(int(dlm_token[0]))
                     metrics.generated_sources.append("dlm")
             else:
-                metrics.total_rejected_tokens += (block_size - spec_idx - 1)
+                metrics.total_rejected_tokens += block_size - spec_idx - 1
                 rejected_flag = True
                 new_tlm_token = tlm_token
                 if gen_idx < len(generated_ids[0]):
@@ -241,7 +258,7 @@ def run_spd_inference_single(
                 metrics.generated_ids.append(int(new_tlm_token[0]))
                 metrics.generated_sources.append("tlm")
 
-        dlm_candidate_ids = list(dlm_candidates[0, 1:accepted_length + 1])
+        dlm_candidate_ids = list(dlm_candidates[0, 1 : accepted_length + 1])
         this_iter_gen_ids = dlm_candidate_ids + [new_tlm_token[0]]
         for tok_id in this_iter_gen_ids:
             if tok_id in eos_token_ids:
@@ -252,12 +269,14 @@ def run_spd_inference_single(
             break
 
         dlm_decode_start = time.time()
-        dlm_inputs["position_ids_target"] = np.arange(spd_counter_idx + 1, spd_counter_idx + block_size + 1).reshape(1, -1)
+        dlm_inputs["position_ids_target"] = np.arange(spd_counter_idx + 1, spd_counter_idx + block_size + 1).reshape(
+            1, -1
+        )
         spd_counter_idx += accepted_length + 1
-        dlm_inputs["position_ids_target"][:, accepted_length + 1:] = -1
+        dlm_inputs["position_ids_target"][:, accepted_length + 1 :] = -1
         dlm_inputs["position_ids"] = np.arange(spd_counter_idx + 1, spd_counter_idx + block_size + 1).reshape(1, -1)
         noise_embeds[:, 0, :] = tlm_decode_outputs["output_embeds"][:, accepted_length, :]
-        dlm_inputs["noise_embeds"]  = noise_embeds
+        dlm_inputs["noise_embeds"] = noise_embeds
         dlm_inputs["target_hidden"] = target_hidden
         dlm_outputs = dlm_session.run(dlm_inputs)
         metrics.dlm_decode_time += time.time() - dlm_decode_start
@@ -270,27 +289,31 @@ def run_spd_inference_single(
 
 # ===== ARGUMENT PARSING =====
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="SPD single-prompt inference")
-    parser.add_argument("--prompt",            required=True, help="Input prompt text")
-    parser.add_argument("--tlm_qpc",           required=True)
-    parser.add_argument("--dlm_qpc",           required=True)
-    parser.add_argument("--tlm_model_name",    required=True)
-    parser.add_argument("--dlm_model_name",    required=True)
-    parser.add_argument("--noise_embed_path",  required=True)
-    parser.add_argument("--iteration",         type=int, default=300)
-    parser.add_argument("--ctx_len",           type=int, default=4096)
-    parser.add_argument("--generation_len",    type=int, default=256)
-    parser.add_argument("--tlm_devices",       nargs="+", type=int, required=True)
-    parser.add_argument("--dlm_devices",       nargs="+", type=int, required=True)
-    parser.add_argument("--hf_token",          default=None)
-    parser.add_argument("--category",          default="",
-                        help="Prompt category for formatting (math, coding, reasoning, …). "
-                             "Defaults to the general reasoning format.")
+    parser.add_argument("--prompt", required=True, help="Input prompt text")
+    parser.add_argument("--tlm_qpc", required=True)
+    parser.add_argument("--dlm_qpc", required=True)
+    parser.add_argument("--tlm_model_name", required=True)
+    parser.add_argument("--dlm_model_name", required=True)
+    parser.add_argument("--noise_embed_path", required=True)
+    parser.add_argument("--iteration", type=int, default=300)
+    parser.add_argument("--ctx_len", type=int, default=4096)
+    parser.add_argument("--generation_len", type=int, default=256)
+    parser.add_argument("--tlm_devices", nargs="+", type=int, required=True)
+    parser.add_argument("--dlm_devices", nargs="+", type=int, required=True)
+    parser.add_argument("--hf_token", default=None)
+    parser.add_argument(
+        "--category",
+        default="",
+        help="Prompt category for formatting (math, coding, reasoning, …). Defaults to the general reasoning format.",
+    )
     return parser.parse_args()
 
 
 # ===== MAIN =====
+
 
 def main():
     args = parse_args()
@@ -299,12 +322,10 @@ def main():
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         args.tlm_model_name, token=args.hf_token, trust_remote_code=True
     )
-    config = transformers.AutoConfig.from_pretrained(
-        args.dlm_model_name, token=args.hf_token, trust_remote_code=True
-    )
-    vocab_size  = config.vocab_size
+    config = transformers.AutoConfig.from_pretrained(args.dlm_model_name, token=args.hf_token, trust_remote_code=True)
+    vocab_size = config.vocab_size
     hidden_size = config.hidden_size
-    block_size  = config.block_size
+    block_size = config.block_size
     mask_token_embed = np.load(args.noise_embed_path)
 
     if tokenizer.pad_token_id is None:
@@ -313,8 +334,12 @@ def main():
     console.print("[bold blue]Loading QAIC inference sessions...[/bold blue]")
     dlm_session = QAICInferenceSession(args.dlm_qpc, args.dlm_devices)
     tlm_session = QAICInferenceSession(args.tlm_qpc, args.tlm_devices)
-    dlm_session.skip_buffers(set([x for x in dlm_session.input_names + dlm_session.output_names if x.startswith("past_")]))
-    tlm_session.skip_buffers(set([x for x in tlm_session.input_names + tlm_session.output_names if x.startswith("past_")]))
+    dlm_session.skip_buffers(
+        set([x for x in dlm_session.input_names + dlm_session.output_names if x.startswith("past_")])
+    )
+    tlm_session.skip_buffers(
+        set([x for x in tlm_session.input_names + tlm_session.output_names if x.startswith("past_")])
+    )
 
     prompt_chunk_size = max(
         [x[tlm_session.binding_index_map["input_ids"]][1][1] for x in tlm_session.allowed_shapes]
@@ -352,14 +377,14 @@ def main():
             output_parts.append(f"[white]{text}[/white]")
     console.print("".join(output_parts))
 
-    ar      = metrics.acceptance_rate()
+    ar = metrics.acceptance_rate()
     dlm_tps = metrics.dlm_tok_rate()
     tlm_tps = metrics.tlm_tok_rate()
     spd_tps = metrics.spd_tok_rate()
 
     w = 46
     print("\n" + "=" * w)
-    print(f"  SPD Inference — Metrics")
+    print("  SPD Inference — Metrics")
     print("=" * w)
     print(f"  {'Acceptance Rate (tok/iter)':<30} {ar:>6.2f}")
     print(f"  {'DLM Throughput  (tok/s)':<30} {dlm_tps:>6.1f}")

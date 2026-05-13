@@ -41,7 +41,7 @@ REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, THIS_DIR)
 
-from benchmark import MODEL_MAP, resolve_model_name  # reuse the alias table
+from benchmark import MODEL_MAP, resolve_model_name  # noqa: E402  # reuse the alias table
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,15 +49,17 @@ from benchmark import MODEL_MAP, resolve_model_name  # reuse the alias table
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model_name", required=True, type=resolve_model_name,
-                   help="TLM name — either the short key (e.g. 'Qwen3-4B') or "
-                        "the full HF repo path (e.g. 'Qwen/Qwen3-4B'). "
-                        f"Supported: {', '.join(MODEL_MAP.keys())}")
+    p.add_argument(
+        "--model_name",
+        required=True,
+        type=resolve_model_name,
+        help="TLM name — either the short key (e.g. 'Qwen3-4B') or "
+        "the full HF repo path (e.g. 'Qwen/Qwen3-4B'). "
+        f"Supported: {', '.join(MODEL_MAP.keys())}",
+    )
     p.add_argument("--prompt", required=True, help="Input prompt text.")
-    p.add_argument("--category", default="",
-                   help="Prompt category for formatting (math, coding, reasoning, …).")
-    p.add_argument("--tlm_hf_path", default=None,
-                   help="Override TLM HF repo (required if mapping has None).")
+    p.add_argument("--category", default="", help="Prompt category for formatting (math, coding, reasoning, …).")
+    p.add_argument("--tlm_hf_path", default=None, help="Override TLM HF repo (required if mapping has None).")
 
     # Optional pre-built QPCs (skip compilation)
     p.add_argument("--tlm_qpc", default=None, help="Pre-compiled TLM qpc dir (skip TLM compile).")
@@ -70,18 +72,16 @@ def parse_args():
     p.add_argument("--dlm_cores", type=int, default=8)
 
     # Compile / run knobs
-    p.add_argument("--ctx_len",         type=int, default=4096)
+    p.add_argument("--ctx_len", type=int, default=4096)
     p.add_argument("--prefill_seq_len", type=int, default=128)
-    p.add_argument("--generation_len",  type=int, default=256)
-    p.add_argument("--iteration",       type=int, default=300)
+    p.add_argument("--generation_len", type=int, default=256)
+    p.add_argument("--iteration", type=int, default=300)
 
-    p.add_argument("--noise_embed_path", default=None,
-                   help="Defaults to noise_embedding/<model_name>_noise_embeds.npy")
+    p.add_argument("--noise_embed_path", default=None, help="Defaults to noise_embedding/<model_name>_noise_embeds.npy")
     p.add_argument("--hf_token", default=os.environ.get("HF_TOKEN"))
 
     # Internal modes used by self-spawned compile subprocesses
-    p.add_argument("--_build", choices=["tlm", "dlm"], default=None,
-                   help=argparse.SUPPRESS)
+    p.add_argument("--_build", choices=["tlm", "dlm"], default=None, help=argparse.SUPPRESS)
     return p.parse_args()
 
 
@@ -94,14 +94,13 @@ def main():
     tlm_repo_default, dlm_repo = MODEL_MAP[args.model_name]
     tlm_repo = args.tlm_hf_path or tlm_repo_default
     if tlm_repo is None:
-        raise SystemExit(
-            f"No default TLM HF path for '{args.model_name}'. Pass --tlm_hf_path."
-        )
+        raise SystemExit(f"No default TLM HF path for '{args.model_name}'. Pass --tlm_hf_path.")
 
     # Sub-mode: spawned compile subprocess. Reuse benchmark.py's builders so we
     # don't duplicate the compile pipeline.
     if args._build is not None:
-        from benchmark import _build_tlm, _build_dlm
+        from benchmark import _build_dlm, _build_tlm
+
         if args._build == "tlm":
             _build_tlm(args, tlm_repo, dlm_repo)
         else:
@@ -110,9 +109,8 @@ def main():
 
     # ── Resolve / discover hidden_size + block_size from DLM config ────────
     import transformers
-    config = transformers.AutoConfig.from_pretrained(
-        dlm_repo, token=args.hf_token, trust_remote_code=True
-    )
+
+    config = transformers.AutoConfig.from_pretrained(dlm_repo, token=args.hf_token, trust_remote_code=True)
     hidden_size = config.hidden_size
     block_size = getattr(config, "block_size", None)
     print(f"DLM repo       : {dlm_repo}")
@@ -121,14 +119,22 @@ def main():
 
     # ── Resolve QPC paths (compile only the side that wasn't pre-supplied) ─
     forwarded = [
-        "--model_name", args.model_name,
-        "--prompt", args.prompt,
-        "--ctx_len", str(args.ctx_len),
-        "--prefill_seq_len", str(args.prefill_seq_len),
-        "--tlm_cores", str(args.tlm_cores),
-        "--dlm_cores", str(args.dlm_cores),
-        "--tlm_devices", *[str(d) for d in args.tlm_devices],
-        "--dlm_devices", *[str(d) for d in args.dlm_devices],
+        "--model_name",
+        args.model_name,
+        "--prompt",
+        args.prompt,
+        "--ctx_len",
+        str(args.ctx_len),
+        "--prefill_seq_len",
+        str(args.prefill_seq_len),
+        "--tlm_cores",
+        str(args.tlm_cores),
+        "--dlm_cores",
+        str(args.dlm_cores),
+        "--tlm_devices",
+        *[str(d) for d in args.tlm_devices],
+        "--dlm_devices",
+        *[str(d) for d in args.dlm_devices],
     ]
     if args.tlm_hf_path:
         forwarded += ["--tlm_hf_path", args.tlm_hf_path]
@@ -154,26 +160,35 @@ def main():
         THIS_DIR, "noise_embedding", f"{args.model_name}_noise_embeds.npy"
     )
     if not os.path.exists(noise_embed):
-        raise SystemExit(
-            f"noise embedding not found: {noise_embed}\n"
-            f"Pass --noise_embed_path explicitly."
-        )
+        raise SystemExit(f"noise embedding not found: {noise_embed}\nPass --noise_embed_path explicitly.")
 
     # ── Run the existing single-prompt inference script ────────────────────
     eval_script = os.path.join(THIS_DIR, "dflash_spd_single_prompt.py")
     cmd = [
-        sys.executable, eval_script,
-        "--prompt",           args.prompt,
-        "--tlm_qpc",          tlm_qpc,
-        "--dlm_qpc",          dlm_qpc,
-        "--tlm_model_name",   tlm_repo,
-        "--dlm_model_name",   dlm_repo,
-        "--noise_embed_path", noise_embed,
-        "--iteration",        str(args.iteration),
-        "--ctx_len",          str(args.ctx_len),
-        "--generation_len",   str(args.generation_len),
-        "--tlm_devices",      *[str(d) for d in args.tlm_devices],
-        "--dlm_devices",      *[str(d) for d in args.dlm_devices],
+        sys.executable,
+        eval_script,
+        "--prompt",
+        args.prompt,
+        "--tlm_qpc",
+        tlm_qpc,
+        "--dlm_qpc",
+        dlm_qpc,
+        "--tlm_model_name",
+        tlm_repo,
+        "--dlm_model_name",
+        dlm_repo,
+        "--noise_embed_path",
+        noise_embed,
+        "--iteration",
+        str(args.iteration),
+        "--ctx_len",
+        str(args.ctx_len),
+        "--generation_len",
+        str(args.generation_len),
+        "--tlm_devices",
+        *[str(d) for d in args.tlm_devices],
+        "--dlm_devices",
+        *[str(d) for d in args.dlm_devices],
     ]
     if args.hf_token:
         cmd += ["--hf_token", args.hf_token]
