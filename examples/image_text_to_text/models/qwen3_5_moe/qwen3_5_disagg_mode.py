@@ -45,7 +45,7 @@ enable_blocking = False  ## By default it is false
 
 generation_len = 256
 
-skip_vision = True
+skip_vision = False
 
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
