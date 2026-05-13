@@ -43,9 +43,13 @@ dependencies = [
     "imageio-ffmpeg==0.6.0",
     "tiktoken==0.12.0",
 <<<<<<< HEAD
+<<<<<<< HEAD
     "compressed-tensors==0.15.0",
 =======
     "compressed-tensors==0.14.0",
+=======
+    "compressed-tensors==0.15.0",
+>>>>>>> fb5f1c3 (minor fix)
     "qwen-vl-utils==0.0.8",
 >>>>>>> 77b7be4 (adding to project.toml)
     "torch==2.7.0; platform_machine=='aarch64'",
