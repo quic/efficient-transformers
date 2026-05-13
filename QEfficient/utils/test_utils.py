@@ -469,6 +469,7 @@ class ModelConfig:
         "OpenGVLab/InternVL3_5-1B",
         "jinaai/jina-embeddings-v2-base-code",
         "hpcai-tech/grok-1",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
     }
 
     DUAL_QPC_MODELS = {
