@@ -1504,7 +1504,7 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
         hidden_states = self.post_attention_layernorm(hidden_states)
 
         if num_q_ffn_blocks is not None and self.mlp.__class__.__name__ == "DeepseekV3MoE":
-            self.mlp(hidden_states, num_q_ffn_blocks)
+            hidden_states = self.mlp(hidden_states, num_q_ffn_blocks)
         else:
             hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
