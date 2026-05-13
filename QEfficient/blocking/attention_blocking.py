@@ -40,7 +40,7 @@ class BlockingMode(str, Enum):
     QKV_PAGED = "qkv_paged"
     HQ = "hq"
     HKV = "hkv"
-    HKV = "hkv_paged"
+    HKV_PAGED = "hkv_paged"
     HQKV = "hqkv"
     HQKV_PAGED = "hqkv_paged"
     BHQKV = "bhqkv"
