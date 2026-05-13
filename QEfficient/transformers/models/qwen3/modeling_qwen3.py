@@ -18,13 +18,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-
-
-@dataclass
-class QEffCausalLMOutputWithPast(CausalLMOutputWithPast):
-    output_embeds: Optional[torch.FloatTensor] = None
-
-
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
     Qwen3Config,
@@ -45,6 +38,11 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+
+@dataclass
+class QEffCausalLMOutputWithPast(CausalLMOutputWithPast):
+    output_embeds: Optional[torch.FloatTensor] = None
 
 
 #  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
@@ -338,7 +336,7 @@ class QEffQwen3Model(Qwen3Model):
         for idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-                
+
             if self.target_layer_ids and idx in self.target_layer_ids:
                 target_hidden_list.append(hidden_states)
 
@@ -354,8 +352,6 @@ class QEffQwen3Model(Qwen3Model):
                 sin_cached=sin,
                 cos_cached=cos,
             )
-
-            
 
         hidden_states = self.norm(hidden_states)
 

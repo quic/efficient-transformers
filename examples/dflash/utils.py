@@ -7,14 +7,16 @@
 
 import json
 import warnings
+from typing import Optional
+
 import numpy as np
 import torch
-from torch import nn
+from datasets import Features, Sequence, Value, load_dataset
 from huggingface_hub import hf_hub_download
 from safetensors import safe_open
+from torch import nn
 from transformers import AutoModelForCausalLM
-from typing import Optional
-from datasets import load_dataset, Features, Sequence, Value
+
 
 def build_target_layer_ids(num_target_layers: int, num_draft_layers: int):
     if num_draft_layers == 1:
@@ -22,11 +24,9 @@ def build_target_layer_ids(num_target_layers: int, num_draft_layers: int):
     start = 1
     end = num_target_layers - 3
     span = end - start
-    target_layer_ids = [
-        int(round(start + (i * span) / (num_draft_layers - 1)))
-        for i in range(num_draft_layers)
-    ]
+    target_layer_ids = [int(round(start + (i * span) / (num_draft_layers - 1))) for i in range(num_draft_layers)]
     return target_layer_ids
+
 
 def extract_context_feature(
     hidden_states: list[torch.Tensor],
@@ -39,6 +39,7 @@ def extract_context_feature(
     target_hidden = torch.cat(selected_states, dim=-1)
     return target_hidden
 
+
 def sample(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
     if temperature < 1e-5:
         return torch.argmax(logits, dim=-1)
@@ -48,18 +49,19 @@ def sample(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
     probs = torch.softmax(logits, dim=-1)
     return torch.multinomial(probs, num_samples=1).view(bsz, seq_len)
 
+
 def load_and_process_dataset(data_name: str):
     # Math datasets
     if data_name == "gsm8k":
         dataset = load_dataset("openai/gsm8k", "main", split="test")
         prompt_fmt = "{question}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
-    
+
     elif data_name == "math500":
         dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")
         prompt_fmt = "{problem}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
-    
+
     elif data_name == "aime24":
         dataset = load_dataset("HuggingFaceH4/aime_2024", split="train")
         prompt_fmt = "{problem}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
@@ -70,10 +72,14 @@ def load_and_process_dataset(data_name: str):
         prompt_fmt = "{problem}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
 
-    # Chat datasets 
+    # Chat datasets
     elif data_name == "alpaca":
         dataset = load_dataset("tatsu-lab/alpaca", split="train")
-        dataset = dataset.map(lambda x: {"formatted_input": (f"{x['instruction']}\n\nInput:\n{x['input']}" if x['input'] else x['instruction'])})
+        dataset = dataset.map(
+            lambda x: {
+                "formatted_input": (f"{x['instruction']}\n\nInput:\n{x['input']}" if x["input"] else x["instruction"])
+            }
+        )
         dataset = dataset.map(lambda x: {"turns": [x["formatted_input"]]})
 
     elif data_name == "mt-bench":
@@ -85,11 +91,11 @@ def load_and_process_dataset(data_name: str):
         dataset = load_dataset("openai/openai_humaneval", split="test")
         prompt_fmt = "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{prompt}\n```"
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
-    
+
     elif data_name == "mbpp":
         dataset = load_dataset("google-research-datasets/mbpp", "sanitized", split="test")
         dataset = dataset.map(lambda x: {"turns": [x["prompt"]]})
-    
+
     elif data_name == "lbpp":
         LBPP_PY_TEST_URL = "https://huggingface.co/datasets/CohereLabs/lbpp/resolve/main/python/test.parquet"
         dataset = load_dataset("parquet", data_files={"test": LBPP_PY_TEST_URL})["test"]
@@ -99,12 +105,13 @@ def load_and_process_dataset(data_name: str):
         dataset = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
         prompt_fmt = "Problem Statement:\n{problem_statement}\nPlease fix the issue described above."
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
-    
+
     elif data_name == "livecodebench":
         base = "https://huggingface.co/datasets/livecodebench/code_generation_lite/resolve/main/"
         allowed_files = ["test.jsonl", "test2.jsonl", "test3.jsonl", "test4.jsonl", "test5.jsonl", "test6.jsonl"]
         urls = [base + fn for fn in allowed_files]
         dataset = load_dataset("json", data_files={"test": urls})["test"]
+
         def format_lcb(doc):
             system_prompt = (
                 "You are an expert Python programmer. You will be given a question (problem specification) "
@@ -120,34 +127,36 @@ def load_and_process_dataset(data_name: str):
                 code_block = "```python\n# YOUR CODE HERE\n```"
             answer_footer = "### Answer: (use the provided format with backticks)"
             return f"{system_prompt}\n\n{question_block}\n\n{format_message}\n{code_block}\n\n{answer_footer}"
+
         target_features = Features({"turns": Sequence(Value("large_string"))})
         dataset = dataset.map(
-            lambda x: {"turns": [format_lcb(x)]},
-            remove_columns=dataset.column_names,
-            features=target_features
+            lambda x: {"turns": [format_lcb(x)]}, remove_columns=dataset.column_names, features=target_features
         )
 
     return dataset
 
 
 _DEFAULT_FMT = "{prompt}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
-_CODING_FMT  = "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{prompt}\n```"
+_CODING_FMT = (
+    "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{prompt}\n```"
+)
 
 _CATEGORY_FMT = {
-    "math":           _DEFAULT_FMT,
+    "math": _DEFAULT_FMT,
     "math_reasoning": _DEFAULT_FMT,
-    "coding":         _CODING_FMT,
-    "reasoning":      _DEFAULT_FMT,
-    "stem":           _DEFAULT_FMT,
-    "qa":             _DEFAULT_FMT,
-    "rag":            _DEFAULT_FMT,
-    "extraction":     _DEFAULT_FMT,
-    "humanities":     _DEFAULT_FMT,
-    "writing":        _DEFAULT_FMT,
-    "summarization":  _DEFAULT_FMT,
-    "translation":    _DEFAULT_FMT,
-    "roleplay":       _DEFAULT_FMT,
+    "coding": _CODING_FMT,
+    "reasoning": _DEFAULT_FMT,
+    "stem": _DEFAULT_FMT,
+    "qa": _DEFAULT_FMT,
+    "rag": _DEFAULT_FMT,
+    "extraction": _DEFAULT_FMT,
+    "humanities": _DEFAULT_FMT,
+    "writing": _DEFAULT_FMT,
+    "summarization": _DEFAULT_FMT,
+    "translation": _DEFAULT_FMT,
+    "roleplay": _DEFAULT_FMT,
 }
+
 
 def format_prompt(prompt: str, category: str = "") -> str:
     fmt = _CATEGORY_FMT.get(category, _DEFAULT_FMT)
@@ -238,9 +247,11 @@ def build_tlm_model(
 
     if "qwen3" in model_type:
         from transformers.models.qwen3.modeling_qwen3 import Qwen3RMSNorm
+
         inner.hidden_norm = Qwen3RMSNorm(hidden_size, eps=base_model.config.rms_norm_eps)
     elif "llama" in model_type:
         from transformers.models.llama.modeling_llama import LlamaRMSNorm
+
         inner.hidden_norm = LlamaRMSNorm(hidden_size, eps=base_model.config.rms_norm_eps)
     else:
         warnings.warn(f"Unknown model_type '{model_type}'; using nn.RMSNorm for hidden_norm.")
@@ -258,11 +269,13 @@ def build_tlm_model(
     with torch.no_grad():
         in_feat = inner.fc.in_features
         max_row_norm = inner.fc.weight.data.norm(dim=1).max().item()
-        fc_out_bound = (in_feat ** 0.5) * max_row_norm
+        fc_out_bound = (in_feat**0.5) * max_row_norm
         s = max(fc_out_bound / target_absmax, 1.0)
         inner.fc.weight.data.div_(s)
-        print(f"[TLM] fc scale: in_features={in_feat}, max_row_norm={max_row_norm:.4f}, "
-              f"fc_out_bound={fc_out_bound:.2f}, s={s:.6f}")
+        print(
+            f"[TLM] fc scale: in_features={in_feat}, max_row_norm={max_row_norm:.4f}, "
+            f"fc_out_bound={fc_out_bound:.2f}, s={s:.6f}"
+        )
 
     print(f"[TLM] fc ({n * hidden_size} -> {hidden_size}) and hidden_norm attached and scaled")
     return base_model

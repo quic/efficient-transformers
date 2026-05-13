@@ -458,8 +458,14 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
 )
 from QEfficient.transformers.models.qwen3.modeling_qwen3_dflash_draft import (
     QEffQwen3Attention as QEffQwen3DFlashAttention,
+)
+from QEfficient.transformers.models.qwen3.modeling_qwen3_dflash_draft import (
     QEffQwen3DecoderLayer as QEffQwen3DFlashDecoderLayer,
+)
+from QEfficient.transformers.models.qwen3.modeling_qwen3_dflash_draft import (
     QEffQwen3ForCausalLM as QEffQwen3DFlashForCausalLM,
+)
+from QEfficient.transformers.models.qwen3.modeling_qwen3_dflash_draft import (
     QEffQwen3Model as QEffQwen3DFlashModel,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
@@ -990,8 +996,9 @@ class DFlashTLMTransform:
     @classmethod
     def _load_tlm_weights(cls, checkpoint_path: str) -> dict:
         """Read only fc and hidden_norm weights from a local checkpoint directory."""
-        import torch
         from pathlib import Path
+
+        import torch
 
         path = Path(checkpoint_path)
         target_keys = {"model.fc.weight", "model.hidden_norm.weight"}
@@ -1057,8 +1064,7 @@ class DFlashTLMTransform:
                 inner.hidden_norm = LlamaRMSNorm(hidden_size, eps=model.config.rms_norm_eps)
             else:
                 warnings.warn(
-                    f"DFlashTLMTransform: unknown model_type '{model_type}'. "
-                    "Using nn.RMSNorm as hidden_norm fallback."
+                    f"DFlashTLMTransform: unknown model_type '{model_type}'. Using nn.RMSNorm as hidden_norm fallback."
                 )
                 inner.hidden_norm = nn.RMSNorm(hidden_size, eps=getattr(model.config, "rms_norm_eps", 1e-6))
 

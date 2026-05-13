@@ -28,9 +28,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import torch
 from transformers import AutoModelForCausalLM
-from QEfficient import QEFFAutoModelForCausalLM
-
 from utils import build_dlm_model, build_tlm_model, extract_lm_head, load_dflash_checkpoint
+
+from QEfficient import QEFFAutoModelForCausalLM
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 TLM_MODEL_PATH = "Qwen/Qwen3-4B"
@@ -48,7 +48,6 @@ COMPILE_KWARGS = dict(
     mxint8_kv_cache=True,
     num_devices=4,
     mos=1,
-    
 )
 
 TLM_NUM_CORES = 8
@@ -106,7 +105,6 @@ def build_dlm():
         num_cores=DLM_NUM_CORES,
         prefill_only=True,
         **COMPILE_KWARGS,
-        
     )
     print(f"dlm_qpc_path: {dlm_qpc_path}")
     return dlm_qpc_path
