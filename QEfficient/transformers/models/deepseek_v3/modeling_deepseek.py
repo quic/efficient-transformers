@@ -470,12 +470,7 @@ class QEffDeepseekV3Attention(nn.Module):
             k_pe_expanded = k_pe_expanded[:, :q_heads, :, :]
         else:
             kva_expanded = kva
-            num_heads_to_repeat = math.ceil(q_heads / k_heads)
-            k_pe_expanded = (
-                k_pe.unsqueeze(2)
-                .expand(-1, -1, num_heads_to_repeat, -1, -1)
-                .reshape(bsz, num_heads_to_repeat * k_heads, -1, self.config.qk_rope_head_dim)
-            )
+            k_pe_expanded = k_pe
 
         v_up_per_head = self.v_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.v_head_dim).permute(1, 0, 2)
         value_states = torch.matmul(kva_expanded, v_up_per_head)
@@ -500,6 +495,12 @@ class QEffDeepseekV3Attention(nn.Module):
                 self.k_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.qk_nope_head_dim).permute(1, 0, 2)
             )
             k_nope = torch.matmul(kva_expanded, k_up_per_head)
+            if k_heads <= 1:
+                k_pe_expanded = (
+                    k_pe_expanded.unsqueeze(1)
+                    .expand(-1, self.num_heads, -1, -1, -1)
+                    .reshape(bsz, self.num_heads, -1, self.qk_rope_head_dim)
+                )
             key_states = torch.cat((k_nope, k_pe_expanded), dim=-1)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
