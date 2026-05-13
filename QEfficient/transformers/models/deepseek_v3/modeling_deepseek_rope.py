@@ -1492,8 +1492,8 @@ class QEffDeepseekV3Model(nn.Module):
             base=self.config.rope_theta,
             **kwargs,
         )
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached)
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached.to(torch.float16))
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached.to(torch.float16))
 
     def forward(
         self,
