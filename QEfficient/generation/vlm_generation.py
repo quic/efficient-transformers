@@ -150,6 +150,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             "qwen2_5_vl",
             "qwen3_vl_moe",
             "qwen3_vl",
+            "qwen3_5_moe",
         }
         self.qeff_model = qeff_model
         self.processor = processor
