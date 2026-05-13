@@ -28,6 +28,10 @@ from transformers.trainer_callback import TrainerCallback, TrainerControl, Train
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
 from QEfficient.finetune.experimental.core.config_manager import ConfigManager
 from QEfficient.finetune.experimental.core.logger import Logger
+from QEfficient.finetune.experimental.core.utils.dist_utils import (
+    get_local_rank,
+    get_world_size,
+)
 from QEfficient.finetune.experimental.core.utils.profiler_utils import (
     get_op_verifier_ctx,
     init_qaic_profiling,
@@ -272,24 +276,104 @@ class QAICProfilerCallback(TrainerCallback):
 
     def __init__(self, *args, **kwargs):
         """
-        Initialize QAIC profiler settings (start/end steps and target device IDs).
+        Initialize QAIC profiler settings (start/end steps, trace directory and target device IDs).
         """
-
         self.start_step = kwargs.get("start_step", -1)
         self.end_step = kwargs.get("end_step", -1)
-        self.device_ids = kwargs.get("device_ids", [0])
+        self.trace_dir = kwargs.get(
+            "trace_dir",
+            os.path.join(os.environ.get("OUTPUT_DIR", "."), "hw-trace"),
+        )
+        self.device_ids = kwargs.get("device_ids")
+        self._profile_started = False
+        self._stop_attempted = False
+        self._warned_start_failure = False
+        self._warned_stop_failure = False
 
-    def on_step_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
-        """
-        Event called at the beginning of a training step. If using gradient accumulation, one training step might take
-        several inputs.
-        """
-        if state.global_step == self.start_step:
-            for device_id in self.device_ids:
-                init_qaic_profiling(True, f"qaic:{device_id}")
-        elif state.global_step == self.end_step:
-            for device_id in self.device_ids:
+    def _resolve_device_ids_for_rank(self) -> list[int]:
+        local_rank = get_local_rank()
+        world_size = get_world_size()
+
+        if not self.device_ids:
+            return [local_rank]
+
+        ids = list(self.device_ids)
+
+        # One device-per-rank mapping.
+        if world_size > 1 and len(ids) == world_size:
+            return [ids[local_rank % len(ids)]]
+
+        return ids
+
+    def _start_profiling(self, device_ids: list[int]) -> None:
+        for device_id in device_ids:
+            try:
+                init_qaic_profiling(True, f"qaic:{device_id}", trace_dir=self.trace_dir)
+                self._profile_started = True
+            except Exception as e:
+                if not self._warned_start_failure:
+                    logger.log_rank_zero(
+                        f"failed to START profiling on qaic:{device_id}: {e}",
+                        level=logging.WARNING,
+                    )
+                    self._warned_start_failure = True
+
+    def _stop_profiling(self, device_ids: list[int], reason: str) -> None:
+        for device_id in device_ids:
+            try:
                 stop_qaic_profiling(True, f"qaic:{device_id}")
+            except Exception as e:
+                if not self._warned_stop_failure:
+                    logger.log_rank_zero(
+                        f"failed to STOP profiling ({reason}) on qaic:{device_id}: {e}",
+                        level=logging.WARNING,
+                    )
+                    self._warned_stop_failure = True
+        self._profile_started = False
+
+    # -------------------------------------------------------------------------
+    # TrainerCallback hooks
+    # -------------------------------------------------------------------------
+
+    def on_step_begin(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if self.start_step >= 0 and state.global_step == self.start_step and not self._profile_started:
+            device_ids = self._resolve_device_ids_for_rank()
+            self._start_profiling(device_ids)
+
+    def on_step_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if (
+            self.end_step >= 0
+            and state.global_step >= self.end_step
+            and self._profile_started
+            and not self._stop_attempted
+        ):
+            self._stop_attempted = True
+            device_ids = self._resolve_device_ids_for_rank()
+            self._stop_profiling(device_ids, f"at end_step={self.end_step}")
+
+    def on_train_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if self._profile_started and not self._stop_attempted:
+            self._stop_attempted = True
+            device_ids = self._resolve_device_ids_for_rank()
+            self._stop_profiling(device_ids, "on train end")
 
 
 @registry.callback("qaic_op_by_op_verifier_callback")

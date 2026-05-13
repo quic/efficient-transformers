@@ -6,8 +6,9 @@
 # -----------------------------------------------------------------------------
 
 
+import os
 from contextlib import nullcontext
-from typing import ContextManager
+from typing import ContextManager, Optional
 
 import torch
 
@@ -64,19 +65,26 @@ def get_op_verifier_ctx(
     )
 
 
-def init_qaic_profiling(use_profiler: bool, device_type: str) -> None:
+def init_qaic_profiling(use_profiler: bool, device_type: str, trace_dir: Optional[str] = None) -> None:
     """Initialize the qaic profiling tool. Note: The profiler is only works
     for qaic backend.
 
     Args:
         use_profiler (bool): Boolean flag to enable profiler.
         device_type (str): Device on which the model is being executed.
+        trace_dir (str, optional): Optional output directory for hardware traces.
     """
     if (use_profiler) and ("qaic" in device_type):
         # Lazily imported qaic's qaic_profile when it is actually needed.
         import torch_qaic.profile as qaic_profile
 
-        qaic_profile.start_profiling(device_type, 1)
+        if trace_dir is None:
+            qaic_profile.start_profiling(device_type, 1)
+            return
+
+        trace_dir = os.path.abspath(os.path.expanduser(trace_dir))
+        os.makedirs(trace_dir, exist_ok=True)
+        qaic_profile.start_profiling(device_type, 1, path=trace_dir)
 
 
 def stop_qaic_profiling(use_profiler: bool, device_type: str) -> None:
