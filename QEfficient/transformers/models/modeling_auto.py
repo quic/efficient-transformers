@@ -3355,6 +3355,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
         num_speculative_tokens: Optional[int] = None,
+        dflash_block_size: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -3387,6 +3388,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 prefill_seq_len=(num_speculative_tokens + 1) if self.is_tlm else 1,
                 ctx_len=ctx_len,
             )[1]
+
         else:
             spec = {
                 "batch_size": full_batch_size if self.continuous_batching else batch_size,
@@ -3397,7 +3399,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["comp_ctx_lengths"] = comp_ctx_lengths
 
         spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
-
+        spec["seq_len"]=dflash_block_size if self.dflash_tlm else spec["prefill_seq_len"]
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -3418,6 +3420,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         batch_size: int = 1,
         full_batch_size: Optional[int] = None,
         kv_cache_batch_size: Optional[int] = None,
+        dflash_block_size:Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
@@ -3428,6 +3431,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
+        
         **compiler_options,
     ) -> str:
         """
@@ -3624,6 +3628,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         kv_cache_batch_size=kv_cache_batch_size,
                         full_batch_size=full_batch_size,
                         num_speculative_tokens=num_speculative_tokens,
+                        dflash_block_size=dflash_block_size,
                     )
                     if decode_spec:
                         specializations.append(decode_spec)
@@ -3636,6 +3641,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     kv_cache_batch_size=kv_cache_batch_size,
                     full_batch_size=full_batch_size,
                     num_speculative_tokens=num_speculative_tokens,
+                    dflash_block_size=dflash_block_size,
                     prefill_only=prefill_only,
                 )
                 if decode_spec:
