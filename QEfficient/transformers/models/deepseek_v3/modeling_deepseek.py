@@ -767,7 +767,7 @@ class QEffDeepseekV3Attention(nn.Module):
             )
 
 
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "2"))
 EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 
 
@@ -1265,7 +1265,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
         rw_expanded = routing_weight.unsqueeze(-1)
-
         for packed_start in range(0, seq_len, packed_chunk_size):
             packed_stop = packed_start + packed_chunk_size
             chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
@@ -1291,8 +1290,8 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 down_proj_unpacked, slot_down_scales, down_zeros_unpacked, self.group_size
             )
 
-            gate_out = torch.bmm(x_chunk, gate_proj_dq.to(expert_out.dtype))
-            up_out = torch.bmm(x_chunk, up_proj_dq.to(expert_out.dtype))
+            gate_out = torch.bmm(x_chunk, gate_proj_dq.transpose(1, 2))
+            up_out = torch.bmm(x_chunk, up_proj_dq.transpose(1, 2))
             hidden = self.act_fn(gate_out) * up_out
             down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(expert_out.dtype))
 
@@ -1322,17 +1321,17 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         expert_out = x.new_zeros((num_nsp, T, H))
 
-        local_gate_qweight = self.all_gate_qweight.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        local_gate_scales = self.all_gate_scales.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        local_gate_qzeros = self.all_gate_qzeros.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        local_gate_qweight = self.all_gate_qweight.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // 2).transpose(0, 1).contiguous()
+        local_gate_scales = self.all_gate_scales.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // self.group_size).transpose(0, 1).contiguous()
+        local_gate_qzeros = self.all_gate_qzeros.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // (self.group_size * 2)).transpose(0, 1).contiguous()
 
-        local_up_qweight = self.all_up_qweight.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        local_up_scales = self.all_up_scales.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        local_up_qzeros = self.all_up_qzeros.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        local_up_qweight = self.all_up_qweight.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // 2).transpose(0, 1).contiguous()
+        local_up_scales = self.all_up_scales.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // self.group_size).transpose(0, 1).contiguous()
+        local_up_qzeros = self.all_up_qzeros.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // (self.group_size * 2)).transpose(0, 1).contiguous()
 
-        local_down_qweight = self.all_down_qweight.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        local_down_scales = self.all_down_scales.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        local_down_qzeros = self.all_down_qzeros.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        local_down_qweight = self.all_down_qweight.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // 2).transpose(0, 1).contiguous()
+        local_down_scales = self.all_down_scales.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // self.group_size).transpose(0, 1).contiguous()
+        local_down_qzeros = self.all_down_qzeros.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // (self.group_size * 2)).transpose(0, 1).contiguous()
 
         for slot in range(local_experts):
             routing_weight = rw[:, slot, :]
@@ -1366,7 +1365,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         if len(self.experts) % EXPERT_BLOCKING_NUM_NSP == 0:
             expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
-            return expert_out.view(B, S, H)
+            return expert_out.view(B, S, H) + self.shared_experts(hidden_states)
 
         final_hidden_states = x.new_zeros((T, H))
         for expert_idx in range(self.config.n_routed_experts):
