@@ -9,6 +9,8 @@ from typing import List, Tuple
 import onnx
 import onnx_ir
 from onnx import external_data_helper
+import shutil
+from typing import List, Tuple
 
 from QEfficient.base.onnx_transforms import CustomOpTransform, RemovePrefix
 
@@ -111,7 +113,7 @@ def split_layer_graph(
     return True
 
 
-def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: int = 0, verbose: bool = False) -> None:
+def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: int = 0, windows: list[tuple[int, int]] = [], verbose: bool = False) -> None:
     windows = _discover_layer_windows(exported_path, start_layer=start_layer)
     for shard_idx, (layer_start, layer_end) in enumerate(windows):
         split_layer_graph(shard_idx, len(windows), exported_path, layer_start, layer_end)
@@ -122,31 +124,14 @@ def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: in
 # ============================================================
 # STAGE 2: PREFIX + DELETION
 # ============================================================
-def async_delete_files(paths: List[str]) -> None:
-    def _delete(p):
-        try:
-            os.remove(p)
-        except FileNotFoundError:
-            pass
-        except Exception:
-            pass
 
-    for p in paths:
-        _delete_pool.submit(_delete, p)
-
-
-def collect_chunk_deletable_files(exported_path: str, layer_windows: List[Tuple[int, int]]) -> List[str]:
-    files = []
+def delete_layer_dirs(exported_path: str, layer_windows: List[Tuple[int, int]]) -> None:
     for layer_start, layer_end in layer_windows:
         layer_dir = f"{exported_path}/onnx_layerwise_tmp/layer_{layer_start}_{layer_end}"
-        if not os.path.isdir(layer_dir):
-            continue
-        for entry in os.scandir(layer_dir):
-            if entry.is_file() and entry.name.endswith(DELETE_SUFFIXES):
-                files.append(entry.path)
-    return files
-
-
+        
+        if os.path.isdir(layer_dir):
+            shutil.rmtree(layer_dir)  # deletes entire directory
+            
 def rewrite_tensors_with_prefix(
     model: onnx.ModelProto,
     prefix: str,
@@ -208,6 +193,7 @@ def run_prefix_pipeline(
     num_layers: int = 61,
     chunk_size: int = 8,
     final_data_dir: str = "final_data",
+    windows: list[tuple[int, int]] = [],
     verbose: bool = False,
 ) -> None:
     windows = _discover_layer_windows(exported_path, start_layer=0)
@@ -225,9 +211,9 @@ def run_prefix_pipeline(
             for f in as_completed(futures):
                 f.result()
         _ = time.time() - t0
-
-        deletables = collect_chunk_deletable_files(exported_path, chunk_windows)
-        async_delete_files(deletables)
+        
+        delete_layer_dirs(exported_path, chunk_windows)
+        
     if verbose:
         print(f"[DONE] prefix+deletion pipeline complete ({len(windows)} windows)")
 
@@ -384,9 +370,8 @@ def merge_models(m1, m2, io_map):
 
 
 def run_merge_pipeline(
-    exported_path: str, num_layers: int = 61, final_data_dir: str = "final_data", verbose: bool = False
+    exported_path: str, num_layers: int = 61, final_data_dir: str = "final_data", windows: list[tuple[int, int]] = [], verbose: bool = False
 ) -> str:
-    windows = _discover_layer_windows(exported_path, start_layer=0)
     if len(windows) < 1:
         raise ValueError("Need at least one discovered shard to merge")
 
@@ -464,10 +449,12 @@ def run_sequential_pipeline(
     final_data_dir: str = "final_data",
     verbose: bool = False,
 ) -> str:
+    windows = _discover_layer_windows(exported_path, start_layer=0)
     run_split_pipeline(
         exported_path=exported_path,
         num_layers=num_layers,
         start_layer=start_layer,
+        windows=windows,
         verbose=verbose,
     )
 
@@ -476,6 +463,7 @@ def run_sequential_pipeline(
         num_layers=num_layers,
         chunk_size=chunk_size,
         final_data_dir=final_data_dir,
+        windows=windows,
         verbose=verbose,
     )
 
@@ -483,6 +471,7 @@ def run_sequential_pipeline(
         exported_path=exported_path,
         num_layers=num_layers,
         final_data_dir=final_data_dir,
+        windows=windows,
         verbose=verbose,
     )
     return final_path

@@ -210,14 +210,14 @@ def _parse_args():
         "--num_kv_blocks",
         dest="num_kv_blocks",
         type=int,
-        default=4,
+        default=8,
         help="Number of KV blocks.",
     )
     parser.add_argument(
         "--head_block_size",
         dest="head_block_size",
         type=int,
-        default=4,
+        default=None,
         help="Head block size.",
     )
     parser.add_argument(
