@@ -248,6 +248,7 @@ def attention_configurator(
             qkv_size_per_nsp = q_size_per_nsp
             # For KV Blocking for loop, q input and qkv output should be persistent in VTCM
             vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp + qkv_size_per_nsp
+
             q_kv_ratio = max(q_size_per_nsp / kv_size_per_nsp, kv_size_per_nsp / q_size_per_nsp)
             num_total_blocks = num_q_blocks * num_kv_blocks
 
