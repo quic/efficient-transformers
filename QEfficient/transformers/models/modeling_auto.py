@@ -47,6 +47,8 @@ from QEfficient.transformers.modeling_utils import (
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
+    DFlashTransform,
+    DFlashTLMTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
@@ -2878,6 +2880,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
+        self.dflash_dlm = False
+        self.hidden_size = self.model.config.hidden_size
+        self.vocab_size = self.model.config.vocab_size
+        if qaic_config is not None:
+            self.dflash_dlm = qaic_config.get("dflash_dlm", False)
+        if self.dflash_dlm:
+            self.model, _ = DFlashTransform.apply(self.model, qaic_config)
+
+        self.dflash_tlm = False
+        if qaic_config is not None:
+            self.dflash_tlm = bool(qaic_config.get("target_layer_ids", None))
+        if self.dflash_tlm:
+            self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
+
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
 
@@ -3073,7 +3089,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
+            self.model.config, fbs if self.continuous_batching else bs, seq_len * 2
         )
         enable_chunking = kwargs.get("enable_chunking", False)
 
@@ -3118,6 +3134,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
+
+        if self.dflash_dlm:
+            example_inputs = {
+                "noise_embeds": torch.ones((bs, seq_len, self.hidden_size), dtype=torch.float),
+                "target_hidden": torch.ones((bs, seq_len, self.hidden_size), dtype=torch.float),
+                "position_ids": torch.arange(seq_len, 2 * seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+                "position_ids_target": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+                "past_key_values": [[] for _ in range(self.num_layers)],
+            }
+            dynamic_axes = {
+                "noise_embeds": {0: "batch_size", 1: "seq_len"},
+                "target_hidden": {0: "batch_size", 1: "seq_len"},
+                "position_ids": {0: "batch_size", 1: "seq_len"},
+                "position_ids_target": {0: "batch_size", 1: "seq_len"},
+            }
+
         if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
@@ -3234,6 +3266,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 vocab_size=self.model.config.vocab_size,
                 qaic_config=self.model.qaic_config,
             )
+
+        if self.dflash_tlm:
+            output_names.append("hidden_states")
+            output_names.append("output_embeds")
 
         return self._export(
             example_inputs,
