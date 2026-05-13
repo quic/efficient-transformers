@@ -2473,6 +2473,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["mm_token_type_ids"] = np.zeros_like(
                 lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
             )
+        if num_kv_blocks:
+            lang_inputs["slot_id"] = (np.max(lang_inputs["position_ids"]) % kv_block_size).reshape(batch_size)
         if "cross_attention_mask" in lang_inputs:
             bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
             lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
