@@ -69,8 +69,6 @@ def _normalize_attention_mode(raw_mode: str) -> str:
 
 def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mode: str) -> str:
     mode = _normalize_attention_mode(requested_mode)
-    #if mode == "":	#this should not be here since it will prevent 'h' and 'b' modes
-        #return ""
     num_q_blocks = attention_cfg.get("num_q_blocks") or 1
     num_kv_blocks = attention_cfg.get("num_kv_blocks") or 1
     head_block_size = (attention_cfg.get("head_block_size") or 1) if attention_cfg.get("head_blocking_enabled") else 1
