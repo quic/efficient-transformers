@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 from typing import Dict, List, Optional
 import argparse
 import csv
@@ -8,7 +15,7 @@ import transformers
 import torch
 from datasets import load_dataset
 from utils import load_and_process_dataset
-from qaic_infer import QAICInferenceSession
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 from rich.console import Console
 from rich.markup import escape
 
@@ -66,14 +73,14 @@ def run_spd_inference_single(
     tokenizer,
     dlm_session: QAICInferenceSession,
     tlm_session: QAICInferenceSession,
+    mask_token_embed,
     vocab_size: int,
     prompt_chunk_size: int,
     ctx_len: int = 4096,
-    block_size: int = 10,
+    block_size: int = 16,
     max_iterations: int = 300,
     hidden_size: int = 4096,
     generation_len: int = 256,
-    mask_embed_path: str = "",
 ) -> SpecDecodingMetrics:
     eos_token_ids = {tokenizer.eos_token_id} if tokenizer.eos_token_id is not None else set()
 
@@ -111,17 +118,36 @@ def run_spd_inference_single(
 
     # ===== PREFILL =====
     prefill_start = time.time()
+    num_sub_blocks = prompt_chunk_size // block_size
+    remainder = prompt_chunk_size % block_size
+
     for pi in range(num_chunks - 1):
         chunk_inputs = {
             "input_ids": tlm_inputs["input_ids"][:, tlm_cache_index[0]:tlm_cache_index[0] + prompt_chunk_size],
             "position_ids": tlm_inputs["position_ids"][:, tlm_cache_index[0]:tlm_cache_index[0] + prompt_chunk_size],
         }
         tlm_prefill_outputs = tlm_session.run(chunk_inputs)
-        dlm_inputs["target_hidden"]       = tlm_prefill_outputs["hidden_states"]
-        dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][:, tlm_cache_index[0]:tlm_cache_index[0] + prompt_chunk_size]
-        dlm_inputs["position_ids"]        = dlm_inputs["position_ids_target"] + block_size
-        dlm_inputs["noise_embeds"]        = np.full((1, prompt_chunk_size, hidden_size), 1, dtype=np.float32)
-        dlm_session.run(dlm_inputs)
+        ## Add support for when the prefill_seq_len is more than block_size
+        for sub_i in range(num_sub_blocks):
+            sub_start = sub_i * block_size
+            dlm_inputs["target_hidden"]       = tlm_prefill_outputs["hidden_states"][:, sub_start:sub_start + block_size, :]
+            dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + block_size]
+            dlm_inputs["position_ids"]        = dlm_inputs["position_ids_target"] + block_size
+            dlm_inputs["noise_embeds"]        = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
+            dlm_session.run(dlm_inputs)
+        
+        ## Add support when prefill_seq_len is not a multiple of block_size
+        if remainder > 0:
+            sub_start = num_sub_blocks * block_size
+            target_hidden_rem = np.zeros((1, block_size, hidden_size), dtype=np.float32)
+            target_hidden_rem[:, :remainder, :] = tlm_prefill_outputs["hidden_states"][:, sub_start:, :]
+            pos_ids_target_rem = np.full((1, block_size), -1, dtype=tlm_inputs["position_ids"].dtype)
+            pos_ids_target_rem[:, :remainder] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + remainder]
+            dlm_inputs["target_hidden"]       = target_hidden_rem
+            dlm_inputs["position_ids_target"] = pos_ids_target_rem
+            dlm_inputs["position_ids"]        = pos_ids_target_rem + block_size
+            dlm_inputs["noise_embeds"]        = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
+            dlm_session.run(dlm_inputs)
         tlm_cache_index[0] += prompt_chunk_size
         dlm_cache_index[0] += prompt_chunk_size
 
@@ -134,12 +160,31 @@ def run_spd_inference_single(
     last_prefill_pos_in_chunk = chunk_inputs["position_ids"].argmax()
     new_tlm_token = tlm_last_prefill_outputs["logits"][:, last_prefill_pos_in_chunk]
 
-    mask_token_embed = np.load(mask_embed_path)
+    ## Add support for when the prefill_seq_len is more than block_size
+    last_sub = last_prefill_pos_in_chunk // block_size
+    for sub_i in range(last_sub):
+        sub_start = sub_i * block_size
+        dlm_inputs["target_hidden"]       = tlm_last_prefill_outputs["hidden_states"][:, sub_start:sub_start + block_size, :]
+        dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + block_size]
+        dlm_inputs["position_ids"]        = dlm_inputs["position_ids_target"] + block_size
+        dlm_inputs["noise_embeds"]        = np.full((1, block_size, hidden_size), 1, dtype=np.float32)
+        dlm_session.run(dlm_inputs)
+
     noise_embeds = np.tile(mask_token_embed, (1, block_size, 1))
     noise_embeds[:, 0, :] = tlm_last_prefill_outputs["output_embeds"][:, last_prefill_pos_in_chunk, :]
-    target_hidden = tlm_last_prefill_outputs["hidden_states"]
-
-    dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][:, tlm_cache_index[0]:tlm_cache_index[0] + prompt_chunk_size]
+    sub_start = last_sub * block_size
+    
+    ## Add support when prefill_seq_len is not a multiple of block_size
+    if last_sub < num_sub_blocks:
+        target_hidden = tlm_last_prefill_outputs["hidden_states"][:, sub_start:sub_start + block_size, :]
+        dlm_inputs["position_ids_target"] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + block_size]
+    else:
+        target_hidden = np.zeros((1, block_size, hidden_size), dtype=np.float32)
+        target_hidden[:, :remainder, :] = tlm_last_prefill_outputs["hidden_states"][:, sub_start:, :]
+        pos_ids_target = np.full((1, block_size), -1, dtype=tlm_inputs["position_ids"].dtype)
+        pos_ids_target[:, :remainder] = tlm_inputs["position_ids"][:, tlm_cache_index[0] + sub_start:tlm_cache_index[0] + sub_start + remainder]
+        dlm_inputs["position_ids_target"] = pos_ids_target
+    
     dlm_inputs["position_ids"] = np.arange(
         tlm_cache_index[0] + last_prefill_pos_in_chunk + 1,
         tlm_cache_index[0] + last_prefill_pos_in_chunk + 1 + block_size,
@@ -156,6 +201,10 @@ def run_spd_inference_single(
     gen_idx = 0
     iteration_count = 0
     continue_generation = True
+
+    tlm_session.set_buffers({"logits": np.zeros((batch_size, block_size), dtype=np.int32)})
+    tlm_session.set_buffers({"hidden_states": np.zeros((batch_size, block_size, hidden_size), dtype=np.float32)})
+    tlm_session.set_buffers({"output_embeds": np.zeros((batch_size, block_size, hidden_size), dtype=np.float32)})
 
     while gen_idx < generation_len and iteration_count < max_iterations and continue_generation:
         iteration_count += 1
@@ -304,9 +353,9 @@ def evaluate_dataset(
     tokenizer,
     dlm_session,
     tlm_session,
+    mask_token_embed,
     vocab_size: int,
     prompt_chunk_size: int,
-    mask_embed_path: str,
     ctx_len: int = 4096,
     block_size: int = 10,
     max_iterations: int = 300,
@@ -335,61 +384,61 @@ def evaluate_dataset(
         )
         console.print(f"[cyan]({i+1}/{len(dataset)})[/cyan] Input: {user_content[:80].strip()}")
 
-        try:
-            metrics = run_spd_inference_single(
-                prompt_text=prompt_text,
-                tokenizer=tokenizer,
-                dlm_session=dlm_session,
-                tlm_session=tlm_session,
-                vocab_size=vocab_size,
-                prompt_chunk_size=prompt_chunk_size,
-                ctx_len=ctx_len,
-                block_size=block_size,
-                max_iterations=max_iterations,
-                hidden_size=hidden_size,
-                generation_len=generation_len,
-                mask_embed_path=mask_embed_path,
-            )
+        # try:
+        metrics = run_spd_inference_single(
+            prompt_text=prompt_text,
+            tokenizer=tokenizer,
+            dlm_session=dlm_session,
+            tlm_session=tlm_session,
+            vocab_size=vocab_size,
+            prompt_chunk_size=prompt_chunk_size,
+            ctx_len=ctx_len,
+            block_size=block_size,
+            max_iterations=max_iterations,
+            hidden_size=hidden_size,
+            generation_len=generation_len,
+            mask_token_embed=mask_token_embed,
+        )
 
-            ar      = metrics.acceptance_rate()
-            dlm_tps = metrics.dlm_tok_rate()
-            tlm_tps = metrics.tlm_tok_rate()
-            spd_tps = metrics.spd_tok_rate()
+        ar      = metrics.acceptance_rate()
+        dlm_tps = metrics.dlm_tok_rate()
+        tlm_tps = metrics.tlm_tok_rate()
+        spd_tps = metrics.spd_tok_rate()
 
-            all_ar.append(ar)
-            all_dlm_tps.append(dlm_tps)
-            all_tlm_tps.append(tlm_tps)
-            all_spd_tps.append(spd_tps)
+        all_ar.append(ar)
+        all_dlm_tps.append(dlm_tps)
+        all_tlm_tps.append(tlm_tps)
+        all_spd_tps.append(spd_tps)
 
-            per_sample_rows.append({
-                "dataset":             dataset_name,
-                "sample_idx":          i,
-                "acceptance_rate":     round(ar, 4),
-                "dlm_tps":             round(dlm_tps, 2),
-                "tlm_tps":             round(tlm_tps, 2),
-                "spd_tps":             round(spd_tps, 2),
-                "total_generated_tokens": metrics.total_generated_tokens,
-                "num_iters":           metrics.num_total_iters,
-                "prefill_time_s":      round(metrics.total_prefill_time, 4),
-                "tlm_decode_time_s":   round(metrics.tlm_decode_time, 4),
-                "dlm_decode_time_s":   round(metrics.dlm_decode_time, 4),
-            })
+        per_sample_rows.append({
+            "dataset":             dataset_name,
+            "sample_idx":          i,
+            "acceptance_rate":     round(ar, 4),
+            "dlm_tps":             round(dlm_tps, 2),
+            "tlm_tps":             round(tlm_tps, 2),
+            "spd_tps":             round(spd_tps, 2),
+            "total_generated_tokens": metrics.total_generated_tokens,
+            "num_iters":           metrics.num_total_iters,
+            "prefill_time_s":      round(metrics.total_prefill_time, 4),
+            "tlm_decode_time_s":   round(metrics.tlm_decode_time, 4),
+            "dlm_decode_time_s":   round(metrics.dlm_decode_time, 4),
+        })
 
-            console.print(
-                f"  AR={ar:.2f}  DLM={dlm_tps:.1f} tok/s  TLM={tlm_tps:.1f} tok/s  SPD={spd_tps:.1f} tok/s"
-            )
+        console.print(
+            f"  AR={ar:.2f}  DLM={dlm_tps:.1f} tok/s  TLM={tlm_tps:.1f} tok/s  SPD={spd_tps:.1f} tok/s"
+        )
 
-            output_parts = ["Output: "]
-            for tok_id, source in zip(metrics.generated_ids, metrics.generated_sources):
-                text = escape(tokenizer.decode([tok_id], skip_special_tokens=True))
-                if source == "dlm":
-                    output_parts.append(f"[blue]{text}[/blue]")
-                else:
-                    output_parts.append(f"[white]{text}[/white]")
-            console.print("".join(output_parts))
+        output_parts = ["Output: "]
+        for tok_id, source in zip(metrics.generated_ids, metrics.generated_sources):
+            text = escape(tokenizer.decode([tok_id], skip_special_tokens=True))
+            if source == "dlm":
+                output_parts.append(f"[blue]{text}[/blue]")
+            else:
+                output_parts.append(f"[white]{text}[/white]")
+        console.print("".join(output_parts))
 
-        except Exception as e:
-            console.print(f"[red]  ✗ Error on sample {i}: {e}[/red]")
+        # except Exception as e:
+        #     console.print(f"[red]  ✗ Error on sample {i}: {e}[/red]")
 
     # ===== SUMMARY =====
     if all_ar:
@@ -447,10 +496,9 @@ def parse_args():
     parser.add_argument("--dataset",          required=True, choices=list(DATASET_CONFIG.keys()))
     parser.add_argument("--tlm_qpc",          required=True)
     parser.add_argument("--dlm_qpc",          required=True)
-    parser.add_argument("--model_name",       required=True)
+    parser.add_argument("--tlm_model_name",       required=True)
+    parser.add_argument("--dlm_model_name",       required=True)
     parser.add_argument("--noise_embed_path", required=True)
-    parser.add_argument("--block_size",       type=int, default=8)
-    parser.add_argument("--hidden_size",      type=int, default=2880)
     parser.add_argument("--iteration",        type=int, default=300)
     parser.add_argument("--ctx_len",          type=int, default=4096)
     parser.add_argument("--generation_len",   type=int, default=1024)
@@ -472,12 +520,15 @@ def main():
 
     console.print("[bold blue]Loading tokenizer and config...[/bold blue]")
     tokenizer = transformers.AutoTokenizer.from_pretrained(
-        args.model_name, token=args.hf_token, trust_remote_code=True
+        args.tlm_model_name, token=args.hf_token, trust_remote_code=True
     )
     config = transformers.AutoConfig.from_pretrained(
-        args.model_name, token=args.hf_token, trust_remote_code=True
+        args.dlm_model_name, token=args.hf_token, trust_remote_code=True
     )
     vocab_size = config.vocab_size
+    hidden_size = config.hidden_size
+    block_size = config.block_size
+    mask_token_embed = np.load(args.noise_embed_path)
 
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -501,11 +552,11 @@ def main():
         tlm_session=tlm_session,
         vocab_size=vocab_size,
         prompt_chunk_size=prompt_chunk_size,
-        mask_embed_path=args.noise_embed_path,
+        mask_token_embed=mask_token_embed,
         ctx_len=args.ctx_len,
-        block_size=args.block_size,
+        block_size=block_size,
         max_iterations=args.iteration,
-        hidden_size=args.hidden_size,
+        hidden_size=hidden_size,
         generation_len=args.generation_len,
         num_samples=num_samples,
         output_dir=args.output_dir,

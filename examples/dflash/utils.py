@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import json
 import warnings
 import numpy as np
@@ -123,6 +130,30 @@ def load_and_process_dataset(data_name: str):
     return dataset
 
 
+_DEFAULT_FMT = "{prompt}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
+_CODING_FMT  = "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{prompt}\n```"
+
+_CATEGORY_FMT = {
+    "math":           _DEFAULT_FMT,
+    "math_reasoning": _DEFAULT_FMT,
+    "coding":         _CODING_FMT,
+    "reasoning":      _DEFAULT_FMT,
+    "stem":           _DEFAULT_FMT,
+    "qa":             _DEFAULT_FMT,
+    "rag":            _DEFAULT_FMT,
+    "extraction":     _DEFAULT_FMT,
+    "humanities":     _DEFAULT_FMT,
+    "writing":        _DEFAULT_FMT,
+    "summarization":  _DEFAULT_FMT,
+    "translation":    _DEFAULT_FMT,
+    "roleplay":       _DEFAULT_FMT,
+}
+
+def format_prompt(prompt: str, category: str = "") -> str:
+    fmt = _CATEGORY_FMT.get(category, _DEFAULT_FMT)
+    return fmt.format(prompt=prompt)
+
+
 def reformat_jsonl_by_category(questions: list) -> list:
     """Apply instruction prefix to JSONL questions based on their category.
 
@@ -130,32 +161,11 @@ def reformat_jsonl_by_category(questions: list) -> list:
     where a specific instruction is obvious (math, coding) a tailored prefix is
     used; for all others the same step-by-step reasoning instruction is applied.
     """
-    _DEFAULT_FMT = "{prompt}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
-    _CODING_FMT  = "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{prompt}\n```"
-
-    _CATEGORY_FMT = {
-        "math":          _DEFAULT_FMT,
-        "math_reasoning": _DEFAULT_FMT,
-        "coding":        _CODING_FMT,
-        "reasoning":     _DEFAULT_FMT,
-        "stem":          _DEFAULT_FMT,
-        "qa":            _DEFAULT_FMT,
-        "rag":           _DEFAULT_FMT,
-        "extraction":    _DEFAULT_FMT,
-        "humanities":    _DEFAULT_FMT,
-        "writing":       _DEFAULT_FMT,
-        "summarization": _DEFAULT_FMT,
-        "translation":   _DEFAULT_FMT,
-        "roleplay":      _DEFAULT_FMT,
-    }
-
     for q in questions:
         category = q.get("category", "")
-        raw_prompt = q["turns"][0]
-        fmt = _CATEGORY_FMT.get(category, _DEFAULT_FMT)
-        q["turns"][0] = fmt.format(prompt=raw_prompt)
-
+        q["turns"][0] = format_prompt(q["turns"][0], category)
     return questions
+
 
 _TARGET_ABSMAX = 128.0
 
