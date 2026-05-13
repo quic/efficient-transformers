@@ -3236,6 +3236,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 qaic_config=self.model.qaic_config,
             )
 
+        if prefill_only:
+            assert prefill_seq_len is not None, "prefill_seq_len must be provided when prefill_only is True"
+            num_q_blocks_ffn = prefill_seq_len // constants.EXPERT_BLOCKING_PACKED_CHUNK_SIZE
+            num_q_blocks_ffn = num_q_blocks_ffn if num_q_blocks_ffn > 0 else 1
+            setattr(self.model.model, "num_q_blocks_ffn", num_q_blocks_ffn)
+
         return self._export(
             example_inputs,
             output_names=output_names,

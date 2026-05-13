@@ -763,7 +763,7 @@ class QEffDeepseekV3Attention(nn.Module):
             )
 
 
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "4"))
 EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 
 
@@ -1235,6 +1235,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         routing_weight: torch.Tensor,
         expert_out: torch.Tensor,
         packed_chunk_size: int,
+        num_q_ffn_blocks: Optional[int] = None,
     ) -> torch.Tensor:
         """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
 
@@ -1253,14 +1254,26 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         batch_size, seq_len = T2Ei.shape
         packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
+        if num_q_ffn_blocks is not None:
+            assert seq_len % num_q_ffn_blocks == 0, "Something went wrong"
+            packed_chunk_size = seq_len // num_q_ffn_blocks
+        else:
+            num_q_ffn_blocks = seq_len // packed_chunk_size
+
         matched_idx = _build_matched_idx_from_cumsum(T2Ei)
         valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
         row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
         rw_expanded = routing_weight.unsqueeze(-1)
 
-        for packed_start in range(0, seq_len, packed_chunk_size):
-            packed_stop = packed_start + packed_chunk_size
+        for chunk_idx in range(num_q_ffn_blocks):
+            print("executing chunk", chunk_idx)
+            packed_start = chunk_idx * packed_chunk_size
+            if chunk_idx == num_q_ffn_blocks - 1:
+                packed_stop = seq_len
+            else:
+                packed_stop = packed_start + packed_chunk_size
+
             chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
             x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
@@ -1303,7 +1316,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         return expert_out
 
-    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
+    def _forward_expert_blocked(
+        self, x: torch.Tensor, routing_weights: torch.Tensor, num_q_ffn_blocks: Optional[int] = None
+    ) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
         if len(self.experts) % num_nsp != 0:
@@ -1315,19 +1330,68 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         expert_out = x.new_zeros((num_nsp, T, H))
 
-        local_gate_qweight = self.all_gate_qweight.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // 2).transpose(0, 1).contiguous()
-        local_gate_scales = self.all_gate_scales.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // self.group_size).transpose(0, 1).contiguous()
-        local_gate_qzeros = self.all_gate_qzeros.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // (self.group_size * 2)).transpose(0, 1).contiguous()
+        local_gate_qweight = (
+            self.all_gate_qweight.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // 2)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_gate_scales = (
+            self.all_gate_scales.view(
+                local_experts, num_nsp, self.out_features_gate, self.in_features_gate // self.group_size
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_gate_qzeros = (
+            self.all_gate_qzeros.view(
+                local_experts, num_nsp, self.out_features_gate, self.in_features_gate // (self.group_size * 2)
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
 
-        local_up_qweight = self.all_up_qweight.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // 2).transpose(0, 1).contiguous()
-        local_up_scales = self.all_up_scales.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // self.group_size).transpose(0, 1).contiguous()
-        local_up_qzeros = self.all_up_qzeros.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // (self.group_size * 2)).transpose(0, 1).contiguous()
+        local_up_qweight = (
+            self.all_up_qweight.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // 2)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_up_scales = (
+            self.all_up_scales.view(
+                local_experts, num_nsp, self.out_features_up, self.in_features_up // self.group_size
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_up_qzeros = (
+            self.all_up_qzeros.view(
+                local_experts, num_nsp, self.out_features_up, self.in_features_up // (self.group_size * 2)
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
 
-        local_down_qweight = self.all_down_qweight.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // 2).transpose(0, 1).contiguous()
-        local_down_scales = self.all_down_scales.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // self.group_size).transpose(0, 1).contiguous()
-        local_down_qzeros = self.all_down_qzeros.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // (self.group_size * 2)).transpose(0, 1).contiguous()
+        local_down_qweight = (
+            self.all_down_qweight.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // 2)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_down_scales = (
+            self.all_down_scales.view(
+                local_experts, num_nsp, self.out_features_down, self.in_features_down // self.group_size
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_down_qzeros = (
+            self.all_down_qzeros.view(
+                local_experts, num_nsp, self.out_features_down, self.in_features_down // (self.group_size * 2)
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
 
         for slot in range(local_experts):
+            print(f"executing slot {slot}")
             routing_weight = rw[:, slot, :]
             T2Ei = routing_weight > 0
             expert_out = self._cumsum_scatter_gather_update_expert_blocked(
@@ -1345,10 +1409,13 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 routing_weight=routing_weight,
                 expert_out=expert_out,
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
+                num_q_ffn_blocks=num_q_ffn_blocks,
             )
         return expert_out.sum(dim=0)
 
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, hidden_states: torch.Tensor, num_q_ffn_blocks: Optional[int] = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         topk_idx, topk_weight, _, _ = self.gate(hidden_states)
         B, S, H = hidden_states.shape
         T = B * S
@@ -1358,8 +1425,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         routing_weights.scatter_(1, topk_idx, topk_weight)
 
         if len(self.experts) % EXPERT_BLOCKING_NUM_NSP == 0:
-            expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
-            return expert_out.view(B, S, H) + self.shared_experts(hidden_states)
+            expert_out = self._forward_expert_blocked(
+                x=x, routing_weights=routing_weights, num_q_ffn_blocks=num_q_ffn_blocks
+            ) + self.shared_experts(hidden_states)
+            return expert_out.view(B, S, H)
 
         final_hidden_states = x.new_zeros((T, H))
         for expert_idx in range(self.config.n_routed_experts):
@@ -1391,10 +1460,12 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        num_q_ffn_blocks: Optional[int] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         orig_hidden_states = self.input_layernorm(hidden_states)
+        # setattr(self.mlp, "num_q_ffn_blocks", num_q_ffn_blocks)
         if mla_absorption is not None:
             cache_compressed = mla_absorption.get("cache_compressed", False)
         else:
@@ -1431,7 +1502,11 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
+
+        if num_q_ffn_blocks is not None and self.mlp.__class__.__name__ == "DeepseekV3MoE":
+            self.mlp(hidden_states, num_q_ffn_blocks)
+        else:
+            hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -1530,7 +1605,7 @@ class QEffDeepseekV3Model(nn.Module):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
-
+        num_q_ffn_blocks = getattr(self, "num_q_blocks_ffn", None)
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -1547,6 +1622,7 @@ class QEffDeepseekV3Model(nn.Module):
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
                 mla_absorption=mla_absorption,
+                num_q_ffn_blocks=num_q_ffn_blocks,
                 **kwargs,
             )
 
