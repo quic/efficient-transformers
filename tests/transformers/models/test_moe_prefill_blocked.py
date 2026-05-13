@@ -91,6 +91,34 @@ def test_qwen3moe_prefill_chunked_export(tmp_path):
     assert qeff.onnx_path.is_file()
 
 
+def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(tmp_path):
+    import onnx
+
+    config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+    onnx_path = qeff.export(
+        tmp_path / "prefill-subfunction",
+        prefill_only=True,
+        enable_chunking=True,
+        use_onnx_subfunctions=True,
+        offload_pt_weights=False,
+    )
+
+    onnx_model = onnx.load(str(onnx_path), load_external_data=False)
+    function_names = {func.name for func in onnx_model.functions}
+    used_op_types = {node.op_type for node in onnx_model.graph.node}
+    for function_proto in onnx_model.functions:
+        used_op_types.update(node.op_type for node in function_proto.node)
+
+    assert "CtxScatter3DInt" in function_names
+    assert "CtxScatter3D" in function_names
+    assert "CtxGather3D" in function_names
+    assert "CtxScatter3DInt" in used_op_types
+    assert "CtxScatter3D" in used_op_types
+    assert "CtxGather3D" in used_op_types
+
+
 # ── GPT-OSS ───────────────────────────────────────────────────────────────────
 
 
