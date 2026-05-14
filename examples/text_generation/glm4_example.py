@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import argparse
-import os
 
 import torch
 from transformers import AutoTokenizer
@@ -54,41 +53,23 @@ def main():
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--tokenizer-id", default=TOKENIZER_ID)
     parser.add_argument("--ctx-len", type=int, default=1024)
-    parser.add_argument("--prefill-seq-len", type=int, default=512)
     parser.add_argument("--num-devices", type=int, default=1)
     parser.add_argument("--num-cores", type=int, default=4)
     parser.add_argument("--replicate-kv-heads", type=int, default=1)
     args = parser.parse_args()
-
-    os.environ.setdefault("EXPERT_BLOCKING_NUM_NSP", "2")
-    os.environ.setdefault("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256")
 
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(args.model_id)
     optionally_replicate_kv_heads(qeff_model, args.replicate_kv_heads)
 
     qeff_model.compile(
         prefill_seq_len=1,
+        ctx_len=args.ctx_len,
+        num_cores=args.num_cores,
+        mxfp6_matmul=True,
         num_devices=args.num_devices,
         use_onnx_subfunctions=True,
-        ctx_len=args.ctx_len,
-        mxfp6_matmul=True,
-        aic_enable_depth_first=True,
-        num_cores=args.num_cores,
         offload_pt_weights=False,
         retain_full_kv=True,
-    )
-
-    qeff_model.compile(
-        prefill_seq_len=args.prefill_seq_len,
-        ctx_len=args.ctx_len,
-        num_cores=args.num_cores,
-        mxfp6_matmul=True,
-        num_devices=args.num_devices,
-        split_retained_state_io=True,
-        aic_enable_depth_first=True,
-        prefill_only=True,
-        enable_chunking=True,
-        use_onnx_subfunctions=True,
         qaic_config={"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 2},
     )
 
