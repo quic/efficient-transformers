@@ -13,7 +13,6 @@ import shutil
 import subprocess
 import warnings
 from abc import ABC, abstractmethod
-from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -38,7 +37,6 @@ from QEfficient.utils import (
     generate_mdp_partition_config,
     hash_dict_params,
     load_json,
-    require_value,
     to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
@@ -631,25 +629,6 @@ class QEFFBaseModel(ABC):
             mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
-
-        supported_options = _qaic_supported_options()
-        if supported_options:
-            filtered_compiler_options = {}
-            for key, value in compiler_options.items():
-                option = "-" + key.replace("_", "-")
-                if option not in supported_options:
-                    logger.warning("Skipping unsupported qaic-compile option: %s", option)
-                    continue
-                filtered_compiler_options[key] = value
-            compiler_options = filtered_compiler_options
-
-        for key, value in compiler_options.items():
-            option = "-" + key.replace("_", "-")
-            if isinstance(value, bool):
-                if value:
-                    command.append(option)
-                continue
-            command.append(f"{option}={value}")
 
         if use_onnx_subfunctions:
             logger.info("Using ONNX subfunctions for compilation.")
