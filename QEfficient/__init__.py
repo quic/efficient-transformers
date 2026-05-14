@@ -30,8 +30,14 @@ from QEfficient.base import (
 )
 from QEfficient.compile.compile_helper import compile
 
-# from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
-# from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
+try:
+    from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
+    from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
+    from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
+except (ImportError, RuntimeError):
+    QEffFluxPipeline = None
+    QEffWanPipeline = None
+    QEffWanImageToVideoPipeline = None
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.peft import QEffAutoPeftModelForCausalLM
@@ -58,10 +64,14 @@ __all__ = [
     "QEFFAutoModelForSequenceClassification",
     "QEFFAutoModelForSpeechSeq2Seq",
     "QEFFCommonLoader",
-    "QEffFluxPipeline",
-    "QEffWanPipeline",
-    "QEffWanImageToVideoPipeline",
 ]
+
+if QEffFluxPipeline is not None:
+    __all__.append("QEffFluxPipeline")
+if QEffWanPipeline is not None:
+    __all__.append("QEffWanPipeline")
+if QEffWanImageToVideoPipeline is not None:
+    __all__.append("QEffWanImageToVideoPipeline")
 
 
 # Conditionally import QAIC-related modules if the SDK is installed
