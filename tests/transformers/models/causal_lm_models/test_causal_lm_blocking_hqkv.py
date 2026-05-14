@@ -47,6 +47,12 @@ def test_full_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manu
         model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup, num_devices=4
     )
 
+    # kv blocking only, head parallel
+    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS, kv_blocking_headpar_split=0)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup, num_devices=4
+    )
+
     # q block only
     qaic_config = dict(enable_blocking=True, num_q_blocks=NUM_Q_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -90,6 +96,12 @@ def test_few_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manua
     qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name, qaic_config=qaic_config, n_layer=n_layer, manual_cleanup=manual_cleanup
+    )
+
+    # kv blocking only, head parallel
+    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS, kv_blocking_headpar_split=0)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup, num_devices=4
     )
 
     # q block only
@@ -146,6 +158,12 @@ def test_dummy_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, man
         model_name=model_name, qaic_config=qaic_config, n_layer=n_layer, config=hf_config, manual_cleanup=manual_cleanup
     )
 
+    # kv blocking only, head parallel
+    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS, kv_blocking_headpar_split=0)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup, num_devices=4
+    )
+
     # q block only
     qaic_config = dict(enable_blocking=True, num_q_blocks=NUM_Q_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -197,6 +215,12 @@ def test_full_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100_CB(model_name, m
         manual_cleanup=manual_cleanup,
         continuous_batching=True,
         num_devices=4,
+    )
+
+    # kv blocking only, head parallel
+    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS, kv_blocking_headpar_split=0)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup, num_devices=4
     )
 
     # q block only
@@ -264,6 +288,12 @@ def test_few_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100_CB(model_name, ma
         continuous_batching=True,
     )
 
+    # kv blocking only, head parallel
+    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS, kv_blocking_headpar_split=0)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup, num_devices=4
+    )
+    
     # q block only
     qaic_config = dict(enable_blocking=True, num_q_blocks=NUM_Q_BLOCKS)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -338,6 +368,12 @@ def test_dummy_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100_CB(model_name, 
         config=hf_config,
         manual_cleanup=manual_cleanup,
         continuous_batching=True,
+    )
+    
+    # kv blocking only, head parallel
+    qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS, kv_blocking_headpar_split=0)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, qaic_config=qaic_config, manual_cleanup=manual_cleanup, num_devices=4
     )
 
     # q block only
