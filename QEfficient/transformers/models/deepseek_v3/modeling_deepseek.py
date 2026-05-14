@@ -802,9 +802,7 @@ class QEffDeepseekMoEGate(nn.Module):
         if self.topk_method == "noaux_tc":
             assert not self.training
             scores_for_choice = scores.view(bsz * seq_len, -1) + self.e_score_correction_bias.unsqueeze(0)
-            group_scores = (
-                scores_for_choice.view(bsz * seq_len, self.n_group, -1).topk(2, dim=-1)[0].sum(dim=-1)
-            )  # [n, n_group]
+            group_scores = torch.einsum("abc->ab", scores_for_choice.view(bsz * seq_len, self.n_group, -1).topk(2, dim=-1)[0]) # [n, n_group]
             group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]  # [n, top_k_group]
             group_mask = torch.zeros_like(group_scores)  # [n, n_group]
             group_mask.scatter_(1, group_idx, 1)  # [n, n_group]
@@ -821,7 +819,8 @@ class QEffDeepseekMoEGate(nn.Module):
 
         ### norm gate to sum 1
         if self.top_k > 1 and self.norm_topk_prob:
-            denominator = topk_weight.sum(dim=-1, keepdim=True) + 1e-20
+            denominator = torch.einsum("bi->b", topk_weight).unsqueeze(-1) + 1e-20
+
             topk_weight = topk_weight / denominator
         topk_weight = topk_weight * self.routed_scaling_factor  # must multiply the scaling factor
 
@@ -1261,7 +1260,8 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             num_q_ffn_blocks = seq_len // packed_chunk_size
 
         matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-        valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+        valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
+
         row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
         rw_expanded = routing_weight.unsqueeze(-1)
@@ -1308,7 +1308,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
             updated_chunk = expert_out_chunk + down_chunk
 
-            chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
+            x = valid_rows - packed_start
+            x = torch.where(x < 0, torch.zeros_like(x), x)
+            chunk_valid_rows = torch.where(x > packed_chunk_size, packed_chunk_size, x)
             updated_chunk = torch.where(
                 (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
             )
@@ -1411,7 +1413,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
                 num_q_ffn_blocks=num_q_ffn_blocks,
             )
-        return expert_out.sum(dim=0)
+        return torch.einsum("bij->ij", expert_out)
 
     def forward(
         self, hidden_states: torch.Tensor, num_q_ffn_blocks: Optional[int] = None
