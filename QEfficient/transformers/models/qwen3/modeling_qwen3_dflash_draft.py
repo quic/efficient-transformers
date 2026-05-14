@@ -220,7 +220,6 @@ def eager_attention_forward(
     scaling: float,
     **kwargs,
 ):
-
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
@@ -263,7 +262,6 @@ class QEffQwen3Attention(Qwen3Attention):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         bsz, q_len = hidden_states.shape[:-1]
