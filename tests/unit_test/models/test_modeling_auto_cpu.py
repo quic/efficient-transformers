@@ -37,6 +37,8 @@ from transformers import (
     GPT2LMHeadModel,
     LlamaConfig,
     LlamaForCausalLM,
+    MistralConfig,
+    MistralModel,
     Wav2Vec2Config,
     Wav2Vec2ForCTC,
     WhisperConfig,
@@ -94,6 +96,23 @@ def make_tiny_bert():
         max_position_embeddings=CTX_LEN,
     )
     return BertModel(cfg).eval(), cfg
+
+
+def make_tiny_mistral_embedding():
+    """Tiny causal-LM backbone used as an embedder — repro shape for QRANIUMSW-58373."""
+    cfg = MistralConfig(
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        hidden_size=32,
+        intermediate_size=64,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
+        sliding_window=None,
+        use_cache=True,
+        attn_implementation="eager",
+    )
+    return MistralModel(cfg).eval(), cfg
 
 
 def make_tiny_bert_seq_cls():
@@ -647,11 +666,44 @@ class TestQEFFAutoModel:
         qeff = QEFFAutoModel(model, pooling="cls")
         assert qeff is not None
 
-    def test_init_sets_use_cache_true(self):
-        """__init__ sets model.base_model.config.use_cache=True."""
+    def test_init_clears_use_cache_without_pooling(self):
+        """__init__ without pooling clears base_model.config.use_cache to None.
+
+        See QRANIUMSW-58373: leaving use_cache set on the config makes
+        transformers>=4.55's @check_model_inputs decorator collide with the
+        positional use_cache the ONNX tracer supplies, raising
+        ``TypeError: ... got multiple values for argument 'use_cache'``.
+        """
         model, cfg = make_tiny_bert()
         qeff = QEFFAutoModel(model)
+        assert qeff.model.base_model.config.use_cache is None
+
+    def test_init_sets_use_cache_true_with_pooling(self):
+        """__init__ with pooling sets base_model.config.use_cache=True.
+
+        Pooled models are wrapped in PooledModel whose 2-arg forward shields
+        the underlying call from positional use_cache, so the True setting is
+        retained for backward compatibility.
+        """
+        model, cfg = make_tiny_bert()
+        qeff = QEFFAutoModel(model, pooling="mean")
         assert qeff.model.base_model.config.use_cache is True
+
+    def test_causal_lm_backbone_embedder_init_clears_use_cache(self):
+        """QRANIUMSW-58373: Mistral/Qwen2-style backbones used as embedders
+        require base_model.config.use_cache=None so the @check_model_inputs
+        decorator does not collide with the tracer's positional use_cache.
+
+        Models like ``intfloat/e5-mistral-7b-instruct`` and
+        ``NovaSearch/stella_en_1.5B_v5`` previously failed at export with
+        ``TypeError: <Model>.forward() got multiple values for argument
+        'use_cache'``. This test guards the no-pooling init path.
+        """
+        model, cfg = make_tiny_mistral_embedding()
+        # The HF default is use_cache=True; verify __init__ overrides it.
+        assert model.config.use_cache is True
+        qeff = QEFFAutoModel(model)
+        assert qeff.model.base_model.config.use_cache is None
 
     def test_get_model_config_returns_dict(self):
         """get_model_config returns the model's config as a dict."""

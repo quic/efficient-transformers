@@ -268,8 +268,9 @@ class QEFFAutoModel(QEFFTransformersBase):
         # Make Embedding specific transforms like appending pooling
         if pooling:
             self.model, _ = PoolingTransform.apply(self.model, pooling)
-
-        self.model.base_model.config.use_cache = True
+            self.model.base_model.config.use_cache = True
+        else:
+            self.model.base_model.config.use_cache = None
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
