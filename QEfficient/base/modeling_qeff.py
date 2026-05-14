@@ -566,6 +566,14 @@ class QEFFBaseModel(ABC):
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
+        for key, value in compiler_options.items():
+            option = "-" + key.replace("_", "-")
+            if isinstance(value, bool):
+                if value:
+                    command.append(option)
+                continue
+            command.append(f"{option}={value}")
+            
         if use_onnx_subfunctions:
             logger.info("Using ONNX subfunctions for compilation.")
             command.append("-sub-functions")
