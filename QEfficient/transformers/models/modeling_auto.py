@@ -2992,6 +2992,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.hash_params["prefill_only"] = True
         if enable_chunking:
             self.hash_params["chunking"] = True
+            if self.model.config.model_type == "glm4_moe":
+                if prefill_seq_len is None or prefill_seq_len <= 0:
+                    raise ValueError("GLM4_MOE chunked prefill export requires a positive prefill_seq_len.")
+                return prefill_seq_len
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
         num_q_blocks = (
@@ -3090,11 +3094,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                         prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                     )
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = (
-                        seq_len
-                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                        if enable_chunking
-                        else seq_len
+                        seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
                     )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
@@ -3104,9 +3106,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("ENABLE_OPT_SWA", None)
                 self.hash_params.pop("chunking", None)
                 if kwargs.get("retain_full_kv", False):
-                    kv_cache_shape[2] = seq_len + (
-                        self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
-                    )
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
+                    kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
                     self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
