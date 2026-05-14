@@ -160,7 +160,7 @@ def _cumsum_scatter_gather_update_expert_blocked(
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
     rw_expanded = routing_weight.unsqueeze(-1)
@@ -181,7 +181,13 @@ def _cumsum_scatter_gather_update_expert_blocked(
         expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
-        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
+        rows_remaining = valid_rows - packed_start
+        chunk_valid_rows = torch.where(rows_remaining < 0, torch.zeros_like(rows_remaining), rows_remaining)
+        chunk_valid_rows = torch.where(
+            chunk_valid_rows > packed_chunk_size,
+            torch.ones_like(chunk_valid_rows) * packed_chunk_size,
+            chunk_valid_rows,
+        )
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
@@ -232,7 +238,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
                 T=T,
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
             )
-        return expert_out.sum(dim=0)
+        return torch.einsum("ijk->jk", expert_out)
 
     def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
