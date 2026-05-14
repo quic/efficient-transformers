@@ -13,6 +13,18 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
+from profiler import QEffMemoryProfiler
+from QEfficient import QEFFAutoModelForCausalLM
+from transformers import AutoTokenizer
+
+# Initialize profiler with verbose output to see detailed memory tracking information
+profiler = QEffMemoryProfiler(verbose=True)
+# Start monitoring memory usage - this begins tracking memory consumption
+profiler.start_monitoring()
+
+# Mark the start of model loading operation for memory profiling, this will help to create stage wise partitioning the output graph
+profiler.mark_operation("Loading model")
+
 ## For AWQ model update pytorch version to 2.8.*
 model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
@@ -26,7 +38,7 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
 skip_vision = False
-
+profiler.mark_operation("Export and Compile")
 if skip_vision:
     ## Only Text ##
 
@@ -34,8 +46,8 @@ if skip_vision:
     batch_size = 1
     qeff_model.compile(
         batch_size=batch_size,
-        prefill_seq_len=128,
-        ctx_len=4096,
+        prefill_seq_len=32,
+        ctx_len=128,
         num_cores=16,
         num_devices=8,
         height=354,
@@ -80,8 +92,8 @@ else:
     start = time.time()
     qeff_model.compile(
         batch_size=batch_size,
-        prefill_seq_len=128,
-        ctx_len=4096,
+        prefill_seq_len=32,
+        ctx_len=128,
         num_cores=16,
         num_devices=8,
         height=354,
@@ -137,10 +149,18 @@ else:
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
 
     streamer = TextStreamer(tokenizer)
+    profiler.mark_operation("Generation")
     start = time.time()
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    # output = qeff_model.generate(inputs=inputs, generation_len=100)
     end = time.time()
     print("Generation Time:", end - start)
-    print(output.generated_ids)
-    print(tokenizer.batch_decode(output.generated_ids))
-    print(output)
+    # print(output.generated_ids)
+    # print(tokenizer.batch_decode(output.generated_ids))
+    # print(output)
+    profiler.stop_monitoring()
+
+    # Print a detailed memory usage report to the console showing peak memory and operation-wise breakdown (optional)
+    print(profiler.get_memory_report())
+
+    # Generate a visual graph of memory usage over time and save it as an image file
+    profiler.generate_memory_graph("profile.png")
