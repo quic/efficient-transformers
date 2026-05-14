@@ -190,7 +190,7 @@ def blocked_kv_attention_forward(
             if mask_block is None:
                 mask_block = causal_mask_block
             else:
-                mask_block = mask_block.to(torch.bool) | causal_mask_blockgiot
+                mask_block = mask_block.to(torch.bool) | causal_mask_block
 
         if mask_block is not None:
             attn_weights_block = torch.where(mask_block, masked_tensor, attn_weights_block)
