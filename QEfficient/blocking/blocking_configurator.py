@@ -360,4 +360,7 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get("skip_kv", False) and enable_blocking:
             blocking_config.skip_kv = qaic_config.get("skip_kv")
 
+        if qaic_config.get("kv_blocking_headpar_split", None) is not None and enable_blocking:
+            blocking_config.kv_blocking_headpar_split = qaic_config.get("kv_blocking_headpar_split")
+
     return blocking_config
