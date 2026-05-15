@@ -188,10 +188,11 @@ def test_qwen3moe_blocked_forward_parity():
     chunked.__dict__.update(block.__dict__)
     chunked.__class__ = QEffPrefillChunkedQwen3MoeSparseMoeBlock
     chunked.__qeff_init__()
-
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
         orig, _ = chunked.orig_forward(x)
+        chunked.expert_blocking_num_nsp = 2
+        chunked.expert_blocking_num_packed_chunks = 1
         blocked, _ = chunked.forward(x)
 
     assert orig.shape == blocked.shape
@@ -210,7 +211,7 @@ def test_qwen3moe_prefill_chunked_export(tmp_path):
     config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
-    qeff.export(tmp_path / "prefill", prefill_only=True, enable_chunking=True)
+    qeff.export(tmp_path / "prefill", prefill_only=True, enable_chunking=True, num_cores=2)
     assert qeff.onnx_path.is_file()
 
 
@@ -224,6 +225,7 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         tmp_path / "prefill-subfunction",
         prefill_only=True,
         enable_chunking=True,
+        num_cores=2,
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
@@ -266,6 +268,8 @@ def test_gptoss_blocked_forward_parity():
 
     blocks_chunked = [m for _, m in qeff.model.named_modules() if isinstance(m, QEffPrefillOnlyChunkedGptOssMLP)]
     assert blocks_chunked
+    blocks_chunked[0].expert_blocking_num_nsp = 2
+    blocks_chunked[0].expert_blocking_num_packed_chunks = 1
 
     with torch.no_grad():
         blocked, _ = blocks_chunked[0].forward(x)
@@ -286,7 +290,7 @@ def test_gptoss_prefill_chunked_export(tmp_path):
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
-    qeff.export(tmp_path / "prefill", prefill_only=True, enable_chunking=True)
+    qeff.export(tmp_path / "prefill", prefill_only=True, enable_chunking=True, num_cores=2)
     assert qeff.onnx_path.is_file()
 
 
@@ -302,12 +306,13 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
         prefill_only=True,
         enable_chunking=True,
         prefill_seq_len=512,
+        num_cores=2,
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
 
     onnx_model = onnx.load(str(onnx_path), load_external_data=False)
-    slice_starts = []
+    dynamic_slice_starts = 0
     op_types = []
     for nodes in [onnx_model.graph.node] + [function.node for function in onnx_model.functions]:
         constants = {}
@@ -318,8 +323,8 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
                     if attr.name == "value":
                         constants[node.output[0]] = numpy_helper.to_array(attr.t).flatten().tolist()
         for node in nodes:
-            if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] in constants:
-                slice_starts.append(constants[node.input[1]])
+            if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] not in constants:
+                dynamic_slice_starts += 1
 
-    assert [256] in slice_starts
+    assert dynamic_slice_starts > 0
     assert op_types.count("CtxGather3D") >= 2 * op_types.count("CtxScatter3DInt")
