@@ -2992,11 +2992,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.hash_params["prefill_only"] = True
         if enable_chunking:
             self.hash_params["chunking"] = True
-            if self.model.config.model_type == "glm4_moe":
-                if prefill_seq_len is None or prefill_seq_len <= 0:
-                    raise ValueError("GLM4_MOE chunked prefill export requires a positive prefill_seq_len.")
-                return prefill_seq_len
-            return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+            seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+            self.hash_params["chunking_seq_len"] = seq_len
+            return seq_len
 
         num_q_blocks = (
             self.hash_params["blocking_config"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
@@ -3105,6 +3103,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("NUM_FFN_BLOCKS", None)
                 self.hash_params.pop("ENABLE_OPT_SWA", None)
                 self.hash_params.pop("chunking", None)
+                self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
                     sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
