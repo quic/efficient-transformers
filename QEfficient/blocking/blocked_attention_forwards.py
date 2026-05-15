@@ -957,6 +957,186 @@ def blocked_kv_mla_attention_forward(
     return attn_output, attn_weights
 
 
+def blocked_kv_par_mla_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,              # [B, NQH, QL, D_abs]  absorption-space Q
+    per_head_v_up: torch.Tensor,      # [1, NQH, kv_lora_rank, v_head_dim]
+    per_head_k_up_normal: torch.Tensor,  # [1, NQH, qk_nope_head_dim, kv_lora_rank] — for non-absorption K
+    mla_absorption: Dict[str, Any],
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: int,
+    par_num_split: int,           # T-dim split within each KV block (maps to NSP cores)
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    compressed_kvs,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """
+    GQA headpar-style MLA attention.
+
+    Layout matches qwen3_gqa_kv_blocking_microbench.py:
+      q_fold = query.reshape(B, Hkv, QL*n_rep, D)            # simple reshape, no permute
+      Q_5d   = q_fold.unsqueeze(2).expand(..., split, ...)   # broadcast over split
+      K_5d   = k_block.view(B, Hkv, split, T_h, D)          # consecutive T split
+
+    Merge is two-stage offline (buffer all blocks):
+      Stage 1: max/exp/sum across KV blocks
+      Stage 2: max/exp/sum across splits
+    """
+    B, NQH, QL, D_abs = query.shape
+    kv_lora_rank = module.config.kv_lora_rank
+    split = par_num_split
+
+    if mla_absorption is not None:
+        absorption = mla_absorption.get("absorption", False)
+    else:
+        absorption = False
+
+    # absorption=True : all n_rep heads in a group share the same K (= ckv||k_pe)
+    #                   ? fold: Hkv = module.num_key_value_heads, n_rep = NQH // Hkv
+    # absorption=False: each query head has its own K = ckv @ k_up_h
+    #                   ? cannot fold across heads; treat as Hkv=NQH, n_rep=1
+    if absorption:
+        Hkv  = getattr(module, "num_key_value_heads", 1)
+        n_rep = NQH // Hkv
+    else:
+        Hkv  = NQH
+        n_rep = 1
+
+    # -- Q fold: reshape + unsqueeze + expand (GQA style) ---------------------
+    q_fold = query.reshape(B, Hkv, QL * n_rep, D_abs)
+    Q_5d   = q_fold.unsqueeze(2).expand(B, Hkv, split, QL * n_rep, D_abs)
+
+    ctx_len       = compressed_kvs.layers[layer_idx].ckv.shape[2]
+    kv_block_size = -(-ctx_len // num_kv_blocks)
+    T_h_nom       = -(-kv_block_size // split)   # ceiling — nominal T per split chunk
+
+    # kv_offsets: consecutive layout, offset of position within block
+    # offsets[s, t] = s*T_h_nom + t
+    kv_offsets = (
+        torch.arange(split, device=query.device)[:, None] * T_h_nom
+        + torch.arange(T_h_nom, device=query.device)[None, :]
+    ).view(1, 1, split, 1, T_h_nom)  # [1, 1, split, 1, T_h_nom]
+
+    position_ids = cache_kwargs.get("position_ids")
+    current_position = position_ids.max(dim=-1).values
+    skip_kv = True
+
+    max_buf: list = []
+    sum_buf: list = []
+    out_buf: list = []
+
+    for j in range(num_kv_blocks):
+        start_index  = j * kv_block_size
+        kv_len_block = ctx_len - start_index if j == num_kv_blocks - 1 else kv_block_size
+        end_index    = start_index + kv_len_block
+        T_orig       = kv_len_block
+
+        skip_future = None
+        if skip_kv:
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if skip_future.item():
+                    break
+
+        # Read KV block: [B, Hkv, T_orig, kv_lora_rank/qk_rope_head_dim]
+        ckv_block  = compressed_kvs.read_only_blocked_ckv(start_index, end_index, layer_idx, cache_kwargs)
+        k_pe_block = compressed_kvs.read_only_blocked_k_pe(start_index, end_index, layer_idx, cache_kwargs)
+
+        # K in absorption or non-absorption space: [B, Hkv, T_orig, D_abs]
+        if absorption:
+            k_block   = torch.cat((ckv_block, k_pe_block), dim=-1)         # [B, Hkv, T, 576]
+            ckv_for_v = ckv_block                                            # [B, Hkv, T, 512]
+        else:
+            # Each query head needs its own K: expand ckv to NQH=Hkv, apply per-head k_up
+            # ckv_block:  [B, orig_Hkv, T, kv_lora_rank]
+            orig_Hkv  = getattr(module, "num_key_value_heads", 1)
+            n_rep_kv  = NQH // orig_Hkv
+            ckv_nqh   = (ckv_block.unsqueeze(2)
+                         .expand(-1, orig_Hkv, n_rep_kv, -1, -1)
+                         .reshape(B, NQH, T_orig, kv_lora_rank))            # [B, NQH, T, 512]
+            k_pe_nqh  = (k_pe_block.unsqueeze(2)
+                         .expand(-1, orig_Hkv, n_rep_kv, -1, -1)
+                         .reshape(B, NQH, T_orig, module.config.qk_rope_head_dim))
+            # per_head_k_up_normal: [1, NQH, kv_lora_rank, qk_nope_head_dim]
+            k_nope    = torch.matmul(ckv_nqh, per_head_k_up_normal)         # [B, NQH, T, 128]
+            k_block   = torch.cat((k_nope, k_pe_nqh), dim=-1)               # [B, NQH, T, 192]
+            ckv_for_v = ckv_nqh                                              # [B, NQH, T, 512]
+
+        # Pad T to multiple of split
+        T_blk = T_orig
+        pad   = 0
+        if T_blk % split != 0:
+            pad       = split - (T_blk % split)
+            k_block   = F.pad(k_block,   (0, 0, 0, pad))
+            ckv_for_v = F.pad(ckv_for_v, (0, 0, 0, pad))
+            T_blk  += pad
+        T_h = T_blk // split
+
+        # 5D K/V: [B, Hkv, split, T_h, D]
+        K_5d = k_block.view(B, Hkv, split, T_h, D_abs)
+        V_5d = ckv_for_v.view(B, Hkv, split, T_h, kv_lora_rank)
+
+        # Attention scores: [B, Hkv, split, QL*n_rep, T_h]
+        attn = torch.matmul(Q_5d, K_5d.transpose(-1, -2)) * scaling
+
+        # Padding mask
+        if pad > 0:
+            chunk_start    = torch.arange(split, device=attn.device) * T_h
+            valid_in_chunk = T_orig - chunk_start
+            k_idx          = torch.arange(T_h, device=attn.device)
+            pad_mask       = k_idx.unsqueeze(0) >= valid_in_chunk.unsqueeze(1)  # [split, T_h]
+            attn = attn.masked_fill(pad_mask.view(1, 1, split, 1, T_h), -3.0e4)
+
+        # Causal mask: offsets within block vs query position
+        off         = kv_offsets if T_h == T_h_nom else kv_offsets[:, :, :, :, :T_h]
+        causal_mask = off > (position_ids - start_index)[:, None, None, :, None]
+        attn        = attn.masked_fill(causal_mask, -3.0e4)
+
+        m_blk   = attn.max(dim=-1).values              # [B, Hkv, split, QL*n_rep]
+        exp_blk = torch.exp(attn - m_blk.unsqueeze(-1))
+
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+            m_blk   = torch.where(skip_future, torch.full_like(m_blk,   float(MIN_MASKED_ATTENTION_VALUE)), m_blk)
+            exp_blk = torch.where(skip_future, torch.zeros_like(exp_blk), exp_blk)
+
+        sum_blk = exp_blk.sum(dim=-1)                   # [B, Hkv, split, QL*n_rep]
+        out_blk = torch.matmul(exp_blk, V_5d)           # [B, Hkv, split, QL*n_rep, kv_lora_rank]
+
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+            sum_blk = torch.where(skip_future, torch.zeros_like(sum_blk), sum_blk)
+            out_blk = torch.where(skip_future, torch.zeros_like(out_blk), out_blk)
+
+        max_buf.append(m_blk)
+        sum_buf.append(sum_blk)
+        out_buf.append(out_blk)
+
+    # -- Stage 1: merge across KV blocks --------------------------------------
+    max_stk = torch.stack(max_buf)   # [nkvb, B, Hkv, split, QL*n_rep]
+    sum_stk = torch.stack(sum_buf)
+    out_stk = torch.stack(out_buf)   # [nkvb, B, Hkv, split, QL*n_rep, kv_lora_rank]
+    m1 = max_stk.max(dim=0).values
+    w1 = torch.exp(max_stk - m1.unsqueeze(0))
+    s1 = (w1 * sum_stk).sum(dim=0)                       # [B, Hkv, split, QL*n_rep]
+    o1 = (w1.unsqueeze(-1) * out_stk).sum(dim=0)         # [B, Hkv, split, QL*n_rep, kv_lora_rank]
+
+    # -- Stage 2: merge across splits -----------------------------------------
+    m2     = m1.max(dim=2).values                         # [B, Hkv, QL*n_rep]
+    w2     = torch.exp(m1 - m2.unsqueeze(2))
+    s2     = (w2 * s1).sum(dim=2)
+    o2     = (w2.unsqueeze(-1) * o1).sum(dim=2)          # [B, Hkv, QL*n_rep, kv_lora_rank]
+    output = o2 / s2.unsqueeze(-1)
+
+    # -- Unfold + v_up (GQA style) ---------------------------------------------
+    # [B, Hkv, QL*n_rep, kv_lora_rank] ? [B, NQH, QL, kv_lora_rank]
+    output     = output.view(B, Hkv, n_rep, QL, kv_lora_rank).reshape(B, NQH, QL, kv_lora_rank)
+    attn_output = torch.matmul(output, per_head_v_up)     # [B, NQH, QL, v_head_dim]
+    attn_output = attn_output.transpose(1, 2).contiguous()  # [B, QL, NQH, v_head_dim]
+
+    return attn_output, None
+
+
 def blocked_h_mla_attention_forward(
     module: nn.Module,
     q_a_proj_out: torch.Tensor,
