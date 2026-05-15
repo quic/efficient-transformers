@@ -95,9 +95,6 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-        if self.config.torch_dtype == torch.bfloat16:
-            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
-
     def _normalize_torch_dtype(self):
         """
         Normalizes torch_dtype across all nested configs to match the top-level config.
@@ -642,7 +639,7 @@ class QEFFBaseModel(ABC):
         # Write custom_io.yaml file
         model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
         pkv_in_bfloat16 = (custom_io is not None) and any(
-            "past_" in key and "bfloat16" in value for key, value in custom_io.items()
+            ("past_" in key or "pixel_values" in key) and "bfloat16" in value for key, value in custom_io.items()
         )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
@@ -659,20 +656,21 @@ class QEFFBaseModel(ABC):
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 
-        try:
-            subprocess.run(command, capture_output=True, check=True)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                "\n".join(
-                    [
-                        "Compilation failed!",
-                        f"Compiler command: {e.cmd}",
-                        f"Compiler exitcode: {e.returncode}",
-                        "Compiler stderr:",
-                        e.stderr.decode(),
-                    ]
-                )
-            )
+        # try:
+        print(" ".join(command))
+        subprocess.run(command, capture_output=True, check=True)
+        # except subprocess.CalledProcessError as e:
+        #     raise RuntimeError(
+        #         "\n".join(
+        #             [
+        #                 "Compilation failed!",
+        #                 f"Compiler command: {e.cmd}",
+        #                 f"Compiler exitcode: {e.returncode}",
+        #                 "Compiler stderr:",
+        #                 e.stderr.decode(),
+        #             ]
+        #         )
+        #     )
         # Dump JSON file with hashed parameters
         hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
         create_json(hashed_compile_params_path, compile_hash_params)

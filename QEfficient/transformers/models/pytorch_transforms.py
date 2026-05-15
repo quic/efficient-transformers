@@ -555,6 +555,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
         Olmo2RMSNorm: CustomRMSNormAIC,
+        Glm4MoeRMSNorm: CustomRMSNormAIC,
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
@@ -674,6 +675,14 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
         GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
         GraniteMoeMoE: QEffGraniteMoeMoE,
+        # GLMMoe
+        Glm4MoeModel: QEffGlm4MoeModel,
+        Glm4MoeForCausalLM: QEffGlm4MoeForCausalLM,
+        Glm4MoeAttention: QEffGlm4MoeAttention,
+        Glm4MoeDecoderLayer: QEffGlm4MoeDecoderLayer,
+        Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
+        Glm4MoeMoE: QEffGlm4MoeMoE,
+        Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
@@ -770,6 +779,8 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        QEffGlm4MoeMoE: QEffPrefillOnlyGlm4MoeMoE,
+        QEffGlm4MoeAttention: QEffGlm4MoePrefillOnlyAttention,
     }
 
 
@@ -779,6 +790,8 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+        QEffGlm4MoeMoE: QEffPrefillOnlyGlm4MoeMoE,
+        QEffGlm4MoeAttention: QEffGlm4MoePrefillOnlyAttention,
         # Qwen3Moe
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         # Qwen3 VL Moe
@@ -796,6 +809,8 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+        QEffPrefillOnlyGlm4MoeMoE: QEffGlm4MoeMoE,
+        QEffGlm4MoePrefillOnlyAttention: QEffGlm4MoeAttention,
         # Qwen3Moe
         QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
         # GLM4 Moe

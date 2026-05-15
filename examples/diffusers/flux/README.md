@@ -10,6 +10,7 @@ FLUX.1-schnell is a fast, distilled version of the FLUX.1 text-to-image model op
 
 - **`flux_1_schnell.py`** - Basic example showing simple image generation
 - **`flux_1_shnell_custom.py`** - Advanced example with customization options
+- **`flux_1_schnell_first_block_cache.py`** - FLUX.1-schnell with patch-based first-block-cache enabled
 - **`flux_config.json`** - Configuration file for pipeline modules
 
 ## Quick Start
@@ -46,6 +47,31 @@ Run the basic example:
 ```bash
 python flux_1_schnell.py
 ```
+
+## First-Block-Cache Usage
+
+Use the first-block-cache path when you want retained-state based speedups during denoising:
+
+```python
+from QEfficient import QEffFluxPipeline
+
+pipeline = QEffFluxPipeline.from_pretrained(
+    "black-forest-labs/FLUX.1-schnell",
+    enable_first_block_cache=True,
+    # Downsample factor used on first-block residuals before similarity check.
+    first_block_cache_downsample_factor=4,
+)
+
+output = pipeline(
+    prompt="A laughing girl",
+    cache_threshold=0.1,
+)
+```
+
+Notes:
+- `enable_first_block_cache=False` keeps baseline behavior unchanged.
+- `cache_threshold` is used only when cache is enabled.
+- `first_block_cache_downsample_factor` must divide transformer hidden size.
 
 ## Advanced Customization
 
