@@ -1048,6 +1048,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "fused_forward": QEffDeepseekV3Attention.fused_forward,
             "fused_forward_h_blocking": QEffDeepseekV3Attention.fused_forward_h_blocking,
             "fused_forward_kv_blocking": QEffDeepseekV3Attention.fused_forward_kv_blocking,
+            "fused_forward_par_kv_blocking": QEffDeepseekV3Attention.fused_forward_par_kv_blocking,
             "fused_forward_orig": QEffDeepseekV3Attention.fused_forward_orig,
             "__qeff_init__": QEffDeepseekV3Attention.__qeff_init__,
         },

@@ -407,6 +407,84 @@ class QEffDeepseekV3Attention(nn.Module):
 
         return attn_output, None, compressed_kvs
 
+    def fused_forward_par_kv_blocking(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        compressed_kvs: Optional[torch.Tensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        mla_absorption: Optional[Dict[str, bool]] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        bsz, q_len, _ = hidden_states.size()
+
+        # -- KV compression (write to cache) ----------------------------------
+        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
+        compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
+        kva = compressed_kv[:, :, :, : self.kv_lora_rank]
+        k_pe = compressed_kv[:, :, :, self.kv_lora_rank :]
+
+        q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
+        q_pe = torch.matmul(q_a_proj_out, self.q_rope)
+        q_pe = q_pe.view(bsz, q_len, self.num_heads, self.qk_rope_head_dim).transpose(1, 2)
+
+        kva = self.kv_a_layernorm(kva)
+        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        if compressed_kvs is not None:
+            compressed_kvs.write_only_ckv(kva, self.layer_idx, cache_kwargs)
+
+        cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        if compressed_kvs is not None:
+            compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
+
+        # -- Build query in absorption space -----------------------------------
+        if mla_absorption is not None:
+            absorption = mla_absorption.get("absorption", False)
+            online = mla_absorption.get("online", False)
+        else:
+            absorption = False
+
+        if absorption:
+            if online:
+                qup_kupT = torch.matmul(self.per_head_q_up, self.per_head_k_up)
+                dq_qup_kupT = torch.matmul(q_a_proj_out, qup_kupT)
+            else:
+                dq_qup_kupT = torch.matmul(q_a_proj_out, self.fusedqk)
+            query = torch.cat((dq_qup_kupT, q_pe), dim=-1)   # [B, num_heads, q_len, d_abs]
+        else:
+            q_nope = torch.bmm(q_a_proj_out, self.q_up)
+            q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
+            query = torch.cat((q_nope, q_pe), dim=-1)
+
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+
+        attn_output, attn_weights = generic_blocked_mla_attention_interface(
+            module=self,
+            query=query,
+            per_head_v_up=self.per_head_v_up,
+            per_head_k_up_normal=self.per_head_k_up_normal,
+            attention_mask=attention_mask,
+            scaling=self.softmax_scale,
+            cache_kwargs=cache_kwargs,
+            layer_idx=self.layer_idx,
+            compressed_kvs=compressed_kvs,
+            mla_absorption=mla_absorption,
+            blocking_config=blocking_config,
+            position_ids=position_ids,
+            **kwargs,
+        )
+
+        attn_output = attn_output.view(bsz, q_len, -1)
+        attn_output = self.o_proj(attn_output)
+        return attn_output, None, compressed_kvs
+
     def fused_forward_orig(
         self,
         hidden_states: torch.Tensor,
@@ -560,6 +638,21 @@ class QEffDeepseekV3Attention(nn.Module):
             )
         elif getattr(blocking_config, "mode", None) == "kv":
             return self.fused_forward_kv_blocking(
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                position_ids,
+                past_key_value,
+                compressed_kvs,
+                batch_index,
+                output_attentions,
+                use_cache,
+                cache_position,
+                mla_absorption,
+                **kwargs,
+            )
+        elif getattr(blocking_config, "mode", None) == "par":
+            return self.fused_forward_par_kv_blocking(
                 hidden_states,
                 position_embeddings,
                 attention_mask,
