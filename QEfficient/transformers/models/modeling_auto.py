@@ -2992,6 +2992,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.hash_params["prefill_only"] = True
         if enable_chunking:
             self.hash_params["chunking"] = True
+            if self.model.config.model_type == "glm4_moe":
+                if prefill_seq_len is None or prefill_seq_len <= 0:
+                    raise ValueError("GLM4_MOE chunked prefill export requires a positive prefill_seq_len.")
+                return prefill_seq_len
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
         num_q_blocks = (
@@ -3090,43 +3094,21 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                         prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                     )
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = (
-                        seq_len
-                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                        if enable_chunking
-                        else seq_len
+                        seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
                     )
-                self.hash_params["FFN_W_BLOCK_SIZE"] = int(os.environ.get("FFN_W_BLOCK_SIZE", -1))
-            self.hash_params["NUM_KV_BLOCKS"] = int(os.environ.get("NUM_KV_BLOCKS", -1))
-            if self.model.config.model_type == "glm4_moe":
-                num_kv_blocks = int(os.environ.get("NUM_KV_BLOCKS", -1))
-                num_ffn_blocks = int(os.environ.get("NUM_FFN_BLOCKS", -1))
-                if num_kv_blocks > seq_len:
-                    seq_len = num_kv_blocks
-
-                seq_len = max(num_kv_blocks, num_ffn_blocks) if num_ffn_blocks > seq_len else seq_len
-                if (num_ffn_blocks > 0 and seq_len % num_ffn_blocks != 0) or (
-                    num_kv_blocks > 0 and seq_len % num_kv_blocks != 0
-                ):
-                    raise ValueError(
-                        f"Got NUM_FFN_BLOCKS={num_ffn_blocks} and NUM_KV_BLOCKS={num_kv_blocks}, tried to set seq_len={seq_len} for export but,"
-                        "seq_len is not divisible by either num_ffn_blocks or num_q_blocks, try chaning the values."
-                    )
-                kv_cache_shape[2] = seq_len
-        else:
-            self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-            self.hash_params.pop("prefill_only", None)
-            self.hash_params.pop("NUM_Q_BLOCKS", None)
-            self.hash_params.pop("NUM_FFN_BLOCKS", None)
-            self.hash_params.pop("ENABLE_OPT_SWA", None)
-            self.hash_params.pop("chunking", None)
-            self.hash_params.pop("FFN_W_BLOCK_SIZE", None)
-            self.hash_params.pop("NUM_KV_BLOCKS", None)
-            if kwargs.get("retain_full_kv", False):
-                kv_cache_shape[2] = seq_len + (
-                    self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
-                )
-                self.hash_params["retain_full_kv"] = True
+            else:
+                self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+                self.hash_params.pop("prefill_only", None)
+                self.hash_params.pop("NUM_Q_BLOCKS", None)
+                self.hash_params.pop("NUM_FFN_BLOCKS", None)
+                self.hash_params.pop("ENABLE_OPT_SWA", None)
+                self.hash_params.pop("chunking", None)
+                if kwargs.get("retain_full_kv", False):
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
+                    kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
+                    self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
