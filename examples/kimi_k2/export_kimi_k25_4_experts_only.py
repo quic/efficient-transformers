@@ -39,6 +39,8 @@ qaic_config = {
 # qaic_config = { "mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "h", "num_kv_heads_repeat": TS}
 # for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
 
+qaic_config = { "mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "par", "par_num_split": 4, "num_kv_blocks": 8}
+
 
 MODEL_PATH = Path(
     "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/54383e83fa343a1331754112fb9e3410c55efa2f"
