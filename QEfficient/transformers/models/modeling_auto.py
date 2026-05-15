@@ -3192,6 +3192,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("moe_prefill_num_nsp", None)
                 self.hash_params.pop("moe_prefill_packed_chunk_size", None)
                 self.hash_params.pop("moe_prefill_num_packed_chunks", None)
+                self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
                     sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
