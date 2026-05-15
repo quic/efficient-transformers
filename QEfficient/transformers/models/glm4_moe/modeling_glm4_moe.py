@@ -520,7 +520,7 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         # orig_i, orig_w = self.orig_forward(hidden_states)
         hidden_states = hidden_states.view(-1, self.config.hidden_size)
         # import ipdb; ipdb.set_trace()c
-        
+
         # router_logits = torch.nn.functional.linear(hidden_states.type(torch.float32), self.weight.type(torch.float32))
         router_logits = torch.nn.functional.linear(hidden_states, self.weight)
 

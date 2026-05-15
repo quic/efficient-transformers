@@ -3114,19 +3114,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 kv_cache_shape[2] = seq_len
         else:
-                self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-                self.hash_params.pop("prefill_only", None)
-                self.hash_params.pop("NUM_Q_BLOCKS", None)
-                self.hash_params.pop("NUM_FFN_BLOCKS", None)
-                self.hash_params.pop("ENABLE_OPT_SWA", None)
-                self.hash_params.pop("chunking", None)
-                self.hash_params.pop("FFN_W_BLOCK_SIZE", None)
+            self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+            self.hash_params.pop("prefill_only", None)
+            self.hash_params.pop("NUM_Q_BLOCKS", None)
+            self.hash_params.pop("NUM_FFN_BLOCKS", None)
+            self.hash_params.pop("ENABLE_OPT_SWA", None)
+            self.hash_params.pop("chunking", None)
+            self.hash_params.pop("FFN_W_BLOCK_SIZE", None)
             self.hash_params.pop("NUM_KV_BLOCKS", None)
             if kwargs.get("retain_full_kv", False):
-                    kv_cache_shape[2] = seq_len + (
-                        self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
-                    )
-                    self.hash_params["retain_full_kv"] = True
+                kv_cache_shape[2] = seq_len + (
+                    self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
+                )
+                self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
