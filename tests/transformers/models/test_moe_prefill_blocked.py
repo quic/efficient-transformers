@@ -165,3 +165,38 @@ def test_gptoss_prefill_chunked_export(tmp_path):
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
     qeff.export(tmp_path / "prefill", prefill_only=True, enable_chunking=True)
     assert qeff.onnx_path.is_file()
+
+
+def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
+    import onnx
+    from onnx import numpy_helper
+
+    config = AutoConfig.for_model("gpt_oss", **{**GPTOSS_CFG, "max_position_embeddings": 1024})
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+    onnx_path = qeff.export(
+        tmp_path / "prefill-subfunction-512",
+        prefill_only=True,
+        enable_chunking=True,
+        prefill_seq_len=512,
+        use_onnx_subfunctions=True,
+        offload_pt_weights=False,
+    )
+
+    onnx_model = onnx.load(str(onnx_path), load_external_data=False)
+    slice_starts = []
+    op_types = []
+    for nodes in [onnx_model.graph.node] + [function.node for function in onnx_model.functions]:
+        constants = {}
+        for node in nodes:
+            op_types.append(node.op_type)
+            if node.op_type == "Constant":
+                for attr in node.attribute:
+                    if attr.name == "value":
+                        constants[node.output[0]] = numpy_helper.to_array(attr.t).flatten().tolist()
+        for node in nodes:
+            if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] in constants:
+                slice_starts.append(constants[node.input[1]])
+
+    assert [256] in slice_starts
+    assert op_types.count("CtxGather3D") >= 2 * op_types.count("CtxScatter3DInt")

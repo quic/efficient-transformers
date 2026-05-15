@@ -119,9 +119,7 @@ def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
     valid_dest = valid_prefix - 1
     scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
-    # Once the compiler fix for ConstantOfShape(INT32_MAX) is available, this
-    # can be switched back to ``torch.full_like(token_idx, int32_max)``.
-    matched_idx = int32_max_scalar.expand_as(token_idx)
+    matched_idx = torch.full_like(token_idx, int32_max)
     matched_idx = CtxScatterFunc3DInt.apply(
         matched_idx.unsqueeze(-1),
         scatter_pos,
