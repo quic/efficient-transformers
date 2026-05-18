@@ -3106,6 +3106,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("NUM_FFN_BLOCKS", None)
                 self.hash_params.pop("ENABLE_OPT_SWA", None)
                 self.hash_params.pop("chunking", None)
+                self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
                     kv_cache_shape[2] = seq_len + (
                         self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
