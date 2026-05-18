@@ -21,6 +21,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
     blocked_kv_mla_attention_forward,
+    blocked_kv_par_mla_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
 )
@@ -29,6 +30,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
 class BlockingMode(str, Enum):
     NONE = ""
     KV = "kv"
+    PAR = "par"
     Q = "q"
     H = "h"
     QKV = "qkv"
@@ -44,6 +46,7 @@ class AttentionBlockingConfig:
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = False
     num_batch_blocks: Optional[int] = None
+    par_num_split: Optional[int] = None
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -60,7 +63,8 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
 }
 
 _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
-    BlockingMode.KV: blocked_kv_mla_attention_forward,
+    BlockingMode.KV: blocked_kv_par_mla_attention_forward,
+    BlockingMode.PAR: blocked_kv_par_mla_attention_forward,
     BlockingMode.H: blocked_h_mla_attention_forward,
 }
 
@@ -220,9 +224,11 @@ def generic_blocked_mla_attention_interface(
         layer_idx=layer_idx,
         compressed_kvs=compressed_kvs,
         mla_absorption=mla_absorption,
+        blocking_config=blocking_config,
         num_kv_blocks=blocking_config.num_kv_blocks,
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
+        par_num_split=blocking_config.par_num_split,
         num_batch_blocks=blocking_config.num_batch_blocks,
         score_mod=score_mod,
         position_bias=position_bias,

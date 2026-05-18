@@ -5,6 +5,7 @@ import inspect
 import json
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import torch
 import transformers
@@ -22,6 +23,7 @@ def _build_qaic_config(
     num_kv_heads_repeat: int,
     num_kv_blocks: int,
     head_block_size: int,
+    par_num_split: Optional[int],
 ):
     return {
         "mla_absorption": mla_absorption_cfg,
@@ -30,6 +32,7 @@ def _build_qaic_config(
         "num_kv_heads_repeat": num_kv_heads_repeat,
         "num_kv_blocks": num_kv_blocks,
         "head_block_size": head_block_size,
+        "par_num_split": par_num_split,
     }
 
 
@@ -221,6 +224,13 @@ def _parse_args():
         help="Head block size.",
     )
     parser.add_argument(
+        "--par_num_split",
+        dest="par_num_split",
+        type=int,
+        default=None,
+        help="T-dim split per KV block for optimized MLA KV blocking.",
+    )
+    parser.add_argument(
         "--absorption",
         dest="absorption",
         action="store_true",
@@ -266,6 +276,7 @@ def main():
     num_kv_heads_repeat = args.num_kv_heads_repeat
     num_kv_blocks = args.num_kv_blocks
     head_block_size = args.head_block_size
+    par_num_split = args.par_num_split
     
     mla_absorption_cfg = {
         "cache_compressed": True,
@@ -305,6 +316,7 @@ def main():
             num_kv_heads_repeat=num_kv_heads_repeat,
             num_kv_blocks=num_kv_blocks,
             head_block_size=head_block_size,
+            par_num_split=par_num_split,
         )
         qeff_model = QEFFAutoModelForCausalLM(
             model, num_kv_heads_repeat=num_kv_heads_repeat, qaic_config=qaic_config, torch_dtype=torch.float16
@@ -354,6 +366,7 @@ def main():
             "num_kv_heads_repeat": num_kv_heads_repeat,
             "num_kv_blocks": num_kv_blocks,
             "head_block_size": head_block_size,
+            "par_num_split": par_num_split,
             "cache_compressed": True,
             "absorption": args.absorption,
             "online": args.online,
