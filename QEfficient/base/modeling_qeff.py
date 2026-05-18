@@ -144,7 +144,7 @@ class QEFFBaseModel(ABC):
                     for attr_name in list(vars(module).keys()):
                         attr = getattr(module, attr_name, None)
                         if isinstance(attr, torch.Tensor) and attr.data_ptr() not in registered_ptrs:
-                            setattr(module, attr_name, torch.empty(0, device="meta"))
+                            setattr(module, attr_name, torch.empty_like(attr, device="meta"))
 
                 # Move all parameters and buffers to meta device with empty storage.
                 self.model.to_empty(device="meta")

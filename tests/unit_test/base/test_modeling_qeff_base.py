@@ -191,6 +191,33 @@ class TestQEFFBaseModelWeightOffloading:
         # The plain tensor attribute should also be on meta device
         assert first_child.extra_weight.is_meta
 
+    def test_offload_preserves_plain_tensor_shape_and_dtype(self):
+        """_offload_model_weights must keep shape/dtype of plain tensor attributes.
+
+        Regression guard: an earlier implementation replaced unregistered tensor
+        attributes with ``torch.empty(0, device="meta")``, which silently broke
+        downstream code that broadcasts against or copies into them (e.g. the
+        LoRA re-export path that calls ``module.lora_scalings.copy_(...)``).
+        Meta tensors carry no storage regardless of shape, so preserving shape
+        costs nothing and keeps shape-dependent code working.
+        """
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        first_child = next(iter(qeff.model.modules()))
+        first_child.extra_weight = torch.randn(3, 1, 1, 1, dtype=torch.float32)
+
+        qeff._offload_model_weights(offload_pt_weights=True)
+
+        assert first_child.extra_weight.is_meta
+        assert tuple(first_child.extra_weight.shape) == (3, 1, 1, 1)
+        assert first_child.extra_weight.dtype == torch.float32
+
+        # Shape-dependent ops downstream must still type-check; this raised
+        # ``RuntimeError: output with shape [0] doesn't match the broadcast
+        # shape [3, 1, 1, 0]`` under the broken implementation.
+        first_child.extra_weight.copy_(torch.ones(3, 1, 1, 1))
+
 
 @pytest.mark.cpu_only
 def _get_any_attn_blocking_config(model):
