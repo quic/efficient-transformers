@@ -36,7 +36,6 @@ class BlockingMode(str, Enum):
     QKV = "qkv"
     HQKV = "hqkv"
     BHQKV = "bhqkv"
-    PAR = "par"
 
 
 @dataclass
@@ -67,7 +66,6 @@ _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
     BlockingMode.KV: blocked_kv_par_mla_attention_forward,
     BlockingMode.PAR: blocked_kv_par_mla_attention_forward,
     BlockingMode.H: blocked_h_mla_attention_forward,
-    BlockingMode.PAR: blocked_kv_par_mla_attention_forward
 }
 
 
@@ -232,7 +230,6 @@ def generic_blocked_mla_attention_interface(
         head_block_size=blocking_config.head_block_size,
         par_num_split=blocking_config.par_num_split,
         num_batch_blocks=blocking_config.num_batch_blocks,
-        par_num_split=blocking_config.par_num_split,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
