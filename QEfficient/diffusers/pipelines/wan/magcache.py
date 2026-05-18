@@ -151,6 +151,10 @@ class WanMagCacheRuntime:
     executed_calls: int = 0
     stream_states: Dict[str, _StreamState] = field(default_factory=dict)
 
+    def _debug_print(self, message: str) -> None:
+        if self.verbose:
+            print(message)
+
     def __post_init__(self) -> None:
         if self.threshold < 0:
             raise ValueError(f"`magcache_thresh` must be >= 0, got {self.threshold}.")
@@ -223,8 +227,16 @@ class WanMagCacheRuntime:
         state = self.stream_states[stream_name]
 
         if not self._cache_allowed_for_call(self.call_index):
+            self._debug_print(
+                f"[MagCache] call={self.call_index} stream={stream_name} diff=N/A "
+                f"thresh={self.threshold:.6f} decision=run (retention window)"
+            )
             return False
         if state.cached_residual is None:
+            self._debug_print(
+                f"[MagCache] call={self.call_index} stream={stream_name} diff=N/A "
+                f"thresh={self.threshold:.6f} decision=run (cache cold start)"
+            )
             return False
 
         ratio = float(self._prepared_ratios[self.call_index])
@@ -233,8 +245,16 @@ class WanMagCacheRuntime:
         state.accumulated_err += abs(1.0 - state.accumulated_ratio)
 
         should_skip = state.accumulated_err < self.threshold and state.accumulated_steps <= self.max_skip_steps
+        self._debug_print(
+            f"[MagCache] call={self.call_index} stream={stream_name} diff={state.accumulated_err:.6f} "
+            f"thresh={self.threshold:.6f} k={state.accumulated_steps}/{self.max_skip_steps} "
+            f"decision={'skip' if should_skip else 'run'}"
+        )
         if should_skip:
             self.skipped_calls += 1
+            self._debug_print(
+                f"[MagCache] stream={stream_name} diff<{self.threshold:.6f}; skipping this step for now."
+            )
             return True
 
         state.reset_accumulators()

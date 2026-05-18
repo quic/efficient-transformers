@@ -922,11 +922,34 @@ class QEffWanPipeline:
         if self.model.config.boundary_ratio is not None and guidance_scale_2 is None:
             guidance_scale_2 = guidance_scale
 
+        if isinstance(use_magcache, str):
+            lowered = use_magcache.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                use_magcache = True
+            elif lowered in {"0", "false", "no", "off"}:
+                use_magcache = False
+            else:
+                raise ValueError(
+                    f"Invalid string value for `use_magcache`: {use_magcache!r}. "
+                    "Use one of: true/false, 1/0, yes/no, on/off."
+                )
+        elif not isinstance(use_magcache, bool):
+            use_magcache = bool(use_magcache)
+            logger.warning(f"Coerced non-bool `use_magcache` to {use_magcache}.")
+
         if not self.enable_first_block_cache and (cache_threshold_high is not None or cache_threshold_low is not None):
             logger.warning(
                 "Ignoring cache thresholds because first-block-cache is disabled. "
                 "Set `enable_first_block_cache=True` and `use_unified=False` to enable it."
             )
+        if not use_magcache and (
+            magcache_verbose
+            or magcache_ratios is not None
+            or magcache_thresh != 0.06
+            or magcache_K != 2
+            or magcache_retention_ratio != 0.4
+        ):
+            logger.warning("Ignoring MagCache knobs because `use_magcache=False`.")
 
         # Initialize pipeline state
         self._guidance_scale = guidance_scale
