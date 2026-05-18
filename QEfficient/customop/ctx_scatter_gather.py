@@ -166,7 +166,11 @@ class CtxScatterFunc3DInt(torch.autograd.Function):
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
-    ctx_indices = ops.Expand(ctx_indices, ops.Slice(ops.Shape(data), starts=[0], ends=[2], axes=[0]))
+    # ctx_indices = ops.Expand(ctx_indices, ops.Slice(ops.Shape(data), starts=[0], ends=[2], axes=[0]))
+    batch_size = ops.Slice(ops.Shape(data), starts=[0], ends=[1], axes=[0])
+    idx_seq_len = ops.Slice(ops.Shape(ctx_indices), starts=[1], ends=[2], axes=[0])
+    expand_shape = ops.Concat(batch_size, idx_seq_len, axis=0)
+    ctx_indices = ops.Expand(ctx_indices, expand_shape)
     ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
     return ops.GatherND(data, ctx_indices, batch_dims=1)
 
